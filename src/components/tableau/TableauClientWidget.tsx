@@ -3,13 +3,21 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
-import { Zap, ShieldCheck, ShieldAlert, ShieldX, ChevronRight, Plus } from "lucide-react";
+import { Zap, ShieldCheck, ShieldAlert, ShieldX, Plus } from "lucide-react";
+
+interface Breaker {
+  id: number;
+  label: string;
+  circuit: string;
+  amperes: number;
+  type: string;
+}
 
 interface BreakerRow {
   id: number;
   name: string;
-  capacity: number;
-  breakers: { id: number; label: string; circuit: string; amperes: number; type: string }[];
+  slots?: (Breaker | null)[];
+  breakers?: Breaker[];
 }
 
 const BREAKER_TYPES: Record<string, { isDiff?: boolean; diffType?: string }> = {
@@ -19,66 +27,56 @@ const BREAKER_TYPES: Record<string, { isDiff?: boolean; diffType?: string }> = {
   "diff-F":  { isDiff: true, diffType: "F" },
 };
 
-const CIRCUITS: Record<string, { label: string; icon: string; ampMax: number; diffType: string | null; section: string | null }> = {
-  lumiere:         { label: "Lumière",         icon: "💡", ampMax: 10,  diffType: "AC", section: "1.5" },
-  prise_16:        { label: "Prises 16A",      icon: "🔌", ampMax: 16,  diffType: "AC", section: "1.5" },
-  prise_20:        { label: "Prises 20A",      icon: "🔌", ampMax: 20,  diffType: "AC", section: "2.5" },
-  cuisine_prises:  { label: "Prises cuisine",  icon: "🍳", ampMax: 20,  diffType: "AC", section: "2.5" },
-  plaque:          { label: "Plaque cuisson",  icon: "🔥", ampMax: 32,  diffType: "A",  section: "6.0" },
-  four:            { label: "Four",            icon: "🥘", ampMax: 20,  diffType: "AC", section: "2.5" },
-  lave_linge:      { label: "Lave-linge",      icon: "🧺", ampMax: 20,  diffType: "A",  section: "2.5" },
-  lave_vaisselle:  { label: "Lave-vaisselle",  icon: "🍽️", ampMax: 20,  diffType: "AC", section: "2.5" },
-  seche_linge:     { label: "Sèche-linge",     icon: "👕", ampMax: 20,  diffType: "A",  section: "2.5" },
-  chauffe_eau:     { label: "Chauffe-eau",     icon: "🚿", ampMax: 20,  diffType: "AC", section: "2.5" },
-  chauffage:       { label: "Chauffage élec.", icon: "🌡️", ampMax: 20,  diffType: "AC", section: "2.5" },
-  clim:            { label: "Climatisation",   icon: "❄️", ampMax: 20,  diffType: "F",  section: "2.5" },
-  seche_serviette: { label: "Sèche-serviette", icon: "🛁", ampMax: 16,  diffType: "AC", section: "1.5" },
-  congelateur:     { label: "Congélateur",     icon: "🧊", ampMax: 20,  diffType: "AC", section: "2.5" },
-  irve:            { label: "IRVE",            icon: "🔋", ampMax: 32,  diffType: "A",  section: "6.0" },
-  piscine:         { label: "Piscine/PAC",     icon: "🏊", ampMax: 20,  diffType: "F",  section: "2.5" },
-  vmc:             { label: "VMC",             icon: "💨", ampMax: 10,  diffType: "AC", section: "1.5" },
-  alarme:          { label: "Alarme",          icon: "🔔", ampMax: 6,   diffType: "AC", section: "1.5" },
-  exterieur:       { label: "Extérieur",       icon: "🌿", ampMax: 16,  diffType: "AC", section: "1.5" },
-  garage:          { label: "Garage",          icon: "🏠", ampMax: 16,  diffType: "AC", section: "1.5" },
-  general:         { label: "Général",         icon: "⚡", ampMax: 63,  diffType: null, section: "10.0" },
-  parafoudre:      { label: "Parafoudre",      icon: "⛈️", ampMax: 0,   diffType: null, section: null },
-  autre:           { label: "Autre",           icon: "⚙️", ampMax: 32,  diffType: "AC", section: "2.5" },
+const CIRCUITS: Record<string, { label: string; icon: string; ampMax: number; diffType: string | null }> = {
+  lumiere:         { label: "Lumière",         icon: "💡", ampMax: 10,  diffType: "AC" },
+  prise_16:        { label: "Prises 16A",      icon: "🔌", ampMax: 16,  diffType: "AC" },
+  prise_20:        { label: "Prises 20A",      icon: "🔌", ampMax: 20,  diffType: "AC" },
+  cuisine_prises:  { label: "Prises cuisine",  icon: "🍳", ampMax: 20,  diffType: "AC" },
+  plaque:          { label: "Plaque cuisson",  icon: "🔥", ampMax: 32,  diffType: "A"  },
+  four:            { label: "Four",            icon: "🥘", ampMax: 20,  diffType: "AC" },
+  lave_linge:      { label: "Lave-linge",      icon: "🧺", ampMax: 20,  diffType: "A"  },
+  lave_vaisselle:  { label: "Lave-vaisselle",  icon: "🍽️", ampMax: 20,  diffType: "AC" },
+  seche_linge:     { label: "Sèche-linge",     icon: "👕", ampMax: 20,  diffType: "A"  },
+  chauffe_eau:     { label: "Chauffe-eau",     icon: "🚿", ampMax: 20,  diffType: "AC" },
+  chauffage:       { label: "Chauffage élec.", icon: "🌡️", ampMax: 20,  diffType: "AC" },
+  clim:            { label: "Climatisation",   icon: "❄️", ampMax: 20,  diffType: "F"  },
+  seche_serviette: { label: "Sèche-serviette", icon: "🛁", ampMax: 16,  diffType: "AC" },
+  congelateur:     { label: "Congélateur",     icon: "🧊", ampMax: 20,  diffType: "AC" },
+  irve:            { label: "IRVE",            icon: "🔋", ampMax: 32,  diffType: "A"  },
+  piscine:         { label: "Piscine/PAC",     icon: "🏊", ampMax: 20,  diffType: "F"  },
+  vmc:             { label: "VMC",             icon: "💨", ampMax: 10,  diffType: "AC" },
+  alarme:          { label: "Alarme",          icon: "🔔", ampMax: 6,   diffType: "AC" },
+  exterieur:       { label: "Extérieur",       icon: "🌿", ampMax: 16,  diffType: "AC" },
+  garage:          { label: "Garage",          icon: "🏠", ampMax: 16,  diffType: "AC" },
+  general:         { label: "Général",         icon: "⚡", ampMax: 63,  diffType: null },
+  parafoudre:      { label: "Parafoudre",      icon: "⛈️", ampMax: 0,   diffType: null },
+  autre:           { label: "Autre",           icon: "⚙️", ampMax: 32,  diffType: "AC" },
 };
 
-const DIFF_HIERARCHY: Record<string, number> = { AC: 0, A: 1, F: 2 };
+function safeBreakers(row: BreakerRow): Breaker[] {
+  const items = row.slots ?? row.breakers ?? [];
+  return items.filter((b): b is Breaker =>
+    b != null && typeof b === "object" && typeof (b as any).type === "string" && (b as any).type.length > 0
+  );
+}
 
-function quickCheckNFC(rows: BreakerRow[]) {
+function quickScore(rows: BreakerRow[]): number {
+  if (!Array.isArray(rows) || rows.length === 0) return 100;
   let errors = 0;
-  const allBreakers = rows.flatMap(r => r.breakers);
-  const diffs = allBreakers.filter(b => BREAKER_TYPES[b.type]?.isDiff);
+  const all = rows.flatMap(r => safeBreakers(r));
+  const diffs = all.filter(b => !!BREAKER_TYPES[b.type]?.isDiff);
   if (diffs.length < 2) errors++;
-  allBreakers.forEach(b => {
+  all.forEach(b => {
     if (BREAKER_TYPES[b.type]?.isDiff || b.circuit === "general" || b.circuit === "parafoudre") return;
     const spec = CIRCUITS[b.circuit];
     if (!spec) return;
     if (spec.ampMax && b.amperes > spec.ampMax) errors++;
-    let cov: (typeof allBreakers)[0] | null = null;
-    for (const row of rows) {
-      let last: (typeof allBreakers)[0] | null = null;
-      for (const rb of row.breakers) {
-        if (BREAKER_TYPES[rb.type]?.isDiff) last = rb;
-        if (rb.id === b.id) { cov = last; break; }
-      }
-    }
-    if (!cov) errors++;
-    else if (spec.diffType && BREAKER_TYPES[cov.type]?.diffType) {
-      const covLevel = DIFF_HIERARCHY[BREAKER_TYPES[cov.type]?.diffType!] ?? -1;
-      const reqLevel = DIFF_HIERARCHY[spec.diffType] ?? -1;
-      if (covLevel < reqLevel) errors++;
-    }
   });
-  const totalBreakers = allBreakers.filter(b => !BREAKER_TYPES[b.type]?.isDiff).length;
-  const score = Math.max(0, Math.round(100 - errors * 15));
-  return { errors, totalBreakers, rows: rows.length, score };
+  return Math.max(0, Math.round(100 - errors * 15));
 }
 
 export default function TableauClientWidget({ clientId }: { clientId: string }) {
-  const [rows, setRows]     = useState<BreakerRow[] | null>(null);
+  const [rows, setRows]       = useState<BreakerRow[] | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -88,7 +86,10 @@ export default function TableauClientWidget({ clientId }: { clientId: string }) 
       .single()
       .then(({ data }) => {
         if (data?.tableau_config) {
-          try { setRows(JSON.parse(data.tableau_config)); } catch {}
+          try {
+            const parsed = JSON.parse(data.tableau_config);
+            setRows(Array.isArray(parsed) ? parsed : []);
+          } catch { setRows([]); }
         } else {
           setRows([]);
         }
@@ -106,7 +107,6 @@ export default function TableauClientWidget({ clientId }: { clientId: string }) 
     );
   }
 
-  // No tableau yet
   if (!rows || rows.length === 0) {
     return (
       <div className="card card-inner flex items-center justify-between">
@@ -126,18 +126,15 @@ export default function TableauClientWidget({ clientId }: { clientId: string }) 
     );
   }
 
-  const { errors, totalBreakers, score } = quickCheckNFC(rows);
+  const score = quickScore(rows);
   const ScoreIcon = score >= 85 ? ShieldCheck : score >= 60 ? ShieldAlert : ShieldX;
-  const scoreClass  = score >= 85 ? "text-emerald-600 bg-emerald-50 border-emerald-200"
-                    : score >= 60 ? "text-amber-600 bg-amber-50 border-amber-200"
-                    : "text-red-600 bg-red-50 border-red-200";
-  const iconClass   = score >= 85 ? "text-emerald-500" : score >= 60 ? "text-amber-500" : "text-red-500";
+  const scoreClass = score >= 85
+    ? "text-emerald-600 bg-emerald-50 border-emerald-200"
+    : score >= 60 ? "text-amber-600 bg-amber-50 border-amber-200"
+    : "text-red-600 bg-red-50 border-red-200";
 
-  // Preview: first 8 non-diff breakers as icons
-  const previewBreakers = rows
-    .flatMap(r => r.breakers)
-    .filter(b => !BREAKER_TYPES[b.type]?.isDiff)
-    .slice(0, 10);
+  const allBreakers = rows.flatMap(r => safeBreakers(r)).filter(b => !BREAKER_TYPES[b.type]?.isDiff);
+  const preview = allBreakers.slice(0, 10);
 
   return (
     <Link href={`/tableau/${clientId}`}
@@ -149,44 +146,33 @@ export default function TableauClientWidget({ clientId }: { clientId: string }) 
           </div>
           <div>
             <p className="font-semibold text-ink-900 text-sm">Tableau électrique</p>
-            <p className="text-xs text-ink-400">{rows.length} rangée{rows.length>1?"s":""} · {totalBreakers} circuit{totalBreakers>1?"s":""}</p>
+            <p className="text-xs text-ink-400">
+              {rows.length} rangée{rows.length > 1 ? "s" : ""} · {allBreakers.length} circuit{allBreakers.length > 1 ? "s" : ""}
+            </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-semibold ${scoreClass}`}>
-            <ScoreIcon size={12} />
-            {score}/100
-          </div>
-          <ChevronRight size={16} className="text-ink-300 group-hover:text-volt-500 transition-colors" />
+        <div className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-semibold ${scoreClass}`}>
+          <ScoreIcon size={12} /> {score}/100
         </div>
       </div>
 
-      {/* Circuit icons preview */}
       <div className="flex flex-wrap gap-1.5">
-        {previewBreakers.map(b => {
+        {preview.map(b => {
           const c = CIRCUITS[b.circuit] || CIRCUITS.autre;
           return (
             <div key={b.id}
-              title={`${b.label || c.label} — ${b.amperes}A`}
               className="flex items-center gap-1 px-2 py-1 bg-ink-50 rounded-lg border border-ink-200 text-xs text-ink-600">
               <span>{c.icon}</span>
               <span className="font-mono text-ink-400 text-[10px]">{b.amperes}A</span>
             </div>
           );
         })}
-        {totalBreakers > 10 && (
+        {allBreakers.length > 10 && (
           <div className="flex items-center px-2 py-1 bg-ink-50 rounded-lg border border-ink-200 text-xs text-ink-400">
-            +{totalBreakers - 10}
+            +{allBreakers.length - 10}
           </div>
         )}
       </div>
-
-      {errors > 0 && (
-        <div className="mt-2 flex items-center gap-1.5 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
-          <ShieldX size={12} />
-          {errors} non-conformité{errors>1?"s":""} NFC 15-100 détectée{errors>1?"s":""}
-        </div>
-      )}
     </Link>
   );
 }
