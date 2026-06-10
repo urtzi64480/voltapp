@@ -411,7 +411,6 @@ export default function PlanningPage() {
 
   useEffect(() => { fetchAll(); fetchGcal(); }, [year, month]);
 
-  // Notif retour OAuth
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("google") === "ok") {
@@ -429,7 +428,7 @@ export default function PlanningPage() {
       response_type: "code",
       scope: "https://www.googleapis.com/auth/calendar.readonly",
       access_type: "offline",
-      prompt: "consent",
+      prompt: "select_account consent",
     });
     window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
   };
@@ -652,18 +651,16 @@ export default function PlanningPage() {
                         {day}
                       </span>
                       <div className="mt-1 space-y-0.5">
-                        {/* Événements Google Calendar (gris, en premier) */}
                         {dayGcal.slice(0, 2).map(ev => (
                           <button key={ev.id}
                             onClick={e => { e.stopPropagation(); setSelectedGcal(ev); }}
                             className="w-full text-left text-xs px-1.5 py-0.5 rounded-md truncate font-medium bg-gray-100 text-gray-500 border border-gray-200">
                             <span className="hidden md:inline">
-                              {ev.allDay ? "↔" : fmt(ev.start) + " · "}
+                              {ev.allDay ? "↔ " : fmt(ev.start) + " · "}
                             </span>
                             {ev.title}
                           </button>
                         ))}
-                        {/* Interventions VoltApp */}
                         {dayIvs.slice(0, 3).map(iv => {
                           const cfg = STATUT_CONFIG[iv.statut];
                           return (
