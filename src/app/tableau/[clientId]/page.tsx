@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Client } from "@/types";
@@ -1144,7 +1144,7 @@ export default function TableauPage() {
     });
   }, [clientId]);
 
-  const compliance = useMemo(() => checkNFC(rows), [rows]);
+  const compliance = checkNFC(rows);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
