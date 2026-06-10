@@ -37,26 +37,11 @@ function isSameDay(a: Date, b: Date) {
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate();
 }
-function parseDateLocal(dateStr: string): Date {
-  // Extrait année/mois/jour sans conversion UTC
-  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (match) return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
-  return new Date(dateStr);
-}
 function fmt(dateStr: string) {
-  // Si la date contient déjà un offset (+01:00 etc.), on extrait l'heure directement
-  const match = dateStr.match(/T(\d{2}):(\d{2})/);
-  if (match) return `${match[1]}:${match[2]}`;
-  return new Date(dateStr).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Paris" });
+  return new Date(dateStr).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 function fmtDate(dateStr: string) {
-  // Extrait la date locale sans conversion UTC
-  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (match) {
-    const d = new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
-    return d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
-  }
-  return new Date(dateStr).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", timeZone: "Europe/Paris" });
+  return new Date(dateStr).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
 }
 
 // ── DocBadge ───────────────────────────────────────────────────────────────
@@ -508,7 +493,7 @@ export default function PlanningPage() {
 
   const gcalForDay = (day: number) => {
     const target = new Date(year, month, day);
-    return gcalEvents.filter(ev => isSameDay(parseDateLocal(ev.start), target));
+    return gcalEvents.filter(ev => isSameDay(new Date(ev.start), target));
   };
 
   // ── CRUD ──
