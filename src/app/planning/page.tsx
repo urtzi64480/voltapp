@@ -86,13 +86,14 @@ const EMPTY_FORM: FormData = {
   statut: "planifie", notes: "",
 };
 
-function InterventionForm({ initial, clients, devis, onSave, onCancel }: {
-  initial: FormData; clients: Client[]; devis: Devis[];
+function InterventionForm({ initial, clients, devis, gcalEvents, onSave, onCancel }: {
+  initial: FormData; clients: Client[]; devis: Devis[]; gcalEvents: GCalEvent[];
   onSave: (data: FormData) => Promise<void>; onCancel: () => void;
 }) {
   const [form, setForm] = useState<FormData>(initial);
   const [saving, setSaving] = useState(false);
-  const set = (k: keyof FormData, v: string) => setForm(f => ({ ...f, [k]: v }));
+  const [conflict, setConflict] = useState<GCalEvent | null>(null);
+  const set = (k: keyof FormData, v: string) => { setConflict(null); setForm(f => ({ ...f, [k]: v })); };
   const clientDevis = devis.filter(d => d.client_id === form.client_id);
 
   useEffect(() => {
@@ -107,6 +108,15 @@ function InterventionForm({ initial, clients, devis, onSave, onCancel }: {
 
   const handleSave = async () => {
     if (!form.titre || !form.date_debut || !form.date_fin) return;
+    const debut = new Date(form.date_debut).getTime();
+    const fin = new Date(form.date_fin).getTime();
+    const conflictingEvent = gcalEvents.find(ev => {
+      if (ev.allDay) return false;
+      const evDebut = new Date(ev.start).getTime();
+      const evFin = new Date(ev.end).getTime();
+      return debut < evFin && fin > evDebut;
+    });
+    if (conflictingEvent) { setConflict(conflictingEvent); return; }
     setSaving(true);
     await onSave(form);
     setSaving(false);
@@ -177,6 +187,17 @@ function InterventionForm({ initial, clients, devis, onSave, onCancel }: {
           rows={2} placeholder="Notes internes…"
           className="w-full border border-ink-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-volt-400 resize-none" />
       </div>
+      {/* Alerte conflit Google Calendar */}
+      {conflict && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+          <p className="text-sm font-semibold text-red-700 mb-1">⛔ Conflit Google Calendar</p>
+          <p className="text-xs text-red-600">
+            <span className="font-medium">{conflict.title}</span>
+            {" · "}{fmt(conflict.start)} → {fmt(conflict.end)}
+          </p>
+          <p className="text-xs text-red-500 mt-1">Modifiez les horaires pour continuer.</p>
+        </div>
+      )}
       <div className="flex gap-3 pt-2">
         <button onClick={onCancel}
           className="flex-1 py-2.5 rounded-xl border border-ink-200 text-sm font-medium text-ink-600 hover:bg-ink-50">
@@ -748,7 +769,7 @@ export default function PlanningPage() {
               </div>
               <div className="p-5">
                 <InterventionForm
-                  initial={formInit} clients={clients} devis={devis}
+                  initial={formInit} clients={clients} devis={devis} gcalEvents={gcalEvents}
                   onSave={editMode ? handleUpdate : handleCreate}
                   onCancel={() => { setShowForm(false); setEditMode(false); }}
                 />
