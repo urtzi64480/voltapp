@@ -337,7 +337,17 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
               <div className="space-y-3">
                 {client.telephone && <div className="flex items-center gap-3"><Phone size={15} className="text-ink-400" /><span className="text-sm">{client.telephone}</span></div>}
                 {client.email && <div className="flex items-center gap-3"><Mail size={15} className="text-ink-400" /><span className="text-sm">{client.email}</span></div>}
-                {(client.adresse || client.ville) && <div className="flex items-center gap-3"><MapPin size={15} className="text-ink-400" /><span className="text-sm">{[client.adresse, client.code_postal, client.ville].filter(Boolean).join(", ")}</span></div>}
+                {(client.adresse || client.ville) && (
+                  <div className="flex items-center gap-3">
+                    <MapPin size={15} className="text-ink-400 shrink-0" />
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([client.adresse, client.code_postal, client.ville].filter(Boolean).join(", "))}`}
+                      target="_blank" rel="noopener noreferrer"
+                      className="text-sm text-volt-600 hover:underline">
+                      {[client.adresse, client.code_postal, client.ville].filter(Boolean).join(", ")}
+                    </a>
+                  </div>
+                )}
                 {client.contact_prefere && <div className="flex items-center gap-3 text-sm"><span className="text-ink-400 w-28 text-xs">Contact préféré</span>{client.contact_prefere}</div>}
                 {client.disponibilites && <div className="flex items-start gap-3 text-sm"><span className="text-ink-400 w-28 text-xs shrink-0">Disponibilités</span>{client.disponibilites}</div>}
                 {client.source && <div className="flex items-center gap-3 text-sm"><span className="text-ink-400 w-28 text-xs">Source</span>{client.source}</div>}
