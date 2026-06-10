@@ -77,6 +77,7 @@ export async function GET(req: NextRequest) {
       singleEvents: "true",
       orderBy: "startTime",
       maxResults: "250",
+      timeZone: "Europe/Paris",
     }),
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
