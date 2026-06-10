@@ -200,9 +200,9 @@ function InterventionForm({ initial, clients, devis, gcalEvents, onSave, onCance
 
 // ── Drawer détail intervention ─────────────────────────────────────────────
 
-function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onPhotoUpload, getPhotoUrl }: {
+function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTermine, onPhotoUpload, getPhotoUrl }: {
   intervention: Intervention; onClose: () => void; onEdit: () => void; onDelete: () => void;
-  onPhotoUpload: (file: File) => Promise<void>; getPhotoUrl: (path: string) => string;
+  onMarkTermine: () => void; onPhotoUpload: (file: File) => Promise<void>; getPhotoUrl: (path: string) => string;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -327,6 +327,12 @@ function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onPhotoUp
             className="p-2.5 rounded-xl border border-red-200 text-red-500 hover:bg-red-50">
             <Trash2 size={16} />
           </button>
+          {intervention.statut !== "termine" && new Date(intervention.date_fin) < new Date() && (
+            <button onClick={onMarkTermine}
+              className="flex-1 py-2.5 rounded-xl bg-green-500 text-white text-sm font-semibold hover:bg-green-600">
+              ✓ Marquer terminé
+            </button>
+          )}
           <button onClick={onEdit}
             className="flex-1 py-2.5 rounded-xl bg-volt-500 text-ink-900 text-sm font-semibold hover:bg-volt-400">
             Modifier
@@ -561,6 +567,13 @@ export default function PlanningPage() {
     await fetchAll();
   };
 
+  const handleMarkTermine = async () => {
+    if (!selected) return;
+    await supabase.from("interventions").update({ statut: "termine" }).eq("id", selected.id);
+    setSelected(null);
+    await fetchAll();
+  };
+
   const handlePhotoUpload = async (file: File) => {
     if (!selected) return;
     const ext = file.name.split(".").pop();
@@ -686,6 +699,8 @@ export default function PlanningPage() {
                   className={cn(
                     "min-h-[80px] md:min-h-[100px] p-1.5 relative",
                     day ? "cursor-pointer hover:bg-ink-50 transition-colors" : "bg-ink-50/50",
+                    day && dayGcal.length > 0 && dayIvs.length === 0 ? "bg-gray-50" : "",
+                    day && dayGcal.length > 0 && dayIvs.length > 0 ? "bg-blue-50/30" : "",
                   )}
                   onClick={() => day && openCreate(day)}>
                   {day && (
@@ -753,7 +768,7 @@ export default function PlanningPage() {
         {selected && !editMode && (
           <InterventionDrawer
             intervention={selected} onClose={() => setSelected(null)}
-            onEdit={openEdit} onDelete={handleDelete}
+            onEdit={openEdit} onDelete={handleDelete} onMarkTermine={handleMarkTermine}
             onPhotoUpload={handlePhotoUpload} getPhotoUrl={getPhotoUrl}
           />
         )}
