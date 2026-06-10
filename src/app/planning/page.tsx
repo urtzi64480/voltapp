@@ -604,6 +604,17 @@ export default function PlanningPage() {
     const dureeMs = oldFin.getTime() - oldDebut.getTime();
     const newDebut = new Date(year, month, day, oldDebut.getHours(), oldDebut.getMinutes());
     const newFin = new Date(newDebut.getTime() + dureeMs);
+    // Vérification conflit Google Calendar
+    const conflict = gcalEvents.find(ev => {
+      if (ev.allDay) return false;
+      const evDebut = new Date(ev.start).getTime();
+      const evFin = new Date(ev.end).getTime();
+      return newDebut.getTime() < evFin && newFin.getTime() > evDebut;
+    });
+    if (conflict) {
+      alert(`Impossible : conflit avec "${conflict.title}" dans Google Calendar.`);
+      return;
+    }
     await supabase.from("interventions").update({
       date_debut: newDebut.toISOString(),
       date_fin: newFin.toISOString(),
