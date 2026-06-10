@@ -33,17 +33,29 @@ function startOfMonth(year: number, month: number) { return new Date(year, month
 function daysInMonth(year: number, month: number) { return new Date(year, month + 1, 0).getDate(); }
 function dayOfWeekMon(date: Date) { return (date.getDay() + 6) % 7; }
 function isSameDay(a: Date, b: Date) {
-  const toParisDate = (d: Date) => new Date(d.toLocaleString("fr-FR", { timeZone: "Europe/Paris" }));
-  const ap = toParisDate(a);
-  const bp = toParisDate(b);
-  return ap.getFullYear() === bp.getFullYear() &&
-    ap.getMonth() === bp.getMonth() &&
-    ap.getDate() === bp.getDate();
+  return a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+}
+function parseDateLocal(dateStr: string): Date {
+  // Extrait année/mois/jour sans conversion UTC
+  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
+  return new Date(dateStr);
 }
 function fmt(dateStr: string) {
+  // Si la date contient déjà un offset (+01:00 etc.), on extrait l'heure directement
+  const match = dateStr.match(/T(\d{2}):(\d{2})/);
+  if (match) return `${match[1]}:${match[2]}`;
   return new Date(dateStr).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Paris" });
 }
 function fmtDate(dateStr: string) {
+  // Extrait la date locale sans conversion UTC
+  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    const d = new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
+    return d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  }
   return new Date(dateStr).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", timeZone: "Europe/Paris" });
 }
 
@@ -475,7 +487,7 @@ export default function PlanningPage() {
 
   const gcalForDay = (day: number) => {
     const target = new Date(year, month, day);
-    return gcalEvents.filter(ev => isSameDay(new Date(ev.start), target));
+    return gcalEvents.filter(ev => isSameDay(parseDateLocal(ev.start), target));
   };
 
   // ── CRUD ──
