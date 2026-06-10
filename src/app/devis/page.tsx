@@ -5,14 +5,15 @@ import { Devis } from "@/types";
 import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { Plus, Search, FileText, ChevronRight, ChevronDown, ChevronUp, User, Receipt } from "lucide-react";
+import { Plus, Search, FileText, ChevronRight, ChevronDown, ChevronUp, User, Receipt, CalendarDays, CalendarX } from "lucide-react";
 
 const FILTRES = ["tous", "brouillon", "envoye", "signe", "refuse"] as const;
 const STATUTS_VISIBLES = ["envoye", "signe", "brouillon", "refuse"];
 
 export default function DevisPage() {
   const [devis, setDevis] = useState<Devis[]>([]);
-  const [facturesMap, setFacturesMap] = useState<Record<string, string>>({}); // devis_id → facture_id
+  const [facturesMap, setFacturesMap] = useState<Record<string, string>>({});
+  const [interventionsMap, setInterventionsMap] = useState<Record<string, boolean>>({}); // devis_id → planifié ?
   const [search, setSearch] = useState("");
   const [filtre, setFiltre] = useState("tous");
   const [loading, setLoading] = useState(true);
@@ -26,17 +27,28 @@ export default function DevisPage() {
         const dvs = data ?? [];
         setDevis(dvs);
 
-        // Charger les factures liées aux devis signés
+        const allIds = dvs.map(d => d.id);
         const signesIds = dvs.filter(d => d.statut === "signe").map(d => d.id);
-        if (signesIds.length > 0) {
-          const { data: facs } = await supabase
-            .from("factures")
-            .select("id, devis_id")
-            .in("devis_id", signesIds);
-          const map: Record<string, string> = {};
-          (facs ?? []).forEach((f: any) => { if (f.devis_id) map[f.devis_id] = f.id; });
-          setFacturesMap(map);
-        }
+
+        await Promise.all([
+          // Factures liées
+          (async () => {
+            if (signesIds.length === 0) return;
+            const { data: facs } = await supabase.from("factures").select("id, devis_id").in("devis_id", signesIds);
+            const map: Record<string, string> = {};
+            (facs ?? []).forEach((f: any) => { if (f.devis_id) map[f.devis_id] = f.id; });
+            setFacturesMap(map);
+          })(),
+          // Interventions liées (pour badge planifié)
+          (async () => {
+            if (allIds.length === 0) return;
+            const { data: ivs } = await supabase.from("interventions").select("devis_id").in("devis_id", allIds);
+            const map: Record<string, boolean> = {};
+            (ivs ?? []).forEach((iv: any) => { if (iv.devis_id) map[iv.devis_id] = true; });
+            setInterventionsMap(map);
+          })(),
+        ]);
+
         setLoading(false);
       });
   }, []);
@@ -108,6 +120,7 @@ export default function DevisPage() {
                     <div className="divide-y divide-ink-100">
                       {items.map(d => {
                         const factureId = facturesMap[d.id];
+                        const planifie = interventionsMap[d.id] ?? false;
                         return (
                           <Link key={d.id} href={`/devis/${d.id}`}
                             className="flex items-center gap-4 px-5 py-3 hover:bg-ink-50 transition-colors group">
@@ -120,6 +133,16 @@ export default function DevisPage() {
                                     onClick={e => { e.preventDefault(); e.stopPropagation(); window.location.href = `/factures/${factureId}`; }}
                                     className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors cursor-pointer">
                                     <Receipt size={11} /> Facturé
+                                  </span>
+                                )}
+                                {/* Badge planification — visible sur tous les devis */}
+                                {planifie ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">
+                                    <CalendarDays size={11} /> Planifié
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-ink-100 text-ink-400">
+                                    <CalendarX size={11} /> Non planifié
                                   </span>
                                 )}
                               </div>
