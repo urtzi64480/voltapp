@@ -102,7 +102,7 @@ function checkNFC(rows: BreakerRow[]) {
   }
 
   const allBreakers = rows.flatMap(r => safeBreakers(r.slots));
-  const diffs = allBreakers.filter(b => BREAKER_TYPES[b.type]?.isDiff);
+  const diffs = allBreakers.filter(b => b && b.type && BREAKER_TYPES[b.type]?.isDiff);
 
   if (diffs.length === 0) {
     errors.push({ id: "no-diff", msg: "Aucun différentiel 30mA détecté. Minimum 2 obligatoires.", rule: "Art. 531.2" });
