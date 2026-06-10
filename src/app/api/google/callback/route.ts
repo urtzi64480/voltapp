@@ -7,7 +7,13 @@ export async function GET(req: NextRequest) {
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { cookies: { get: (n) => cookieStore.get(n)?.value, set: () => {}, remove: () => {} } }
+    {
+      cookies: {
+        get: (n: string) => cookieStore.get(n)?.value,
+        set: () => {},
+        remove: () => {},
+      },
+    }
   );
 
   const code = req.nextUrl.searchParams.get("code");
@@ -17,7 +23,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/planning?google=error", req.url));
   }
 
-  // Échange code → tokens
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -35,7 +40,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/planning?google=error", req.url));
   }
 
-  // Récupère l'utilisateur Supabase courant via le cookie de session
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.redirect(new URL("/planning?google=error", req.url));
@@ -43,7 +47,6 @@ export async function GET(req: NextRequest) {
 
   const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
 
-  // Upsert token en base
   await supabase.from("google_tokens").upsert({
     user_id: user.id,
     access_token: tokens.access_token,
