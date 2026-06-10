@@ -422,16 +422,18 @@ export default function PlanningPage() {
   // ── Connexion Google ──
 
   const connectGoogle = () => {
-    const params = new URLSearchParams({
+    const oauthParams = new URLSearchParams({
       client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
       redirect_uri: `${window.location.origin}/api/google/callback`,
       response_type: "code",
       scope: "https://www.googleapis.com/auth/calendar.readonly",
       access_type: "offline",
-      prompt: "consent",
-      login_hint: "urtzi64480@gmail.com",
+      prompt: "select_account consent",
     });
-    window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+    const oauthUrl = `https://accounts.google.com/o/oauth2/v2/auth?${oauthParams}`;
+    // Passe par la déconnexion Google puis redirige vers OAuth
+    const logoutUrl = `https://accounts.google.com/logout?continue=${encodeURIComponent(oauthUrl)}`;
+    window.location.href = logoutUrl;
   };
 
   const disconnectGoogle = async () => {
