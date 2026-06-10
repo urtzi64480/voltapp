@@ -2,21 +2,29 @@
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { Client, Devis, Facture } from "@/types";
-import { fmt, fmtDate, initiales, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
+import { fmt, fmtDate, fmtDatetime, initiales, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Phone, Mail, MapPin, Home, Key, FileText, Camera, X, Plus, Pencil, Save, Trash2, ChevronLeft, ChevronRight, Receipt } from "lucide-react";
+import { ArrowLeft, Phone, Mail, MapPin, Home, Key, FileText, Camera, X, Plus, Pencil, Save, Trash2, ChevronLeft, ChevronRight, Receipt, CalendarDays } from "lucide-react";
 import TableauClientWidget from "@/components/tableau/TableauClientWidget";
 
 interface Palier {
-  id: string;
-  label: string;
-  seuil_min: number;
-  seuil_max: number | null;
-  remise_pct: number;
-  couleur: string;
+  id: string; label: string; seuil_min: number; seuil_max: number | null;
+  remise_pct: number; couleur: string;
 }
+
+interface Intervention {
+  id: string; titre: string; description?: string; adresse_chantier?: string;
+  date_debut: string; date_fin: string; statut: string; devis_id?: string;
+}
+
+const STATUT_IV_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
+  planifie: { label: "Planifié",  color: "text-blue-700",  bg: "bg-blue-100" },
+  en_cours: { label: "En cours",  color: "text-amber-700", bg: "bg-amber-100" },
+  termine:  { label: "Terminé",   color: "text-green-700", bg: "bg-green-100" },
+  annule:   { label: "Annulé",    color: "text-red-700",   bg: "bg-red-100" },
+};
 
 const F = ({ label, k, type = "text", placeholder = "", col2 = false, form, set }: any) => (
   <div className={col2 ? "col-span-2" : ""}>
@@ -83,7 +91,8 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
   const [devis, setDevis] = useState<Devis[]>([]);
   const [factures, setFactures] = useState<Facture[]>([]);
   const [paliers, setPaliers] = useState<Palier[]>([]);
-  const [tab, setTab] = useState<"infos" | "logement" | "tableau" | "documents" | "photos" | "notes">("infos");
+  const [interventions, setInterventions] = useState<Intervention[]>([]);
+  const [tab, setTab] = useState<"infos" | "logement" | "tableau" | "documents" | "interventions" | "photos" | "notes">("infos");
   const [editInfos, setEditInfos] = useState(false);
   const [editLogement, setEditLogement] = useState(false);
   const [editNotes, setEditNotes] = useState(false);
@@ -96,22 +105,22 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function loadData() {
-    const [{ data: c }, { data: d }, { data: f }, { data: p }] = await Promise.all([
+    const [{ data: c }, { data: d }, { data: f }, { data: p }, { data: iv }] = await Promise.all([
       supabase.from("clients").select("*").eq("id", id).single(),
       supabase.from("devis").select("*").eq("client_id", id).order("created_at", { ascending: false }),
       supabase.from("factures").select("*").eq("client_id", id).order("created_at", { ascending: false }),
       supabase.from("paliers_fidelite").select("*").order("seuil_min"),
+      supabase.from("interventions").select("*").eq("client_id", id).order("date_debut", { ascending: false }),
     ]);
     if (c) { setClient(c); setNotes(c.notes ?? ""); setForm(c); }
     setDevis(d ?? []);
     setFactures(f ?? []);
     setPaliers(p ?? []);
+    setInterventions((iv ?? []) as Intervention[]);
   }
 
   useEffect(() => {
     loadData();
-    // Recharger depuis la DB quand l'utilisateur revient sur cet onglet
-    // (ex : après suppression d'une facture depuis la page facture)
     window.addEventListener("focus", loadData);
     return () => window.removeEventListener("focus", loadData);
   }, [id]);
@@ -211,12 +220,13 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
   if (!client) return <Shell><div className="p-8 text-center text-ink-400">Chargement…</div></Shell>;
 
   const tabs = [
-    { id: "infos",     label: "Infos" },
-    { id: "logement",  label: "Logement" },
-    { id: "tableau",   label: "⚡ Tableau" },
-    { id: "documents", label: `Documents (${devis.length + factures.length})` },
-    { id: "photos",    label: `Photos (${client.photos?.length ?? 0})` },
-    { id: "notes",     label: "Notes" },
+    { id: "infos",         label: "Infos" },
+    { id: "logement",      label: "Logement" },
+    { id: "tableau",       label: "⚡ Tableau" },
+    { id: "documents",     label: `Documents (${devis.length + factures.length})` },
+    { id: "interventions", label: `Interventions (${interventions.length})` },
+    { id: "photos",        label: `Photos (${client.photos?.length ?? 0})` },
+    { id: "notes",         label: "Notes" },
   ] as const;
 
   const photos = client.photos ?? [];
@@ -267,7 +277,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
 
         <BarreFidelite ca={caPayé} paliers={paliers} />
 
-        <div className="grid grid-cols-3 gap-3 mb-5">
+        <div className="grid grid-cols-4 gap-3 mb-5">
           <div className="card card-inner text-center !py-4">
             <p className="text-xs text-ink-400 mb-1">CA payé</p>
             <p className="text-lg font-bold text-volt-600">{fmt(caPayé)}</p>
@@ -279,6 +289,10 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
           <div className="card card-inner text-center !py-4">
             <p className="text-xs text-ink-400 mb-1">Factures</p>
             <p className="text-lg font-bold text-ink-900">{factures.length}</p>
+          </div>
+          <div className="card card-inner text-center !py-4">
+            <p className="text-xs text-ink-400 mb-1">Interventions</p>
+            <p className="text-lg font-bold text-ink-900">{interventions.length}</p>
           </div>
         </div>
 
@@ -418,6 +432,60 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {tab === "interventions" && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs text-ink-400">{interventions.length} intervention{interventions.length > 1 ? "s" : ""}</p>
+              <Link
+                href={`/planning?planifier=1&client_id=${id}&titre=&adresse=${encodeURIComponent([client.adresse, client.code_postal, client.ville].filter(Boolean).join(" "))}`}
+                className="btn-ghost text-xs !py-1.5">
+                <CalendarDays size={13} /> Planifier
+              </Link>
+            </div>
+            {interventions.length === 0 ? (
+              <div className="card card-inner text-center py-10">
+                <CalendarDays size={32} className="mx-auto mb-3 text-ink-200" />
+                <p className="text-ink-400 text-sm mb-3">Aucune intervention</p>
+                <Link
+                  href={`/planning?planifier=1&client_id=${id}&titre=&adresse=${encodeURIComponent([client.adresse, client.code_postal, client.ville].filter(Boolean).join(" "))}`}
+                  className="btn-volt inline-flex text-xs">
+                  <CalendarDays size={13} /> Planifier une intervention
+                </Link>
+              </div>
+            ) : (
+              interventions.map(iv => {
+                const cfg = STATUT_IV_CONFIG[iv.statut] ?? STATUT_IV_CONFIG.planifie;
+                return (
+                  <div key={iv.id} className="card card-inner">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <span className={cn("text-xs px-2 py-0.5 rounded-full font-medium", cfg.bg, cfg.color)}>
+                            {cfg.label}
+                          </span>
+                          <span className="font-semibold text-sm text-ink-900 truncate">{iv.titre}</span>
+                        </div>
+                        <p className="text-xs text-ink-500 capitalize">
+                          {fmtDate(iv.date_debut)}
+                        </p>
+                        {iv.adresse_chantier && (
+                          <p className="text-xs text-ink-400 mt-0.5">{iv.adresse_chantier}</p>
+                        )}
+                        {iv.description && (
+                          <p className="text-xs text-ink-500 mt-1 line-clamp-2">{iv.description}</p>
+                        )}
+                      </div>
+                      <Link href={`/planning`} className="text-ink-300 hover:text-volt-500 shrink-0 mt-0.5">
+                        <CalendarDays size={15} />
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         )}
 
