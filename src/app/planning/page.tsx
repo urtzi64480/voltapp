@@ -33,15 +33,18 @@ function startOfMonth(year: number, month: number) { return new Date(year, month
 function daysInMonth(year: number, month: number) { return new Date(year, month + 1, 0).getDate(); }
 function dayOfWeekMon(date: Date) { return (date.getDay() + 6) % 7; }
 function isSameDay(a: Date, b: Date) {
-  return a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate();
+  const toParisDate = (d: Date) => new Date(d.toLocaleString("fr-FR", { timeZone: "Europe/Paris" }));
+  const ap = toParisDate(a);
+  const bp = toParisDate(b);
+  return ap.getFullYear() === bp.getFullYear() &&
+    ap.getMonth() === bp.getMonth() &&
+    ap.getDate() === bp.getDate();
 }
 function fmt(dateStr: string) {
-  return new Date(dateStr).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  return new Date(dateStr).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Paris" });
 }
 function fmtDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  return new Date(dateStr).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", timeZone: "Europe/Paris" });
 }
 
 // ── DocBadge ───────────────────────────────────────────────────────────────
