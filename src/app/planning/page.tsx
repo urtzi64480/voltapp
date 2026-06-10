@@ -271,9 +271,14 @@ function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTer
             </div>
           )}
           {intervention.adresse_chantier && (
-            <div className="flex items-start gap-2 text-sm text-ink-600">
+            <div className="flex items-start gap-2 text-sm">
               <MapPin size={14} className="text-ink-400 mt-0.5 shrink-0" />
-              <span>{intervention.adresse_chantier}</span>
+              <a
+                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(intervention.adresse_chantier)}`}
+                target="_blank" rel="noopener noreferrer"
+                className="text-volt-600 hover:underline">
+                {intervention.adresse_chantier}
+              </a>
             </div>
           )}
           {intervention.description && (
