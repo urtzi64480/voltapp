@@ -51,11 +51,11 @@ const DIFF_HIERARCHY: Record<string, number> = { AC: 0, A: 1, F: 2 };
 
 function quickScore(rows: BreakerRow[]) {
   let errors = 0;
-  const all = rows.flatMap(r => r.breakers);
-  const diffs = all.filter(b => BREAKER_TYPES[b.type]?.isDiff);
+  const all = rows.flatMap(r => (r.breakers ?? []).filter((b): b is typeof b => b != null && typeof (b as any)?.type === "string"));
+  const diffs = all.filter(b => BREAKER_TYPES[b?.type ?? ""]?.isDiff);
   if (diffs.length < 2) errors++;
   all.forEach(b => {
-    if (BREAKER_TYPES[b.type]?.isDiff || b.circuit === "general" || b.circuit === "parafoudre") return;
+    if (BREAKER_TYPES[b?.type ?? ""]?.isDiff || b.circuit === "general" || b.circuit === "parafoudre") return;
     const spec = CIRCUITS[b.circuit];
     if (!spec) return;
     if (spec.ampMax && b.amperes > spec.ampMax) errors++;
@@ -63,13 +63,13 @@ function quickScore(rows: BreakerRow[]) {
     for (const row of rows) {
       let last: typeof all[0] | null = null;
       for (const rb of row.breakers) {
-        if (BREAKER_TYPES[rb.type]?.isDiff) last = rb;
+        if (BREAKER_TYPES[rb?.type ?? ""]?.isDiff) last = rb;
         if (rb.id === b.id) { cov = last; break; }
       }
     }
     if (!cov) errors++;
-    else if (spec.diffType && BREAKER_TYPES[cov.type]?.diffType) {
-      if ((DIFF_HIERARCHY[BREAKER_TYPES[cov.type].diffType!] ?? -1) < (DIFF_HIERARCHY[spec.diffType] ?? -1)) errors++;
+    else if (spec.diffType && BREAKER_TYPES[cov?.type ?? ""]?.diffType) {
+      if ((DIFF_HIERARCHY[BREAKER_TYPES[cov?.type ?? ""].diffType!] ?? -1) < (DIFF_HIERARCHY[spec.diffType] ?? -1)) errors++;
     }
   });
   return Math.max(0, Math.round(100 - errors * 15));
@@ -334,8 +334,8 @@ export default function TableauxPage() {
                 ? "text-emerald-600 bg-emerald-50 border-emerald-200"
                 : score >= 60 ? "text-amber-600 bg-amber-50 border-amber-200"
                 : "text-red-600 bg-red-50 border-red-200";
-              const totalBreakers = rows.flatMap(r => r.breakers).filter(b => !BREAKER_TYPES[b.type]?.isDiff).length;
-              const preview = rows.flatMap(r => r.breakers).filter(b => !BREAKER_TYPES[b.type]?.isDiff).slice(0, 8);
+              const totalBreakers = rows.flatMap(r => r.breakers ?? []).filter(b => b != null && typeof b?.type === "string" && !BREAKER_TYPES[b?.type ?? ""]?.isDiff).length;
+              const preview = rows.flatMap(r => r.breakers ?? []).filter(b => b != null && typeof b?.type === "string" && !BREAKER_TYPES[b?.type ?? ""]?.isDiff).slice(0, 8);
 
               return (
                 <div key={entry.clientId} className="card card-inner hover:border-volt-300 transition-colors">
