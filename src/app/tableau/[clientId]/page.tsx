@@ -1214,7 +1214,7 @@ export default function TableauPage() {
 
   // Global offset for numbering (count filled slots)
   const getOffset = (ri: number) =>
-    rows.slice(0, ri).reduce((s, r) => s + (r.slots ?? []).filter((b): b is Breaker => b != null && !!b.type).length, 0);
+    rows.slice(0, ri).reduce((s, r) => s + safeBreakers(r.slots).length, 0);
 
   const scoreColor = compliance.score >= 85 ? "text-emerald-600 bg-emerald-50 border-emerald-200"
     : compliance.score >= 60 ? "text-amber-600 bg-amber-50 border-amber-200"
