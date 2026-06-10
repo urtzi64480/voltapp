@@ -428,7 +428,8 @@ export default function PlanningPage() {
       response_type: "code",
       scope: "https://www.googleapis.com/auth/calendar.readonly",
       access_type: "offline",
-      prompt: "select_account consent",
+      prompt: "consent",
+      login_hint: "urtzi64480@gmail.com",
     });
     window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
   };
