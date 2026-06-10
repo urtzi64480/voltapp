@@ -7,7 +7,7 @@ import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { Plus, Search, FileText, ChevronRight, ChevronDown, ChevronUp, User, Receipt, CalendarDays, CalendarX } from "lucide-react";
 
-const FILTRES = ["tous", "brouillon", "envoye", "signe", "refuse"] as const;
+const FILTRES = ["tous", "brouillon", "envoye", "signe", "refuse", "non_planifie"] as const;
 const STATUTS_VISIBLES = ["envoye", "signe", "brouillon", "refuse"];
 
 export default function DevisPage() {
@@ -55,7 +55,9 @@ export default function DevisPage() {
 
   const filtered = devis.filter(d => {
     const s = `${d.numero} ${d.objet ?? ""} ${(d.client as any)?.nom ?? ""}`.toLowerCase();
-    return s.includes(search.toLowerCase()) && (filtre === "tous" || d.statut === filtre);
+    const matchSearch = s.includes(search.toLowerCase());
+    if (filtre === "non_planifie") return matchSearch && !interventionsMap[d.id];
+    return matchSearch && (filtre === "tous" || d.statut === filtre);
   });
 
   const byClient: Record<string, { label: string; items: Devis[] }> = {};
@@ -89,7 +91,7 @@ export default function DevisPage() {
               <button key={f} onClick={() => setFiltre(f)}
                 className={cn("px-3 py-1.5 rounded-lg text-xs font-medium border transition-all",
                   filtre === f ? "bg-ink-900 text-volt-400 border-ink-900" : "bg-white border-ink-200 text-ink-500 hover:bg-ink-50")}>
-                {f === "tous" ? "Tous" : STATUT_LABELS[f]}
+                {f === "tous" ? "Tous" : f === "non_planifie" ? "Non planifié" : STATUT_LABELS[f]}
               </button>
             ))}
           </div>
