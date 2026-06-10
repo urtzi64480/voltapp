@@ -6,7 +6,7 @@ import { fmt, fmtDate, fmtDatetime, STATUT_LABELS, STATUT_COLORS, cn } from "@/l
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, X, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift } from "lucide-react";
+import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, X, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays } from "lucide-react";
 
 type Mode = "view" | "edit";
 type Tab = "edition" | "apercu" | "signature";
@@ -287,6 +287,18 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     }
   }
 
+  // ── Planifier depuis ce devis ──
+  function planifierIntervention() {
+    if (!devis) return;
+    const params = new URLSearchParams({
+      devis_id: devis.id,
+      client_id: devis.client_id ?? "",
+      titre: devis.objet ?? devis.numero,
+      adresse: [(devis.client as any)?.adresse, (devis.client as any)?.code_postal, (devis.client as any)?.ville].filter(Boolean).join(" "),
+    });
+    router.push(`/planning?planifier=1&${params.toString()}`);
+  }
+
   if (!devis) return <Shell><div className="p-8 text-center text-ink-400">Chargement…</div></Shell>;
 
   const viewLignes = (devis.lignes ?? []) as any[];
@@ -413,6 +425,9 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
 
             <div className="flex flex-wrap gap-3">
               <button onClick={dl} className="btn-ghost flex-1 justify-center"><Download size={15} /> Télécharger PDF</button>
+              <button onClick={planifierIntervention} className="btn-ghost flex-1 justify-center">
+                <CalendarDays size={15} /> Planifier
+              </button>
               {devis.statut !== "signe" && (
                 <button className="flex-1 flex items-center justify-center gap-2 bg-ink-200 text-ink-400 font-semibold rounded-xl px-4 py-2.5 text-sm cursor-not-allowed">
                   <Receipt size={15} /> Convertir en facture
