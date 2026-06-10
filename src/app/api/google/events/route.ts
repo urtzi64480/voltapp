@@ -26,13 +26,18 @@ export async function GET(req: NextRequest) {
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { cookies: { get: (n) => cookieStore.get(n)?.value, set: () => {}, remove: () => {} } }
+    {
+      cookies: {
+        get: (n: string) => cookieStore.get(n)?.value,
+        set: () => {},
+        remove: () => {},
+      },
+    }
   );
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ events: [], connected: false });
 
-  // Récupère le token stocké
   const { data: tokenRow } = await supabase
     .from("google_tokens")
     .select("*")
@@ -43,7 +48,6 @@ export async function GET(req: NextRequest) {
 
   let accessToken = tokenRow.access_token;
 
-  // Refresh si expiré (avec 60s de marge)
   if (new Date(tokenRow.expires_at).getTime() < Date.now() + 60_000) {
     if (!tokenRow.refresh_token) {
       return NextResponse.json({ events: [], connected: false, expired: true });
@@ -58,7 +62,6 @@ export async function GET(req: NextRequest) {
     }).eq("user_id", user.id);
   }
 
-  // Paramètres de la requête : year & month
   const url = req.nextUrl;
   const year = parseInt(url.searchParams.get("year") ?? String(new Date().getFullYear()));
   const month = parseInt(url.searchParams.get("month") ?? String(new Date().getMonth()));
@@ -66,7 +69,6 @@ export async function GET(req: NextRequest) {
   const timeMin = new Date(year, month - 1, 1).toISOString();
   const timeMax = new Date(year, month + 2, 0, 23, 59, 59).toISOString();
 
-  // Appel Google Calendar API
   const gcalRes = await fetch(
     `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
     new URLSearchParams({
@@ -85,7 +87,6 @@ export async function GET(req: NextRequest) {
 
   const gcalData = await gcalRes.json();
 
-  // Normalise les events pour le front
   const events = (gcalData.items ?? []).map((ev: any) => ({
     id: ev.id,
     title: ev.summary ?? "(Sans titre)",
