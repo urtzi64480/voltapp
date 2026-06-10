@@ -438,6 +438,28 @@ export default function PlanningPage() {
       window.history.replaceState({}, "", "/planning");
       fetchGcal();
     }
+    // Pré-remplissage depuis fiche devis
+    if (params.get("planifier") === "1") {
+      const toLocal = (d: Date) => {
+        const pad = (n: number) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      };
+      const base = new Date(); base.setHours(8, 0, 0, 0);
+      const end = new Date(base); end.setHours(10, 0, 0, 0);
+      setFormInit({
+        client_id: params.get("client_id") ?? "",
+        devis_id: params.get("devis_id") ?? "",
+        titre: params.get("titre") ?? "",
+        description: "",
+        adresse_chantier: params.get("adresse") ?? "",
+        date_debut: toLocal(base),
+        date_fin: toLocal(end),
+        statut: "planifie",
+        notes: "",
+      });
+      setShowForm(true);
+      window.history.replaceState({}, "", "/planning");
+    }
   }, []);
 
   // ── Connexion Google ──
