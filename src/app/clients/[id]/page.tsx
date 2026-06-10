@@ -18,7 +18,6 @@ interface Palier {
   couleur: string;
 }
 
-// ── Composants définis HORS du composant principal ──
 const F = ({ label, k, type = "text", placeholder = "", col2 = false, form, set }: any) => (
   <div className={col2 ? "col-span-2" : ""}>
     <label className="label">{label}</label>
@@ -47,13 +46,11 @@ function MedailleBadge({ palier }: { palier: Palier | null }) {
 
 function BarreFidelite({ ca, paliers }: { ca: number; paliers: Palier[] }) {
   if (paliers.length === 0) return null;
-
   const palierActuel = [...paliers].reverse().find(p => ca >= p.seuil_min) ?? null;
   const palierSuivant = paliers.find(p => p.seuil_min > ca) ?? null;
   const pct = palierSuivant
     ? Math.min(100, ((ca - (palierActuel?.seuil_min ?? 0)) / (palierSuivant.seuil_min - (palierActuel?.seuil_min ?? 0))) * 100)
     : 100;
-
   return (
     <div className="card card-inner mb-5">
       <div className="flex items-center justify-between mb-2">
@@ -98,21 +95,28 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
   const [lightbox, setLightbox] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    Promise.all([
+  async function loadData() {
+    const [{ data: c }, { data: d }, { data: f }, { data: p }] = await Promise.all([
       supabase.from("clients").select("*").eq("id", id).single(),
       supabase.from("devis").select("*").eq("client_id", id).order("created_at", { ascending: false }),
       supabase.from("factures").select("*").eq("client_id", id).order("created_at", { ascending: false }),
       supabase.from("paliers_fidelite").select("*").order("seuil_min"),
-    ]).then(([{ data: c }, { data: d }, { data: f }, { data: p }]) => {
-      setClient(c); setNotes(c?.notes ?? ""); setDevis(d ?? []); setForm(c ?? {});
-      setFactures(f ?? []);
-      setPaliers(p ?? []);
-    });
+    ]);
+    if (c) { setClient(c); setNotes(c.notes ?? ""); setForm(c); }
+    setDevis(d ?? []);
+    setFactures(f ?? []);
+    setPaliers(p ?? []);
+  }
+
+  useEffect(() => {
+    loadData();
+    // Recharger depuis la DB quand l'utilisateur revient sur cet onglet
+    // (ex : après suppression d'une facture depuis la page facture)
+    window.addEventListener("focus", loadData);
+    return () => window.removeEventListener("focus", loadData);
   }, [id]);
 
   const setF = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
-
   const caPayé = factures.filter(f => f.statut === "payee").reduce((a, f) => a + f.total_ttc, 0);
   const palierActuel = [...paliers].reverse().find(p => caPayé >= p.seuil_min) ?? null;
 
@@ -221,7 +225,6 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
     <Shell>
       <div className="p-4 md:p-8 max-w-3xl mx-auto">
 
-        {/* Lightbox */}
         {lightbox !== null && photos.length > 0 && (
           <div className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center" onClick={() => setLightbox(null)}>
             <button onClick={() => setLightbox(null)} className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 z-10"><X size={20} /></button>
@@ -233,7 +236,6 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
           </div>
         )}
 
-        {/* Modal suppression */}
         {confirmDelete && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
@@ -247,7 +249,6 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
           </div>
         )}
 
-        {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <Link href="/clients" className="btn-ghost !px-2.5 !py-2"><ArrowLeft size={16} /></Link>
           <div className="w-12 h-12 rounded-full bg-ink-900 flex items-center justify-center text-volt-400 font-semibold shrink-0">
@@ -264,10 +265,8 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
           <Link href={`/devis/nouveau?client=${id}`} className="btn-volt text-xs !py-2"><Plus size={14} /> Devis</Link>
         </div>
 
-        {/* Barre fidélité */}
         <BarreFidelite ca={caPayé} paliers={paliers} />
 
-        {/* Stats rapides */}
         <div className="grid grid-cols-3 gap-3 mb-5">
           <div className="card card-inner text-center !py-4">
             <p className="text-xs text-ink-400 mb-1">CA payé</p>
@@ -283,7 +282,6 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
           </div>
         </div>
 
-        {/* Tabs */}
         <div className="flex gap-1 overflow-x-auto mb-5 pb-1">
           {tabs.map(t => (
             <button key={t.id} onClick={() => setTab(t.id as any)}
@@ -294,7 +292,6 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
           ))}
         </div>
 
-        {/* Tab: Infos */}
         {tab === "infos" && (
           <div className="card card-inner">
             <div className="flex items-center justify-between mb-4">
@@ -336,7 +333,6 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
           </div>
         )}
 
-        {/* Tab: Logement */}
         {tab === "logement" && (
           <div className="card card-inner">
             <div className="flex items-center justify-between mb-4">
@@ -369,14 +365,12 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
           </div>
         )}
 
-        {/* Tab: Tableau électrique */}
         {tab === "tableau" && (
           <div className="space-y-3">
             <TableauClientWidget clientId={id} />
           </div>
         )}
 
-        {/* Tab: Documents */}
         {tab === "documents" && (
           <div className="space-y-4">
             <div>
@@ -389,8 +383,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
               ) : (
                 <div className="space-y-2">
                   {devis.map(d => (
-                    <Link key={d.id} href={`/devis/${d.id}`}
-                      className="card card-inner flex items-center gap-3 hover:border-volt-400 transition-colors">
+                    <Link key={d.id} href={`/devis/${d.id}`} className="card card-inner flex items-center gap-3 hover:border-volt-400 transition-colors">
                       <FileText size={15} className="text-ink-400 shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-sm">{d.numero}</p>
@@ -403,7 +396,6 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                 </div>
               )}
             </div>
-
             <div>
               <h3 className="text-xs font-semibold text-ink-400 uppercase tracking-wide mb-2 px-1">Factures ({factures.length})</h3>
               {factures.length === 0 ? (
@@ -413,8 +405,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
               ) : (
                 <div className="space-y-2">
                   {factures.map(f => (
-                    <Link key={f.id} href={`/factures/${f.id}`}
-                      className="card card-inner flex items-center gap-3 hover:border-volt-400 transition-colors">
+                    <Link key={f.id} href={`/factures/${f.id}`} className="card card-inner flex items-center gap-3 hover:border-volt-400 transition-colors">
                       <Receipt size={15} className="text-ink-400 shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-sm">{f.numero}</p>
@@ -430,7 +421,6 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
           </div>
         )}
 
-        {/* Tab: Photos */}
         {tab === "photos" && (
           <div>
             <div className="flex justify-between items-center mb-3">
@@ -460,7 +450,6 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
           </div>
         )}
 
-        {/* Tab: Notes */}
         {tab === "notes" && (
           <div className="card card-inner">
             <div className="flex items-center justify-between mb-3">
