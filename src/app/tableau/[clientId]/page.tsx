@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Client } from "@/types";
@@ -102,7 +102,7 @@ function checkNFC(rows: BreakerRow[]) {
   }
 
   const allBreakers = rows.flatMap(r => safeBreakers(r.slots));
-  const diffs = allBreakers.filter(b => b && b.type && BREAKER_TYPES[b.type]?.isDiff);
+  const diffs = allBreakers.filter(b => b != null && typeof b === "object" && typeof (b as any).type === "string" && !!BREAKER_TYPES[(b as any).type]?.isDiff);
 
   if (diffs.length === 0) {
     errors.push({ id: "no-diff", msg: "Aucun différentiel 30mA détecté. Minimum 2 obligatoires.", rule: "Art. 531.2" });
@@ -1144,7 +1144,7 @@ export default function TableauPage() {
     });
   }, [clientId]);
 
-  const compliance = checkNFC(rows);
+  const compliance = useMemo(() => checkNFC(rows), [rows]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -1214,7 +1214,7 @@ export default function TableauPage() {
 
   // Global offset for numbering (count filled slots)
   const getOffset = (ri: number) =>
-    rows.slice(0, ri).reduce((s, r) => s + safeBreakers(r.slots).length, 0);
+    rows.slice(0, ri).reduce((s, r) => s + safeBreakers(r.slots ?? []).length, 0);
 
   const scoreColor = compliance.score >= 85 ? "text-emerald-600 bg-emerald-50 border-emerald-200"
     : compliance.score >= 60 ? "text-amber-600 bg-amber-50 border-amber-200"
@@ -1358,7 +1358,7 @@ export default function TableauPage() {
           breaker={editBreaker.breaker}
           slotIndex={editBreaker.slotIdx}
           compliance={compliance}
-          allBreakers={rows.flatMap(r => (r.slots ?? []).filter((b): b is Breaker => b != null && !!b.type))}
+          allBreakers={rows.flatMap(r => safeBreakers(r.slots ?? []))}
           onUpdate={updated => {
             updateSlot(editBreaker.rowId, editBreaker.slotIdx, updated);
             setEditBreaker({ ...editBreaker, breaker: updated });
