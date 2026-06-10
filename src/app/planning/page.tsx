@@ -20,6 +20,25 @@ const MOIS = [
   "Juillet","Août","Septembre","Octobre","Novembre","Décembre",
 ];
 
+// Palette couleurs clients
+const CLIENT_COLORS = [
+  { bg: "bg-violet-100", color: "text-violet-700", border: "border-violet-300" },
+  { bg: "bg-orange-100", color: "text-orange-700", border: "border-orange-300" },
+  { bg: "bg-teal-100",   color: "text-teal-700",   border: "border-teal-300" },
+  { bg: "bg-pink-100",   color: "text-pink-700",   border: "border-pink-300" },
+  { bg: "bg-indigo-100", color: "text-indigo-700", border: "border-indigo-300" },
+  { bg: "bg-lime-100",   color: "text-lime-700",   border: "border-lime-300" },
+  { bg: "bg-cyan-100",   color: "text-cyan-700",   border: "border-cyan-300" },
+  { bg: "bg-rose-100",   color: "text-rose-700",   border: "border-rose-300" },
+];
+
+function getClientColor(clientId?: string) {
+  if (!clientId) return CLIENT_COLORS[0];
+  let hash = 0;
+  for (let i = 0; i < clientId.length; i++) hash = clientId.charCodeAt(i) + ((hash << 5) - hash);
+  return CLIENT_COLORS[Math.abs(hash) % CLIENT_COLORS.length];
+}
+
 const STATUT_CONFIG: Record<StatutIntervention, { label: string; color: string; bg: string }> = {
   planifie:  { label: "Planifié",   color: "text-blue-700",  bg: "bg-blue-100" },
   en_cours:  { label: "En cours",   color: "text-amber-700", bg: "bg-amber-100" },
@@ -574,6 +593,24 @@ export default function PlanningPage() {
     await fetchAll();
   };
 
+  const handleDrop = async (e: React.DragEvent, day: number) => {
+    e.preventDefault();
+    const ivId = e.dataTransfer.getData("intervention_id");
+    if (!ivId) return;
+    const iv = interventions.find(i => i.id === ivId);
+    if (!iv) return;
+    const oldDebut = new Date(iv.date_debut);
+    const oldFin = new Date(iv.date_fin);
+    const dureeMs = oldFin.getTime() - oldDebut.getTime();
+    const newDebut = new Date(year, month, day, oldDebut.getHours(), oldDebut.getMinutes());
+    const newFin = new Date(newDebut.getTime() + dureeMs);
+    await supabase.from("interventions").update({
+      date_debut: newDebut.toISOString(),
+      date_fin: newFin.toISOString(),
+    }).eq("id", ivId);
+    await fetchAll();
+  };
+
   const handlePhotoUpload = async (file: File) => {
     if (!selected) return;
     const ext = file.name.split(".").pop();
@@ -702,7 +739,9 @@ export default function PlanningPage() {
                     day && dayGcal.length > 0 && dayIvs.length === 0 ? "bg-gray-50" : "",
                     day && dayGcal.length > 0 && dayIvs.length > 0 ? "bg-blue-50/30" : "",
                   )}
-                  onClick={() => day && openCreate(day)}>
+                  onClick={() => day && openCreate(day)}
+                  onDragOver={e => { if (day) e.preventDefault(); }}
+                  onDrop={e => { if (day) handleDrop(e, day); }}>
                   {day && (
                     <>
                       <span className={cn(
@@ -723,13 +762,15 @@ export default function PlanningPage() {
                           </button>
                         ))}
                         {dayIvs.slice(0, 3).map(iv => {
-                          const cfg = STATUT_CONFIG[iv.statut];
+                          const clientColor = getClientColor(iv.client_id);
                           return (
                             <button key={iv.id}
                               onClick={e => { e.stopPropagation(); setSelected(iv); }}
+                              draggable
+                              onDragStart={e => { e.dataTransfer.setData("intervention_id", iv.id); e.stopPropagation(); }}
                               className={cn(
-                                "w-full text-left text-xs px-1.5 py-0.5 rounded-md truncate font-medium",
-                                cfg.bg, cfg.color
+                                "w-full text-left text-xs px-1.5 py-0.5 rounded-md truncate font-medium border",
+                                clientColor.bg, clientColor.color, clientColor.border
                               )}>
                               <span className="hidden md:inline">
                                 {fmt(iv.date_debut)} · {iv.client?.nom || "—"} · 
