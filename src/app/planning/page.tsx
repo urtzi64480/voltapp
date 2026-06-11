@@ -229,15 +229,29 @@ function InterventionForm({ initial, clients, devis, calEvents, onSave, onCancel
 
 // ── Drawer intervention ───────────────────────────────────────────────────
 
-function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTermine, onPhotoUpload, getPhotoUrl }: {
+function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTermine, onPhotoUpload }: {
   intervention: Intervention; onClose: () => void; onEdit: () => void; onDelete: () => void;
-  onMarkTermine: () => void; onPhotoUpload: (file: File) => Promise<void>; getPhotoUrl: (path: string) => string;
+  onMarkTermine: () => void; onPhotoUpload: (file: File) => Promise<void>;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   const devis = intervention.devis;
   const facture = devis?.factures?.[0];
   const cfg = STATUT_CONFIG[intervention.statut];
+
+  useEffect(() => {
+    if (!intervention.photos || intervention.photos.length === 0) return;
+    const load = async () => {
+      const entries: Record<string, string> = {};
+      for (const path of intervention.photos!) {
+        const { data } = await supabase.storage.from("intervention-photos").createSignedUrl(path, 3600);
+        if (data?.signedUrl) entries[path] = data.signedUrl;
+      }
+      setSignedUrls(entries);
+    };
+    load();
+  }, [intervention.photos]);
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
@@ -322,8 +336,10 @@ function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTer
             </div>
             {intervention.photos && intervention.photos.length > 0 ? (
               <div className="grid grid-cols-3 gap-2">
-                {intervention.photos.map((p, i) => (
-                  <img key={i} src={getPhotoUrl(p)} alt={`Photo ${i + 1}`} className="aspect-square object-cover rounded-lg" />
+                {intervention.photos.map((p, i) => signedUrls[p] ? (
+                  <img key={i} src={signedUrls[p]} alt={`Photo ${i + 1}`} className="aspect-square object-cover rounded-lg" />
+                ) : (
+                  <div key={i} className="aspect-square rounded-lg bg-ink-100 animate-pulse" />
                 ))}
               </div>
             ) : <p className="text-sm text-ink-400 italic">Aucune photo</p>}
@@ -703,20 +719,7 @@ export default function PlanningPage() {
     await fetchAll();
   };
 
-  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
 
-  const getPhotoUrl = (path: string): string => {
-    return photoUrls[path] ?? "";
-  };
-
-  const loadPhotoUrls = async (photos: string[]) => {
-    const entries: Record<string, string> = {};
-    for (const path of photos) {
-      const { data } = await supabase.storage.from("intervention-photos").createSignedUrl(path, 3600);
-      if (data?.signedUrl) entries[path] = data.signedUrl;
-    }
-    setPhotoUrls(prev => ({ ...prev, ...entries }));
-  };
 
   const openCreate = (day?: number, h?: number, m?: number) => {
     const base = day ? new Date(year, month, day, h ?? 8, m ?? 0) : new Date();
@@ -789,7 +792,7 @@ export default function PlanningPage() {
             interventions={interventions} calEvents={appleEvents}
             onBack={() => setDayView(null)}
             onCreateAt={(h, m) => openCreate(dayView, h, m)}
-            onSelectIv={iv => { setSelected(iv); if (iv.photos && iv.photos.length > 0) loadPhotoUrls(iv.photos); }} onSelectCal={setSelectedCal}
+            onSelectIv={iv => { setSelected(iv); }} onSelectCal={setSelectedCal}
             onDropToTime={handleDropToTime} />
         ) : (
           <>
@@ -836,7 +839,7 @@ export default function PlanningPage() {
                             {dayIvs.slice(0, 3).map(iv => {
                               const cc = getClientColor(iv.client_id);
                               return (
-                                <button key={iv.id} onClick={e => { e.stopPropagation(); setSelected(iv); if (iv.photos && iv.photos.length > 0) loadPhotoUrls(iv.photos); }}
+                                <button key={iv.id} onClick={e => { e.stopPropagation(); setSelected(iv); }}
                                   draggable onDragStart={e => { e.dataTransfer.setData("intervention_id", iv.id); e.stopPropagation(); }}
                                   className={cn("w-full text-left text-xs px-1.5 py-0.5 rounded-md truncate font-medium border flex items-center gap-1", cc.bg, cc.color, cc.border)}>
                                   <VoltBadge />
@@ -873,9 +876,9 @@ export default function PlanningPage() {
         )}
 
         {selected && !editMode && (
-          <InterventionDrawer intervention={selected} onClose={() => { setSelected(null); setPhotoUrls({}); }}
+          <InterventionDrawer intervention={selected} onClose={() => setSelected(null)}
             onEdit={openEdit} onDelete={handleDelete} onMarkTermine={handleMarkTermine}
-            onPhotoUpload={handlePhotoUpload} getPhotoUrl={getPhotoUrl} />
+            onPhotoUpload={handlePhotoUpload} />
         )}
         {selectedCal && <CalDrawer event={selectedCal} onClose={() => setSelectedCal(null)} />}
 
