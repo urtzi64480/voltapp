@@ -15,7 +15,6 @@ interface Apporteur {
 interface PalierApporteur {
   id?: string; label: string; seuil_min: number; seuil_max: number | null; commission_pct: number; ordre: number;
 }
-interface AppleCalendar { url: string; name: string; }
 
 const PALIER_EMOJI: Record<string, string> = { bronze: "🥉", silver: "🥈", gold: "🥇" };
 
@@ -45,18 +44,12 @@ export default function ParametresPage() {
   const [apporteurForm, setApporteurForm] = useState<Partial<Apporteur>>({});
   const [showNewApporteur, setShowNewApporteur] = useState(false);
   const [newApporteur, setNewApporteur] = useState({ nom: "", entreprise: "", telephone: "", email: "" });
-  const [savingApporteurs, setSavingApporteurs] = useState(false);
-  const [savedApporteurs, setSavedApporteurs] = useState(false);
   const [savingPaliersAp, setSavingPaliersAp] = useState(false);
   const [savedPaliersAp, setSavedPaliersAp] = useState(false);
 
-  // Apple Calendar
-  const [appleUsername, setAppleUsername] = useState("");
-  const [applePassword, setApplePassword] = useState("");
+  // Apple Calendar ICS
+  const [appleUrls, setAppleUrls] = useState<string[]>([""]);
   const [appleConnected, setAppleConnected] = useState(false);
-  const [appleCalendars, setAppleCalendars] = useState<AppleCalendar[]>([]);
-  const [appleSelected, setAppleSelected] = useState<string[]>([]);
-  const [appleStep, setAppleStep] = useState("idle");
   const [appleSaving, setAppleSaving] = useState(false);
   const [appleError, setAppleError] = useState("");
 
@@ -64,20 +57,21 @@ export default function ParametresPage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const [{ data: p }, { data: pal }, { data: ap }, { data: palAp }, { data: appleToken }] = await Promise.all([
+      const [{ data: p }, { data: pal }, { data: ap }, { data: palAp }, { data: appleData }] = await Promise.all([
         supabase.from("profil").select("*").eq("id", user.id).single(),
         supabase.from("paliers_fidelite").select("*").order("seuil_min"),
         supabase.from("apporteurs").select("*").order("nom"),
         supabase.from("paliers_apporteur").select("*").order("ordre"),
-        supabase.from("apple_tokens").select("*").eq("user_id", user.id).single(),
+        supabase.from("apple_ics").select("*").eq("user_id", user.id).single(),
       ]);
       if (p) setProfil(p);
       if (pal) setPaliers(pal);
       if (ap) setApporteurs(ap);
       if (palAp) setPaliersApporteur(palAp);
-      if (appleToken) {
+      if (appleData) {
         setAppleConnected(true);
-        setAppleSelected(JSON.parse(appleToken.selected_calendars ?? "[]"));
+        const urls = JSON.parse(appleData.ics_urls ?? "[]");
+        setAppleUrls(urls.length > 0 ? urls : [""]);
       }
     }
     load();
@@ -175,54 +169,26 @@ export default function ParametresPage() {
     setPaliersApporteur(ps => ps.map((p, i) => i === idx ? { ...p, [field]: value } : p));
   }
 
-  // ── Apple Calendar ──
-  async function connectApple() {
-    if (!appleUsername || !applePassword) { setAppleError("Remplissez les deux champs."); return; }
+  // ── Apple Calendar ICS ──
+  async function saveAppleIcs() {
+    const validUrls = appleUrls.filter(u => u.trim() !== "");
+    if (validUrls.length === 0) { setAppleError("Ajoutez au moins une URL."); return; }
     setAppleError("");
-    setAppleStep("loading");
-    try {
-      const res = await fetch("/api/apple/calendars", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: appleUsername, password: applePassword }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setAppleError(data.error ?? "Connexion échouée"); setAppleStep("idle"); return; }
-      setAppleCalendars(data.calendars);
-      setAppleSelected(data.calendars.map((c: AppleCalendar) => c.url));
-      setAppleStep("select");
-    } catch {
-      setAppleError("Erreur réseau"); setAppleStep("idle");
-    }
-  }
-
-  async function saveAppleSelection() {
     setAppleSaving(true);
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setAppleStep("select"); return; }
-    await supabase.from("apple_tokens").upsert({
+    if (!user) { setAppleSaving(false); return; }
+    await supabase.from("apple_ics").upsert({
       user_id: user.id,
-      username: appleUsername,
-      password: applePassword,
-      selected_calendars: JSON.stringify(appleSelected),
+      ics_urls: JSON.stringify(validUrls),
     }, { onConflict: "user_id" });
     setAppleConnected(true);
     setAppleSaving(false);
-    setAppleStep("idle");
   }
 
   async function disconnectApple() {
-    await fetch("/api/apple/disconnect", { method: "POST" });
+    await fetch("/api/apple/ics-disconnect", { method: "POST" });
     setAppleConnected(false);
-    setAppleUsername("");
-    setApplePassword("");
-    setAppleCalendars([]);
-    setAppleSelected([]);
-    setAppleStep("idle");
-  }
-
-  function toggleCalendar(url: string) {
-    setAppleSelected(sel => sel.includes(url) ? sel.filter(u => u !== url) : [...sel, url]);
+    setAppleUrls([""]);
   }
 
   const set = (k: string, v: any) => setProfil(p => ({ ...p, [k]: v }));
@@ -255,13 +221,9 @@ export default function ParametresPage() {
         {/* ── ONGLET CALENDRIERS ── */}
         {activeTab === "calendriers" && (
           <div className="space-y-4">
-
-            {/* Google Calendar — statut */}
             <div className="card card-inner">
-              <div className="flex items-center gap-3 mb-1">
-                <div className="w-8 h-8 rounded-lg bg-white border border-ink-200 flex items-center justify-center">
-                  <span className="text-base">G</span>
-                </div>
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-white border border-ink-200 flex items-center justify-center font-bold text-sm">G</div>
                 <div>
                   <p className="font-semibold text-ink-800 text-sm">Google Calendar</p>
                   <p className="text-xs text-ink-400">Géré depuis la page Planning</p>
@@ -269,7 +231,6 @@ export default function ParametresPage() {
               </div>
             </div>
 
-            {/* Apple Calendar */}
             <div className="card card-inner">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-8 h-8 rounded-lg bg-ink-900 flex items-center justify-center">
@@ -277,78 +238,58 @@ export default function ParametresPage() {
                 </div>
                 <div className="flex-1">
                   <p className="font-semibold text-ink-800 text-sm">Apple Calendar (iCloud)</p>
-                  <p className="text-xs text-ink-400">Connexion via mot de passe d'application</p>
+                  <p className="text-xs text-ink-400">Synchronisation via lien public ICS</p>
                 </div>
                 {appleConnected && (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">Connecté</span>
                 )}
               </div>
 
-              {!appleConnected && appleStep !== "select" && (
-                <div className="space-y-3">
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
-                    <p className="font-semibold mb-1">Avant de continuer :</p>
-                    <p>Générez un mot de passe d'application sur <strong>appleid.apple.com</strong> → Sécurité → Mots de passe pour les apps → <strong>+</strong> → nommez-le "VoltApp".</p>
-                    <p className="mt-1">⚠️ N'utilisez pas votre vrai mot de passe iCloud.</p>
-                  </div>
-                  <div>
-                    <label className="label">Identifiant Apple (email iCloud)</label>
-                    <input className="input" type="email" placeholder="prenom@icloud.com"
-                      value={appleUsername} onChange={e => setAppleUsername(e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="label">Mot de passe d'application</label>
-                    <input className="input" type="password" placeholder="xxxx-xxxx-xxxx-xxxx"
-                      value={applePassword} onChange={e => setApplePassword(e.target.value)} />
-                  </div>
-                  {appleError && <p className="text-xs text-red-600">{appleError}</p>}
-                  <button onClick={connectApple} disabled={appleStep === "loading"}
-                    className="w-full py-2.5 rounded-xl bg-ink-900 text-volt-400 text-sm font-semibold hover:bg-ink-800 disabled:opacity-40">
-                    {appleStep === "loading" ? "Connexion…" : "Se connecter"}
+              <div className="space-y-3">
+                <div className="bg-ink-50 border border-ink-200 rounded-xl p-3 text-xs text-ink-600 space-y-1.5">
+                  <p className="font-semibold text-ink-700">Comment obtenir le lien :</p>
+                  <p>Sur iPhone → <strong>Calendrier</strong> → appui long sur le calendrier → <strong>Calendrier public</strong> → activer → <strong>Partager le lien</strong></p>
+                  <p>Collez l'URL <code className="bg-ink-200 px-1 rounded">webcal://...</code> ci-dessous.</p>
+                </div>
+
+                <div className="space-y-2">
+                  {appleUrls.map((url, idx) => (
+                    <div key={idx} className="flex gap-2">
+                      <input
+                        value={url}
+                        onChange={e => setAppleUrls(urls => urls.map((u, i) => i === idx ? e.target.value : u))}
+                        placeholder="webcal://p12-caldav.icloud.com/..."
+                        className="input flex-1 text-xs font-mono"
+                      />
+                      {appleUrls.length > 1 && (
+                        <button onClick={() => setAppleUrls(urls => urls.filter((_, i) => i !== idx))}
+                          className="p-2 rounded-lg text-red-400 hover:bg-red-50">
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button onClick={() => setAppleUrls(urls => [...urls, ""])}
+                    className="text-xs text-volt-700 font-medium flex items-center gap-1 hover:text-volt-600">
+                    <Plus size={12} /> Ajouter un calendrier
                   </button>
                 </div>
-              )}
 
-              {appleStep === "select" && (
-                <div className="space-y-3">
-                  <p className="text-sm font-semibold text-ink-700">Choisissez les calendriers à synchroniser :</p>
-                  <div className="space-y-2">
-                    {appleCalendars.map(cal => (
-                      <label key={cal.url} className="flex items-center gap-3 p-3 rounded-xl border border-ink-100 cursor-pointer hover:bg-ink-50">
-                        <input type="checkbox" checked={appleSelected.includes(cal.url)}
-                          onChange={() => toggleCalendar(cal.url)}
-                          className="w-4 h-4 rounded accent-volt-500" />
-                        <span className="text-sm text-ink-800">{cal.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                  <div className="flex gap-3">
-                    <button onClick={() => setAppleStep("idle")} className="flex-1 py-2.5 rounded-xl border border-ink-200 text-sm font-medium text-ink-600 hover:bg-ink-50">
-                      Annuler
-                    </button>
-                    <button onClick={saveAppleSelection} disabled={appleSelected.length === 0 || appleSaving}
-                      className="flex-1 py-2.5 rounded-xl bg-ink-900 text-volt-400 text-sm font-semibold hover:bg-ink-800 disabled:opacity-40">
-                      {appleSaving ? "Enregistrement…" : `Synchroniser (${appleSelected.length})`}
-                    </button>
-                  </div>
-                </div>
-              )}
+                {appleError && <p className="text-xs text-red-600">{appleError}</p>}
 
-              {appleConnected && appleStep === "idle" && (
-                <div className="space-y-3">
-                  <p className="text-xs text-ink-500">{appleSelected.length} calendrier{appleSelected.length > 1 ? "s" : ""} synchronisé{appleSelected.length > 1 ? "s" : ""}</p>
-                  <div className="flex gap-3">
-                    <button onClick={() => { setAppleStep("loading"); connectApple(); }}
-                      className="flex-1 py-2 rounded-xl border border-ink-200 text-sm font-medium text-ink-600 hover:bg-ink-50">
-                      Modifier la sélection
-                    </button>
+                <div className="flex gap-3">
+                  {appleConnected && (
                     <button onClick={disconnectApple}
                       className="flex-1 py-2 rounded-xl border border-red-200 text-sm font-medium text-red-500 hover:bg-red-50">
                       Déconnecter
                     </button>
-                  </div>
+                  )}
+                  <button onClick={saveAppleIcs} disabled={appleSaving}
+                    className="flex-1 py-2.5 rounded-xl bg-ink-900 text-volt-400 text-sm font-semibold hover:bg-ink-800 disabled:opacity-40">
+                    {appleSaving ? "Enregistrement…" : appleConnected ? "Mettre à jour" : "Connecter"}
+                  </button>
                 </div>
-              )}
+              </div>
             </div>
           </div>
         )}
