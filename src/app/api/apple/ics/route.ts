@@ -12,8 +12,8 @@ function parseICSDate(val: string): Date {
   return new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}`);
 }
 
-function parseICS(icsText: string, timeMin: Date, timeMax: Date) {
-  const events: { id: string; title: string; start: string; end: string; allDay: boolean }[] = [];
+function parseICS(icsText: string, timeMin: Date, timeMax: Date, calUrl: string) {
+  const events: { id: string; title: string; start: string; end: string; allDay: boolean; calUrl: string }[] = [];
   const blocks = icsText.split("BEGIN:VEVENT");
   for (let i = 1; i < blocks.length; i++) {
     const block = blocks[i];
@@ -26,7 +26,7 @@ function parseICS(icsText: string, timeMin: Date, timeMax: Date) {
     const startDate = parseICSDate(dtstart);
     const endDate = dtend ? parseICSDate(dtend) : startDate;
     if (endDate < timeMin || startDate > timeMax) continue;
-    events.push({ id: uid, title: summary, start: startDate.toISOString(), end: endDate.toISOString(), allDay });
+    events.push({ id: uid, title: summary, start: startDate.toISOString(), end: endDate.toISOString(), allDay, calUrl });
   }
   return events;
 }
@@ -40,15 +40,24 @@ export async function GET(req: NextRequest) {
   );
 
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ events: [], connected: false });
+  if (!user) return NextResponse.json({ events: [], connected: false, cals: [] });
 
   const { data: token } = await supabase
     .from("apple_ics").select("*").eq("user_id", user.id).single();
 
-  if (!token) return NextResponse.json({ events: [], connected: false });
+  if (!token) return NextResponse.json({ events: [], connected: false, cals: [] });
 
-  const urls: string[] = JSON.parse(token.ics_urls ?? "[]");
-  if (urls.length === 0) return NextResponse.json({ events: [], connected: true });
+  // Charge les calendriers avec nom+couleur
+  let cals: { url: string; nom: string; couleur: string }[] = [];
+  try {
+    cals = JSON.parse(token.calendars ?? "[]");
+    if (cals.length === 0) {
+      const urls = JSON.parse(token.ics_urls ?? "[]");
+      cals = urls.map((u: string, i: number) => ({ url: u, nom: `Calendrier ${i + 1}`, couleur: "#9ca3af" }));
+    }
+  } catch { cals = []; }
+
+  if (cals.length === 0) return NextResponse.json({ events: [], connected: true, cals: [] });
 
   const url = req.nextUrl;
   const year = parseInt(url.searchParams.get("year") ?? String(new Date().getFullYear()));
@@ -56,22 +65,19 @@ export async function GET(req: NextRequest) {
   const timeMin = new Date(year, month - 1, 1);
   const timeMax = new Date(year, month + 2, 0, 23, 59, 59);
 
-  const allEvents: { id: string; title: string; start: string; end: string; allDay: boolean }[] = [];
+  const allEvents: { id: string; title: string; start: string; end: string; allDay: boolean; calUrl: string }[] = [];
 
-  for (const icsUrl of urls) {
+  for (const cal of cals) {
+    if (!cal.url.trim()) continue;
     try {
-      // Convertir webcal:// en https://
-      const fetchUrl = icsUrl.replace(/^webcal:\/\//i, "https://");
-      const res = await fetch(fetchUrl, {
-        headers: { "Accept": "text/calendar" },
-        next: { revalidate: 0 },
-      } as any);
+      const fetchUrl = cal.url.replace(/^webcal:\/\//i, "https://");
+      const res = await fetch(fetchUrl, { headers: { "Accept": "text/calendar" } });
       if (!res.ok) continue;
       const text = await res.text();
-      const parsed = parseICS(text, timeMin, timeMax);
+      const parsed = parseICS(text, timeMin, timeMax, cal.url);
       allEvents.push(...parsed);
     } catch { continue; }
   }
 
-  return NextResponse.json({ events: allEvents, connected: true });
+  return NextResponse.json({ events: allEvents, connected: true, cals });
 }
