@@ -393,9 +393,11 @@ function DayView({ year, month, day, interventions, calEvents, onBack, onCreateA
     .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
   const allDayEvs = calEvents.filter(ev => ev.allDay && isSameDay(new Date(ev.start), date));
   const HOUR_PX = 60;
+  const TRACK_LEFT = 48;
+  const TRACK_RIGHT = 8;
 
   function topPx(s: string) { const d = new Date(s); return (d.getHours() - 7 + d.getMinutes() / 60) * HOUR_PX; }
-  function heightPx(s: string, e: string) { return Math.max(20, (new Date(e).getTime() - new Date(s).getTime()) / 3600000 * HOUR_PX); }
+  function heightPx(sMs: number, eMs: number) { return Math.max(20, (eMs - sMs) / 3600000 * HOUR_PX); }
 
   const handleRowDrop = (e: React.DragEvent, h: number) => {
     e.preventDefault();
@@ -407,6 +409,32 @@ function DayView({ year, month, day, interventions, calEvents, onBack, onCreateA
     const totalMinutes = h * 60 + Math.max(0, Math.min(59, minuteInHour));
     onDropToTime(ivId, Math.floor(totalMinutes / 60), totalMinutes % 60);
   };
+
+  // Unification items
+  type AnyItem = { key: string; startMs: number; endMs: number; startStr: string; kind: "cal" | "iv"; data: any };
+  const allItems: AnyItem[] = [
+    ...dayEvs.map(ev => ({ key: ev.id, startMs: new Date(ev.start).getTime(), endMs: new Date(ev.end).getTime(), startStr: ev.start, kind: "cal" as const, data: ev })),
+    ...dayIvs.map(iv => ({ key: iv.id, startMs: new Date(iv.date_debut).getTime(), endMs: new Date(iv.date_fin).getTime(), startStr: iv.date_debut, kind: "iv" as const, data: iv })),
+  ].sort((a, b) => a.startMs - b.startMs);
+
+  // Calcul colonnes
+  const colIdxArr: number[] = [];
+  const colEnds: number[] = [];
+  for (let i = 0; i < allItems.length; i++) {
+    let col = 0;
+    while (colEnds[col] !== undefined && colEnds[col] > allItems[i].startMs) col++;
+    colIdxArr[i] = col;
+    colEnds[col] = allItems[i].endMs;
+  }
+  const totalColsArr: number[] = allItems.map((item, i) => {
+    let max = colIdxArr[i];
+    for (let j = 0; j < allItems.length; j++) {
+      if (allItems[j].startMs < item.endMs && allItems[j].endMs > item.startMs) {
+        if (colIdxArr[j] > max) max = colIdxArr[j];
+      }
+    }
+    return max + 1;
+  });
 
   return (
     <div className="flex flex-col h-full">
@@ -439,97 +467,50 @@ function DayView({ year, month, day, interventions, calEvents, onBack, onCreateA
               <div className="flex-1 h-full cursor-pointer hover:bg-ink-50/50 transition-colors" />
             </div>
           ))}
-          {renderItems()}
+          {allItems.map((item, i) => {
+            const top = topPx(item.startStr);
+            const height = heightPx(item.startMs, item.endMs);
+            const totalCols = totalColsArr[i];
+            const colIdx = colIdxArr[i];
+            const leftCalc = `calc(${TRACK_LEFT}px + (100% - ${TRACK_LEFT}px - ${TRACK_RIGHT}px) / ${totalCols} * ${colIdx})`;
+            const widthCalc = `calc((100% - ${TRACK_LEFT}px - ${TRACK_RIGHT}px) / ${totalCols})`;
+
+            if (item.kind === "cal") {
+              const ev = item.data as GCalEvent;
+              return (
+                <button key={item.key} onClick={e => { e.stopPropagation(); onSelectCal(ev); }}
+                  className="absolute rounded-lg px-2 py-1 text-xs text-left overflow-hidden z-10 flex items-start gap-1"
+                  style={{ top, height, left: leftCalc, width: widthCalc, backgroundColor: (ev.calColor ?? "#9ca3af") + "20", borderLeft: `3px solid ${ev.calColor ?? "#9ca3af"}`, color: ev.calColor ?? "#6b7280" }}>
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">{ev.title}</p>
+                    <p className="opacity-70">{fmt(ev.start)} → {fmt(ev.end)}</p>
+                  </div>
+                </button>
+              );
+            } else {
+              const iv = item.data as Intervention;
+              const cc = getClientColor(iv.client_id);
+              return (
+                <button key={item.key} onClick={e => { e.stopPropagation(); onSelectIv(iv); }}
+                  draggable onDragStart={e => { e.dataTransfer.setData("intervention_id", iv.id); e.stopPropagation(); }}
+                  className={cn("absolute rounded-lg px-2 py-1 text-xs text-left overflow-hidden z-20 flex items-start gap-1 border cursor-grab active:cursor-grabbing", cc.bg, cc.color, cc.border)}
+                  style={{ top, height, left: leftCalc, width: widthCalc }}>
+                  <VoltBadge />
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">{iv.titre}</p>
+                    <p className="opacity-70">{fmt(iv.date_debut)} → {fmt(iv.date_fin)}</p>
+                    {iv.client && <p className="opacity-60 truncate">{iv.client.nom}</p>}
+                  </div>
+                </button>
+              );
+            }
+          })}
         </div>
       </div>
     </div>
   );
-
-  function renderItems() {
-    // Unification de tous les items avec start/end normalisés
-    type Item = { key: string; startMs: number; endMs: number; startStr: string; endStr: string; kind: "cal" | "iv"; data: any };
-    const items: Item[] = [
-      ...dayEvs.map(ev => ({ key: ev.id, startMs: new Date(ev.start).getTime(), endMs: new Date(ev.end).getTime(), startStr: ev.start, endStr: ev.end, kind: "cal" as const, data: ev })),
-      ...dayIvs.map(iv => ({ key: iv.id, startMs: new Date(iv.date_debut).getTime(), endMs: new Date(iv.date_fin).getTime(), startStr: iv.date_debut, endStr: iv.date_fin, kind: "iv" as const, data: iv })),
-    ].sort((a, b) => a.startMs - b.startMs);
-
-    // Calcul colonnes
-    const colIdxArr: number[] = [];
-    const colEnds: number[] = [];
-    for (let i = 0; i < items.length; i++) {
-      let col = 0;
-      while (colEnds[col] !== undefined && colEnds[col] > items[i].startMs) col++;
-      colIdxArr[i] = col;
-      colEnds[col] = items[i].endMs;
-    }
-    // Calcul totalCols pour chaque item
-    const totalColsArr: number[] = items.map((item, i) => {
-      let max = colIdxArr[i];
-      for (let j = 0; j < items.length; j++) {
-        if (items[j].startMs < item.endMs && items[j].endMs > item.startMs) {
-          if (colIdxArr[j] > max) max = colIdxArr[j];
-        }
-      }
-      return max + 1;
-    });
-
-    const TRACK_LEFT = 48; // px (w-12 = 3rem = 48px)
-    const TRACK_RIGHT = 8; // px margin right
-
-    return items.map((item, i) => {
-      const top = (new Date(item.startStr).getHours() - 7 + new Date(item.startStr).getMinutes() / 60) * HOUR_PX;
-      const height = Math.max(20, (item.endMs - item.startMs) / 3600000 * HOUR_PX);
-      const totalCols = totalColsArr[i];
-      const colIdx = colIdxArr[i];
-
-      if (item.kind === "cal") {
-        const ev = item.data as GCalEvent;
-        return (
-          <button key={item.key}
-            onClick={e => { e.stopPropagation(); onSelectCal(ev); }}
-            className="absolute rounded-lg px-2 py-1 text-xs text-left overflow-hidden z-10 flex items-start gap-1"
-            style={{
-              top, height,
-              left: `calc(${TRACK_LEFT}px + (100% - ${TRACK_LEFT}px - ${TRACK_RIGHT}px) / ${totalCols} * ${colIdx})`,
-              width: `calc((100% - ${TRACK_LEFT}px - ${TRACK_RIGHT}px) / ${totalCols})`,
-              backgroundColor: (ev.calColor ?? "#9ca3af") + "20",
-              borderLeft: `3px solid ${ev.calColor ?? "#9ca3af"}`,
-              color: ev.calColor ?? "#6b7280",
-            }}>
-            <div className="min-w-0">
-              <p className="font-medium truncate">{ev.title}</p>
-              <p className="opacity-70">{fmt(ev.start)} → {fmt(ev.end)}</p>
-            </div>
-          </button>
-        );
-      } else {
-        const iv = item.data as Intervention;
-        const cc = getClientColor(iv.client_id);
-        return (
-          <button key={item.key}
-            onClick={e => { e.stopPropagation(); onSelectIv(iv); }}
-            draggable onDragStart={e => { e.dataTransfer.setData("intervention_id", iv.id); e.stopPropagation(); }}
-            className={cn("absolute rounded-lg px-2 py-1 text-xs text-left overflow-hidden z-20 flex items-start gap-1 border cursor-grab active:cursor-grabbing", cc.bg, cc.color, cc.border)}
-            style={{
-              top, height,
-              left: `calc(${TRACK_LEFT}px + (100% - ${TRACK_LEFT}px - ${TRACK_RIGHT}px) / ${totalCols} * ${colIdx})`,
-              width: `calc((100% - ${TRACK_LEFT}px - ${TRACK_RIGHT}px) / ${totalCols})`,
-            }}>
-            <VoltBadge />
-            <div className="min-w-0">
-              <p className="font-medium truncate">{iv.titre}</p>
-              <p className="opacity-70">{fmt(iv.date_debut)} → {fmt(iv.date_fin)}</p>
-              {iv.client && <p className="opacity-60 truncate">{iv.client.nom}</p>}
-            </div>
-          </button>
-        );
-      }
-    });
-  }
-
-    </div>
-  );
 }
+
 
 // ── Page principale ───────────────────────────────────────────────────────
 
