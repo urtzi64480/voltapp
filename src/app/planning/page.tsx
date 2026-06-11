@@ -242,15 +242,12 @@ function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTer
 
   useEffect(() => {
     if (!intervention.photos || intervention.photos.length === 0) return;
-    const load = async () => {
-      const entries: Record<string, string> = {};
-      for (const path of intervention.photos!) {
-        const { data } = await supabase.storage.from("intervention-photos").createSignedUrl(path, 3600);
-        if (data?.signedUrl) entries[path] = data.signedUrl;
-      }
-      setSignedUrls(entries);
-    };
-    load();
+    const entries: Record<string, string> = {};
+    for (const path of intervention.photos) {
+      const { data } = supabase.storage.from("intervention-photos").getPublicUrl(path);
+      entries[path] = data.publicUrl;
+    }
+    setSignedUrls(entries);
   }, [intervention.photos]);
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
