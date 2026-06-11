@@ -247,8 +247,8 @@ function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTer
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <aside className="relative w-full max-w-md bg-white h-full overflow-y-auto shadow-2xl flex flex-col">
-        <div className="flex items-start justify-between p-5 border-b border-ink-100 sticky top-0 bg-white z-10">
+      <aside className="relative w-full max-w-md bg-white h-full shadow-2xl flex flex-col">
+        <div className="flex items-start justify-between p-5 border-b border-ink-100 shrink-0">
           <div className="flex-1 pr-4">
             <div className="flex items-center gap-2 mb-1">
               <span className={cn("text-xs px-2 py-0.5 rounded-full font-medium", cfg.bg, cfg.color)}>{cfg.label}</span>
@@ -258,7 +258,7 @@ function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTer
           </div>
           <button onClick={onClose} className="text-ink-400 hover:text-ink-700 p-1"><X size={20} /></button>
         </div>
-        <div className="flex-1 p-5 space-y-5">
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
           <div className="flex items-center gap-2 text-sm text-ink-600">
             <Clock size={14} className="text-ink-400" />
             <span className="capitalize">{fmtDate(intervention.date_debut)}</span>
@@ -335,7 +335,7 @@ function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTer
             </div>
           )}
         </div>
-        <div className="p-4 pb-24 md:pb-4 border-t border-ink-100 flex gap-3 sticky bottom-0 bg-white">
+        <div className="p-4 pb-24 md:pb-4 border-t border-ink-100 flex gap-3 shrink-0 bg-white">
           <button onClick={onDelete} className="p-2.5 rounded-xl border border-red-200 text-red-500 hover:bg-red-50"><Trash2 size={16} /></button>
           {intervention.statut !== "termine" && new Date(intervention.date_fin) < new Date() && (
             <button onClick={onMarkTermine} className="flex-1 py-2.5 rounded-xl bg-green-500 text-white text-sm font-semibold hover:bg-green-600">✓ Marquer terminé</button>
@@ -704,17 +704,31 @@ export default function PlanningPage() {
     const ext = file.name.split(".").pop();
     const path = `${selected.id}/${Date.now()}.${ext}`;
     const { error } = await supabase.storage.from("intervention-photos").upload(path, file);
-    if (error) return;
+    if (error) { console.error("Upload error:", error); return; }
+    // Met à jour les photos directement sans passer par fetchAll pour éviter la perte de selected
     const current = selected.photos || [];
-    await supabase.from("interventions").update({ photos: [...current, path] }).eq("id", selected.id);
+    const newPhotos = [...current, path];
+    const { error: updateErr } = await supabase.from("interventions").update({ photos: newPhotos }).eq("id", selected.id);
+    if (updateErr) { console.error("Update error:", updateErr); return; }
+    // Met à jour selected localement immédiatement
+    setSelected(s => s ? { ...s, photos: newPhotos } : s);
+    // Puis refresh global
     await fetchAll();
-    const { data } = await supabase.from("interventions").select("*, client:clients(*), devis:devis(*, factures(*))").eq("id", selected.id).single();
-    if (data) setSelected(data as Intervention);
   };
 
-  const getPhotoUrl = (path: string) => {
-    const { data } = supabase.storage.from("intervention-photos").getPublicUrl(path);
-    return data.publicUrl;
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+
+  const getPhotoUrl = (path: string): string => {
+    return photoUrls[path] ?? "";
+  };
+
+  const loadPhotoUrls = async (photos: string[]) => {
+    const entries: Record<string, string> = {};
+    for (const path of photos) {
+      const { data } = await supabase.storage.from("intervention-photos").createSignedUrl(path, 3600);
+      if (data?.signedUrl) entries[path] = data.signedUrl;
+    }
+    setPhotoUrls(prev => ({ ...prev, ...entries }));
   };
 
   const openCreate = (day?: number, h?: number, m?: number) => {
@@ -788,7 +802,7 @@ export default function PlanningPage() {
             interventions={interventions} calEvents={appleEvents}
             onBack={() => setDayView(null)}
             onCreateAt={(h, m) => openCreate(dayView, h, m)}
-            onSelectIv={setSelected} onSelectCal={setSelectedCal}
+            onSelectIv={iv => { setSelected(iv); if (iv.photos && iv.photos.length > 0) loadPhotoUrls(iv.photos); }} onSelectCal={setSelectedCal}
             onDropToTime={handleDropToTime} />
         ) : (
           <>
@@ -835,7 +849,7 @@ export default function PlanningPage() {
                             {dayIvs.slice(0, 3).map(iv => {
                               const cc = getClientColor(iv.client_id);
                               return (
-                                <button key={iv.id} onClick={e => { e.stopPropagation(); setSelected(iv); }}
+                                <button key={iv.id} onClick={e => { e.stopPropagation(); setSelected(iv); if (iv.photos && iv.photos.length > 0) loadPhotoUrls(iv.photos); }}
                                   draggable onDragStart={e => { e.dataTransfer.setData("intervention_id", iv.id); e.stopPropagation(); }}
                                   className={cn("w-full text-left text-xs px-1.5 py-0.5 rounded-md truncate font-medium border flex items-center gap-1", cc.bg, cc.color, cc.border)}>
                                   <VoltBadge />
@@ -872,7 +886,7 @@ export default function PlanningPage() {
         )}
 
         {selected && !editMode && (
-          <InterventionDrawer intervention={selected} onClose={() => setSelected(null)}
+          <InterventionDrawer intervention={selected} onClose={() => { setSelected(null); setPhotoUrls({}); }}
             onEdit={openEdit} onDelete={handleDelete} onMarkTermine={handleMarkTermine}
             onPhotoUpload={handlePhotoUpload} getPhotoUrl={getPhotoUrl} />
         )}
