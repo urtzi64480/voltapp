@@ -541,7 +541,7 @@ export default function PlanningPage() {
 
   const fetchApple = useCallback(async () => {
     try {
-      const res = await fetch(`/api/apple/events?year=${year}&month=${month}`);
+      const res = await fetch(`/api/apple/ics?year=${year}&month=${month}`);
       const data = await res.json();
       setAppleConnected(data.connected);
       setAppleEvents(data.events ?? []);
