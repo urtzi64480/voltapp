@@ -229,26 +229,18 @@ function InterventionForm({ initial, clients, devis, calEvents, onSave, onCancel
 
 // ── Drawer intervention ───────────────────────────────────────────────────
 
-function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTermine, onPhotoUpload }: {
+function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTermine, onPhotoUpload, onPhotoRemove }: {
   intervention: Intervention; onClose: () => void; onEdit: () => void; onDelete: () => void;
-  onMarkTermine: () => void; onPhotoUpload: (file: File) => Promise<void>;
+  onMarkTermine: () => void; onPhotoUpload: (file: File) => Promise<void>; onPhotoRemove: (path: string) => Promise<void>;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
+  const [lightbox, setLightbox] = useState<string | null>(null);
   const devis = intervention.devis;
   const facture = devis?.factures?.[0];
   const cfg = STATUT_CONFIG[intervention.statut];
 
-  useEffect(() => {
-    if (!intervention.photos || intervention.photos.length === 0) return;
-    const entries: Record<string, string> = {};
-    for (const path of intervention.photos) {
-      const { data } = supabase.storage.from("intervention-photos").getPublicUrl(path);
-      entries[path] = data.publicUrl;
-    }
-    setSignedUrls(entries);
-  }, [intervention.photos]);
+  const getUrl = (path: string) => supabase.storage.from("intervention-photos").getPublicUrl(path).data.publicUrl;
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
@@ -323,6 +315,19 @@ function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTer
             </div>
           )}
           <div>
+            {lightbox && (
+              <div className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center" onClick={() => setLightbox(null)}>
+                <button onClick={e => { e.stopPropagation(); onPhotoRemove(lightbox); setLightbox(null); }}
+                  className="absolute top-4 left-4 w-10 h-10 rounded-full bg-red-500/80 flex items-center justify-center text-white hover:bg-red-600 z-10">
+                  <Trash2 size={16} />
+                </button>
+                <button onClick={() => setLightbox(null)}
+                  className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 z-10">
+                  <X size={20} />
+                </button>
+                <img src={getUrl(lightbox)} alt="" className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg" onClick={e => e.stopPropagation()} />
+              </div>
+            )}
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide">Photos</p>
               <button onClick={() => fileRef.current?.click()} disabled={uploading}
@@ -333,10 +338,11 @@ function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTer
             </div>
             {intervention.photos && intervention.photos.length > 0 ? (
               <div className="grid grid-cols-3 gap-2">
-                {intervention.photos.map((p, i) => signedUrls[p] ? (
-                  <img key={i} src={signedUrls[p]} alt={`Photo ${i + 1}`} className="aspect-square object-cover rounded-lg" />
-                ) : (
-                  <div key={i} className="aspect-square rounded-lg bg-ink-100 animate-pulse" />
+                {intervention.photos.map((p, i) => (
+                  <div key={i} className="relative group aspect-square cursor-pointer" onClick={() => setLightbox(p)}>
+                    <img src={getUrl(p)} alt={`Photo ${i + 1}`} className="w-full h-full object-cover rounded-lg" />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 rounded-lg transition-colors" />
+                  </div>
                 ))}
               </div>
             ) : <p className="text-sm text-ink-400 italic">Aucune photo</p>}
@@ -705,14 +711,19 @@ export default function PlanningPage() {
     const path = `${selected.id}/${Date.now()}.${ext}`;
     const { error } = await supabase.storage.from("intervention-photos").upload(path, file);
     if (error) { console.error("Upload error:", error); return; }
-    // Met à jour les photos directement sans passer par fetchAll pour éviter la perte de selected
     const current = selected.photos || [];
     const newPhotos = [...current, path];
-    const { error: updateErr } = await supabase.from("interventions").update({ photos: newPhotos }).eq("id", selected.id);
-    if (updateErr) { console.error("Update error:", updateErr); return; }
-    // Met à jour selected localement immédiatement
+    await supabase.from("interventions").update({ photos: newPhotos }).eq("id", selected.id);
     setSelected(s => s ? { ...s, photos: newPhotos } : s);
-    // Puis refresh global
+    await fetchAll();
+  };
+
+  const handlePhotoRemove = async (path: string) => {
+    if (!selected) return;
+    try { await supabase.storage.from("intervention-photos").remove([path]); } catch {}
+    const newPhotos = (selected.photos || []).filter(p => p !== path);
+    await supabase.from("interventions").update({ photos: newPhotos }).eq("id", selected.id);
+    setSelected(s => s ? { ...s, photos: newPhotos } : s);
     await fetchAll();
   };
 
@@ -875,7 +886,7 @@ export default function PlanningPage() {
         {selected && !editMode && (
           <InterventionDrawer intervention={selected} onClose={() => setSelected(null)}
             onEdit={openEdit} onDelete={handleDelete} onMarkTermine={handleMarkTermine}
-            onPhotoUpload={handlePhotoUpload} />
+            onPhotoUpload={handlePhotoUpload} onPhotoRemove={handlePhotoRemove} />
         )}
         {selectedCal && <CalDrawer event={selectedCal} onClose={() => setSelectedCal(null)} />}
 
