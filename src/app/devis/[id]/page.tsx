@@ -6,7 +6,7 @@ import { fmt, fmtDate, fmtDatetime, STATUT_LABELS, STATUT_COLORS, cn } from "@/l
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, X, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays } from "lucide-react";
+import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, X, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy } from "lucide-react";
 
 type Mode = "view" | "edit";
 type Tab = "edition" | "apercu" | "signature";
@@ -89,6 +89,9 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const [sigData, setSigData] = useState<string | null>(null);
   const [sigDate, setSigDate] = useState<string | null>(null);
   const [sigMode, setSigMode] = useState<SigMode>("draw");
+  const [generatingLink, setGeneratingLink] = useState(false);
+  const [sigLink, setSigLink] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const drawing = useRef(false);
@@ -190,6 +193,34 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     reader.readAsDataURL(file);
   }
 
+  // ── Lien de signature par SMS ──
+  async function envoyerParSMS() {
+    if (!devis) return;
+    setGeneratingLink(true);
+    try {
+      const res = await fetch("/api/devis/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ devis_id: id }),
+      });
+      const { token } = await res.json();
+      const link = `${window.location.origin}/devis/signer/${token}`;
+      setSigLink(link);
+      const client = devis.client as any;
+      const tel = client?.telephone?.replace(/\s/g, "") ?? "";
+      const msg = `Bonjour ${client?.prenom ?? ""}, veuillez signer votre devis ${devis.numero} ici : ${link}`;
+      window.location.href = `sms:${tel}?body=${encodeURIComponent(msg)}`;
+    } catch {}
+    setGeneratingLink(false);
+  }
+
+  async function copyLink() {
+    if (!sigLink) return;
+    await navigator.clipboard.writeText(sigLink);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  }
+
   function addPrestation(p: Prestation) {
     setLignes(prev => {
       const ex = prev.findIndex(l => l.nom === p.nom && l.type_branche === p.type_branche);
@@ -287,7 +318,6 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     }
   }
 
-  // ── Planifier depuis ce devis ──
   function planifierIntervention() {
     if (!devis) return;
     const params = new URLSearchParams({
@@ -420,6 +450,31 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
               <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl px-4 py-3 text-sm mb-3">
                 <PenLine size={16} className="shrink-0" />
                 <p>Ce devis doit être signé avant de pouvoir être converti en facture.</p>
+              </div>
+            )}
+
+            {/* Lien signature par SMS */}
+            {devis.statut !== "signe" && (
+              <div className="card card-inner mb-4 space-y-3">
+                <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide">Signature à distance</p>
+                <p className="text-xs text-ink-400">Envoyez un lien sécurisé au client pour qu'il signe depuis son téléphone.</p>
+                <div className="flex gap-2">
+                  <button onClick={envoyerParSMS} disabled={generatingLink}
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-ink-900 text-volt-400 text-sm font-semibold hover:bg-ink-800 disabled:opacity-40">
+                    <MessageSquare size={15} />
+                    {generatingLink ? "Génération…" : "Envoyer par SMS"}
+                  </button>
+                  {sigLink && (
+                    <button onClick={copyLink}
+                      className="px-3 py-2.5 rounded-xl border border-ink-200 text-ink-600 hover:bg-ink-50 flex items-center gap-1.5 text-sm">
+                      <Copy size={14} />
+                      {linkCopied ? "Copié !" : "Copier"}
+                    </button>
+                  )}
+                </div>
+                {sigLink && (
+                  <p className="text-xs text-ink-400 font-mono break-all bg-ink-50 rounded-lg px-3 py-2">{sigLink}</p>
+                )}
               </div>
             )}
 
