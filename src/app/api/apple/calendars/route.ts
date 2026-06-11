@@ -11,6 +11,18 @@ async function fetchCalDAV(username: string, password: string, url: string, meth
   return fetch(url, { method, headers, body });
 }
 
+function extractTag(xml: string, tag: string): string | null {
+  const cleaned = xml.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const start = cleaned.indexOf(`<${tag}>`);
+  const startAlt = cleaned.indexOf(`<${tag} `);
+  const pos = start !== -1 ? start : startAlt;
+  if (pos === -1) return null;
+  const hrefStart = cleaned.indexOf("<href>", pos);
+  const hrefEnd = cleaned.indexOf("</href>", hrefStart);
+  if (hrefStart === -1 || hrefEnd === -1) return null;
+  return cleaned.slice(hrefStart + 6, hrefEnd).trim();
+}
+
 export async function POST(req: NextRequest) {
   const cookieStore = cookies();
   const supabase = createServerClient(
@@ -35,10 +47,10 @@ export async function POST(req: NextRequest) {
   }
 
   const principalText = await principalRes.text();
-  const principalMatch = principalText.match(/<current-user-principal>.*?<href>(.*?)<\/href>/s);
-  if (!principalMatch) return NextResponse.json({ error: "Principal introuvable" }, { status: 400 });
+  const principalHref = extractTag(principalText, "current-user-principal");
+  if (!principalHref) return NextResponse.json({ error: "Principal introuvable" }, { status: 400 });
 
-  const principalUrl = `https://caldav.icloud.com${principalMatch[1]}`;
+  const principalUrl = `https://caldav.icloud.com${principalHref}`;
 
   // Get calendar home
   const homeRes = await fetchCalDAV(
@@ -46,10 +58,10 @@ export async function POST(req: NextRequest) {
     `<?xml version="1.0"?><propfind xmlns="DAV:" xmlns:cd="urn:ietf:params:xml:ns:caldav"><prop><cd:calendar-home-set/></prop></propfind>`
   );
   const homeText = await homeRes.text();
-  const homeMatch = homeText.match(/<calendar-home-set>.*?<href>(.*?)<\/href>/s);
-  if (!homeMatch) return NextResponse.json({ error: "Calendar home introuvable" }, { status: 400 });
+  const homeHref = extractTag(homeText, "calendar-home-set");
+  if (!homeHref) return NextResponse.json({ error: "Calendar home introuvable" }, { status: 400 });
 
-  const calHomeUrl = `https://caldav.icloud.com${homeMatch[1]}`;
+  const calHomeUrl = `https://caldav.icloud.com${homeHref}`;
 
   // List calendars
   const calRes = await fetchCalDAV(
@@ -58,15 +70,14 @@ export async function POST(req: NextRequest) {
   );
   const calText = await calRes.text();
 
-  // Parse calendars
+  // Parse calendars — split by response blocks without dotAll flag
   const calendars: { url: string; name: string }[] = [];
-  const responseRegex = /<response>([\s\S]*?)<\/response>/g;
-  let match;
-  while ((match = responseRegex.exec(calText)) !== null) {
-    const block = match[1];
+  const parts = calText.split("<response>");
+  for (let i = 1; i < parts.length; i++) {
+    const block = parts[i];
     if (!block.includes("calendar/>") && !block.includes("<calendar />")) continue;
-    const hrefMatch = block.match(/<href>(.*?)<\/href>/);
-    const nameMatch = block.match(/<displayname>(.*?)<\/displayname>/);
+    const hrefMatch = block.match(/<href>([^<]+)<\/href>/);
+    const nameMatch = block.match(/<displayname>([^<]*)<\/displayname>/);
     if (hrefMatch && nameMatch && nameMatch[1]) {
       calendars.push({ url: hrefMatch[1], name: nameMatch[1] });
     }
