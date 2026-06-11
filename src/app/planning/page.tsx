@@ -439,87 +439,94 @@ function DayView({ year, month, day, interventions, calEvents, onBack, onCreateA
               <div className="flex-1 h-full cursor-pointer hover:bg-ink-50/50 transition-colors" />
             </div>
           ))}
-          {(() => {
-            // Calcul colonnes pour éviter overlaps
-            type ColInfo = { colIdx: number; totalCols: number };
-            function assignColumns<T extends { start: string; end: string }>(items: T[]): (T & ColInfo)[] {
-              const result: (T & ColInfo)[] = [];
-              const cols: number[][] = [];
-              for (const item of items) {
-                const s = new Date(item.start).getTime();
-                const e = new Date(item.end).getTime();
-                let colIdx = 0;
-                while (cols[colIdx] && cols[colIdx].some(endT => endT > s)) colIdx++;
-                if (!cols[colIdx]) cols[colIdx] = [];
-                cols[colIdx].push(e);
-                result.push({ ...item, colIdx, totalCols: 0 });
-              }
-              for (const item of result) {
-                const s = new Date(item.start).getTime();
-                const e = new Date(item.end).getTime();
-                let maxCol = item.colIdx;
-                for (const other of result) {
-                  const os = new Date(other.start).getTime();
-                  const oe = new Date(other.end).getTime();
-                  if (s < oe && e > os) maxCol = Math.max(maxCol, other.colIdx);
-                }
-                item.totalCols = maxCol + 1;
-              }
-              return result;
-            }
-
-            const allItems = [
-              ...dayEvs.map(ev => ({ ...ev, kind: "cal" as const })),
-              ...dayIvs.map(iv => ({ ...iv, start: iv.date_debut, end: iv.date_fin, kind: "iv" as const })),
-            ].filter(it => !it.allDay || it.kind === "iv")
-             .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
-
-            const withCols = assignColumns(allItems);
-            const TRACK_W = "calc(100% - 3.5rem - 0.5rem)"; // right zone width
-
-            return withCols.map(item => {
-              const colW = `calc(${TRACK_W} / ${item.totalCols})`;
-              const colL = `calc(3.5rem + ${item.totalCols > 1 ? `(${TRACK_W} / ${item.totalCols}) * ${item.colIdx}` : "0px"})`;
-
-              if (item.kind === "cal") {
-                const ev = item as typeof dayEvs[0] & ColInfo;
-                return (
-                  <button key={ev.id} onClick={e => { e.stopPropagation(); onSelectCal(ev); }}
-                    className="absolute rounded-lg px-2 py-1 text-xs text-left overflow-hidden z-10 flex items-start gap-1.5"
-                    style={{
-                      top: `${topPx(ev.start)}px`, height: `${heightPx(ev.start, ev.end)}px`,
-                      left: colL, width: colW,
-                      backgroundColor: (ev.calColor ?? "#9ca3af") + "20",
-                      borderLeft: `3px solid ${ev.calColor ?? "#9ca3af"}`,
-                      color: ev.calColor ?? "#6b7280",
-                    }}>
-                    <div className="min-w-0">
-                      <p className="font-medium truncate">{ev.title}</p>
-                      <p className="opacity-70">{fmt(ev.start)} → {fmt(ev.end)}</p>
-                    </div>
-                  </button>
-                );
-              } else {
-                const iv = item as typeof dayIvs[0] & ColInfo & { start: string; end: string };
-                const cc = getClientColor(iv.client_id);
-                return (
-                  <button key={iv.id} onClick={e => { e.stopPropagation(); onSelectIv(iv); }}
-                    draggable onDragStart={e => { e.dataTransfer.setData("intervention_id", iv.id); e.stopPropagation(); }}
-                    className={cn("absolute rounded-lg px-2 py-1 text-xs text-left overflow-hidden z-20 flex items-start gap-1.5 border cursor-grab active:cursor-grabbing", cc.bg, cc.color, cc.border)}
-                    style={{ top: `${topPx(iv.date_debut)}px`, height: `${heightPx(iv.date_debut, iv.date_fin)}px`, left: colL, width: colW }}>
-                    <VoltBadge />
-                    <div className="min-w-0">
-                      <p className="font-medium truncate">{iv.titre}</p>
-                      <p className="opacity-70">{fmt(iv.date_debut)} → {fmt(iv.date_fin)}</p>
-                      {iv.client && <p className="opacity-60 truncate">{iv.client.nom}</p>}
-                    </div>
-                  </button>
-                );
-              }
-            });
-          })()}
+          {renderItems()}
         </div>
       </div>
+    </div>
+  );
+
+  function renderItems() {
+    // Unification de tous les items avec start/end normalisés
+    type Item = { key: string; startMs: number; endMs: number; startStr: string; endStr: string; kind: "cal" | "iv"; data: any };
+    const items: Item[] = [
+      ...dayEvs.map(ev => ({ key: ev.id, startMs: new Date(ev.start).getTime(), endMs: new Date(ev.end).getTime(), startStr: ev.start, endStr: ev.end, kind: "cal" as const, data: ev })),
+      ...dayIvs.map(iv => ({ key: iv.id, startMs: new Date(iv.date_debut).getTime(), endMs: new Date(iv.date_fin).getTime(), startStr: iv.date_debut, endStr: iv.date_fin, kind: "iv" as const, data: iv })),
+    ].sort((a, b) => a.startMs - b.startMs);
+
+    // Calcul colonnes
+    const colIdxArr: number[] = [];
+    const colEnds: number[] = [];
+    for (let i = 0; i < items.length; i++) {
+      let col = 0;
+      while (colEnds[col] !== undefined && colEnds[col] > items[i].startMs) col++;
+      colIdxArr[i] = col;
+      colEnds[col] = items[i].endMs;
+    }
+    // Calcul totalCols pour chaque item
+    const totalColsArr: number[] = items.map((item, i) => {
+      let max = colIdxArr[i];
+      for (let j = 0; j < items.length; j++) {
+        if (items[j].startMs < item.endMs && items[j].endMs > item.startMs) {
+          if (colIdxArr[j] > max) max = colIdxArr[j];
+        }
+      }
+      return max + 1;
+    });
+
+    const TRACK_LEFT = 48; // px (w-12 = 3rem = 48px)
+    const TRACK_RIGHT = 8; // px margin right
+
+    return items.map((item, i) => {
+      const top = (new Date(item.startStr).getHours() - 7 + new Date(item.startStr).getMinutes() / 60) * HOUR_PX;
+      const height = Math.max(20, (item.endMs - item.startMs) / 3600000 * HOUR_PX);
+      const totalCols = totalColsArr[i];
+      const colIdx = colIdxArr[i];
+
+      if (item.kind === "cal") {
+        const ev = item.data as GCalEvent;
+        return (
+          <button key={item.key}
+            onClick={e => { e.stopPropagation(); onSelectCal(ev); }}
+            className="absolute rounded-lg px-2 py-1 text-xs text-left overflow-hidden z-10 flex items-start gap-1"
+            style={{
+              top, height,
+              left: `calc(${TRACK_LEFT}px + (100% - ${TRACK_LEFT}px - ${TRACK_RIGHT}px) / ${totalCols} * ${colIdx})`,
+              width: `calc((100% - ${TRACK_LEFT}px - ${TRACK_RIGHT}px) / ${totalCols})`,
+              backgroundColor: (ev.calColor ?? "#9ca3af") + "20",
+              borderLeft: `3px solid ${ev.calColor ?? "#9ca3af"}`,
+              color: ev.calColor ?? "#6b7280",
+            }}>
+            <div className="min-w-0">
+              <p className="font-medium truncate">{ev.title}</p>
+              <p className="opacity-70">{fmt(ev.start)} → {fmt(ev.end)}</p>
+            </div>
+          </button>
+        );
+      } else {
+        const iv = item.data as Intervention;
+        const cc = getClientColor(iv.client_id);
+        return (
+          <button key={item.key}
+            onClick={e => { e.stopPropagation(); onSelectIv(iv); }}
+            draggable onDragStart={e => { e.dataTransfer.setData("intervention_id", iv.id); e.stopPropagation(); }}
+            className={cn("absolute rounded-lg px-2 py-1 text-xs text-left overflow-hidden z-20 flex items-start gap-1 border cursor-grab active:cursor-grabbing", cc.bg, cc.color, cc.border)}
+            style={{
+              top, height,
+              left: `calc(${TRACK_LEFT}px + (100% - ${TRACK_LEFT}px - ${TRACK_RIGHT}px) / ${totalCols} * ${colIdx})`,
+              width: `calc((100% - ${TRACK_LEFT}px - ${TRACK_RIGHT}px) / ${totalCols})`,
+            }}>
+            <VoltBadge />
+            <div className="min-w-0">
+              <p className="font-medium truncate">{iv.titre}</p>
+              <p className="opacity-70">{fmt(iv.date_debut)} → {fmt(iv.date_fin)}</p>
+              {iv.client && <p className="opacity-60 truncate">{iv.client.nom}</p>}
+            </div>
+          </button>
+        );
+      }
+    });
+  }
+
     </div>
   );
 }
