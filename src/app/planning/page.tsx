@@ -4,19 +4,16 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import {
   ChevronLeft, ChevronRight, Plus, X, MapPin, FileText,
-  Receipt, Camera, Trash2, Clock, User, ExternalLink,
-  Calendar, Unlink,
+  Receipt, Camera, Trash2, Clock, User, ExternalLink, AlertTriangle,
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Intervention, Client, Devis, StatutIntervention } from "@/types";
 import Shell from "@/components/layout/Shell";
 
-// ── Helpers ────────────────────────────────────────────────────────────────
-
 const JOURS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 const MOIS = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
-const HEURES = Array.from({ length: 14 }, (_, i) => i + 7); // 7h → 20h
+const HEURES = Array.from({ length: 14 }, (_, i) => i + 7);
 
 const CLIENT_COLORS = [
   { bg: "bg-violet-100", color: "text-violet-700", border: "border-violet-300" },
@@ -43,8 +40,8 @@ const STATUT_CONFIG: Record<StatutIntervention, { label: string; color: string; 
   annule:   { label: "Annulé",    color: "text-red-700",   bg: "bg-red-100" },
 };
 
-type CalSource = "google" | "apple";
-type GCalEvent = { id: string; title: string; start: string; end: string; allDay: boolean; source?: CalSource };
+interface AppleCal { url: string; nom: string; couleur: string; }
+type GCalEvent = { id: string; title: string; start: string; end: string; allDay: boolean; calColor?: string; calNom?: string; };
 
 function startOfMonth(y: number, m: number) { return new Date(y, m, 1); }
 function daysInMonth(y: number, m: number) { return new Date(y, m + 1, 0).getDate(); }
@@ -55,17 +52,13 @@ function isSameDay(a: Date, b: Date) {
 function fmt(s: string) { return new Date(s).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }); }
 function fmtDate(s: string) { return new Date(s).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" }); }
 
-function SourceBadge({ source }: { source?: CalSource }) {
-  if (!source) return null;
-  if (source === "google") return <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-green-500 text-white text-[9px] font-bold shrink-0">G</span>;
-  return <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-600 text-white text-[9px] font-bold shrink-0">A</span>;
+function CalDot({ color }: { color?: string }) {
+  return <span className="w-2.5 h-2.5 rounded-full shrink-0 inline-block" style={{ backgroundColor: color ?? "#9ca3af" }} />;
 }
 
 function VoltBadge() {
   return <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-volt-500 text-ink-900 text-[9px] font-bold shrink-0">V</span>;
 }
-
-// ── DocBadge ──────────────────────────────────────────────────────────────
 
 function DocBadge({ ok, label }: { ok: boolean; label: string }) {
   return (
@@ -89,14 +82,15 @@ const EMPTY_FORM: FormData = {
   adresse_chantier: "", date_debut: "", date_fin: "", statut: "planifie", notes: "",
 };
 
-function InterventionForm({ initial, clients, devis, gcalEvents, onSave, onCancel }: {
-  initial: FormData; clients: Client[]; devis: Devis[]; gcalEvents: GCalEvent[];
+function InterventionForm({ initial, clients, devis, calEvents, onSave, onCancel }: {
+  initial: FormData; clients: Client[]; devis: Devis[]; calEvents: GCalEvent[];
   onSave: (data: FormData) => Promise<void>; onCancel: () => void;
 }) {
   const [form, setForm] = useState<FormData>(initial);
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState<GCalEvent | null>(null);
-  const set = (k: keyof FormData, v: string) => { setConflict(null); setForm(f => ({ ...f, [k]: v })); };
+  const [forceMode, setForceMode] = useState(false);
+  const set = (k: keyof FormData, v: string) => { setConflict(null); setForceMode(false); setForm(f => ({ ...f, [k]: v })); };
   const clientDevis = devis.filter(d => d.client_id === form.client_id);
 
   useEffect(() => {
@@ -106,15 +100,22 @@ function InterventionForm({ initial, clients, devis, gcalEvents, onSave, onCance
     }
   }, [form.client_id]);
 
-  const handleSave = async () => {
-    if (!form.titre || !form.date_debut || !form.date_fin) return;
+  const checkConflict = (): GCalEvent | null => {
+    if (!form.date_debut || !form.date_fin) return null;
     const debut = new Date(form.date_debut).getTime();
     const fin = new Date(form.date_fin).getTime();
-    const conflictingEvent = gcalEvents.find(ev => {
+    return calEvents.find(ev => {
       if (ev.allDay) return false;
       return debut < new Date(ev.end).getTime() && fin > new Date(ev.start).getTime();
-    });
-    if (conflictingEvent) { setConflict(conflictingEvent); return; }
+    }) ?? null;
+  };
+
+  const handleSave = async () => {
+    if (!form.titre || !form.date_debut || !form.date_fin) return;
+    if (!forceMode) {
+      const c = checkConflict();
+      if (c) { setConflict(c); return; }
+    }
     setSaving(true);
     await onSave(form);
     setSaving(false);
@@ -181,17 +182,40 @@ function InterventionForm({ initial, clients, devis, gcalEvents, onSave, onCance
         <textarea value={form.notes} onChange={e => set("notes", e.target.value)} rows={2} placeholder="Notes internes…"
           className="w-full border border-ink-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-volt-400 resize-none" />
       </div>
-      {conflict && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-3">
-          <p className="text-sm font-semibold text-red-700 mb-1">⛔ Conflit calendrier</p>
-          <div className="flex items-center gap-1.5">
-            <SourceBadge source={conflict.source} />
-            <span className="text-xs text-red-600 font-medium">{conflict.title}</span>
-            <span className="text-xs text-red-500">· {fmt(conflict.start)} → {fmt(conflict.end)}</span>
+
+      {/* Alerte conflit avec option forcer */}
+      {conflict && !forceMode && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+            <p className="text-sm font-semibold text-amber-700">Conflit dans votre calendrier</p>
           </div>
-          <p className="text-xs text-red-500 mt-1">Modifiez les horaires pour continuer.</p>
+          <div className="flex items-center gap-2 text-xs text-amber-600 pl-6">
+            <CalDot color={conflict.calColor} />
+            <span className="font-medium">{conflict.title}</span>
+            <span className="text-amber-500">· {fmt(conflict.start)} → {fmt(conflict.end)}</span>
+            {conflict.calNom && <span className="text-amber-400 italic">({conflict.calNom})</span>}
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button onClick={() => setConflict(null)}
+              className="flex-1 py-2 rounded-lg border border-amber-300 text-xs font-medium text-amber-700 hover:bg-amber-100">
+              Modifier les horaires
+            </button>
+            <button onClick={() => { setForceMode(true); setConflict(null); }}
+              className="flex-1 py-2 rounded-lg bg-amber-500 text-white text-xs font-semibold hover:bg-amber-600">
+              Forcer quand même
+            </button>
+          </div>
         </div>
       )}
+
+      {forceMode && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-center gap-2 text-xs text-amber-600">
+          <AlertTriangle size={13} />
+          <span>Planification forcée malgré le conflit calendrier.</span>
+        </div>
+      )}
+
       <div className="flex gap-3 pt-2">
         <button onClick={onCancel} className="flex-1 py-2.5 rounded-xl border border-ink-200 text-sm font-medium text-ink-600 hover:bg-ink-50">Annuler</button>
         <button onClick={handleSave} disabled={saving || !form.titre || !form.date_debut || !form.date_fin}
@@ -326,7 +350,6 @@ function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTer
 // ── Drawer event calendrier ───────────────────────────────────────────────
 
 function CalDrawer({ event, onClose }: { event: GCalEvent; onClose: () => void }) {
-  const isGoogle = event.source === "google";
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
@@ -334,8 +357,8 @@ function CalDrawer({ event, onClose }: { event: GCalEvent; onClose: () => void }
         <div className="flex items-start justify-between p-5 border-b border-ink-100">
           <div className="flex-1 pr-4">
             <div className="flex items-center gap-1.5 mb-1.5">
-              <SourceBadge source={event.source} />
-              <span className="text-xs text-ink-500">{isGoogle ? "Google Calendar" : "Apple Calendar"}</span>
+              <CalDot color={event.calColor} />
+              <span className="text-xs text-ink-500">{event.calNom ?? "Apple Calendar"}</span>
             </div>
             <h2 className="text-base font-semibold text-ink-900">{event.title}</h2>
           </div>
@@ -356,10 +379,7 @@ function CalDrawer({ event, onClose }: { event: GCalEvent; onClose: () => void }
 
 // ── Vue Jour ─────────────────────────────────────────────────────────────
 
-function DayView({
-  year, month, day, interventions, calEvents, onBack, onCreateAt,
-  onSelectIv, onSelectCal, onDropToTime,
-}: {
+function DayView({ year, month, day, interventions, calEvents, onBack, onCreateAt, onSelectIv, onSelectCal, onDropToTime }: {
   year: number; month: number; day: number;
   interventions: Intervention[]; calEvents: GCalEvent[];
   onBack: () => void; onCreateAt: (h: number, m: number) => void;
@@ -372,24 +392,15 @@ function DayView({
   const dayEvs = calEvents.filter(ev => !ev.allDay && isSameDay(new Date(ev.start), date))
     .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
   const allDayEvs = calEvents.filter(ev => ev.allDay && isSameDay(new Date(ev.start), date));
+  const HOUR_PX = 60;
 
-  const HOUR_PX = 60; // pixels par heure
+  function topPx(s: string) { const d = new Date(s); return (d.getHours() - 7 + d.getMinutes() / 60) * HOUR_PX; }
+  function heightPx(s: string, e: string) { return Math.max(20, (new Date(e).getTime() - new Date(s).getTime()) / 3600000 * HOUR_PX); }
 
-  function topPx(dateStr: string) {
-    const d = new Date(dateStr);
-    return (d.getHours() - 7 + d.getMinutes() / 60) * HOUR_PX;
-  }
-  function heightPx(start: string, end: string) {
-    const s = new Date(start), e = new Date(end);
-    return Math.max(20, (e.getTime() - s.getTime()) / 3600000 * HOUR_PX);
-  }
-
-  const handleRowDragOver = (e: React.DragEvent, h: number) => { e.preventDefault(); };
   const handleRowDrop = (e: React.DragEvent, h: number) => {
     e.preventDefault();
     const ivId = e.dataTransfer.getData("intervention_id");
     if (!ivId) return;
-    // Calculer la minute précise à partir de la position Y dans la cellule
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const relY = e.clientY - rect.top;
     const minuteInHour = Math.round((relY / HOUR_PX) * 60);
@@ -399,72 +410,57 @@ function DayView({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
       <div className="flex items-center gap-3 mb-4">
-        <button onClick={onBack} className="p-2 rounded-lg hover:bg-ink-100 text-ink-600">
-          <ChevronLeft size={18} />
-        </button>
+        <button onClick={onBack} className="p-2 rounded-lg hover:bg-ink-100 text-ink-600"><ChevronLeft size={18} /></button>
         <h2 className="text-lg font-semibold text-ink-800 capitalize flex-1">{fmtDate(date.toISOString())}</h2>
         <button onClick={() => onCreateAt(8, 0)}
           className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-volt-500 text-ink-900 text-sm font-semibold hover:bg-volt-400">
           <Plus size={15} /> Intervention
         </button>
       </div>
-
-      {/* Events journée entière */}
       {allDayEvs.length > 0 && (
         <div className="mb-3 space-y-1">
           {allDayEvs.map(ev => (
             <button key={ev.id} onClick={() => onSelectCal(ev)}
-              className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 text-xs font-medium text-left">
-              <SourceBadge source={ev.source} /> {ev.title} <span className="text-gray-400">— Journée entière</span>
+              className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-left"
+              style={{ backgroundColor: (ev.calColor ?? "#9ca3af") + "20", color: ev.calColor ?? "#6b7280", borderLeft: `3px solid ${ev.calColor ?? "#9ca3af"}` }}>
+              <CalDot color={ev.calColor} /> {ev.title} <span className="opacity-60">— Journée entière</span>
             </button>
           ))}
         </div>
       )}
-
-      {/* Timeline */}
       <div className="flex-1 overflow-y-auto bg-white rounded-2xl border border-ink-100 shadow-sm">
         <div className="relative" style={{ minHeight: `${HOUR_PX * HEURES.length}px` }}>
-          {/* Lignes heures */}
           {HEURES.map(h => (
-            <div key={h}
-              className="absolute w-full border-t border-ink-100 flex items-start"
+            <div key={h} className="absolute w-full border-t border-ink-100 flex items-start"
               style={{ top: `${(h - 7) * HOUR_PX}px`, height: `${HOUR_PX}px` }}
-              onDragOver={e => handleRowDragOver(e, h)}
-              onDrop={e => handleRowDrop(e, h)}
-              onClick={() => onCreateAt(h, 0)}>
+              onDragOver={e => e.preventDefault()} onDrop={e => handleRowDrop(e, h)} onClick={() => onCreateAt(h, 0)}>
               <span className="text-xs text-ink-400 w-12 shrink-0 pt-1 pl-2 select-none">{String(h).padStart(2, "0")}:00</span>
               <div className="flex-1 h-full cursor-pointer hover:bg-ink-50/50 transition-colors" />
             </div>
           ))}
-
-          {/* Events Google/Apple */}
           {dayEvs.map(ev => (
-            <button key={ev.id}
-              onClick={e => { e.stopPropagation(); onSelectCal(ev); }}
-              className="absolute left-14 right-2 rounded-lg px-2 py-1 text-xs bg-gray-100 text-gray-600 border border-gray-300 text-left overflow-hidden z-10 flex items-start gap-1.5"
-              style={{ top: `${topPx(ev.start)}px`, height: `${heightPx(ev.start, ev.end)}px` }}>
-              <SourceBadge source={ev.source} />
+            <button key={ev.id} onClick={e => { e.stopPropagation(); onSelectCal(ev); }}
+              className="absolute left-14 right-2 rounded-lg px-2 py-1 text-xs text-left overflow-hidden z-10 flex items-start gap-1.5"
+              style={{
+                top: `${topPx(ev.start)}px`, height: `${heightPx(ev.start, ev.end)}px`,
+                backgroundColor: (ev.calColor ?? "#9ca3af") + "20",
+                borderLeft: `3px solid ${ev.calColor ?? "#9ca3af"}`,
+                color: ev.calColor ?? "#6b7280",
+              }}>
+              <CalDot color={ev.calColor} />
               <div className="min-w-0">
                 <p className="font-medium truncate">{ev.title}</p>
-                <p className="text-gray-400">{fmt(ev.start)} → {fmt(ev.end)}</p>
+                <p className="opacity-70">{fmt(ev.start)} → {fmt(ev.end)}</p>
               </div>
             </button>
           ))}
-
-          {/* Interventions VoltApp */}
           {dayIvs.map(iv => {
-            const clientColor = getClientColor(iv.client_id);
+            const cc = getClientColor(iv.client_id);
             return (
-              <button key={iv.id}
-                onClick={e => { e.stopPropagation(); onSelectIv(iv); }}
-                draggable
-                onDragStart={e => { e.dataTransfer.setData("intervention_id", iv.id); e.stopPropagation(); }}
-                className={cn(
-                  "absolute left-14 right-2 rounded-lg px-2 py-1 text-xs text-left overflow-hidden z-20 flex items-start gap-1.5 border cursor-grab active:cursor-grabbing",
-                  clientColor.bg, clientColor.color, clientColor.border
-                )}
+              <button key={iv.id} onClick={e => { e.stopPropagation(); onSelectIv(iv); }}
+                draggable onDragStart={e => { e.dataTransfer.setData("intervention_id", iv.id); e.stopPropagation(); }}
+                className={cn("absolute left-14 right-2 rounded-lg px-2 py-1 text-xs text-left overflow-hidden z-20 flex items-start gap-1.5 border cursor-grab active:cursor-grabbing", cc.bg, cc.color, cc.border)}
                 style={{ top: `${topPx(iv.date_debut)}px`, height: `${heightPx(iv.date_debut, iv.date_fin)}px` }}>
                 <VoltBadge />
                 <div className="min-w-0">
@@ -493,18 +489,10 @@ export default function PlanningPage() {
   const [loading, setLoading] = useState(true);
   const [dayView, setDayView] = useState<number | null>(null);
 
-  // Calendriers externes
-  const [gcalEvents, setGcalEvents] = useState<GCalEvent[]>([]);
+  // Apple Calendar
   const [appleEvents, setAppleEvents] = useState<GCalEvent[]>([]);
-  const [gcalConnected, setGcalConnected] = useState(false);
+  const [appleCals, setAppleCals] = useState<AppleCal[]>([]);
   const [appleConnected, setAppleConnected] = useState(false);
-  const [gcalLoading, setGcalLoading] = useState(false);
-
-  // Tous les events externes avec source
-  const allCalEvents: GCalEvent[] = [
-    ...gcalEvents.map(ev => ({ ...ev, source: "google" as CalSource })),
-    ...appleEvents.map(ev => ({ ...ev, source: "apple" as CalSource })),
-  ];
 
   // Drawers
   const [selected, setSelected] = useState<Intervention | null>(null);
@@ -528,31 +516,26 @@ export default function PlanningPage() {
     setLoading(false);
   };
 
-  const fetchGcal = useCallback(async () => {
-    setGcalLoading(true);
-    try {
-      const res = await fetch(`/api/google/events?year=${year}&month=${month}`);
-      const data = await res.json();
-      setGcalConnected(data.connected);
-      setGcalEvents(data.events ?? []);
-    } catch { setGcalConnected(false); }
-    setGcalLoading(false);
-  }, [year, month]);
-
   const fetchApple = useCallback(async () => {
     try {
       const res = await fetch(`/api/apple/ics?year=${year}&month=${month}`);
       const data = await res.json();
       setAppleConnected(data.connected);
-      setAppleEvents(data.events ?? []);
+      // Enrichit les events avec les métadonnées du calendrier
+      const cals: AppleCal[] = data.cals ?? [];
+      setAppleCals(cals);
+      const events: GCalEvent[] = (data.events ?? []).map((ev: any) => {
+        const cal = cals.find((c: AppleCal) => ev.calUrl && c.url === ev.calUrl) ?? cals[0];
+        return { ...ev, calColor: cal?.couleur, calNom: cal?.nom };
+      });
+      setAppleEvents(events);
     } catch { setAppleConnected(false); }
   }, [year, month]);
 
-  useEffect(() => { fetchAll(); fetchGcal(); fetchApple(); }, [year, month]);
+  useEffect(() => { fetchAll(); fetchApple(); }, [year, month]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("google") === "ok") { window.history.replaceState({}, "", "/planning"); fetchGcal(); }
     if (params.get("planifier") === "1") {
       const toLocal = (d: Date) => {
         const pad = (n: number) => String(n).padStart(2, "0");
@@ -571,24 +554,6 @@ export default function PlanningPage() {
     }
   }, []);
 
-  const connectGoogle = () => {
-    const oauthParams = new URLSearchParams({
-      client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
-      redirect_uri: `${window.location.origin}/api/google/callback`,
-      response_type: "code",
-      scope: "https://www.googleapis.com/auth/calendar.readonly",
-      access_type: "offline",
-      prompt: "select_account consent",
-    });
-    const oauthUrl = `https://accounts.google.com/o/oauth2/v2/auth?${oauthParams}`;
-    window.location.href = `https://accounts.google.com/logout?continue=${encodeURIComponent(oauthUrl)}`;
-  };
-
-  const disconnectGoogle = async () => {
-    await fetch("/api/google/disconnect", { method: "POST" });
-    setGcalConnected(false); setGcalEvents([]);
-  };
-
   const prevMonth = () => { if (month === 0) { setYear(y => y - 1); setMonth(11); } else setMonth(m => m - 1); };
   const nextMonth = () => { if (month === 11) { setYear(y => y + 1); setMonth(0); } else setMonth(m => m + 1); };
 
@@ -606,10 +571,9 @@ export default function PlanningPage() {
     const target = new Date(year, month, day);
     return interventions.filter(iv => isSameDay(new Date(iv.date_debut), target));
   };
-
   const calForDay = (day: number) => {
     const target = new Date(year, month, day);
-    return allCalEvents.filter(ev => isSameDay(new Date(ev.start), target));
+    return appleEvents.filter(ev => isSameDay(new Date(ev.start), target));
   };
 
   const handleCreate = async (form: FormData) => {
@@ -659,11 +623,13 @@ export default function PlanningPage() {
     const dureeMs = new Date(iv.date_fin).getTime() - oldDebut.getTime();
     const newDebut = new Date(year, month, day, oldDebut.getHours(), oldDebut.getMinutes());
     const newFin = new Date(newDebut.getTime() + dureeMs);
-    const conflict = allCalEvents.find(ev => {
+    const conflict = appleEvents.find(ev => {
       if (ev.allDay) return false;
       return newDebut.getTime() < new Date(ev.end).getTime() && newFin.getTime() > new Date(ev.start).getTime();
     });
-    if (conflict) { alert(`Impossible : conflit avec "${conflict.title}" dans votre calendrier.`); return; }
+    if (conflict) {
+      if (!confirm(`⚠️ Conflit avec "${conflict.title}" (${fmt(conflict.start)} → ${fmt(conflict.end)})\n\nForcer quand même ?`)) return;
+    }
     await supabase.from("interventions").update({ date_debut: newDebut.toISOString(), date_fin: newFin.toISOString() }).eq("id", ivId);
     await fetchAll();
   };
@@ -674,11 +640,13 @@ export default function PlanningPage() {
     const dureeMs = new Date(iv.date_fin).getTime() - new Date(iv.date_debut).getTime();
     const newDebut = new Date(year, month, dayView!, h, m, 0);
     const newFin = new Date(newDebut.getTime() + dureeMs);
-    const conflict = allCalEvents.find(ev => {
+    const conflict = appleEvents.find(ev => {
       if (ev.allDay) return false;
       return newDebut.getTime() < new Date(ev.end).getTime() && newFin.getTime() > new Date(ev.start).getTime();
     });
-    if (conflict) { alert(`Impossible : conflit avec "${conflict.title}".`); return; }
+    if (conflict) {
+      if (!confirm(`⚠️ Conflit avec "${conflict.title}" (${fmt(conflict.start)} → ${fmt(conflict.end)})\n\nForcer quand même ?`)) return;
+    }
     await supabase.from("interventions").update({ date_debut: newDebut.toISOString(), date_fin: newFin.toISOString() }).eq("id", ivId);
     await fetchAll();
   };
@@ -730,13 +698,9 @@ export default function PlanningPage() {
     setEditMode(true);
   };
 
-  const anyCalConnected = gcalConnected || appleConnected;
-
   return (
     <Shell>
       <div className="p-4 md:p-6 max-w-5xl mx-auto">
-
-        {/* Header */}
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-2xl font-display font-bold text-ink-900">Planning</h1>
@@ -749,60 +713,43 @@ export default function PlanningPage() {
           )}
         </div>
 
-        {/* Bandeau calendriers */}
-        <div className="flex flex-wrap gap-2 mb-4">
-          {/* Google */}
-          <div className={cn("flex items-center gap-2 px-3 py-2 rounded-xl text-sm flex-1 min-w-0",
-            gcalConnected ? "bg-green-50 border border-green-200" : "bg-ink-50 border border-ink-200")}>
-            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-green-500 text-white text-[10px] font-bold shrink-0">G</span>
-            {gcalConnected ? (
-              <>
-                <span className="text-green-700 font-medium text-xs flex-1">Google connecté{gcalLoading ? " · Sync…" : ""}</span>
-                <button onClick={disconnectGoogle} className="text-xs text-red-500 hover:text-red-700 shrink-0 flex items-center gap-1"><Unlink size={11} /></button>
-              </>
-            ) : (
-              <>
-                <span className="text-ink-500 text-xs flex-1 truncate">Google Calendar</span>
-                <button onClick={connectGoogle} className="text-xs text-volt-700 font-semibold shrink-0 bg-white border border-volt-300 px-2 py-0.5 rounded-lg">Connecter</button>
-              </>
-            )}
-          </div>
-          {/* Apple */}
-          <div className={cn("flex items-center gap-2 px-3 py-2 rounded-xl text-sm flex-1 min-w-0",
-            appleConnected ? "bg-gray-50 border border-gray-300" : "bg-ink-50 border border-ink-200")}>
-            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-gray-700 text-white text-[10px] font-bold shrink-0">A</span>
-            {appleConnected ? (
-              <span className="text-gray-700 font-medium text-xs flex-1">Apple connecté</span>
-            ) : (
-              <>
-                <span className="text-ink-500 text-xs flex-1 truncate">Apple Calendar</span>
-                <Link href="/parametres" className="text-xs text-volt-700 font-semibold shrink-0 bg-white border border-volt-300 px-2 py-0.5 rounded-lg">Connecter</Link>
-              </>
-            )}
-          </div>
+        {/* Bandeau Apple Calendar */}
+        <div className={cn("flex items-center gap-2 px-4 py-2.5 rounded-xl mb-4 text-sm",
+          appleConnected ? "bg-gray-50 border border-gray-200" : "bg-ink-50 border border-ink-200")}>
+          {appleConnected ? (
+            <>
+              <div className="flex items-center gap-2 flex-1 flex-wrap">
+                {appleCals.map((cal, i) => (
+                  <span key={i} className="flex items-center gap-1.5 text-xs font-medium text-ink-700">
+                    <CalDot color={cal.couleur} /> {cal.nom}
+                  </span>
+                ))}
+              </div>
+              <Link href="/parametres?tab=calendriers" className="text-xs text-ink-400 hover:text-ink-600 shrink-0">Gérer</Link>
+            </>
+          ) : (
+            <>
+              <span className="text-ink-500 text-xs flex-1">Apple Calendar non connecté</span>
+              <Link href="/parametres" className="text-xs text-volt-700 font-semibold shrink-0 bg-white border border-volt-300 px-2 py-0.5 rounded-lg">Connecter</Link>
+            </>
+          )}
         </div>
 
-        {/* Vue jour ou vue mois */}
         {dayView ? (
-          <DayView
-            year={year} month={month} day={dayView}
-            interventions={interventions} calEvents={allCalEvents}
+          <DayView year={year} month={month} day={dayView}
+            interventions={interventions} calEvents={appleEvents}
             onBack={() => setDayView(null)}
             onCreateAt={(h, m) => openCreate(dayView, h, m)}
-            onSelectIv={setSelected}
-            onSelectCal={setSelectedCal}
-            onDropToTime={handleDropToTime}
-          />
+            onSelectIv={setSelected} onSelectCal={setSelectedCal}
+            onDropToTime={handleDropToTime} />
         ) : (
           <>
-            {/* Navigation mois */}
             <div className="flex items-center justify-between mb-4">
               <button onClick={prevMonth} className="p-2 rounded-lg hover:bg-ink-100 text-ink-600"><ChevronLeft size={18} /></button>
               <h2 className="text-lg font-semibold text-ink-800 capitalize">{MOIS[month]} {year}</h2>
               <button onClick={nextMonth} className="p-2 rounded-lg hover:bg-ink-100 text-ink-600"><ChevronRight size={18} /></button>
             </div>
 
-            {/* Grille mois */}
             <div className="bg-white rounded-2xl border border-ink-100 overflow-hidden shadow-sm">
               <div className="grid grid-cols-7 border-b border-ink-100">
                 {JOURS.map(j => <div key={j} className="text-center text-xs font-semibold text-ink-400 py-2.5">{j}</div>)}
@@ -824,8 +771,7 @@ export default function PlanningPage() {
                       onDrop={e => { if (day) handleDrop(e, day); }}>
                       {day && (
                         <>
-                          <button
-                            onClick={e => { e.stopPropagation(); setDayView(day); }}
+                          <button onClick={e => { e.stopPropagation(); setDayView(day); }}
                             className={cn("text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full hover:bg-volt-200 transition-colors",
                               isToday ? "bg-volt-500 text-ink-900" : "text-ink-500")}>
                             {day}
@@ -833,8 +779,8 @@ export default function PlanningPage() {
                           <div className="mt-1 space-y-0.5">
                             {dayEvs.slice(0, 2).map(ev => (
                               <button key={ev.id} onClick={e => { e.stopPropagation(); setSelectedCal(ev); }}
-                                className="w-full text-left text-xs px-1.5 py-0.5 rounded-md truncate font-medium bg-gray-100 text-gray-500 border border-gray-200 flex items-center gap-1">
-                                <SourceBadge source={ev.source} />
+                                className="w-full text-left text-xs px-1.5 py-0.5 rounded-md truncate font-medium flex items-center gap-1"
+                                style={{ backgroundColor: (ev.calColor ?? "#9ca3af") + "20", color: ev.calColor ?? "#6b7280", borderLeft: `2px solid ${ev.calColor ?? "#9ca3af"}` }}>
                                 <span className="truncate">{ev.allDay ? "↔ " : ""}{ev.title}</span>
                               </button>
                             ))}
@@ -862,19 +808,21 @@ export default function PlanningPage() {
               </div>
             </div>
 
-            {/* Légende */}
             <div className="flex flex-wrap gap-3 mt-4">
               {(Object.entries(STATUT_CONFIG) as [StatutIntervention, typeof STATUT_CONFIG[StatutIntervention]][]).map(([, cfg]) => (
                 <span key={cfg.label} className={cn("text-xs px-2.5 py-1 rounded-full font-medium", cfg.bg, cfg.color)}>{cfg.label}</span>
               ))}
-              {gcalConnected && <span className="text-xs px-2.5 py-1 rounded-full font-medium bg-green-100 text-green-700 flex items-center gap-1"><SourceBadge source="google" /> Google</span>}
-              {appleConnected && <span className="text-xs px-2.5 py-1 rounded-full font-medium bg-gray-100 text-gray-600 flex items-center gap-1"><SourceBadge source="apple" /> Apple</span>}
               <span className="text-xs px-2.5 py-1 rounded-full font-medium bg-volt-100 text-volt-700 flex items-center gap-1"><VoltBadge /> VoltApp</span>
+              {appleCals.map((cal, i) => (
+                <span key={i} className="text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1.5"
+                  style={{ backgroundColor: cal.couleur + "20", color: cal.couleur }}>
+                  <CalDot color={cal.couleur} /> {cal.nom}
+                </span>
+              ))}
             </div>
           </>
         )}
 
-        {/* Drawers */}
         {selected && !editMode && (
           <InterventionDrawer intervention={selected} onClose={() => setSelected(null)}
             onEdit={openEdit} onDelete={handleDelete} onMarkTermine={handleMarkTermine}
@@ -882,7 +830,6 @@ export default function PlanningPage() {
         )}
         {selectedCal && <CalDrawer event={selectedCal} onClose={() => setSelectedCal(null)} />}
 
-        {/* Modal formulaire */}
         {(showForm || editMode) && (
           <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/40" onClick={() => { setShowForm(false); setEditMode(false); }} />
@@ -892,7 +839,7 @@ export default function PlanningPage() {
                 <button onClick={() => { setShowForm(false); setEditMode(false); }} className="text-ink-400 hover:text-ink-700"><X size={20} /></button>
               </div>
               <div className="p-5">
-                <InterventionForm initial={formInit} clients={clients} devis={devis} gcalEvents={allCalEvents}
+                <InterventionForm initial={formInit} clients={clients} devis={devis} calEvents={appleEvents}
                   onSave={editMode ? handleUpdate : handleCreate}
                   onCancel={() => { setShowForm(false); setEditMode(false); }} />
               </div>
