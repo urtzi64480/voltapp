@@ -335,7 +335,12 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
               </div>
             ) : (
               <div className="space-y-3">
-                {client.telephone && <div className="flex items-center gap-3"><Phone size={15} className="text-ink-400" /><span className="text-sm">{client.telephone}</span></div>}
+                {client.telephone && (
+                  <div className="flex items-center gap-3">
+                    <Phone size={15} className="text-ink-400 shrink-0" />
+                    <a href={`tel:${client.telephone}`} className="text-sm text-emerald-600 font-semibold hover:underline">{client.telephone}</a>
+                  </div>
+                )}
                 {client.email && <div className="flex items-center gap-3"><Mail size={15} className="text-ink-400" /><span className="text-sm">{client.email}</span></div>}
                 {(client.adresse || client.ville) && (
                   <div className="flex items-center gap-3">
