@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import {
   ChevronLeft, ChevronRight, Plus, X, MapPin, FileText,
-  Receipt, Camera, Trash2, Clock, User, ExternalLink, AlertTriangle,
+  Receipt, Camera, Trash2, Clock, User, ExternalLink, AlertTriangle, Phone,
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -274,9 +274,17 @@ function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTer
                 <User size={14} className="text-ink-400" />
                 <span className="font-medium">{intervention.client.prenom} {intervention.client.nom}</span>
               </div>
-              <Link href={`/clients/${intervention.client_id}`} className="text-xs text-volt-600 hover:underline flex items-center gap-1">
-                Voir fiche <ExternalLink size={11} />
-              </Link>
+              <div className="flex items-center gap-2">
+                {intervention.client.telephone && (
+                  <a href={`tel:${intervention.client.telephone}`}
+                    className="flex items-center gap-1 text-xs text-emerald-600 font-semibold bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-lg hover:bg-emerald-100">
+                    <Phone size={12} /> {intervention.client.telephone}
+                  </a>
+                )}
+                <Link href={`/clients/${intervention.client_id}`} className="text-xs text-volt-600 hover:underline flex items-center gap-1">
+                  Fiche <ExternalLink size={11} />
+                </Link>
+              </div>
             </div>
           )}
           {intervention.adresse_chantier && (
