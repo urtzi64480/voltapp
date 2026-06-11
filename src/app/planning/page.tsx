@@ -441,28 +441,27 @@ function DayView({ year, month, day, interventions, calEvents, onBack, onCreateA
           ))}
           {(() => {
             // Calcul colonnes pour éviter overlaps
-            type Col = { start: number; end: number; col: number; totalCols: number };
-            function assignColumns<T extends { start: string; end: string }>(items: T[]): (T & Col)[] {
-              const result: (T & Col)[] = [];
-              const cols: number[][] = []; // cols[i] = liste des end times de la colonne i
+            type ColInfo = { colIdx: number; totalCols: number };
+            function assignColumns<T extends { start: string; end: string }>(items: T[]): (T & ColInfo)[] {
+              const result: (T & ColInfo)[] = [];
+              const cols: number[][] = [];
               for (const item of items) {
                 const s = new Date(item.start).getTime();
                 const e = new Date(item.end).getTime();
-                let col = 0;
-                while (cols[col] && cols[col].some(endT => endT > s)) col++;
-                if (!cols[col]) cols[col] = [];
-                cols[col].push(e);
-                result.push({ ...item, start: item.start, end: item.end, col, totalCols: 0 });
+                let colIdx = 0;
+                while (cols[colIdx] && cols[colIdx].some(endT => endT > s)) colIdx++;
+                if (!cols[colIdx]) cols[colIdx] = [];
+                cols[colIdx].push(e);
+                result.push({ ...item, colIdx, totalCols: 0 });
               }
-              // Calcul totalCols : nb de colonnes qui chevauchent chaque event
               for (const item of result) {
                 const s = new Date(item.start).getTime();
                 const e = new Date(item.end).getTime();
-                let maxCol = item.col;
+                let maxCol = item.colIdx;
                 for (const other of result) {
                   const os = new Date(other.start).getTime();
                   const oe = new Date(other.end).getTime();
-                  if (s < oe && e > os) maxCol = Math.max(maxCol, other.col);
+                  if (s < oe && e > os) maxCol = Math.max(maxCol, other.colIdx);
                 }
                 item.totalCols = maxCol + 1;
               }
@@ -480,10 +479,10 @@ function DayView({ year, month, day, interventions, calEvents, onBack, onCreateA
 
             return withCols.map(item => {
               const colW = `calc(${TRACK_W} / ${item.totalCols})`;
-              const colL = `calc(3.5rem + ${item.totalCols > 1 ? `(${TRACK_W} / ${item.totalCols}) * ${item.col}` : "0px"})`;
+              const colL = `calc(3.5rem + ${item.totalCols > 1 ? `(${TRACK_W} / ${item.totalCols}) * ${item.colIdx}` : "0px"})`;
 
               if (item.kind === "cal") {
-                const ev = item as typeof dayEvs[0] & Col;
+                const ev = item as typeof dayEvs[0] & ColInfo;
                 return (
                   <button key={ev.id} onClick={e => { e.stopPropagation(); onSelectCal(ev); }}
                     className="absolute rounded-lg px-2 py-1 text-xs text-left overflow-hidden z-10 flex items-start gap-1.5"
@@ -501,7 +500,7 @@ function DayView({ year, month, day, interventions, calEvents, onBack, onCreateA
                   </button>
                 );
               } else {
-                const iv = item as typeof dayIvs[0] & Col & { start: string; end: string };
+                const iv = item as typeof dayIvs[0] & ColInfo & { start: string; end: string };
                 const cc = getClientColor(iv.client_id);
                 return (
                   <button key={iv.id} onClick={e => { e.stopPropagation(); onSelectIv(iv); }}
