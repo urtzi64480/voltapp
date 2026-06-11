@@ -341,7 +341,12 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                     <a href={`tel:${client.telephone}`} className="text-sm text-emerald-600 font-semibold hover:underline">{client.telephone}</a>
                   </div>
                 )}
-                {client.email && <div className="flex items-center gap-3"><Mail size={15} className="text-ink-400" /><span className="text-sm">{client.email}</span></div>}
+                {client.email && (
+                  <div className="flex items-center gap-3">
+                    <Mail size={15} className="text-ink-400 shrink-0" />
+                    <a href={`mailto:${client.email}`} className="text-sm text-volt-600 hover:underline">{client.email}</a>
+                  </div>
+                )}
                 {(client.adresse || client.ville) && (
                   <div className="flex items-center gap-3">
                     <MapPin size={15} className="text-ink-400 shrink-0" />
