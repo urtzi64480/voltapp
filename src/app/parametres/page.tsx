@@ -57,6 +57,7 @@ export default function ParametresPage() {
   const [appleCalendars, setAppleCalendars] = useState<AppleCalendar[]>([]);
   const [appleSelected, setAppleSelected] = useState<string[]>([]);
   const [appleStep, setAppleStep] = useState("idle");
+  const [appleSaving, setAppleSaving] = useState(false);
   const [appleError, setAppleError] = useState("");
 
   useEffect(() => {
@@ -196,7 +197,7 @@ export default function ParametresPage() {
   }
 
   async function saveAppleSelection() {
-    setAppleStep("saving");
+    setAppleSaving(true);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setAppleStep("select"); return; }
     await supabase.from("apple_tokens").upsert({
@@ -206,6 +207,7 @@ export default function ParametresPage() {
       selected_calendars: JSON.stringify(appleSelected),
     }, { onConflict: "user_id" });
     setAppleConnected(true);
+    setAppleSaving(false);
     setAppleStep("idle");
   }
 
@@ -324,9 +326,9 @@ export default function ParametresPage() {
                     <button onClick={() => setAppleStep("idle")} className="flex-1 py-2.5 rounded-xl border border-ink-200 text-sm font-medium text-ink-600 hover:bg-ink-50">
                       Annuler
                     </button>
-                    <button onClick={saveAppleSelection} disabled={appleSelected.length === 0 || appleStep === "saving"}
+                    <button onClick={saveAppleSelection} disabled={appleSelected.length === 0 || appleSaving}
                       className="flex-1 py-2.5 rounded-xl bg-ink-900 text-volt-400 text-sm font-semibold hover:bg-ink-800 disabled:opacity-40">
-                      {appleStep === "saving" ? "Enregistrement…" : `Synchroniser (${appleSelected.length})`}
+                      {appleSaving ? "Enregistrement…" : `Synchroniser (${appleSelected.length})`}
                     </button>
                   </div>
                 </div>
