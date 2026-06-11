@@ -56,7 +56,7 @@ export default function ParametresPage() {
   const [appleConnected, setAppleConnected] = useState(false);
   const [appleCalendars, setAppleCalendars] = useState<AppleCalendar[]>([]);
   const [appleSelected, setAppleSelected] = useState<string[]>([]);
-  const [appleStep, setAppleStep] = useState<"idle" | "loading" | "select" | "saving">("idle");
+  const [appleStep, setAppleStep] = useState("idle");
   const [appleError, setAppleError] = useState("");
 
   useEffect(() => {
