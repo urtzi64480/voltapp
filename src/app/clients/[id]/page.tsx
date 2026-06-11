@@ -6,7 +6,7 @@ import { fmt, fmtDate, fmtDatetime, initiales, STATUT_LABELS, STATUT_COLORS, cn 
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Phone, Mail, MapPin, Home, Key, FileText, Camera, X, Plus, Pencil, Save, Trash2, ChevronLeft, ChevronRight, Receipt, CalendarDays } from "lucide-react";
+import { ArrowLeft, Phone, Mail, MapPin, Home, Key, FileText, Camera, X, Plus, Pencil, Save, Trash2, ChevronLeft, ChevronRight, Receipt, CalendarDays, MessageSquare } from "lucide-react";
 import TableauClientWidget from "@/components/tableau/TableauClientWidget";
 
 interface Palier {
@@ -339,6 +339,10 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                   <div className="flex items-center gap-3">
                     <Phone size={15} className="text-ink-400 shrink-0" />
                     <a href={`tel:${client.telephone}`} className="text-sm text-emerald-600 font-semibold hover:underline">{client.telephone}</a>
+                    <a href={`sms:${client.telephone}`}
+                      className="flex items-center gap-1 text-xs text-blue-600 font-medium bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-lg hover:bg-blue-100">
+                      SMS
+                    </a>
                   </div>
                 )}
                 {client.email && (
