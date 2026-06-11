@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Profil } from "@/types";
 import Shell from "@/components/layout/Shell";
-import { Save, Settings, Users, Plus, Trash2, Pencil, X, Check, Apple, Calendar } from "lucide-react";
+import { Save, Settings, Users, Plus, Trash2, Pencil, X, Check, Calendar, Smartphone } from "lucide-react";
 
 interface Palier {
   id: string; label: string; seuil_min: number; seuil_max: number | null;
@@ -271,7 +271,7 @@ export default function ParametresPage() {
             <div className="card card-inner">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-8 h-8 rounded-lg bg-ink-900 flex items-center justify-center">
-                  <Apple size={16} className="text-white" />
+                  <Smartphone size={16} className="text-white" />
                 </div>
                 <div className="flex-1">
                   <p className="font-semibold text-ink-800 text-sm">Apple Calendar (iCloud)</p>
