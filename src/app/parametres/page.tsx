@@ -15,8 +15,14 @@ interface Apporteur {
 interface PalierApporteur {
   id?: string; label: string; seuil_min: number; seuil_max: number | null; commission_pct: number; ordre: number;
 }
+interface AppleCal { url: string; nom: string; couleur: string; }
 
 const PALIER_EMOJI: Record<string, string> = { bronze: "🥉", silver: "🥈", gold: "🥇" };
+
+const COULEURS_PRESET = [
+  "#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6",
+  "#EC4899", "#06B6D4", "#84CC16", "#F97316", "#6366F1",
+];
 
 const F = ({ label, type = "text", placeholder = "", full = false, value, onChange }: {
   label: string; type?: string; placeholder?: string; full?: boolean;
@@ -47,8 +53,8 @@ export default function ParametresPage() {
   const [savingPaliersAp, setSavingPaliersAp] = useState(false);
   const [savedPaliersAp, setSavedPaliersAp] = useState(false);
 
-  // Apple Calendar ICS
-  const [appleUrls, setAppleUrls] = useState<string[]>([""]);
+  // Apple Calendar
+  const [appleCals, setAppleCals] = useState<AppleCal[]>([{ url: "", nom: "Mon calendrier", couleur: "#3B82F6" }]);
   const [appleConnected, setAppleConnected] = useState(false);
   const [appleSaving, setAppleSaving] = useState(false);
   const [appleError, setAppleError] = useState("");
@@ -70,8 +76,22 @@ export default function ParametresPage() {
       if (palAp) setPaliersApporteur(palAp);
       if (appleData) {
         setAppleConnected(true);
-        const urls = JSON.parse(appleData.ics_urls ?? "[]");
-        setAppleUrls(urls.length > 0 ? urls : [""]);
+        // Essaie de charger le nouveau format calendars, sinon migre depuis ics_urls
+        try {
+          const cals = JSON.parse(appleData.calendars ?? "[]");
+          if (cals.length > 0) {
+            setAppleCals(cals);
+          } else {
+            const urls = JSON.parse(appleData.ics_urls ?? "[]");
+            setAppleCals(urls.map((u: string, i: number) => ({
+              url: u,
+              nom: `Calendrier ${i + 1}`,
+              couleur: COULEURS_PRESET[i % COULEURS_PRESET.length],
+            })));
+          }
+        } catch {
+          setAppleCals([{ url: "", nom: "Mon calendrier", couleur: "#3B82F6" }]);
+        }
       }
     }
     load();
@@ -169,17 +189,18 @@ export default function ParametresPage() {
     setPaliersApporteur(ps => ps.map((p, i) => i === idx ? { ...p, [field]: value } : p));
   }
 
-  // ── Apple Calendar ICS ──
-  async function saveAppleIcs() {
-    const validUrls = appleUrls.filter(u => u.trim() !== "");
-    if (validUrls.length === 0) { setAppleError("Ajoutez au moins une URL."); return; }
+  // ── Apple Calendar ──
+  async function saveApple() {
+    const valid = appleCals.filter(c => c.url.trim() !== "");
+    if (valid.length === 0) { setAppleError("Ajoutez au moins une URL."); return; }
     setAppleError("");
     setAppleSaving(true);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setAppleSaving(false); return; }
     await supabase.from("apple_ics").upsert({
       user_id: user.id,
-      ics_urls: JSON.stringify(validUrls),
+      ics_urls: JSON.stringify(valid.map(c => c.url)),
+      calendars: JSON.stringify(valid),
     }, { onConflict: "user_id" });
     setAppleConnected(true);
     setAppleSaving(false);
@@ -188,7 +209,11 @@ export default function ParametresPage() {
   async function disconnectApple() {
     await fetch("/api/apple/ics-disconnect", { method: "POST" });
     setAppleConnected(false);
-    setAppleUrls([""]);
+    setAppleCals([{ url: "", nom: "Mon calendrier", couleur: "#3B82F6" }]);
+  }
+
+  function updateCal(idx: number, field: keyof AppleCal, value: string) {
+    setAppleCals(cals => cals.map((c, i) => i === idx ? { ...c, [field]: value } : c));
   }
 
   const set = (k: string, v: any) => setProfil(p => ({ ...p, [k]: v }));
@@ -204,33 +229,19 @@ export default function ParametresPage() {
         </div>
 
         <div className="flex gap-1 mb-6 bg-ink-100 p-1 rounded-xl overflow-x-auto">
-          <button onClick={() => setActiveTab("profil")}
-            className={`flex items-center gap-1.5 flex-1 justify-center px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === "profil" ? "bg-white text-ink-900 shadow-sm" : "text-ink-500 hover:text-ink-700"}`}>
-            <Settings size={14} /> Profil & fiscal
-          </button>
-          <button onClick={() => setActiveTab("calendriers")}
-            className={`flex items-center gap-1.5 flex-1 justify-center px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === "calendriers" ? "bg-white text-ink-900 shadow-sm" : "text-ink-500 hover:text-ink-700"}`}>
-            <Calendar size={14} /> Calendriers
-          </button>
-          <button onClick={() => setActiveTab("apporteurs")}
-            className={`flex items-center gap-1.5 flex-1 justify-center px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === "apporteurs" ? "bg-white text-ink-900 shadow-sm" : "text-ink-500 hover:text-ink-700"}`}>
-            <Users size={14} /> Apporteurs
-          </button>
+          {(["profil", "calendriers", "apporteurs"] as Tab[]).map(t => (
+            <button key={t} onClick={() => setActiveTab(t)}
+              className={`flex items-center gap-1.5 flex-1 justify-center px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === t ? "bg-white text-ink-900 shadow-sm" : "text-ink-500 hover:text-ink-700"}`}>
+              {t === "profil" && <><Settings size={14} /> Profil & fiscal</>}
+              {t === "calendriers" && <><Calendar size={14} /> Calendriers</>}
+              {t === "apporteurs" && <><Users size={14} /> Apporteurs</>}
+            </button>
+          ))}
         </div>
 
         {/* ── ONGLET CALENDRIERS ── */}
         {activeTab === "calendriers" && (
           <div className="space-y-4">
-            <div className="card card-inner">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-white border border-ink-200 flex items-center justify-center font-bold text-sm">G</div>
-                <div>
-                  <p className="font-semibold text-ink-800 text-sm">Google Calendar</p>
-                  <p className="text-xs text-ink-400">Géré depuis la page Planning</p>
-                </div>
-              </div>
-            </div>
-
             <div className="card card-inner">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-8 h-8 rounded-lg bg-ink-900 flex items-center justify-center">
@@ -245,35 +256,54 @@ export default function ParametresPage() {
                 )}
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-4">
                 <div className="bg-ink-50 border border-ink-200 rounded-xl p-3 text-xs text-ink-600 space-y-1.5">
                   <p className="font-semibold text-ink-700">Comment obtenir le lien :</p>
                   <p>Sur iPhone → <strong>Calendrier</strong> → appui long sur le calendrier → <strong>Calendrier public</strong> → activer → <strong>Partager le lien</strong></p>
                   <p>Collez l'URL <code className="bg-ink-200 px-1 rounded">webcal://...</code> ci-dessous.</p>
                 </div>
 
-                <div className="space-y-2">
-                  {appleUrls.map((url, idx) => (
-                    <div key={idx} className="flex gap-2">
-                      <input
-                        value={url}
-                        onChange={e => setAppleUrls(urls => urls.map((u, i) => i === idx ? e.target.value : u))}
+                <div className="space-y-3">
+                  {appleCals.map((cal, idx) => (
+                    <div key={idx} className="p-3 rounded-xl border border-ink-100 bg-ink-50 space-y-2">
+                      <div className="flex items-center gap-2">
+                        {/* Couleur */}
+                        <div className="relative shrink-0">
+                          <input type="color" value={cal.couleur}
+                            onChange={e => updateCal(idx, "couleur", e.target.value)}
+                            className="w-8 h-8 rounded-lg cursor-pointer border border-ink-200 p-0.5 bg-white" />
+                        </div>
+                        {/* Nom */}
+                        <input value={cal.nom} onChange={e => updateCal(idx, "nom", e.target.value)}
+                          placeholder="Nom du calendrier"
+                          className="input flex-1 text-sm" />
+                        {appleCals.length > 1 && (
+                          <button onClick={() => setAppleCals(c => c.filter((_, i) => i !== idx))}
+                            className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 shrink-0">
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                      {/* Couleurs preset */}
+                      <div className="flex gap-1.5 flex-wrap">
+                        {COULEURS_PRESET.map(c => (
+                          <button key={c} onClick={() => updateCal(idx, "couleur", c)}
+                            className={`w-5 h-5 rounded-full border-2 transition-all ${cal.couleur === c ? "border-ink-900 scale-110" : "border-transparent"}`}
+                            style={{ backgroundColor: c }} />
+                        ))}
+                      </div>
+                      {/* URL */}
+                      <input value={cal.url} onChange={e => updateCal(idx, "url", e.target.value)}
                         placeholder="webcal://p12-caldav.icloud.com/..."
-                        className="input flex-1 text-xs font-mono"
-                      />
-                      {appleUrls.length > 1 && (
-                        <button onClick={() => setAppleUrls(urls => urls.filter((_, i) => i !== idx))}
-                          className="p-2 rounded-lg text-red-400 hover:bg-red-50">
-                          <X size={14} />
-                        </button>
-                      )}
+                        className="input w-full text-xs font-mono" />
                     </div>
                   ))}
-                  <button onClick={() => setAppleUrls(urls => [...urls, ""])}
-                    className="text-xs text-volt-700 font-medium flex items-center gap-1 hover:text-volt-600">
-                    <Plus size={12} /> Ajouter un calendrier
-                  </button>
                 </div>
+
+                <button onClick={() => setAppleCals(c => [...c, { url: "", nom: `Calendrier ${c.length + 1}`, couleur: COULEURS_PRESET[c.length % COULEURS_PRESET.length] }])}
+                  className="text-xs text-volt-700 font-medium flex items-center gap-1 hover:text-volt-600">
+                  <Plus size={12} /> Ajouter un calendrier
+                </button>
 
                 {appleError && <p className="text-xs text-red-600">{appleError}</p>}
 
@@ -284,7 +314,7 @@ export default function ParametresPage() {
                       Déconnecter
                     </button>
                   )}
-                  <button onClick={saveAppleIcs} disabled={appleSaving}
+                  <button onClick={saveApple} disabled={appleSaving}
                     className="flex-1 py-2.5 rounded-xl bg-ink-900 text-volt-400 text-sm font-semibold hover:bg-ink-800 disabled:opacity-40">
                     {appleSaving ? "Enregistrement…" : appleConnected ? "Mettre à jour" : "Connecter"}
                   </button>
