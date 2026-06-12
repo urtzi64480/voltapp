@@ -277,6 +277,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const [sigDate, setSigDate] = useState<string | null>(null);
   const [sigMode, setSigMode] = useState<SigMode>("draw");
   const [generatingLink, setGeneratingLink] = useState(false);
+  const [factureAssociee, setFactureAssociee] = useState<{ id: string; numero: string; statut: string } | null>(null);
   const [sigLink, setSigLink] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const [viewSigMode, setViewSigMode] = useState<"direct" | "sms">("direct");
@@ -326,6 +327,10 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
             .then(({ data: facs }) => setCaClientPayé((facs ?? []).reduce((a, f) => a + (f.total_ttc ?? 0), 0)));
         }
       });
+
+    // Chercher la facture associée à ce devis
+    supabase.from("factures").select("id, numero, statut").eq("devis_id", id).maybeSingle()
+      .then(({ data: f }) => { if (f) setFactureAssociee(f as any); });
 
     Promise.all([
       supabase.from("clients").select("*").order("nom"),
@@ -698,6 +703,21 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                 <p className="label mb-2">Signature client</p>
                 <img src={devis.signature_data} alt="Signature" className="h-20 border border-ink-100 rounded-xl p-2" />
                 {devis.signe_le && <p className="text-xs text-ink-400 mt-1">Signé le {fmtDatetime(devis.signe_le)}</p>}
+              </div>
+            )}
+
+            {factureAssociee && (
+              <div className="card card-inner mb-4 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
+                  <Receipt size={16} className="text-emerald-700" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-ink-400">Facture générée</p>
+                  <p className="font-semibold text-ink-900 text-sm">{factureAssociee.numero}</p>
+                </div>
+                <Link href={`/factures/${factureAssociee.id}`} className="btn-ghost !px-3 text-xs shrink-0">
+                  Voir →
+                </Link>
               </div>
             )}
 
