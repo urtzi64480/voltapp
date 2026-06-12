@@ -2,6 +2,15 @@
 import { Devis, Profil, Facture } from "@/types";
 import { fmt, fmtDate, fmtDatetime } from "./utils";
 
+interface Acompte {
+  id: string;
+  facture_id: string;
+  montant: number;
+  date_versement: string;
+  notes?: string;
+  created_at: string;
+}
+
 export async function genPDFDevis(devis: Devis, profil: Profil, sigData?: string) {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
@@ -91,7 +100,6 @@ export async function genPDFDevis(devis: Devis, profil: Profil, sigData?: string
 
   const finalY = (doc as any).lastAutoTable.finalY + 6;
 
-  // Calcul remises pour affichage PDF
   const totSBrut = lignes.filter(l => l.type_branche === "service").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
   const totMBrut = lignes.filter(l => l.type_branche === "materiau").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
   const remiseFideliteEur = devis.remise_fidelite_pct
@@ -99,9 +107,7 @@ export async function genPDFDevis(devis: Devis, profil: Profil, sigData?: string
     : 0;
   const remiseS = totSBrut - devis.total_service - remiseFideliteEur;
   const remiseM = totMBrut - devis.total_materiau;
-  const hasRemise = remiseS > 0.01 || remiseM > 0.01 || remiseFideliteEur > 0.01;
 
-  // Totaux bloc
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
     { label: "Prestation service :", value: fmt(totSBrut) },
   ];
@@ -126,13 +132,11 @@ export async function genPDFDevis(devis: Devis, profil: Profil, sigData?: string
     doc.text(row.value, bx + 68, y, { align: "right" });
   });
 
-  // TVA mention
   doc.setFont("helvetica", "italic");
   doc.setFontSize(7.5);
   doc.setTextColor(163, 163, 163);
   doc.text(profil.mention_tva ?? "TVA non applicable — Art. 293 B du CGI", M, finalY + 16);
 
-  // Signature
   const sigY = finalY + boxH + 10;
   const sig = sigData ?? devis.signature_data;
   doc.setDrawColor(210, 210, 200);
@@ -148,7 +152,6 @@ export async function genPDFDevis(devis: Devis, profil: Profil, sigData?: string
     doc.rect(M, sigY + 10, 70, 24);
   }
 
-  // Footer
   const pH = doc.internal.pageSize.getHeight();
   doc.setFillColor(28, 25, 23);
   doc.rect(0, pH - 10, W, 10, "F");
@@ -160,7 +163,7 @@ export async function genPDFDevis(devis: Devis, profil: Profil, sigData?: string
   doc.save(`Devis-${devis.numero}.pdf`);
 }
 
-export async function genPDFFacture(facture: Facture, profil: Profil) {
+export async function genPDFFacture(facture: Facture, profil: Profil, acomptes: Acompte[] = []) {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
   const doc = new jsPDF({ unit: "mm", format: "a4" });
@@ -222,7 +225,6 @@ export async function genPDFFacture(facture: Facture, profil: Profil) {
 
   const fy = (doc as any).lastAutoTable.finalY + 6;
 
-  // Calcul remises facture
   const lignes = facture.lignes ?? [];
   const totSBrut = lignes.filter(l => l.type_branche === "service").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
   const totMBrut = lignes.filter(l => l.type_branche === "materiau").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
@@ -231,6 +233,8 @@ export async function genPDFFacture(facture: Facture, profil: Profil) {
     : 0;
   const remiseS = totSBrut - facture.total_service - remiseFideliteEur;
   const remiseM = totMBrut - facture.total_materiau;
+  const totalAcomptes = acomptes.reduce((a, ac) => a + ac.montant, 0);
+  const soldeRestant = facture.total_ttc - totalAcomptes;
 
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
     { label: "Prestation service :", value: fmt(totSBrut) },
@@ -241,19 +245,36 @@ export async function genPDFFacture(facture: Facture, profil: Profil) {
   if (remiseFideliteEur > 0.01) lignesTotal.push({ label: `Remise fidélité ${facture.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
   lignesTotal.push({ label: "Total TTC :", value: fmt(facture.total_ttc), bold: true, color: [251, 191, 36] });
 
+  // Acomptes
+  if (acomptes.length > 0) {
+    acomptes.forEach((ac, i) => {
+      lignesTotal.push({
+        label: `Acompte ${i + 1} (${fmtDate(ac.date_versement)})${ac.notes ? ` · ${ac.notes}` : ""} :`,
+        value: `- ${fmt(ac.montant)}`,
+        color: [37, 99, 235],
+      });
+    });
+    lignesTotal.push({
+      label: "Solde restant dû :",
+      value: soldeRestant <= 0.01 ? "Soldé" : fmt(soldeRestant),
+      bold: true,
+      color: soldeRestant <= 0.01 ? [22, 163, 74] : [217, 119, 6],
+    });
+  }
+
   const boxH = 8 + lignesTotal.length * 7;
-  const bx = W - M - 72;
+  const bx = W - M - 80;
   doc.setFillColor(28, 25, 23);
-  doc.rect(bx, fy, 72, boxH, "F");
+  doc.rect(bx, fy, 80, boxH, "F");
 
   lignesTotal.forEach((row, i) => {
     const y = fy + 9 + i * 7;
     doc.setFont("helvetica", row.bold ? "bold" : "normal");
-    doc.setFontSize(row.bold ? 11 : 8.5);
+    doc.setFontSize(row.bold ? 10 : 8);
     const color = row.color ?? [200, 200, 190];
     doc.setTextColor(color[0], color[1], color[2]);
     doc.text(row.label, bx + 4, y);
-    doc.text(row.value, bx + 68, y, { align: "right" });
+    doc.text(row.value, bx + 76, y, { align: "right" });
   });
 
   doc.setFont("helvetica", "italic");
