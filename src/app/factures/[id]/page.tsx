@@ -330,6 +330,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
         </div>
 
         {/* Bloc acomptes */}
+        {facture.statut !== "payee" && facture.statut !== "envoyee" && (
         <div className="card card-inner mb-4">
           <div className="flex items-center justify-between mb-3">
             <div>
@@ -338,7 +339,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
                 <p className="text-xs text-ink-400 mt-0.5">{fmt(totalAcomptes)} encaissé · Solde {soldeRestant <= 0.01 ? "soldé" : fmt(soldeRestant)}</p>
               )}
             </div>
-            {soldeRestant > 0.01 && (
+            {soldeRestant > 0.01 && facture.statut !== "payee" && facture.statut !== "envoyee" && (
               <button onClick={() => setShowAcompteForm(!showAcompteForm)}
                 className="btn-ghost !px-3 text-xs flex items-center gap-1.5">
                 <Plus size={13} /> Ajouter
@@ -374,7 +375,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
             </div>
           )}
 
-          {showAcompteForm && (
+          {showAcompteForm && facture.statut !== "payee" && facture.statut !== "envoyee" && (
             <div className="p-3 bg-ink-50 rounded-xl border border-ink-100 space-y-3">
               <p className="text-xs font-semibold text-ink-600 uppercase tracking-wide">Nouveau versement</p>
               <div className="flex gap-2 items-end">
@@ -429,6 +430,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
             </div>
           )}
         </div>
+        )}
 
         <div className="flex flex-wrap gap-3">
           <button onClick={dl} className="btn-ghost flex-1 justify-center"><Download size={15} /> PDF</button>
