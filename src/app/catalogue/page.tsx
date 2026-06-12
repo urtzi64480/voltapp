@@ -891,21 +891,41 @@ export default function CataloguePage() {
   async function handleImport(rows: ImportRow[]) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    const inserts = rows.map(r => ({
-      user_id: user.id,
-      nom: r.nom, description: r.description || null,
-      type_branche: r.type_branche as "service" | "materiau",
-      categorie: r.categorie || "Divers",
-      sous_categorie: r.sous_categorie || null,
-      marque: r.marque || null,
-      unite: r.unite || "forfait",
-      prix_achat: r.prix_achat !== "" ? parseFloat(r.prix_achat) : null,
-      prix_unitaire: parseFloat(r.prix_unitaire),
-      image_url: r.image_url || null,
-      liens_fournisseurs: r.liens_fournisseurs ? r.liens_fournisseurs.split("|").filter(Boolean) : [],
-      actif: true,
-    }));
-    await supabase.from("prestations").insert(inserts);
+    const toInsert: object[] = [];
+    const toUpdate: { id: string; data: object }[] = [];
+
+    for (const r of rows) {
+      const payload = {
+        nom: r.nom,
+        description: r.description || null,
+        type_branche: r.type_branche as "service" | "materiau",
+        categorie: r.categorie || "Divers",
+        sous_categorie: r.sous_categorie || null,
+        marque: r.marque || null,
+        unite: r.unite || "forfait",
+        prix_achat: r.prix_achat !== "" ? parseFloat(r.prix_achat) : null,
+        prix_unitaire: parseFloat(r.prix_unitaire),
+        image_url: r.image_url || null,
+        liens_fournisseurs: r.liens_fournisseurs ? r.liens_fournisseurs.split("|").filter(Boolean) : [],
+        actif: true,
+      };
+      const existing = prestations.find(
+        p => p.nom.trim().toLowerCase() === r.nom.trim().toLowerCase()
+          && p.type_branche === r.type_branche
+      );
+      if (existing) {
+        toUpdate.push({ id: existing.id, data: payload });
+      } else {
+        toInsert.push({ user_id: user.id, ...payload });
+      }
+    }
+
+    if (toInsert.length > 0) {
+      await supabase.from("prestations").insert(toInsert);
+    }
+    for (const { id, data } of toUpdate) {
+      await supabase.from("prestations").update(data).eq("id", id);
+    }
     await load();
   }
 
