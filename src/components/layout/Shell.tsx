@@ -3,10 +3,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, Users, FileText, BookOpen,
-  TrendingUp, Settings, Zap, Menu, X, Receipt, CalendarDays,
+  TrendingUp, Settings, Zap, Menu, X, Receipt, CalendarDays, AlertTriangle,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/lib/supabase";
 
 const NAV = [
   { href: "/dashboard",  label: "Dashboard",  icon: LayoutDashboard },
@@ -28,19 +29,24 @@ const BOTTOM_NAV = [
   { href: "/crm",       label: "CRM",       icon: TrendingUp },
 ];
 
-function NavLink({ href, label, Icon, active, onClick }: {
-  href: string; label: string; Icon: any; active: boolean; onClick?: () => void;
+function NavLink({ href, label, Icon, active, onClick, badge }: {
+  href: string; label: string; Icon: any; active: boolean; onClick?: () => void; badge?: number;
 }) {
   return (
     <Link href={href} onClick={onClick}
       className={cn(
-        "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150",
+        "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 relative",
         active
           ? "bg-volt-500 text-ink-900"
           : "text-ink-400 hover:bg-ink-800 hover:text-white"
       )}>
       <Icon size={17} />
-      <span>{label}</span>
+      <span className="flex-1">{label}</span>
+      {badge !== undefined && badge > 0 && (
+        <span className="flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white text-xs font-bold shrink-0">
+          {badge > 9 ? "9+" : badge}
+        </span>
+      )}
     </Link>
   );
 }
@@ -48,15 +54,31 @@ function NavLink({ href, label, Icon, active, onClick }: {
 export default function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const [drawer, setDrawer] = useState(false);
+  const [facturesEnRetard, setFacturesEnRetard] = useState(0);
 
   const isActive = (href: string) =>
     href === "/dashboard" ? path === href : path.startsWith(href);
+
+  useEffect(() => {
+    // Charger les factures en retard de plus de 15 jours
+    const seuilDate = new Date();
+    seuilDate.setDate(seuilDate.getDate() - 15);
+    const seuil = seuilDate.toISOString().split("T")[0];
+
+    supabase
+      .from("factures")
+      .select("id", { count: "exact" })
+      .in("statut", ["envoyee", "relance"])
+      .lt("date_echeance", seuil)
+      .then(({ count }) => {
+        setFacturesEnRetard(count ?? 0);
+      });
+  }, [path]);
 
   return (
     <div className="flex h-screen overflow-hidden">
       {/* ── Sidebar desktop ── */}
       <aside className="hidden md:flex flex-col w-56 bg-ink-900 shrink-0">
-        {/* Logo */}
         <div className="flex items-center gap-3 px-5 py-5 border-b border-ink-700">
           <div className="w-8 h-8 rounded-lg bg-volt-500 flex items-center justify-center">
             <Zap size={16} className="text-ink-900" />
@@ -64,14 +86,16 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           <span className="font-display text-white text-lg leading-none">VoltApp</span>
         </div>
 
-        {/* Nav */}
         <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto">
           {NAV.map(({ href, label, icon: Icon }) => (
-            <NavLink key={href} href={href} label={label} Icon={Icon} active={isActive(href)} />
+            <NavLink
+              key={href} href={href} label={label} Icon={Icon}
+              active={isActive(href)}
+              badge={href === "/factures" ? facturesEnRetard : undefined}
+            />
           ))}
         </nav>
 
-        {/* CTA devis */}
         <div className="p-3 border-t border-ink-700">
           <Link href="/devis/nouveau"
             className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-volt-500 text-ink-900 text-sm font-semibold hover:bg-volt-400 transition-colors">
@@ -90,6 +114,11 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           <span className="font-display text-white text-base">VoltApp</span>
         </div>
         <div className="flex items-center gap-2">
+          {facturesEnRetard > 0 && (
+            <Link href="/factures" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold">
+              <AlertTriangle size={12} /> {facturesEnRetard}
+            </Link>
+          )}
           <Link href="/devis/nouveau"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-volt-500 text-ink-900 text-xs font-semibold">
             <Zap size={12} /> Devis
@@ -113,8 +142,12 @@ export default function Shell({ children }: { children: React.ReactNode }) {
             </div>
             <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto">
               {NAV.map(({ href, label, icon: Icon }) => (
-                <NavLink key={href} href={href} label={label} Icon={Icon}
-                  active={isActive(href)} onClick={() => setDrawer(false)} />
+                <NavLink
+                  key={href} href={href} label={label} Icon={Icon}
+                  active={isActive(href)}
+                  onClick={() => setDrawer(false)}
+                  badge={href === "/factures" ? facturesEnRetard : undefined}
+                />
               ))}
             </nav>
           </aside>
@@ -130,8 +163,13 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       <nav className="bottom-nav">
         {BOTTOM_NAV.map(({ href, label, icon: Icon }) => (
           <Link key={href} href={href}
-            className={cn("bottom-nav-item", isActive(href) && "active")}>
+            className={cn("bottom-nav-item relative", isActive(href) && "active")}>
             <Icon size={20} />
+            {href === "/factures" && facturesEnRetard > 0 && (
+              <span className="absolute top-0 right-3 w-4 h-4 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
+                {facturesEnRetard > 9 ? "9+" : facturesEnRetard}
+              </span>
+            )}
             <span>{label}</span>
           </Link>
         ))}
