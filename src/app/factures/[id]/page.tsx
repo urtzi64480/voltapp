@@ -139,7 +139,7 @@ Veuillez trouver ci-dessous le lien vers votre facture ${facture.numero} d'un mo
 
 Cordialement`
       );
-      window.location.href = `mailto:${email}?subject=${objet}&body=${corps}`;
+      window.open(`mailto:${email}?subject=${objet}&body=${corps}`);
 
     } catch (err) {
       console.error("Erreur envoi facture:", err);
