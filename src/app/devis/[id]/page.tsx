@@ -562,7 +562,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     const { data: f } = await supabase.from("factures").insert({
       user_id: user.id, devis_id: devis.id, client_id: devis.client_id,
       apporteur_id: (devis as any).apporteur_id ?? null,
-      numero: num, objet: devis.objet, statut: "envoyee",
+      numero: num, objet: devis.objet, statut: "a_envoyer",
       total_service: devis.total_service, total_materiau: devis.total_materiau, total_ttc: devis.total_ttc,
       remise_fidelite_pct: devis.remise_fidelite_pct ?? null,
       date_echeance: ech.toISOString().split("T")[0],
