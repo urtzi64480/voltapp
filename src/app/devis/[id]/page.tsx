@@ -333,7 +333,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       .then(({ data: f }) => { if (f) setFactureAssociee(f as any); });
 
     Promise.all([
-      supabase.from("clients").select("*").order("nom"),
+      supabase.from("clients").select("id, nom, prenom, email, telephone, adresse, code_postal, ville, statut").order("nom"),
       supabase.from("prestations").select("*").eq("actif", true).order("categorie").order("nom"),
       supabase.from("paliers_fidelite").select("*").order("seuil_min"),
       supabase.from("apporteurs").select("id,nom,entreprise").eq("actif", true).order("nom"),
