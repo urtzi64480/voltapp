@@ -339,7 +339,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       supabase.from("apporteurs").select("id,nom,entreprise").eq("actif", true).order("nom"),
       supabase.from("profil").select("*").eq("id", "d506c94e-40c7-4bcd-a48c-97e86f4ea7c0").single(),
     ]).then(([{ data: cls }, { data: pre }, { data: pal }, { data: ap }, { data: p }]) => {
-      setClients(cls ?? []);
+      setClients((cls ?? []) as any);
       setPrestations(pre ?? []);
       setPaliers(pal ?? []);
       setApporteurs(ap ?? []);
