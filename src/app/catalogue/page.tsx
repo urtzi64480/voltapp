@@ -10,6 +10,10 @@ import {
   CheckCircle2, TrendingUp, Gift
 } from "lucide-react";
 
+// ─── Types internes ──────────────────────────────────────────────────────────
+
+type PrestationExt = Prestation & { prix_achat?: number | null };
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function getFavicon(url: string) {
@@ -31,7 +35,7 @@ function prixVenteFromMarge(prixAchat: number, margePct: number): number {
   return Math.round(prixAchat * (1 + margePct / 100) * 100) / 100;
 }
 
-function matchSearch(p: Prestation & { prix_achat?: number }, q: string): boolean {
+function matchSearch(p: PrestationExt, q: string): boolean {
   if (!q.trim()) return true;
   const lower = q.toLowerCase();
   return [p.nom, p.description, p.marque, p.sous_categorie, p.categorie]
@@ -216,10 +220,6 @@ function FormMarque({ value, onChange, marques }: { value: string; onChange: (v:
     </div>
   );
 }
-
-// ─── Types internes ──────────────────────────────────────────────────────────
-
-type PrestationExt = Prestation & { prix_achat?: number | null };
 
 // ─── CSV ─────────────────────────────────────────────────────────────────────
 
