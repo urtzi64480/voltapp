@@ -22,12 +22,13 @@ export const initiales = (nom: string, prenom?: string | null) => {
 export const UNITES = ["forfait", "heure", "u", "ml", "m2"] as const;
 export const BRANCHES = ["service", "materiau"] as const;
 export const STATUTS_DEVIS = ["brouillon", "envoye", "signe", "refuse", "expire"] as const;
-export const STATUTS_FACTURE = ["envoyee", "payee", "relance", "impayee"] as const;
+export const STATUTS_FACTURE = ["a_envoyer", "envoyee", "payee", "relance", "impayee"] as const;
 export const PLAFOND_SERVICE = 77700;
 export const PLAFOND_MATERIAU = 188700;
 export const STATUT_LABELS: Record<string, string> = {
   brouillon: "Brouillon", envoye: "Envoyé", signe: "Signé",
   refuse: "Refusé", expire: "Expiré",
+  a_envoyer: "À envoyer",
   envoyee: "Envoyée", payee: "Payée", relance: "Relancée", impayee: "Impayée",
   actif: "Actif", inactif: "Inactif", vip: "VIP",
 };
@@ -37,6 +38,7 @@ export const STATUT_COLORS: Record<string, string> = {
   signe:     "bg-emerald-100 text-emerald-700",
   refuse:    "bg-red-100 text-red-700",
   expire:    "bg-ink-100 text-ink-500",
+  a_envoyer: "bg-blue-100 text-blue-700",
   envoyee:   "bg-volt-100 text-volt-700",
   payee:     "bg-emerald-100 text-emerald-700",
   relance:   "bg-orange-100 text-orange-700",
