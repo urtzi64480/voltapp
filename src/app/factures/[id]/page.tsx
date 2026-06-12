@@ -339,7 +339,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
                 <p className="text-xs text-ink-400 mt-0.5">{fmt(totalAcomptes)} encaissé · Solde {soldeRestant <= 0.01 ? "soldé" : fmt(soldeRestant)}</p>
               )}
             </div>
-            {soldeRestant > 0.01 && facture.statut !== "payee" && facture.statut !== "envoyee" && (
+            {soldeRestant > 0.01 && (
               <button onClick={() => setShowAcompteForm(!showAcompteForm)}
                 className="btn-ghost !px-3 text-xs flex items-center gap-1.5">
                 <Plus size={13} /> Ajouter
@@ -375,7 +375,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
             </div>
           )}
 
-          {showAcompteForm && facture.statut !== "payee" && facture.statut !== "envoyee" && (
+          {showAcompteForm && (
             <div className="p-3 bg-ink-50 rounded-xl border border-ink-100 space-y-3">
               <p className="text-xs font-semibold text-ink-600 uppercase tracking-wide">Nouveau versement</p>
               <div className="flex gap-2 items-end">
