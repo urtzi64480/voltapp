@@ -1,9 +1,8 @@
 export type TypeBranche = "service" | "materiau";
 export type StatutDevis = "brouillon" | "envoye" | "signe" | "refuse" | "expire";
-export type StatutFacture = "envoyee" | "payee" | "relance" | "impayee";
+export type StatutFacture = "a_envoyer" | "envoyee" | "payee" | "relance" | "impayee";
 export type StatutTransmission = "en_attente" | "transmise" | "acceptee" | "rejetee";
 export type StatutIntervention = "planifie" | "en_cours" | "termine" | "annule";
-
 export interface Profil {
   id: string;
   nom_entreprise?: string;
@@ -27,7 +26,6 @@ export interface Profil {
   taux_ir_service?: number;
   taux_ir_materiau?: number;
 }
-
 export interface Client {
   id: string;
   user_id: string;
@@ -54,7 +52,6 @@ export interface Client {
   created_at: string;
   updated_at: string;
 }
-
 export interface Prestation {
   id: string;
   user_id: string;
@@ -68,10 +65,10 @@ export interface Prestation {
   marque?: string;
   image_url?: string;
   liens_fournisseurs?: string[];
+  prix_achat?: number | null;
   actif: boolean;
   created_at: string;
 }
-
 export interface DevisLigne {
   id?: string;
   devis_id?: string;
@@ -84,7 +81,6 @@ export interface DevisLigne {
   type_branche: TypeBranche;
   ordre?: number;
 }
-
 export interface Devis {
   id: string;
   user_id: string;
@@ -110,7 +106,6 @@ export interface Devis {
   client?: Client;
   lignes?: DevisLigne[];
 }
-
 export interface FactureLigne {
   id?: string;
   facture_id?: string;
@@ -121,7 +116,6 @@ export interface FactureLigne {
   type_branche: TypeBranche;
   ordre?: number;
 }
-
 export interface Facture {
   id: string;
   user_id: string;
@@ -147,7 +141,6 @@ export interface Facture {
   client?: Client;
   lignes?: FactureLigne[];
 }
-
 export interface PalierFidelite {
   id: string;
   label: string;
@@ -156,7 +149,6 @@ export interface PalierFidelite {
   remise_pct: number;
   couleur: string;
 }
-
 export interface Intervention {
   id: string;
   user_id: string;
@@ -172,7 +164,6 @@ export interface Intervention {
   notes?: string;
   created_at: string;
   updated_at: string;
-  // Relations joinées
   client?: Client;
   devis?: Devis & { factures?: Facture[] };
 }
