@@ -597,7 +597,8 @@ Veuillez trouver ci-dessous le lien vers votre devis signé ${devis.numero} d'un
 
 Cordialement`
         );
-        window.location.href = `mailto:${email}?subject=${sujet}&body=${corps}`;
+        window.open(`mailto:${email}?subject=${sujet}&body=${corps}`);
+        window.location.href = `/factures/${f.id}`;
       } catch {
         // Si l'envoi échoue, on redirige quand même
         window.location.href = `/factures/${f.id}`;
