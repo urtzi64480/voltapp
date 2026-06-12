@@ -80,7 +80,7 @@ function MargeTag({ prixAchat, prixVente }: { prixAchat?: number | null; prixVen
       <Gift size={10} /> Cadeau
     </span>
   );
-  const color = marge < 0 ? "text-red-600 bg-red-50" : marge < 15 ? "text-amber-600 bg-amber-50" : "text-emerald-700 bg-emerald-50";
+  const color = marge < 0 ? "text-red-600 bg-red-50" : "text-emerald-700 bg-emerald-50";
   return (
     <span className={cn("inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium", color)}>
       <TrendingUp size={10} /> {marge > 0 ? "+" : ""}{marge}%
