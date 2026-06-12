@@ -574,7 +574,34 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       })));
       await supabase.from("profil").update({ compteur_facture: (p?.compteur_facture ?? 0) + 1 }).eq("id", user.id);
       await supabase.from("devis").update({ statut: "signe" }).eq("id", devis.id);
-      window.location.href = `/factures/${f.id}`;
+
+      // Envoi devis signé par email
+      try {
+        const { genPDFDevisBlob } = await import("@/lib/pdf");
+        const profilFallback = p ?? { id: user.id, prefixe_devis: "DEV", prefixe_facture: "FAC", compteur_devis: 0, compteur_facture: 0, mention_tva: "TVA non applicable — Art. 293 B du CGI", conditions_paiement: "Paiement à réception", taux_horaire: 55, created_at: "", updated_at: "" };
+        const blob = await genPDFDevisBlob(devis, profilFallback);
+        const fileName = `devis/${devis.numero}.pdf`;
+        await supabase.storage.from("documents").upload(fileName, blob, { contentType: "application/pdf", upsert: true });
+        const { data: urlData } = supabase.storage.from("documents").getPublicUrl(fileName);
+        const pdfUrl = urlData.publicUrl;
+        const clientObj = devis.client as any;
+        const email = clientObj?.email ?? "";
+        const prenom = clientObj?.prenom ?? "";
+        const sujet = encodeURIComponent(`Votre devis signé ${devis.numero}`);
+        const corps = encodeURIComponent(
+          `Bonjour ${prenom},
+
+Veuillez trouver ci-dessous le lien vers votre devis signé ${devis.numero} d'un montant de ${devis.total_ttc.toFixed(2).replace(".", ",")} €.
+
+👉 Télécharger le devis : ${pdfUrl}
+
+Cordialement`
+        );
+        window.location.href = `mailto:${email}?subject=${sujet}&body=${corps}`;
+      } catch {
+        // Si l'envoi échoue, on redirige quand même
+        window.location.href = `/factures/${f.id}`;
+      }
     }
   }
 
