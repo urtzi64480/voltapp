@@ -93,6 +93,11 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
     setFacture(f => f ? { ...f, statut: "payee", paye_le: new Date().toISOString() } : f);
   }
 
+  async function marquerEnvoyee() {
+    await supabase.from("factures").update({ statut: "envoyee" }).eq("id", id);
+    setFacture(f => f ? { ...f, statut: "envoyee" } : f);
+  }
+
   async function marquerRelance() {
     await supabase.from("factures").update({ statut: "relance" }).eq("id", id);
     setFacture(f => f ? { ...f, statut: "relance" } : f);
@@ -427,7 +432,13 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
 
         <div className="flex flex-wrap gap-3">
           <button onClick={dl} className="btn-ghost flex-1 justify-center"><Download size={15} /> PDF</button>
-          {facture.statut !== "payee" && (
+          {facture.statut === "a_envoyer" && (
+            <button onClick={marquerEnvoyee}
+              className="btn-volt flex-1 justify-center">
+              <CheckCircle size={15} /> Marquer comme envoyée
+            </button>
+          )}
+          {facture.statut !== "payee" && facture.statut !== "a_envoyer" && (
             <>
               {facture.statut === "envoyee" && (
                 <button onClick={marquerRelance} className="btn-ghost flex-1 justify-center"><Clock size={15} /> Marquer relancée</button>
