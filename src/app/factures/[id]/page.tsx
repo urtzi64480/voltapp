@@ -93,9 +93,60 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
     setFacture(f => f ? { ...f, statut: "payee", paye_le: new Date().toISOString() } : f);
   }
 
-  async function marquerEnvoyee() {
-    await supabase.from("factures").update({ statut: "envoyee" }).eq("id", id);
-    setFacture(f => f ? { ...f, statut: "envoyee" } : f);
+  async function marquerEnvoyeeEtEnvoyer() {
+    if (!facture) return;
+    try {
+      // 1. Charger le profil
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: p } = await supabase.from("profil").select("*").eq("id", user.id).single();
+
+      // 2. Générer le PDF en Blob
+      const { genPDFFactureBlob } = await import("@/lib/pdf");
+      const blob = await genPDFFactureBlob(
+        facture,
+        p ?? { id: user.id, prefixe_devis: "DEV", prefixe_facture: "FAC", compteur_devis: 0, compteur_facture: 0, mention_tva: "TVA non applicable — Art. 293 B du CGI", conditions_paiement: "Paiement à réception", taux_horaire: 55, created_at: "", updated_at: "" },
+        acomptes,
+      );
+
+      // 3. Upload dans Supabase Storage
+      const fileName = `factures/${facture.numero}.pdf`;
+      const { error: uploadError } = await supabase.storage
+        .from("documents")
+        .upload(fileName, blob, { contentType: "application/pdf", upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      // 4. URL publique
+      const { data: urlData } = supabase.storage.from("documents").getPublicUrl(fileName);
+      const pdfUrl = urlData.publicUrl;
+
+      // 5. Passer statut à envoyee
+      await supabase.from("factures").update({ statut: "envoyee" }).eq("id", id);
+      setFacture(f => f ? { ...f, statut: "envoyee" } : f);
+
+      // 6. Ouvrir mailto
+      const client = facture.client as any;
+      const email = client?.email ?? "";
+      const prenom = client?.prenom ?? "";
+      const objet = encodeURIComponent(`Votre facture ${facture.numero}`);
+      const corps = encodeURIComponent(
+        `Bonjour ${prenom},
+
+Veuillez trouver ci-dessous le lien vers votre facture ${facture.numero} d'un montant de ${facture.total_ttc.toFixed(2).replace(".", ",")} €.
+
+👉 Télécharger la facture : ${pdfUrl}
+
+Cordialement`
+      );
+      window.location.href = `mailto:${email}?subject=${objet}&body=${corps}`;
+
+    } catch (err) {
+      console.error("Erreur envoi facture:", err);
+      // Fallback : passer quand même en envoyée
+      await supabase.from("factures").update({ statut: "envoyee" }).eq("id", id);
+      setFacture(f => f ? { ...f, statut: "envoyee" } : f);
+    }
   }
 
   async function marquerRelance() {
@@ -435,9 +486,9 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
         <div className="flex flex-wrap gap-3">
           <button onClick={dl} className="btn-ghost flex-1 justify-center"><Download size={15} /> PDF</button>
           {facture.statut === "a_envoyer" && (
-            <button onClick={marquerEnvoyee}
+            <button onClick={marquerEnvoyeeEtEnvoyer}
               className="btn-volt flex-1 justify-center">
-              <CheckCircle size={15} /> Marquer comme envoyée
+              <CheckCircle size={15} /> Envoyer la facture
             </button>
           )}
           {facture.statut !== "payee" && facture.statut !== "a_envoyer" && (
