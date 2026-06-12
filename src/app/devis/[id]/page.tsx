@@ -279,6 +279,15 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const [generatingLink, setGeneratingLink] = useState(false);
   const [sigLink, setSigLink] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [viewSigMode, setViewSigMode] = useState<"direct" | "sms">("direct");
+  const [viewSigInputMode, setViewSigInputMode] = useState<"draw" | "upload">("draw");
+  const [viewSigData, setViewSigData] = useState<string | null>(null);
+  const [viewSigDate, setViewSigDate] = useState<string | null>(null);
+  const viewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const viewFileInputRef = useRef<HTMLInputElement>(null);
+  const viewDrawing = useRef(false);
+  const viewLast = useRef({ x: 0, y: 0 });
+  const viewSigCtx = useRef<CanvasRenderingContext2D | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const drawing = useRef(false);
@@ -365,6 +374,63 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     sigCtx.current.lineTo(p.x, p.y); sigCtx.current.stroke(); last.current = p;
   }
   function stopDraw() { drawing.current = false; }
+
+  // ── Canvas view signature ──
+  useEffect(() => {
+    if (viewSigMode !== "direct" || viewSigInputMode !== "draw" || !viewCanvasRef.current) return;
+    const c = viewCanvasRef.current;
+    c.width = c.offsetWidth * window.devicePixelRatio;
+    c.height = c.offsetHeight * window.devicePixelRatio;
+    const ctx = c.getContext("2d")!;
+    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    ctx.strokeStyle = "#1C1917"; ctx.lineWidth = 2.5; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    viewSigCtx.current = ctx;
+  }, [viewSigMode, viewSigInputMode]);
+
+  function getViewPos(e: any) {
+    const c = viewCanvasRef.current!; const r = c.getBoundingClientRect();
+    if (e.touches) return { x: e.touches[0].clientX - r.left, y: e.touches[0].clientY - r.top };
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+  function startViewDraw(e: any) { e.preventDefault(); viewDrawing.current = true; viewLast.current = getViewPos(e); }
+  function moveViewDraw(e: any) {
+    e.preventDefault();
+    if (!viewDrawing.current || !viewSigCtx.current) return;
+    const p = getViewPos(e);
+    viewSigCtx.current.beginPath(); viewSigCtx.current.moveTo(viewLast.current.x, viewLast.current.y);
+    viewSigCtx.current.lineTo(p.x, p.y); viewSigCtx.current.stroke(); viewLast.current = p;
+  }
+  function stopViewDraw() { viewDrawing.current = false; }
+  function clearViewSig() {
+    if (!viewCanvasRef.current || !viewSigCtx.current) return;
+    viewSigCtx.current.clearRect(0, 0, viewCanvasRef.current.offsetWidth, viewCanvasRef.current.offsetHeight);
+  }
+  function validerViewCanvas() {
+    const c = viewCanvasRef.current!;
+    const px = viewSigCtx.current!.getImageData(0, 0, c.width, c.height).data;
+    if (!px.some(v => v !== 0)) { alert("Veuillez signer."); return; }
+    setViewSigData(c.toDataURL("image/png"));
+    setViewSigDate(new Date().toLocaleString("fr-FR"));
+  }
+  function handleViewUploadSig(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      setViewSigData(ev.target?.result as string);
+      setViewSigDate(new Date().toLocaleString("fr-FR"));
+    };
+    reader.readAsDataURL(file);
+  }
+  async function validerSignatureDirecte() {
+    if (!viewSigData || !devis) return;
+    await supabase.from("devis").update({
+      signature_data: viewSigData,
+      signe_le: new Date().toISOString(),
+      statut: "signe",
+    }).eq("id", id);
+    setDevis(d => d ? { ...d, signature_data: viewSigData, signe_le: new Date().toISOString(), statut: "signe" } : d);
+    setViewSigData(null); setViewSigDate(null);
+  }
   function clearSig() {
     if (!canvasRef.current || !sigCtx.current) return;
     sigCtx.current.clearRect(0, 0, canvasRef.current.offsetWidth, canvasRef.current.offsetHeight);
@@ -643,25 +709,102 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
             )}
 
             {devis.statut !== "signe" && (
-              <div className="card card-inner mb-4 space-y-3">
-                <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide">Signature à distance</p>
-                <p className="text-xs text-ink-400">Envoyez un lien sécurisé au client pour qu'il signe depuis son téléphone.</p>
-                <div className="flex gap-2">
-                  <button onClick={envoyerParSMS} disabled={generatingLink}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-ink-900 text-volt-400 text-sm font-semibold hover:bg-ink-800 disabled:opacity-40">
-                    <MessageSquare size={15} />
-                    {generatingLink ? "Génération…" : "Envoyer par SMS"}
+              <div className="card card-inner mb-4 space-y-4">
+                {/* Tabs signature directe / SMS */}
+                <div className="flex gap-1 bg-ink-100 p-1 rounded-xl">
+                  <button onClick={() => setViewSigMode("direct")}
+                    className={cn("flex items-center gap-1.5 flex-1 justify-center px-3 py-2 rounded-lg text-sm font-medium transition-all",
+                      viewSigMode === "direct" ? "bg-white text-ink-900 shadow-sm" : "text-ink-500 hover:text-ink-700")}>
+                    <PenLine size={14} /> Signer en face à face
                   </button>
-                  {sigLink && (
-                    <button onClick={copyLink}
-                      className="px-3 py-2.5 rounded-xl border border-ink-200 text-ink-600 hover:bg-ink-50 flex items-center gap-1.5 text-sm">
-                      <Copy size={14} />
-                      {linkCopied ? "Copié !" : "Copier"}
-                    </button>
-                  )}
+                  <button onClick={() => setViewSigMode("sms")}
+                    className={cn("flex items-center gap-1.5 flex-1 justify-center px-3 py-2 rounded-lg text-sm font-medium transition-all",
+                      viewSigMode === "sms" ? "bg-white text-ink-900 shadow-sm" : "text-ink-500 hover:text-ink-700")}>
+                    <MessageSquare size={14} /> Signature à distance
+                  </button>
                 </div>
-                {sigLink && (
-                  <p className="text-xs text-ink-400 font-mono break-all bg-ink-50 rounded-lg px-3 py-2">{sigLink}</p>
+
+                {/* Signature directe */}
+                {viewSigMode === "direct" && (
+                  <div className="space-y-3">
+                    {viewSigData ? (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-3 text-emerald-600">
+                          <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0"><Check size={16} /></div>
+                          <div><p className="font-semibold text-sm">Signature capturée</p><p className="text-xs text-emerald-500">{viewSigDate}</p></div>
+                        </div>
+                        <img src={viewSigData} alt="Signature" className="h-16 border border-ink-100 rounded-xl p-2 bg-white" />
+                        <div className="flex gap-2">
+                          <button onClick={() => { setViewSigData(null); setViewSigDate(null); }}
+                            className="btn-ghost flex-1 justify-center text-sm"><RotateCcw size={13} /> Recommencer</button>
+                          <button onClick={validerSignatureDirecte}
+                            className="btn-volt flex-1 justify-center text-sm"><Check size={13} /> Confirmer & signer</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="flex gap-1 bg-ink-100 p-1 rounded-xl">
+                          <button onClick={() => setViewSigInputMode("draw")}
+                            className={cn("flex items-center gap-1.5 flex-1 justify-center px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
+                              viewSigInputMode === "draw" ? "bg-white text-ink-900 shadow-sm" : "text-ink-500")}>
+                            <PenLine size={12} /> Dessiner
+                          </button>
+                          <button onClick={() => setViewSigInputMode("upload")}
+                            className={cn("flex items-center gap-1.5 flex-1 justify-center px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
+                              viewSigInputMode === "upload" ? "bg-white text-ink-900 shadow-sm" : "text-ink-500")}>
+                            <Upload size={12} /> Importer
+                          </button>
+                        </div>
+                        {viewSigInputMode === "draw" && (
+                          <>
+                            <canvas ref={viewCanvasRef}
+                              className="w-full border-2 border-dashed border-ink-200 rounded-2xl bg-white cursor-crosshair touch-none"
+                              style={{ height: "160px" }}
+                              onMouseDown={startViewDraw} onMouseMove={moveViewDraw} onMouseUp={stopViewDraw} onMouseLeave={stopViewDraw}
+                              onTouchStart={startViewDraw} onTouchMove={moveViewDraw} onTouchEnd={stopViewDraw} />
+                            <div className="flex gap-2">
+                              <button onClick={clearViewSig} className="btn-ghost flex-1 justify-center text-sm"><RotateCcw size={13} /> Effacer</button>
+                              <button onClick={validerViewCanvas} className="btn-volt flex-1 justify-center text-sm"><Check size={13} /> Valider</button>
+                            </div>
+                          </>
+                        )}
+                        {viewSigInputMode === "upload" && (
+                          <>
+                            <input ref={viewFileInputRef} type="file" accept="image/*" className="hidden" onChange={handleViewUploadSig} />
+                            <button onClick={() => viewFileInputRef.current?.click()}
+                              className="w-full flex flex-col items-center justify-center gap-2 border-2 border-dashed border-ink-200 rounded-2xl bg-white py-8 hover:border-volt-400 hover:bg-volt-50 transition-all">
+                              <Upload size={20} className="text-ink-300" />
+                              <span className="text-sm text-ink-500">Cliquez pour choisir une image</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* SMS */}
+                {viewSigMode === "sms" && (
+                  <div className="space-y-3">
+                    <p className="text-xs text-ink-400">Envoyez un lien sécurisé au client pour qu'il signe depuis son téléphone.</p>
+                    <div className="flex gap-2">
+                      <button onClick={envoyerParSMS} disabled={generatingLink}
+                        className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-ink-900 text-volt-400 text-sm font-semibold hover:bg-ink-800 disabled:opacity-40">
+                        <MessageSquare size={15} />
+                        {generatingLink ? "Génération…" : "Envoyer par SMS"}
+                      </button>
+                      {sigLink && (
+                        <button onClick={copyLink}
+                          className="px-3 py-2.5 rounded-xl border border-ink-200 text-ink-600 hover:bg-ink-50 flex items-center gap-1.5 text-sm">
+                          <Copy size={14} />
+                          {linkCopied ? "Copié !" : "Copier"}
+                        </button>
+                      )}
+                    </div>
+                    {sigLink && (
+                      <p className="text-xs text-ink-400 font-mono break-all bg-ink-50 rounded-lg px-3 py-2">{sigLink}</p>
+                    )}
+                  </div>
                 )}
               </div>
             )}
