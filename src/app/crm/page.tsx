@@ -4,22 +4,17 @@ import { supabase } from "@/lib/supabase";
 import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, PLAFOND_SERVICE, PLAFOND_MATERIAU, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { TrendingUp, FileText, Receipt, CheckCircle, Clock, AlertTriangle, BarChart3, PieChart, Euro, Users } from "lucide-react";
+import { TrendingUp, FileText, Receipt, CheckCircle, Clock, AlertTriangle, BarChart3, PieChart, Euro, Users, Download } from "lucide-react";
 
 interface CATStat { categorie: string; type_branche: string; total: number; nb: number; }
 interface CommissionApporteur {
-  id: string;
-  nom: string;
-  entreprise?: string;
-  caMois: number;
-  commissionPct: number;
-  commissionEur: number;
+  id: string; nom: string; entreprise?: string;
+  caMois: number; commissionPct: number; commissionEur: number;
 }
 
 function BarMois({ mois, service, materiau, serviceN1, materiauN1, maxMois, label }: {
   mois: number; service: number; materiau: number;
-  serviceN1: number; materiauN1: number;
-  maxMois: number; label: string;
+  serviceN1: number; materiauN1: number; maxMois: number; label: string;
 }) {
   const [hover, setHover] = useState(false);
   const tot = service + materiau;
@@ -58,6 +53,8 @@ function BarMois({ mois, service, materiau, serviceN1, materiauN1, maxMois, labe
 export default function CRMPage() {
   const [annee, setAnnee] = useState(new Date().getFullYear());
   const [moisCommission, setMoisCommission] = useState(new Date().getMonth() + 1);
+  const [anneeExport, setAnneeExport] = useState(new Date().getFullYear());
+  const [moisExport, setMoisExport] = useState(new Date().getMonth() + 1);
   const [loading, setLoading] = useState(true);
 
   const [caAnnuel, setCaAnnuel] = useState({ service: 0, materiau: 0 });
@@ -74,6 +71,9 @@ export default function CRMPage() {
   const [commissionsApporteurs, setCommissionsApporteurs] = useState<CommissionApporteur[]>([]);
   const [totalCommissions, setTotalCommissions] = useState(0);
 
+  const MOIS_LONG = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
+  const MOIS = ["J","F","M","A","M","J","J","A","S","O","N","D"];
+
   useEffect(() => {
     async function load() {
       setLoading(true);
@@ -81,7 +81,6 @@ export default function CRMPage() {
       const fin     = `${annee}-12-31`;
       const debutN1 = `${annee - 1}-01-01`;
       const finN1   = `${annee - 1}-12-31`;
-
       const moisStr = String(moisCommission).padStart(2, "0");
       const debutMois = `${annee}-${moisStr}-01`;
       const finMois = new Date(annee, moisCommission, 0).toISOString().split("T")[0];
@@ -112,11 +111,9 @@ export default function CRMPage() {
         user ? supabase.from("profil").select("taux_cotisations_service,taux_cotisations_materiau,taux_ir_service,taux_ir_materiau").eq("id", user.id).single() : Promise.resolve({ data: null }),
         supabase.from("apporteurs").select("*").eq("actif", true).order("nom"),
         supabase.from("paliers_apporteur").select("*").order("seuil_min"),
-        // Factures payées du mois sélectionné avec apporteur
         supabase.from("factures").select("total_ttc,apporteur_id").eq("statut","payee").gte("paye_le", debutMois).lte("paye_le", finMois).not("apporteur_id", "is", null),
       ]);
 
-      // Taux fiscaux
       if (profil) {
         setTauxFiscaux({
           cotis_service:  (profil as any).taux_cotisations_service ?? 22,
@@ -126,29 +123,24 @@ export default function CRMPage() {
         });
       }
 
-      // CA annuel N
       const rows = facsPayees ?? [];
       const caS = rows.reduce((a, r) => a + r.total_service, 0);
       const caM = rows.reduce((a, r) => a + r.total_materiau, 0);
       setCaAnnuel({ service: caS, materiau: caM });
 
-      // CA annuel N-1
       const rowsN1 = facsPayeesN1 ?? [];
       setCaAnnuelN1({ service: rowsN1.reduce((a, r) => a + r.total_service, 0), materiau: rowsN1.reduce((a, r) => a + r.total_materiau, 0) });
 
-      // CA mensuel N
       const map: Record<number, { service: number; materiau: number }> = {};
       for (let m = 1; m <= 12; m++) map[m] = { service: 0, materiau: 0 };
       rows.forEach(r => { const m = new Date(r.date_emission).getMonth() + 1; map[m].service += r.total_service; map[m].materiau += r.total_materiau; });
       setCaMensuel(Object.entries(map).map(([k, v]) => ({ mois: parseInt(k), ...v })));
 
-      // CA mensuel N-1
       const mapN1: Record<number, { service: number; materiau: number }> = {};
       for (let m = 1; m <= 12; m++) mapN1[m] = { service: 0, materiau: 0 };
       rowsN1.forEach(r => { const m = new Date(r.date_emission).getMonth() + 1; mapN1[m].service += r.total_service; mapN1[m].materiau += r.total_materiau; });
       setCaMensuelN1(Object.entries(mapN1).map(([k, v]) => ({ mois: parseInt(k), ...v })));
 
-      // CA par catégorie
       const catMap: Record<string, CATStat> = {};
       (lignesPayees ?? []).forEach((l: any) => {
         const key = l.type_branche;
@@ -158,9 +150,7 @@ export default function CRMPage() {
       });
       setCatStats(Object.values(catMap).sort((a, b) => b.total - a.total));
 
-      // Devis stats
       const dv = devisAll ?? [];
-      const devisDecides = dv.filter(d => d.statut !== "brouillon").length;
       setDevisStats({
         total: dv.length,
         brouillon: dv.filter(d => d.statut === "brouillon").length,
@@ -171,7 +161,6 @@ export default function CRMPage() {
         caSignes: dv.filter(d => d.statut === "signe").reduce((a, d) => a + d.total_ttc, 0),
       });
 
-      // Paiements
       const fa = facsAll ?? [];
       setPaiementStats({
         nbPayees: fa.filter(f => f.statut === "payee").length,
@@ -182,7 +171,6 @@ export default function CRMPage() {
         montantRelance: fa.filter(f => f.statut === "relance").reduce((a, f) => a + f.total_ttc, 0),
       });
 
-      // Top clients
       const clMap: Record<string, { nom: string; prenom?: string; ca: number; nb: number }> = {};
       (topCls ?? []).forEach((f: any) => {
         if (!f.client_id) return;
@@ -195,44 +183,86 @@ export default function CRMPage() {
       setDevisEnAttente(devisAttente ?? []);
       setFacturesImpayees(facsImp ?? []);
 
-      // Commissions apporteurs du mois
       const aps = apporteurs ?? [];
       const pals = (paliersAp ?? []).sort((a: any, b: any) => a.seuil_min - b.seuil_min);
       const facsMoisData = facsMois ?? [];
-
-      // CA par apporteur ce mois
       const caParAp: Record<string, number> = {};
       facsMoisData.forEach((f: any) => {
         if (!f.apporteur_id) return;
         caParAp[f.apporteur_id] = (caParAp[f.apporteur_id] ?? 0) + f.total_ttc;
       });
-
       const commissions: CommissionApporteur[] = [];
       let totalComm = 0;
-
       aps.forEach((ap: any) => {
         const ca = caParAp[ap.id] ?? 0;
         if (ca === 0) return;
-        // Trouver le palier applicable
         const palier = [...pals].reverse().find((p: any) => ca >= p.seuil_min) as any ?? null;
         const pct = palier?.commission_pct ?? 0;
         const comm = Math.round(ca * pct / 100 * 100) / 100;
         totalComm += comm;
         commissions.push({ id: ap.id, nom: ap.nom, entreprise: ap.entreprise, caMois: ca, commissionPct: pct, commissionEur: comm });
       });
-
       setCommissionsApporteurs(commissions.sort((a, b) => b.commissionEur - a.commissionEur));
       setTotalCommissions(totalComm);
-
       setLoading(false);
     }
     load();
   }, [annee, moisCommission]);
 
+  // ── Export comptable CSV ──
+  async function exportComptable() {
+    const moisStr = String(moisExport).padStart(2, "0");
+    const debutMois = `${anneeExport}-${moisStr}-01`;
+    const finMois = new Date(anneeExport, moisExport, 0).toISOString().split("T")[0];
+
+    const { data: facs } = await supabase
+      .from("factures")
+      .select("numero, date_emission, objet, total_service, total_materiau, total_ttc, paye_le, client:clients(nom, prenom)")
+      .eq("statut", "payee")
+      .gte("paye_le", debutMois)
+      .lte("paye_le", finMois)
+      .order("paye_le");
+
+    if (!facs || facs.length === 0) {
+      alert("Aucune facture payée sur cette période.");
+      return;
+    }
+
+    const headers = ["Numéro", "Client", "Date émission", "Date paiement", "Objet", "CA Service (€)", "CA Matériaux (€)", "Total TTC (€)"];
+    const rows = facs.map((f: any) => [
+      f.numero,
+      f.client ? `${f.client.prenom ?? ""} ${f.client.nom}`.trim() : "",
+      f.date_emission,
+      f.paye_le ? f.paye_le.split("T")[0] : "",
+      f.objet ?? "",
+      f.total_service.toFixed(2).replace(".", ","),
+      f.total_materiau.toFixed(2).replace(".", ","),
+      f.total_ttc.toFixed(2).replace(".", ","),
+    ]);
+
+    const totService = facs.reduce((a: number, f: any) => a + f.total_service, 0);
+    const totMateriau = facs.reduce((a: number, f: any) => a + f.total_materiau, 0);
+    const totTTC = facs.reduce((a: number, f: any) => a + f.total_ttc, 0);
+    rows.push(["TOTAL", "", "", "", "", totService.toFixed(2).replace(".", ","), totMateriau.toFixed(2).replace(".", ","), totTTC.toFixed(2).replace(".", ",")]);
+
+    const csv = [
+      `Export comptable — ${MOIS_LONG[moisExport - 1]} ${anneeExport}`,
+      "",
+      headers.join(";"),
+      ...rows.map((r: string[]) => r.map((v: string) => `"${String(v).replace(/"/g, '""')}"`).join(";")),
+    ].join("\n");
+
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `export-comptable-${anneeExport}-${moisStr}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const caTotal = caAnnuel.service + caAnnuel.materiau;
   const caTotalN1 = caAnnuelN1.service + caAnnuelN1.materiau;
-
-  // Calcul rentabilité annuelle
   const cotisService  = caAnnuel.service  * tauxFiscaux.cotis_service  / 100;
   const cotisMatriau  = caAnnuel.materiau * tauxFiscaux.cotis_materiau / 100;
   const irService     = caAnnuel.service  * tauxFiscaux.ir_service     / 100;
@@ -243,13 +273,9 @@ export default function CRMPage() {
   const resultatNet   = caTotal - totalCharges;
   const pctCharges    = caTotal > 0 ? Math.round(totalCharges / caTotal * 100) : 0;
   const pctNet        = caTotal > 0 ? Math.round(resultatNet / caTotal * 100) : 0;
-
   const pctService  = Math.min(100, Math.round(caAnnuel.service / PLAFOND_SERVICE * 100));
   const pctMateriau = Math.min(100, Math.round(caAnnuel.materiau / PLAFOND_MATERIAU * 100));
   const maxMois = Math.max(...caMensuel.map(m => m.service + m.materiau), ...caMensuelN1.map(m => m.service + m.materiau), 1);
-  const MOIS = ["J","F","M","A","M","J","J","A","S","O","N","D"];
-  const MOIS_LONG = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
-
   const devisDecides = devisStats.envoye + devisStats.signe + devisStats.refuse;
   const txConversion = devisDecides > 0 ? Math.round(devisStats.signe / devisDecides * 100) : 0;
   const evol = caTotalN1 > 0 ? Math.round((caTotal - caTotalN1) / caTotalN1 * 100) : null;
@@ -257,18 +283,46 @@ export default function CRMPage() {
   return (
     <Shell>
       <div className="p-4 md:p-8 max-w-5xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
           <div>
             <h1 className="font-display text-3xl text-ink-900">CRM</h1>
             <p className="text-ink-500 text-sm mt-1">Analyse complète de votre activité</p>
           </div>
-          <select className="input !w-auto" value={annee} onChange={e => setAnnee(parseInt(e.target.value))}>
-            {[2024,2025,2026,2027,2028].map(a => <option key={a}>{a}</option>)}
-          </select>
+          <div className="flex items-center gap-2 flex-wrap">
+            <select className="input !w-auto" value={annee} onChange={e => setAnnee(parseInt(e.target.value))}>
+              {[2024,2025,2026,2027,2028].map(a => <option key={a}>{a}</option>)}
+            </select>
+          </div>
         </div>
 
         {loading ? <div className="text-center py-16 text-ink-400">Chargement…</div> : (
           <div className="space-y-5">
+
+            {/* Export comptable */}
+            <div className="card card-inner">
+              <div className="flex items-center gap-2 mb-4">
+                <Download size={18} className="text-volt-600" />
+                <h2 className="font-semibold text-ink-800">Export comptable</h2>
+              </div>
+              <div className="flex items-end gap-3 flex-wrap">
+                <div>
+                  <label className="label">Mois</label>
+                  <select className="input !w-auto" value={moisExport} onChange={e => setMoisExport(parseInt(e.target.value))}>
+                    {MOIS_LONG.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Année</label>
+                  <select className="input !w-auto" value={anneeExport} onChange={e => setAnneeExport(parseInt(e.target.value))}>
+                    {[2024,2025,2026,2027,2028].map(a => <option key={a}>{a}</option>)}
+                  </select>
+                </div>
+                <button onClick={exportComptable} className="btn-volt flex items-center gap-2">
+                  <Download size={15} /> Exporter CSV
+                </button>
+              </div>
+              <p className="text-xs text-ink-400 mt-3">Toutes les factures payées du mois sélectionné · Format compatible déclaration AE (CA service / CA matériaux séparés) · Encodage UTF-8 BOM</p>
+            </div>
 
             {/* KPIs */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -308,15 +362,13 @@ export default function CRMPage() {
                 <Euro size={18} className="text-volt-600" />
                 <h2 className="font-semibold text-ink-800">Rentabilité estimée {annee}</h2>
               </div>
-
               {caTotal === 0 ? (
                 <p className="text-ink-400 text-sm text-center py-6">Aucun CA payé sur cette période</p>
               ) : (
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <div className="flex justify-between text-xs text-ink-500 mb-1">
-                      <span>CA brut</span>
-                      <span className="font-semibold text-ink-900">{fmt(caTotal)}</span>
+                      <span>CA brut</span><span className="font-semibold text-ink-900">{fmt(caTotal)}</span>
                     </div>
                     <div className="h-8 bg-ink-100 rounded-xl overflow-hidden flex">
                       <div className="h-full bg-red-400 flex items-center justify-center text-white text-xs font-semibold transition-all"
@@ -333,7 +385,6 @@ export default function CRMPage() {
                       <span className="flex items-center gap-1.5 text-xs text-ink-500"><span className="w-3 h-3 rounded-sm bg-emerald-500" />Résultat net ({fmt(resultatNet)})</span>
                     </div>
                   </div>
-
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
                     <div className="bg-ink-50 rounded-xl p-4">
                       <p className="text-xs text-ink-400 mb-1">CA brut</p>
@@ -361,7 +412,6 @@ export default function CRMPage() {
                       </div>
                     </div>
                   </div>
-
                   <div className="pt-2 border-t border-ink-100">
                     <p className="text-xs font-semibold text-ink-400 uppercase tracking-wide mb-3">Détail par branche</p>
                     <div className="grid grid-cols-2 gap-3 text-sm">
@@ -400,7 +450,6 @@ export default function CRMPage() {
                   {MOIS_LONG.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
                 </select>
               </div>
-
               {commissionsApporteurs.length === 0 ? (
                 <div className="text-center py-6">
                   <p className="text-ink-400 text-sm">Aucune commission pour {MOIS_LONG[moisCommission - 1]} {annee}</p>
@@ -423,28 +472,16 @@ export default function CRMPage() {
                       </div>
                     </div>
                   ))}
-
                   <div className="flex items-center justify-between pt-3 border-t border-ink-200">
                     <p className="text-sm font-semibold text-ink-700">Total commissions {MOIS_LONG[moisCommission - 1]}</p>
                     <p className="text-lg font-bold text-amber-600">{fmt(totalCommissions)}</p>
                   </div>
-
-                  {/* Impact rentabilité */}
                   <div className="mt-2 p-3 rounded-xl bg-amber-50 border border-amber-200">
                     <p className="text-xs font-semibold text-amber-700 mb-2">Impact sur la rentabilité mensuelle estimée</p>
                     <div className="space-y-1 text-xs text-ink-600">
-                      <div className="flex justify-between">
-                        <span>Résultat net annuel estimé</span>
-                        <span className="font-semibold">{fmt(resultatNet)}</span>
-                      </div>
-                      <div className="flex justify-between text-amber-600">
-                        <span>Commissions {MOIS_LONG[moisCommission - 1]}</span>
-                        <span>− {fmt(totalCommissions)}</span>
-                      </div>
-                      <div className="flex justify-between font-semibold text-emerald-700 pt-1 border-t border-amber-200">
-                        <span>Résultat net après commissions</span>
-                        <span>{fmt(resultatNet - totalCommissions)}</span>
-                      </div>
+                      <div className="flex justify-between"><span>Résultat net annuel estimé</span><span className="font-semibold">{fmt(resultatNet)}</span></div>
+                      <div className="flex justify-between text-amber-600"><span>Commissions {MOIS_LONG[moisCommission - 1]}</span><span>− {fmt(totalCommissions)}</span></div>
+                      <div className="flex justify-between font-semibold text-emerald-700 pt-1 border-t border-amber-200"><span>Résultat net après commissions</span><span>{fmt(resultatNet - totalCommissions)}</span></div>
                     </div>
                   </div>
                 </div>
@@ -474,7 +511,7 @@ export default function CRMPage() {
               </div>
             </div>
 
-            {/* Plafonds AE + CA par type */}
+            {/* Plafonds + CA par type */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <div className="card card-inner">
                 <div className="flex items-center gap-2 mb-4">
