@@ -41,8 +41,18 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
   const [acompteNotes, setAcompteNotes] = useState("");
   const [savingAcompte, setSavingAcompte] = useState(false);
   const [confirmDeleteAcompte, setConfirmDeleteAcompte] = useState<string | null>(null);
+  const [devisAssocie, setDevisAssocie] = useState<{ id: string; numero: string; statut: string } | null>(null);
 
   useEffect(() => {
+    // Chercher le devis associé
+    supabase.from("factures").select("devis_id").eq("id", id).single()
+      .then(({ data: f }) => {
+        if ((f as any)?.devis_id) {
+          supabase.from("devis").select("id, numero, statut").eq("id", (f as any).devis_id).single()
+            .then(({ data: d }) => { if (d) setDevisAssocie(d as any); });
+        }
+      });
+
     Promise.all([
       supabase.from("factures").select("*, client:clients(*), lignes:facture_lignes(*)").eq("id", id).single(),
       supabase.from("apporteurs").select("id,nom,entreprise").eq("actif", true).order("nom"),
@@ -211,6 +221,21 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
           {facture.moyen_paiement && <div><p className="label">Moyen</p><p>{facture.moyen_paiement}</p></div>}
           {facture.remise_fidelite_pct && <div><p className="label">Remise fidélité</p><p className="text-emerald-600 font-semibold">🎁 {facture.remise_fidelite_pct}% service</p></div>}
         </div>
+
+        {devisAssocie && (
+          <div className="card card-inner mb-4 flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-volt-100 flex items-center justify-center shrink-0">
+              <Download size={16} className="text-volt-700" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-ink-400">Devis d'origine</p>
+              <p className="font-semibold text-ink-900 text-sm">{devisAssocie.numero}</p>
+            </div>
+            <Link href={`/devis/${devisAssocie.id}`} className="btn-ghost !px-3 text-xs shrink-0">
+              Voir →
+            </Link>
+          </div>
+        )}
 
         {apporteurs.length > 0 && (
           <div className="card card-inner mb-4">
