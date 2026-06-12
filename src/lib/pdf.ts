@@ -11,14 +11,15 @@ interface Acompte {
   created_at: string;
 }
 
-export async function genPDFDevis(devis: Devis, profil: Profil, sigData?: string) {
+// ── Constructeur interne partagé ─────────────────────────────────────────────
+
+async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
   const M = 18;
 
-  // Header bar
   doc.setFillColor(28, 25, 23);
   doc.rect(0, 0, W, 38, "F");
   doc.setFont("helvetica", "bold");
@@ -45,7 +46,6 @@ export async function genPDFDevis(devis: Devis, profil: Profil, sigData?: string
     doc.text(l, W - M, 13 + i * 5.5, { align: "right" });
   });
 
-  // Client block
   doc.setFillColor(245, 245, 244);
   doc.rect(M, 44, 80, 28, "F");
   doc.setFont("helvetica", "bold");
@@ -74,7 +74,6 @@ export async function genPDFDevis(devis: Devis, profil: Profil, sigData?: string
     doc.text(devis.objet, W / 2 + 4, 58);
   }
 
-  // Table
   const lignes = devis.lignes ?? [];
   autoTable(doc, {
     startY: 80,
@@ -160,10 +159,10 @@ export async function genPDFDevis(devis: Devis, profil: Profil, sigData?: string
   doc.setTextColor(120, 113, 108);
   doc.text(profil.conditions_paiement ?? "", W / 2, pH - 4, { align: "center" });
 
-  doc.save(`Devis-${devis.numero}.pdf`);
+  return doc;
 }
 
-export async function genPDFFacture(facture: Facture, profil: Profil, acomptes: Acompte[] = []) {
+async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acompte[] = []) {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
   const doc = new jsPDF({ unit: "mm", format: "a4" });
@@ -244,8 +243,6 @@ export async function genPDFFacture(facture: Facture, profil: Profil, acomptes: 
   if (remiseM > 0.01) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
   if (remiseFideliteEur > 0.01) lignesTotal.push({ label: `Remise fidélité ${facture.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
   lignesTotal.push({ label: "Total TTC :", value: fmt(facture.total_ttc), bold: true, color: [251, 191, 36] });
-
-  // Acomptes
   if (acomptes.length > 0) {
     acomptes.forEach((ac, i) => {
       lignesTotal.push({
@@ -290,5 +287,27 @@ export async function genPDFFacture(facture: Facture, profil: Profil, acomptes: 
   doc.setTextColor(120, 113, 108);
   doc.text(profil.conditions_paiement ?? "", W / 2, pH - 4, { align: "center" });
 
+  return doc;
+}
+
+// ── API publique ─────────────────────────────────────────────────────────────
+
+export async function genPDFDevis(devis: Devis, profil: Profil, sigData?: string) {
+  const doc = await buildDevisDoc(devis, profil, sigData);
+  doc.save(`Devis-${devis.numero}.pdf`);
+}
+
+export async function genPDFDevisBlob(devis: Devis, profil: Profil, sigData?: string): Promise<Blob> {
+  const doc = await buildDevisDoc(devis, profil, sigData);
+  return doc.output("blob");
+}
+
+export async function genPDFFacture(facture: Facture, profil: Profil, acomptes: Acompte[] = []) {
+  const doc = await buildFactureDoc(facture, profil, acomptes);
   doc.save(`Facture-${facture.numero}.pdf`);
+}
+
+export async function genPDFFactureBlob(facture: Facture, profil: Profil, acomptes: Acompte[] = []): Promise<Blob> {
+  const doc = await buildFactureDoc(facture, profil, acomptes);
+  return doc.output("blob");
 }
