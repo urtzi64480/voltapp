@@ -39,7 +39,6 @@ function calcRemise(total: number, type: RemiseType, val: string): number {
   return Math.min(total, v);
 }
 
-// ── Composants HORS parent ──
 function RemiseLine({ label, type, val, onType, onVal, base }: {
   label: string; type: RemiseType; val: string;
   onType: (t: RemiseType) => void; onVal: (v: string) => void; base: number;
@@ -93,12 +92,12 @@ function NouveauDevisPage() {
 
   useEffect(() => {
     Promise.all([
-      supabase.from("clients").select("*").order("nom"),
+      supabase.from("clients").select("id, nom, prenom, email, telephone, adresse, code_postal, ville, statut, tableau_marque, code_acces").order("nom"),
       supabase.from("prestations").select("*").eq("actif", true).order("categorie").order("nom"),
       supabase.from("paliers_fidelite").select("*").order("seuil_min"),
       supabase.from("apporteurs").select("id,nom,entreprise").eq("actif", true).order("nom"),
     ]).then(([{ data: cls }, { data: pre }, { data: pal }, { data: ap }]) => {
-      setClients(cls ?? []);
+      setClients((cls ?? []) as any);
       setPrestations(pre ?? []);
       setPaliers(pal ?? []);
       setApporteurs(ap ?? []);
@@ -271,13 +270,12 @@ function NouveauDevisPage() {
                     {selectedClient && (
                       <div className="mt-2 text-xs text-ink-500 space-y-0.5">
                         {selectedClient.adresse && <p>📍 {selectedClient.adresse} {selectedClient.ville}</p>}
-                        {selectedClient.tableau_marque && <p>⚡ Tableau : {selectedClient.tableau_marque} {selectedClient.tableau_config}</p>}
+                        {selectedClient.tableau_marque && <p>⚡ Tableau : {selectedClient.tableau_marque}</p>}
                         {selectedClient.code_acces && <p>🔑 {selectedClient.code_acces}</p>}
                       </div>
                     )}
                   </div>
 
-                  {/* Apporteur d'affaires — interne uniquement */}
                   {apporteurs.length > 0 && (
                     <div>
                       <label className="label">Apporteur d'affaires <span className="text-ink-300 font-normal">(usage interne)</span></label>
@@ -290,7 +288,6 @@ function NouveauDevisPage() {
                     </div>
                   )}
 
-                  {/* Bandeau remise fidélité */}
                   {palierActuelClient && lignes.length > 0 && totServiceApresRemise > 0 && (
                     <div className={cn(
                       "rounded-xl border px-3 py-2.5 text-sm transition-all",
