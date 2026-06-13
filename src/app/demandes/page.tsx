@@ -273,7 +273,7 @@ export default function DemandesPage() {
 
         {/* Confirm delete */}
         {confirmDelete && selected && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
             <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
               <h3 className="font-semibold text-ink-900 text-lg mb-2">Supprimer cette demande ?</h3>
               <p className="text-sm text-ink-500 mb-5">Les photos associées seront également supprimées.</p>
