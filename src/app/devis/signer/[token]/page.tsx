@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { Check, RotateCcw, PenLine } from "lucide-react";
+import { Check, RotateCcw, PenLine, Download } from "lucide-react";
 
 function fmt(n: number) { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n); }
 
@@ -12,6 +12,7 @@ export default function SignerPage({ params }: { params: { token: string } }) {
   const [error, setError] = useState("");
   const [signed, setSigned] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
   const last = useRef({ x: 0, y: 0 });
@@ -29,13 +30,13 @@ export default function SignerPage({ params }: { params: { token: string } }) {
       if (data.signature_token_expires_at && new Date(data.signature_token_expires_at) < new Date()) {
         setError("Ce lien a expiré."); return;
       }
-      if (data.statut === "signe") { setSigned(true); setDevis(data); return; }
-
-      setDevis(data);
 
       // Charge le profil via user_id du devis
       const { data: p } = await supabase.from("profil").select("*").eq("id", data.user_id).single();
       setProfil(p);
+
+      if (data.statut === "signe") { setSigned(true); setDevis(data); return; }
+      setDevis(data);
     }
     load();
   }, [token]);
@@ -83,8 +84,34 @@ export default function SignerPage({ params }: { params: { token: string } }) {
       signature_token: null,
       signature_token_expires_at: null,
     }).eq("signature_token", token);
+    // Recharger le devis avec la signature pour le PDF
+    const { data } = await supabase
+      .from("devis")
+      .select("*, client:clients(*), lignes:devis_lignes(*)")
+      .eq("id", devis.id)
+      .single();
+    if (data) setDevis(data);
     setSigned(true);
     setSaving(false);
+  }
+
+  async function telechargerPDF() {
+    if (!devis || !profil) return;
+    setDownloading(true);
+    try {
+      const { genPDFDevis } = await import("@/lib/pdf");
+      const profilFallback = profil ?? {
+        id: devis.user_id, prefixe_devis: "DEV", prefixe_facture: "FAC",
+        compteur_devis: 0, compteur_facture: 0,
+        mention_tva: "TVA non applicable — Art. 293 B du CGI",
+        conditions_paiement: "Paiement à réception", taux_horaire: 55,
+        created_at: "", updated_at: "",
+      };
+      await genPDFDevis(devis, profilFallback);
+    } catch (e) {
+      console.error("Erreur PDF:", e);
+    }
+    setDownloading(false);
   }
 
   if (error) return (
@@ -109,8 +136,19 @@ export default function SignerPage({ params }: { params: { token: string } }) {
         <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">
           <Check size={32} className="text-emerald-600" />
         </div>
-        <p className="font-semibold text-gray-800 text-lg mb-2">Devis signé !</p>
-        <p className="text-sm text-gray-500">Le devis <strong>{devis.numero}</strong> a bien été signé. Vous pouvez fermer cette page.</p>
+        <p className="font-semibold text-gray-800 text-lg mb-1">Devis signé !</p>
+        <p className="text-sm text-gray-500 mb-6">
+          Le devis <strong>{devis.numero}</strong> a bien été signé.
+          Vous pouvez télécharger votre exemplaire ci-dessous.
+        </p>
+        <button
+          onClick={telechargerPDF}
+          disabled={downloading}
+          className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gray-900 text-amber-400 text-sm font-bold hover:bg-gray-800 disabled:opacity-50 transition-colors">
+          <Download size={16} />
+          {downloading ? "Génération…" : "Télécharger le devis signé"}
+        </button>
+        <p className="text-xs text-gray-400 mt-3">Vous pouvez fermer cette page après téléchargement.</p>
       </div>
     </div>
   );
