@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, Users, FileText, BookOpen,
-  TrendingUp, Settings, Zap, Menu, X, Receipt, CalendarDays, AlertTriangle,
+  TrendingUp, Settings, Zap, Menu, X, Receipt, CalendarDays, AlertTriangle, ClipboardList,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,7 @@ import { supabase } from "@/lib/supabase";
 const NAV = [
   { href: "/dashboard",  label: "Dashboard",  icon: LayoutDashboard },
   { href: "/clients",    label: "Clients",     icon: Users },
+  { href: "/demandes",   label: "Demandes",    icon: ClipboardList },
   { href: "/devis",      label: "Devis",       icon: FileText },
   { href: "/planning",   label: "Planning",    icon: CalendarDays },
   { href: "/factures",   label: "Factures",    icon: Receipt },
