@@ -19,14 +19,12 @@ type CircuitCategory = "lumiere" | "prises";
 interface GroupeLumineux {
   nbPoints: number;
   typeCommande: CommandeType;
-  nbCommandes: number; // nb V&V ou nb BP télérupteur
+  nbCommandes: number;
 }
 
 interface PieceConfig {
   nom: string;
-  // lumiere
   groupes: GroupeLumineux[];
-  // prises
   nbPrises: number;
 }
 
@@ -35,14 +33,14 @@ interface Breaker {
   label: string;
   circuit: string;
   amperes: number;
-  type: string; // "diff-AC" | "diff-A" | "diff-F" | "1P" | "2P"
+  type: string;
   pieces: PieceConfig[];
 }
 
 interface BreakerRow {
   id: number;
   name: string;
-  slots: (Breaker | null)[]; // slot 0 = diff, slots 1-8 = breakers
+  slots: (Breaker | null)[];
 }
 
 // ─── NFC 15-100 CONSTANTS ─────────────────────────────────────────────────────
@@ -84,12 +82,10 @@ const CIRCUITS: Record<string, {
   autre:           { label: "Autre",            icon: "⚙️", ampMax: 32, dedié: false, diffType: "AC", section: "2.5", category: null },
 };
 
-// Diamètres extérieurs câbles (mm) — valeurs fabricants typ.
 const CABLE_DIAM_MM: Record<string, number> = {
   "1.5": 6.8, "2.5": 7.8, "4.0": 9.0, "6.0": 10.5, "10.0": 13.0,
 };
 
-// Gaines IRL (diamètre intérieur utile mm) — NF C 15-100 art. 529.1
 const GAINES_IRL = [
   { label: "IRL 16", diamInt: 12.2 },
   { label: "IRL 20", diamInt: 15.8 },
@@ -113,16 +109,15 @@ function gaineRecommandee(sections: string[]): { gaine: string; tauxPct: number;
   return { gaine: last.label + " (insuffisant)", tauxPct: Math.round((totalSection / sectionInt) * 100), ok: false };
 }
 
-// Câbles pour un groupe lumineux (Ph+N+PE + fils de commande)
 function cablesGroupe(groupe: GroupeLumineux, section: string): string[] {
-  const cables: string[] = [section, section, section]; // Ph + N + PE
+  const cables: string[] = [section, section, section];
   if (groupe.typeCommande === "simple") {
-    cables.push("1.5"); // retour lampe
+    cables.push("1.5");
   } else if (groupe.typeCommande === "vav") {
-    cables.push("1.5", "1.5"); // 2 navettes
+    cables.push("1.5", "1.5");
   } else {
-    for (let i = 0; i < groupe.nbCommandes; i++) cables.push("1.5"); // navettes BP
-    cables.push("1.5"); // retour
+    for (let i = 0; i < groupe.nbCommandes; i++) cables.push("1.5");
+    cables.push("1.5");
   }
   return cables;
 }
@@ -146,23 +141,9 @@ const BREAKER_H = 130;
 let _id = 0;
 const uid = () => ++_id;
 
-const defaultGroupe = (): GroupeLumineux => ({
-  nbPoints: 1,
-  typeCommande: "simple",
-  nbCommandes: 1,
-});
-
-const defaultPiece = (): PieceConfig => ({
-  nom: "",
-  groupes: [defaultGroupe()],
-  nbPrises: 1,
-});
-
-const emptyRow = (rowNum: number): BreakerRow => ({
-  id: uid(),
-  name: `Rangée ${rowNum}`,
-  slots: Array(9).fill(null),
-});
+const defaultGroupe = (): GroupeLumineux => ({ nbPoints: 1, typeCommande: "simple", nbCommandes: 1 });
+const defaultPiece = (): PieceConfig => ({ nom: "", groupes: [defaultGroupe()], nbPrises: 1 });
+const emptyRow = (rowNum: number): BreakerRow => ({ id: uid(), name: `Rangée ${rowNum}`, slots: Array(9).fill(null) });
 
 function safeBreakers(slots: (Breaker | null)[] | undefined): Breaker[] {
   if (!Array.isArray(slots)) return [];
@@ -190,6 +171,8 @@ function checkNFC(rows: BreakerRow[]) {
   const allBreakers = rows.flatMap(r => safeBreakers(r.slots));
   const diffs = allBreakers.filter(b => !!BREAKER_TYPES[b.type]?.isDiff);
 
+  // ── ERREURS : sécurité électrique ──
+
   if (diffs.length === 0) {
     errors.push({ id: "no-diff", msg: "Aucun différentiel 30mA détecté. Minimum 2 obligatoires.", rule: "Art. 531.2" });
   } else if (diffs.length === 1) {
@@ -209,19 +192,112 @@ function checkNFC(rows: BreakerRow[]) {
     breakers.forEach(b => {
       const spec = CIRCUITS[b.circuit];
       if (!spec) return;
+      const lbl = b.label || spec.label;
+
+      // Calibre > max du circuit → ERREUR
       if (spec.ampMax && b.amperes > spec.ampMax) {
-        errors.push({ id: `amp-${b.id}`, msg: `"${b.label || spec.label}" : ${b.amperes}A dépasse le max autorisé (${spec.ampMax}A).`, rule: "NFC §533" });
+        errors.push({ id: `amp-${b.id}`, msg: `"${lbl}" : ${b.amperes}A dépasse le max autorisé (${spec.ampMax}A).`, rule: "NFC §533" });
       }
+
+      // Absence différentiel → ERREUR
       if (!diff) {
-        errors.push({ id: `nodiff-${b.id}`, msg: `"${b.label || spec.label}" : aucun différentiel en amont.`, rule: "Art. 531.2" });
+        errors.push({ id: `nodiff-${b.id}`, msg: `"${lbl}" : aucun différentiel en amont.`, rule: "Art. 531.2" });
       } else if (spec.diffType) {
         const covType = BREAKER_TYPES[diff.type]?.diffType;
         if (covType && (DIFF_HIERARCHY[covType] ?? -1) < (DIFF_HIERARCHY[spec.diffType] ?? -1)) {
-          errors.push({ id: `difftype-${b.id}`, msg: `"${b.label || spec.label}" : nécessite diff. Type ${spec.diffType}, protégé par Type ${covType}.`, rule: "NFC §531.2" });
+          errors.push({ id: `difftype-${b.id}`, msg: `"${lbl}" : nécessite diff. Type ${spec.diffType}, protégé par Type ${covType}.`, rule: "NFC §531.2" });
+        }
+      }
+
+      // ── AVERTISSEMENTS : non-conformités pratiques ──
+
+      // Section câble incompatible avec le calibre (NFC §523)
+      if (spec.section) {
+        const section = parseFloat(spec.section);
+        const maxAmpSection =
+          section <= 1.5 ? 10 :
+          section <= 2.5 ? 20 :
+          section <= 4.0 ? 25 :
+          section <= 6.0 ? 32 : 63;
+        if (b.amperes > maxAmpSection) {
+          warnings.push({
+            id: `section-${b.id}`,
+            msg: `"${lbl}" : section ${spec.section}mm² insuffisante pour ${b.amperes}A (max ${maxAmpSection}A sur cette section NFC §523).`,
+            rule: "NFC §523",
+          });
+        }
+      }
+
+      // Calibre trop faible pour le type de circuit
+      const calibreMin: Record<string, number> = {
+        prise_16: 16, prise_20: 20, cuisine_prises: 20,
+        plaque: 32, four: 20, lave_linge: 20, lave_vaisselle: 20,
+        seche_linge: 20, chauffe_eau: 20, chauffage: 20,
+        clim: 20, seche_serviette: 16, congelateur: 20,
+        irve: 32, piscine: 20, vmc: 10, alarme: 6,
+        exterieur: 16, garage: 16,
+      };
+      const minReq = calibreMin[b.circuit];
+      if (minReq && b.amperes < minReq) {
+        warnings.push({
+          id: `calibremin-${b.id}`,
+          msg: `"${lbl}" : calibre ${b.amperes}A insuffisant pour ce circuit (min recommandé ${minReq}A).`,
+          rule: "NFC §533",
+        });
+      }
+
+      // Lumière > 10A
+      if (b.circuit === "lumiere" && b.amperes > 10) {
+        warnings.push({
+          id: `lum-amp-${b.id}`,
+          msg: `"${lbl}" : circuit lumière à ${b.amperes}A — NFC recommande 10A max sur 1.5mm².`,
+          rule: "NFC §533",
+        });
+      }
+
+      // Nombre de socles max par circuit (NFC art. 771.314)
+      const totalPrises = b.pieces.reduce((s, p) => s + (p.nbPrises ?? 0), 0);
+      if (totalPrises > 0) {
+        if ((b.circuit === "prise_16" || b.circuit === "exterieur" || b.circuit === "garage") && totalPrises > 8) {
+          warnings.push({
+            id: `socles16-${b.id}`,
+            msg: `"${lbl}" : ${totalPrises} socles détectés — max 8 par circuit 16A.`,
+            rule: "Art. 771.314",
+          });
+        }
+        if ((b.circuit === "cuisine_prises" || b.circuit === "prise_20") && totalPrises > 6) {
+          warnings.push({
+            id: `socles20-${b.id}`,
+            msg: `"${lbl}" : ${totalPrises} socles détectés — max 6 par circuit 20A cuisine.`,
+            rule: "Art. 771.314.2",
+          });
+        }
+      }
+
+      // Circuit dédié sur plusieurs pièces
+      if (spec.dedié && b.pieces.length > 1) {
+        warnings.push({
+          id: `dedie-${b.id}`,
+          msg: `"${lbl}" : circuit dédié configuré sur ${b.pieces.length} pièces — vérifier si réellement dédié.`,
+          rule: "Art. 771.314",
+        });
+      }
+
+      // Points lumineux : vérifier cohérence nb points vs calibre 10A
+      if (b.circuit === "lumiere") {
+        const totalPoints = b.pieces.flatMap(p => p.groupes).reduce((s, g) => s + g.nbPoints, 0);
+        if (totalPoints > 8 && b.amperes <= 10) {
+          warnings.push({
+            id: `lumpts-${b.id}`,
+            msg: `"${lbl}" : ${totalPoints} points lumineux sur un seul circuit 10A — envisager un second circuit.`,
+            rule: "Art. 771.312",
+          });
         }
       }
     });
   });
+
+  // ── INFOS : recommandations générales ──
 
   if (!allBreakers.some(b => b.circuit === "parafoudre")) {
     infos.push({ id: "parafoudre", msg: "Parafoudre non détecté. Obligatoire NFC 15-100 (2024).", rule: "§443" });
@@ -231,6 +307,17 @@ function checkNFC(rows: BreakerRow[]) {
   const found = specialTypes.filter(t => allBreakers.some(b => b.circuit === t)).length;
   if (found < 4) {
     infos.push({ id: "spec", msg: `${found} circuit(s) spécialisé(s) sur 5 recommandés.`, rule: "Art. 771.314.2" });
+  }
+
+  // Pas de circuit lumière du tout
+  if (!allBreakers.some(b => b.circuit === "lumiere")) {
+    infos.push({ id: "no-lumiere", msg: "Aucun circuit lumière détecté.", rule: "Art. 771.312" });
+  }
+
+  // Pas de circuit prises du tout
+  const hasPrises = allBreakers.some(b => ["prise_16","prise_20","cuisine_prises"].includes(b.circuit));
+  if (!hasPrises) {
+    infos.push({ id: "no-prises", msg: "Aucun circuit prises détecté.", rule: "Art. 771.314" });
   }
 
   const score = Math.max(0, Math.round(100 - errors.length * 15 - warnings.length * 5 - infos.length * 2));
@@ -354,9 +441,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
   const spec = CIRCUITS[breaker.circuit];
   const category = getCategory(breaker.circuit);
 
-  const [piecesText, setPiecesText] = useState(
-    breaker.pieces.map(p => p.nom).join(" · ")
-  );
+  const [piecesText, setPiecesText] = useState(breaker.pieces.map(p => p.nom).join(" · "));
 
   const handlePiecesTextChange = (val: string) => {
     setPiecesText(val);
@@ -369,34 +454,34 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
   };
 
   const updatePiece = (pi: number, patch: Partial<PieceConfig>) => {
-    const newPieces = breaker.pieces.map((p, i) => i === pi ? { ...p, ...patch } : p);
-    onUpdate({ ...breaker, pieces: newPieces });
+    onUpdate({ ...breaker, pieces: breaker.pieces.map((p, i) => i === pi ? { ...p, ...patch } : p) });
   };
 
   const updateGroupe = (pi: number, gi: number, patch: Partial<GroupeLumineux>) => {
-    const newPieces = breaker.pieces.map((p, i) => {
-      if (i !== pi) return p;
-      const newGroupes = p.groupes.map((g, j) => j === gi ? { ...g, ...patch } : g);
-      return { ...p, groupes: newGroupes };
+    onUpdate({
+      ...breaker,
+      pieces: breaker.pieces.map((p, i) => i !== pi ? p : {
+        ...p, groupes: p.groupes.map((g, j) => j === gi ? { ...g, ...patch } : g),
+      }),
     });
-    onUpdate({ ...breaker, pieces: newPieces });
   };
 
   const addGroupe = (pi: number) => {
-    const newPieces = breaker.pieces.map((p, i) => {
-      if (i !== pi) return p;
-      return { ...p, groupes: [...p.groupes, defaultGroupe()] };
+    onUpdate({
+      ...breaker,
+      pieces: breaker.pieces.map((p, i) => i !== pi ? p : { ...p, groupes: [...p.groupes, defaultGroupe()] }),
     });
-    onUpdate({ ...breaker, pieces: newPieces });
   };
 
   const removeGroupe = (pi: number, gi: number) => {
-    const newPieces = breaker.pieces.map((p, i) => {
-      if (i !== pi) return p;
-      const newGroupes = p.groupes.filter((_, j) => j !== gi);
-      return { ...p, groupes: newGroupes.length > 0 ? newGroupes : [defaultGroupe()] };
+    onUpdate({
+      ...breaker,
+      pieces: breaker.pieces.map((p, i) => {
+        if (i !== pi) return p;
+        const newGroupes = p.groupes.filter((_, j) => j !== gi);
+        return { ...p, groupes: newGroupes.length > 0 ? newGroupes : [defaultGroupe()] };
+      }),
     });
-    onUpdate({ ...breaker, pieces: newPieces });
   };
 
   return (
@@ -416,8 +501,6 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
         </div>
 
         <div className="p-4 flex flex-col gap-4">
-
-          {/* Libellé */}
           <div>
             <label className="label">Libellé (étiquette)</label>
             <input className="input" placeholder="Ex: Éclairage RDC, Prises séjour…"
@@ -425,7 +508,6 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
               onChange={e => onUpdate({ ...breaker, label: e.target.value })} />
           </div>
 
-          {/* Type */}
           <div>
             <label className="label">Type</label>
             <select className="input" value={breaker.type}
@@ -438,7 +520,6 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
 
           {!isDiff && (
             <>
-              {/* Circuit */}
               <div>
                 <label className="label">Circuit</label>
                 <select className="input" value={breaker.circuit}
@@ -449,7 +530,6 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                 </select>
               </div>
 
-              {/* Calibre */}
               <div>
                 <label className="label">Calibre</label>
                 <div className="flex flex-wrap gap-2">
@@ -464,7 +544,6 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                 </div>
               </div>
 
-              {/* NFC hint */}
               {spec && (
                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-700 font-mono leading-relaxed">
                   📋 NFC 15-100 — Max {spec.ampMax}A · Section {spec.section}mm²
@@ -472,7 +551,6 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                 </div>
               )}
 
-              {/* Pièces */}
               {category && (
                 <div className="flex flex-col gap-3">
                   <div>
@@ -488,7 +566,6 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                     <div className="flex flex-col gap-3">
                       {breaker.pieces.map((piece, pi) => (
                         <div key={pi} className="border border-ink-200 rounded-xl overflow-hidden">
-                          {/* Pièce header */}
                           <div className="px-3 py-2 bg-ink-100 flex items-center gap-2">
                             <span className="text-sm">{category === "lumiere" ? "💡" : "🔌"}</span>
                             <span className="text-xs font-bold text-ink-700 font-mono">{piece.nom || `Pièce ${pi + 1}`}</span>
@@ -499,35 +576,25 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                               <>
                                 {piece.groupes.map((groupe, gi) => (
                                   <div key={gi} className="border border-ink-200 rounded-lg p-2.5 flex flex-col gap-2 bg-white">
-                                    {/* Groupe header */}
                                     <div className="flex items-center justify-between">
-                                      <span className="text-[10px] font-bold text-ink-400 uppercase tracking-wide font-mono">
-                                        Groupe {gi + 1}
-                                      </span>
+                                      <span className="text-[10px] font-bold text-ink-400 uppercase tracking-wide font-mono">Groupe {gi + 1}</span>
                                       {piece.groupes.length > 1 && (
-                                        <button onClick={() => removeGroupe(pi, gi)}
-                                          className="text-ink-300 hover:text-red-400 transition-colors">
+                                        <button onClick={() => removeGroupe(pi, gi)} className="text-ink-300 hover:text-red-400 transition-colors">
                                           <Trash2 size={11} />
                                         </button>
                                       )}
                                     </div>
-
-                                    {/* Nb points lumineux */}
                                     <div className="flex items-center gap-2">
                                       <span className="text-xs text-ink-500 w-28 shrink-0">Points lumineux</span>
                                       <div className="flex gap-1 flex-wrap">
                                         {[1,2,3,4,5,6].map(n => (
                                           <button key={n} onClick={() => updateGroupe(pi, gi, { nbPoints: n })}
                                             className={`w-7 h-7 rounded-md text-xs font-bold border transition-all ${
-                                              groupe.nbPoints === n
-                                                ? "bg-amber-400 text-ink-900 border-amber-500"
-                                                : "bg-white text-ink-500 border-ink-200 hover:border-ink-400"
+                                              groupe.nbPoints === n ? "bg-amber-400 text-ink-900 border-amber-500" : "bg-white text-ink-500 border-ink-200 hover:border-ink-400"
                                             }`}>{n}</button>
                                         ))}
                                       </div>
                                     </div>
-
-                                    {/* Type de commande */}
                                     <div className="flex items-center gap-2">
                                       <span className="text-xs text-ink-500 w-28 shrink-0">Commande</span>
                                       <div className="flex gap-1">
@@ -535,15 +602,11 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                                           <button key={v}
                                             onClick={() => updateGroupe(pi, gi, { typeCommande: v, nbCommandes: v === "vav" ? 2 : 1 })}
                                             className={`px-2 py-1 rounded-md text-xs font-semibold border transition-all ${
-                                              groupe.typeCommande === v
-                                                ? "bg-emerald-700 text-white border-emerald-800"
-                                                : "bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                                              groupe.typeCommande === v ? "bg-emerald-700 text-white border-emerald-800" : "bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50"
                                             }`}>{l}</button>
                                         ))}
                                       </div>
                                     </div>
-
-                                    {/* Nb commandes (V&V ou BP) */}
                                     {groupe.typeCommande !== "simple" && (
                                       <div className="flex items-center gap-2">
                                         <span className="text-xs text-ink-500 w-28 shrink-0">
@@ -553,9 +616,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                                           {(groupe.typeCommande === "vav" ? [2,3] : [1,2,3,4,5]).map(n => (
                                             <button key={n} onClick={() => updateGroupe(pi, gi, { nbCommandes: n })}
                                               className={`w-7 h-7 rounded-md text-xs font-bold border transition-all ${
-                                                groupe.nbCommandes === n
-                                                  ? "bg-orange-500 text-white border-orange-600"
-                                                  : "bg-white text-ink-500 border-ink-200 hover:border-ink-400"
+                                                groupe.nbCommandes === n ? "bg-orange-500 text-white border-orange-600" : "bg-white text-ink-500 border-ink-200 hover:border-ink-400"
                                               }`}>{n}</button>
                                           ))}
                                         </div>
@@ -563,8 +624,6 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                                     )}
                                   </div>
                                 ))}
-
-                                {/* Ajouter groupe */}
                                 <button onClick={() => addGroupe(pi)}
                                   className="flex items-center gap-1.5 text-xs text-volt-600 hover:text-volt-700 font-semibold transition-colors">
                                   <Plus size={12} /> Ajouter un groupe de points lumineux
@@ -579,9 +638,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                                   {[1,2,3,4,5,6,8,10].map(n => (
                                     <button key={n} onClick={() => updatePiece(pi, { nbPrises: n })}
                                       className={`w-7 h-7 rounded-md text-xs font-bold border transition-all ${
-                                        piece.nbPrises === n
-                                          ? "bg-volt-400 text-ink-900 border-volt-500"
-                                          : "bg-white text-ink-500 border-ink-200 hover:border-ink-400"
+                                        piece.nbPrises === n ? "bg-volt-400 text-ink-900 border-volt-500" : "bg-white text-ink-500 border-ink-200 hover:border-ink-400"
                                       }`}>{n}</button>
                                   ))}
                                 </div>
@@ -599,17 +656,13 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
         </div>
 
         <div className="flex gap-2 p-4 border-t border-ink-200">
-          <button onClick={onClose} className="btn-primary flex-1">
-            <Save size={14} /> Valider
-          </button>
+          <button onClick={onClose} className="btn-primary flex-1"><Save size={14} /> Valider</button>
           {!hasError && !isDiff && (
             <button onClick={() => { onClose(); onShowSchema(breaker); }} className="btn-ghost">
               <Zap size={14} /> Schéma
             </button>
           )}
-          <button onClick={onRemove} className="btn-danger !px-3">
-            <Trash2 size={14} />
-          </button>
+          <button onClick={onRemove} className="btn-danger !px-3"><Trash2 size={14} /></button>
         </div>
       </div>
     </div>
@@ -678,49 +731,34 @@ function CompliancePanel({ result, onClose }: { result: ReturnType<typeof checkN
 // ─── CIRCUIT SCHEMA MODAL ─────────────────────────────────────────────────────
 
 const CABLE_COLORS = {
-  phase:   "#DC2626",
-  neutre:  "#2563EB",
-  terre:   "#16A34A",
-  retour:  "#7C3AED",
-  navette: "#EA580C",
+  phase: "#DC2626", neutre: "#2563EB", terre: "#16A34A", retour: "#7C3AED", navette: "#EA580C",
 };
 
 function CircuitSchema({ breaker, rowBreakers, onClose }: {
-  breaker: Breaker;
-  rowBreakers: (Breaker | null)[];
-  onClose: () => void;
+  breaker: Breaker; rowBreakers: (Breaker | null)[]; onClose: () => void;
 }) {
   const [tab, setTab] = useState<"unifilaire" | "gaines">("unifilaire");
-
   const spec    = CIRCUITS[breaker.circuit];
   const circuit = spec || CIRCUITS.autre;
   const isLight = breaker.circuit === "lumiere";
   const isPrise = ["prise_16","prise_20","cuisine_prises","exterieur","garage"].includes(breaker.circuit);
   const diff    = rowBreakers[0] as Breaker | null;
   const section = spec?.section ?? "2.5";
-
-  // For unifilaire: use first piece / first group
   const firstPiece  = breaker.pieces[0];
   const firstGroupe = firstPiece?.groupes?.[0];
   const switchType  = firstGroupe?.typeCommande ?? "simple";
   const switchCount = firstGroupe?.nbCommandes ?? 1;
   const lampCount   = firstGroupe?.nbPoints ?? 1;
 
-  // ── GAINES DATA ──
   interface GaineGroup {
-    nom: string;
-    cables: string[];
-    lignes: string[]; // détail lisible
-    boiteDerivation: boolean;
-    raisonBoite: string;
+    nom: string; cables: string[]; lignes: string[];
+    boiteDerivation: boolean; raisonBoite: string;
   }
 
   const gainesData = useMemo((): GaineGroup[] => {
     if (breaker.pieces.length === 0) return [];
     const groups: GaineGroup[] = [];
-
     if (isLight) {
-      // Si plusieurs pièces : gaine commune tableau → boîte centrale
       if (breaker.pieces.length > 1) {
         groups.push({
           nom: "Tableau → Boîte de dérivation principale",
@@ -730,46 +768,35 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
           raisonBoite: `${breaker.pieces.length} pièces desservies — 1 boîte centrale réduit le câblage depuis le tableau`,
         });
       }
-
-      // Une gaine par pièce
       breaker.pieces.forEach(piece => {
         const totalGroupes = piece.groupes.length;
         const totalPoints = piece.groupes.reduce((s, g) => s + g.nbPoints, 0);
         const allCables: string[] = totalGroupes > 1 ? cablesPrises(section) : [];
         const lignes: string[] = totalGroupes > 1 ? [`Ph/N/PE ${section}mm² — tronc commun`] : [];
-
         piece.groupes.forEach((groupe, gi) => {
           const cablesG = cablesGroupe(groupe, totalGroupes > 1 ? "1.5" : section);
           allCables.push(...cablesG);
           lignes.push(
             `Groupe ${gi + 1} — ${groupe.nbPoints} pt${groupe.nbPoints > 1 ? "s" : ""} · ${labelCommande(groupe)}`
-            + ` → Ph/N${totalGroupes > 1 ? "" : `/PE ${section}mm²`} + ${
-              groupe.typeCommande === "simple" ? "Retour 1.5mm²"
-              : groupe.typeCommande === "vav" ? "2× Navette 1.5mm²"
-              : `${groupe.nbCommandes}× Navette + Retour 1.5mm²`
+            + ` → ${
+              groupe.typeCommande === "simple" ? "Ph/N/PE + Retour 1.5mm²"
+              : groupe.typeCommande === "vav" ? "Ph/N/PE + 2× Navette 1.5mm²"
+              : `Ph/N/PE + ${groupe.nbCommandes}× Navette + Retour 1.5mm²`
             }`
           );
         });
-
-        const nomGaine = breaker.pieces.length > 1
-          ? `Boîte → ${piece.nom || "Pièce"}`
-          : `Tableau → ${piece.nom || "Pièce"}`;
-
         const needsBoite = totalPoints > 1 || totalGroupes > 1;
         groups.push({
-          nom: nomGaine,
+          nom: breaker.pieces.length > 1 ? `Boîte → ${piece.nom || "Pièce"}` : `Tableau → ${piece.nom || "Pièce"}`,
           cables: allCables,
           lignes,
           boiteDerivation: needsBoite,
           raisonBoite: totalGroupes > 1
-            ? `${totalGroupes} groupes de commande → boîte de dérivation pour distribuer les fils de commande`
-            : totalPoints > 1
-            ? `${totalPoints} points lumineux → boîte de dérivation pour maillage`
-            : "",
+            ? `${totalGroupes} groupes de commande → boîte pour distribuer les fils`
+            : totalPoints > 1 ? `${totalPoints} points lumineux → boîte pour maillage` : "",
         });
       });
     } else {
-      // Prises
       if (breaker.pieces.length > 1) {
         groups.push({
           nom: "Tableau → Boîte de dérivation principale",
@@ -782,9 +809,7 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
       breaker.pieces.forEach(piece => {
         const needsBoite = piece.nbPrises > 1;
         groups.push({
-          nom: breaker.pieces.length > 1
-            ? `Boîte → ${piece.nom || "Pièce"}`
-            : `Tableau → ${piece.nom || "Pièce"}`,
+          nom: breaker.pieces.length > 1 ? `Boîte → ${piece.nom || "Pièce"}` : `Tableau → ${piece.nom || "Pièce"}`,
           cables: cablesPrises(section),
           lignes: [
             `Ph/N/PE ${section}mm²`,
@@ -798,7 +823,7 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
     return groups;
   }, [breaker.pieces, isLight, section]);
 
-  // ── UNIFILAIRE SVG (identique à l'original) ──
+  // SVG unifilaire
   const H = isLight ? 340 : 240;
   const midY = H / 2;
   const elements: React.ReactNode[] = [];
@@ -813,9 +838,7 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
       <text x={14} y={midY+51} textAnchor="middle" fontSize={8} fill={CABLE_COLORS.terre}  fontFamily="monospace">PE</text>
     </g>
   );
-
   let curX = 55;
-
   if (diff) {
     const dt = BREAKER_TYPES[diff.type]?.diffType || "AC";
     elements.push(
@@ -834,7 +857,6 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
     );
     curX += 58;
   }
-
   elements.push(
     <g key="brk">
       <rect x={curX} y={midY-22} width={28} height={44} rx={4} fill="#e8e8e6" stroke="#c0c0bc" strokeWidth={1.5}/>
@@ -848,9 +870,7 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
     <line key="bn"   x1={curX}    y1={midY+20} x2={curX+56} y2={midY+20} stroke={CABLE_COLORS.neutre} strokeWidth={2.5}/>,
     <line key="bpe"  x1={curX}    y1={midY+38} x2={curX+56} y2={midY+38} stroke={CABLE_COLORS.terre}  strokeWidth={2.5} strokeDasharray="5,3"/>
   );
-  if (spec?.section) {
-    elements.push(<text key="sec" x={curX+13} y={midY-26} textAnchor="middle" fontSize={8} fill="#64748b" fontFamily="monospace">{spec.section}mm²</text>);
-  }
+  if (spec?.section) elements.push(<text key="sec" x={curX+13} y={midY-26} textAnchor="middle" fontSize={8} fill="#64748b" fontFamily="monospace">{spec.section}mm²</text>);
   curX += 56;
 
   if (isLight) {
@@ -1008,8 +1028,6 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="card w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
-
-        {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <div className="flex items-center gap-2">
             <span className="text-xl">{circuit.icon}</span>
@@ -1023,20 +1041,14 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
           </div>
           <button onClick={onClose} className="btn-ghost !px-2 !py-1">✕</button>
         </div>
-
-        {/* Tabs */}
         <div className="flex border-b border-ink-200 shrink-0">
           {([["unifilaire", "⚡ Schéma unifilaire"], ["gaines", "🔀 Cheminement gaines"]] as const).map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)}
               className={`flex-1 py-2.5 text-xs font-semibold transition-all border-b-2 ${
-                tab === key
-                  ? "border-volt-400 text-volt-600 bg-volt-50"
-                  : "border-transparent text-ink-400 hover:text-ink-700"
+                tab === key ? "border-volt-400 text-volt-600 bg-volt-50" : "border-transparent text-ink-400 hover:text-ink-700"
               }`}>{label}</button>
           ))}
         </div>
-
-        {/* Unifilaire */}
         {tab === "unifilaire" && (
           <>
             {isLight && firstPiece && (
@@ -1056,9 +1068,9 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
             </div>
             <div className="flex flex-wrap gap-4 px-4 py-3 border-t border-ink-200 bg-ink-50 shrink-0">
               {[
-                { color: CABLE_COLORS.phase,   label: "Phase" },
-                { color: CABLE_COLORS.neutre,  label: "Neutre" },
-                { color: CABLE_COLORS.terre,   label: "Terre", dash: true },
+                { color: CABLE_COLORS.phase, label: "Phase" },
+                { color: CABLE_COLORS.neutre, label: "Neutre" },
+                { color: CABLE_COLORS.terre, label: "Terre", dash: true },
                 ...(isLight ? [
                   { color: CABLE_COLORS.retour, label: "Retour lampe" },
                   ...(switchType !== "simple" ? [{ color: CABLE_COLORS.navette, label: "Navette" }] : []),
@@ -1074,8 +1086,6 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
             </div>
           </>
         )}
-
-        {/* Gaines — scroll fixé, cartes auto-hauteur */}
         {tab === "gaines" && (
           <div className="flex-1 overflow-y-auto">
             <div className="p-4 flex flex-col gap-3">
@@ -1090,7 +1100,6 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
                     <span className="shrink-0">📋</span>
                     <span>NFC 15-100 art. 529.1 — Taux de remplissage gaine ≤ 1/3. Boîtes de dérivation accessibles obligatoires (art. 526.3).</span>
                   </div>
-
                   {gainesData.map((g, gi) => {
                     const gaineInfo = gaineRecommandee(g.cables);
                     const tauxColor = gaineInfo.tauxPct <= 20
@@ -1098,10 +1107,8 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
                       : gaineInfo.tauxPct <= 33
                       ? "text-amber-700 bg-amber-50 border-amber-200"
                       : "text-red-700 bg-red-50 border-red-200";
-
                     return (
                       <div key={gi} className="border border-ink-200 rounded-2xl overflow-hidden">
-                        {/* Header gaine */}
                         <div className="flex items-center justify-between px-4 py-2.5 bg-ink-900 gap-2">
                           <span className="text-volt-400 font-mono font-bold text-sm truncate">{g.nom}</span>
                           <div className="flex items-center gap-2 shrink-0">
@@ -1116,8 +1123,6 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
                             </div>
                           </div>
                         </div>
-
-                        {/* Détail câbles */}
                         <div className="p-3 flex flex-col gap-1.5">
                           {g.lignes.map((ligne, li) => (
                             <div key={li} className="flex items-start gap-2 text-xs text-ink-600">
@@ -1126,23 +1131,15 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
                             </div>
                           ))}
                         </div>
-
-                        {/* Raison boîte */}
                         {g.boiteDerivation && g.raisonBoite && (
                           <div className="px-3 py-2 bg-amber-50 border-t border-amber-100">
-                            <p className="text-[10px] text-amber-700 font-mono leading-relaxed">
-                              → {g.raisonBoite}
-                            </p>
-                            <p className="text-[10px] text-amber-500 font-mono mt-0.5">
-                              Art. 526.3 — boîte accessible obligatoire
-                            </p>
+                            <p className="text-[10px] text-amber-700 font-mono leading-relaxed">→ {g.raisonBoite}</p>
+                            <p className="text-[10px] text-amber-500 font-mono mt-0.5">Art. 526.3 — boîte accessible obligatoire</p>
                           </div>
                         )}
                       </div>
                     );
                   })}
-
-                  {/* Légende */}
                   <div className="flex flex-wrap gap-3 text-[10px] font-mono text-ink-400 pt-1">
                     <span><span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1"></span>{"< 20%"} — optimal</span>
                     <span><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1"></span>{"≤ 33%"} — limite NFC</span>
@@ -1161,8 +1158,7 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
 // ─── DIN RAIL ROW ─────────────────────────────────────────────────────────────
 
 function DinRailRow({ row, globalOffset, selectedSlot, compliance, onClickSlot, onDeleteRow, onUpdateName }: {
-  row: BreakerRow;
-  globalOffset: number;
+  row: BreakerRow; globalOffset: number;
   selectedSlot: { rowId: number; slotIdx: number } | null;
   compliance: ReturnType<typeof checkNFC>;
   onClickSlot: (rowId: number, slotIdx: number) => void;
@@ -1171,14 +1167,12 @@ function DinRailRow({ row, globalOffset, selectedSlot, compliance, onClickSlot, 
 }) {
   const totalW = DIFF_W + 8 * SLOT_W + 9 * 4 + 40;
   const panelW = Math.max(totalW, 400);
-
   const getIssue = (b: Breaker | null) => {
     if (!b) return null;
     if (compliance.errors.some(e => e.id.includes(String(b.id)))) return "error";
     if (compliance.warnings.some(w => w.id.includes(String(b.id)))) return "warning";
     return null;
   };
-
   return (
     <div className="mb-10">
       <div className="flex items-center gap-3 mb-2">
@@ -1221,7 +1215,6 @@ function SlotCell({ breaker, slotIdx, isDiffSlot, issue, isSelected, globalNum, 
 }) {
   const w = isDiffSlot ? DIFF_W : SLOT_W;
   const label = breaker ? (breaker.label || (CIRCUITS[breaker.circuit]?.label ?? "")) : "";
-
   return (
     <div onClick={onClick} style={{
       position: "relative", zIndex: 1, cursor: "pointer", flexShrink: 0,
@@ -1235,8 +1228,7 @@ function SlotCell({ breaker, slotIdx, isDiffSlot, issue, isSelected, globalNum, 
         <div style={{ position: "absolute", top: 4, right: 4, width: 14, height: 14, borderRadius: "50%", background: issue === "error" ? "#ef4444" : "#f59e0b", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "white", fontWeight: "bold" }}>!</div>
       )}
       <div style={{
-        position: "absolute", bottom: -34, left: 0, right: 0, height: 32,
-        background: "#fffde7",
+        position: "absolute", bottom: -34, left: 0, right: 0, height: 32, background: "#fffde7",
         border: `1px solid ${issue==="error" ? "#ef4444" : issue==="warning" ? "#f59e0b" : "#d4c97a"}`,
         borderRadius: 2, display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center", padding: "1px 3px",
@@ -1247,21 +1239,18 @@ function SlotCell({ breaker, slotIdx, isDiffSlot, issue, isSelected, globalNum, 
             {(CIRCUITS[breaker.circuit]?.icon ?? "")} {label}
           </div>
         )}
-        <div style={{ fontSize: 6, color: "#a8a29e", fontFamily: "monospace" }}>
-          {breaker ? `N°${globalNum}` : "—"}
-        </div>
+        <div style={{ fontSize: 6, color: "#a8a29e", fontFamily: "monospace" }}>{breaker ? `N°${globalNum}` : "—"}</div>
       </div>
       {isSelected && (
         <div style={{ position: "absolute", bottom: -58, left: "50%", transform: "translateX(-50%)", whiteSpace: "nowrap", zIndex: 10, background: "#1c1917", color: "#fbbf24", border: "1px solid #fbbf24", borderRadius: 6, fontSize: 10, fontWeight: 700, padding: "3px 8px", display: "flex", alignItems: "center", gap: 4 }}>
-          <Settings2 size={10} />
-          {breaker ? "Configurer" : "Ajouter"}
+          <Settings2 size={10} />{breaker ? "Configurer" : "Ajouter"}
         </div>
       )}
     </div>
   );
 }
 
-// ─── PRINT LABELS — libellé général uniquement ────────────────────────────────
+// ─── PRINT LABELS ─────────────────────────────────────────────────────────────
 
 function printLabels(rows: BreakerRow[], clientName: string) {
   let gn = 0, html = "";
@@ -1317,7 +1306,6 @@ export default function TableauPage() {
               const rawSlots = Array.isArray(row.slots) ? row.slots : (Array.isArray(row.breakers) ? row.breakers : []);
               rawSlots.forEach((b: any, i: number) => {
                 if (i >= 9 || b == null || typeof b !== "object" || typeof b.type !== "string") return;
-                // Migration pieces[] avec groupes[]
                 let pieces: PieceConfig[] = [];
                 if (Array.isArray(b.pieces)) {
                   pieces = b.pieces.map((p: any) => ({
@@ -1325,19 +1313,10 @@ export default function TableauPage() {
                     nbPrises: p.nbPrises ?? 1,
                     groupes: Array.isArray(p.groupes) && p.groupes.length > 0
                       ? p.groupes
-                      : [{
-                          nbPoints: p.pointsLumineux ?? 1,
-                          typeCommande: (p.typeCommande ?? "simple") as CommandeType,
-                          nbCommandes: p.nbCommandes ?? 1,
-                        }],
+                      : [{ nbPoints: p.pointsLumineux ?? 1, typeCommande: (p.typeCommande ?? "simple") as CommandeType, nbCommandes: p.nbCommandes ?? 1 }],
                   }));
                 } else if (b.switchType || b.lampCount) {
-                  // Très ancien format
-                  pieces = [{
-                    nom: b.label ?? "",
-                    nbPrises: 1,
-                    groupes: [{ nbPoints: b.lampCount ?? 1, typeCommande: (b.switchType ?? "simple") as CommandeType, nbCommandes: b.switchCount ?? 1 }],
-                  }];
+                  pieces = [{ nom: b.label ?? "", nbPrises: 1, groupes: [{ nbPoints: b.lampCount ?? 1, typeCommande: (b.switchType ?? "simple") as CommandeType, nbCommandes: b.switchCount ?? 1 }] }];
                 }
                 slots[i] = { id: b.id ?? uid(), label: b.label ?? "", circuit: b.circuit ?? "autre", amperes: b.amperes ?? 16, type: b.type, pieces } as Breaker;
               });
@@ -1361,14 +1340,8 @@ export default function TableauPage() {
   }, [rows, clientId]);
 
   const addRow = () => setRows(r => [...r, emptyRow(r.length + 1)]);
-
-  const deleteRow = (rowId: number) => {
-    setRows(r => r.filter(x => x.id !== rowId));
-    if (selectedSlot?.rowId === rowId) setSelectedSlot(null);
-  };
-
-  const updateRowName = (rowId: number, name: string) =>
-    setRows(r => r.map(x => x.id === rowId ? { ...x, name } : x));
+  const deleteRow = (rowId: number) => { setRows(r => r.filter(x => x.id !== rowId)); if (selectedSlot?.rowId === rowId) setSelectedSlot(null); };
+  const updateRowName = (rowId: number, name: string) => setRows(r => r.map(x => x.id === rowId ? { ...x, name } : x));
 
   const handleClickSlot = (rowId: number, slotIdx: number) => {
     const row = rows.find(r => r.id === rowId);
@@ -1376,13 +1349,7 @@ export default function TableauPage() {
     if (selectedSlot?.rowId === rowId && selectedSlot?.slotIdx === slotIdx) {
       const existing = row.slots[slotIdx];
       const isDiffSlot = slotIdx === 0;
-      const defaultBreaker: Breaker = existing ?? {
-        id: uid(), label: "",
-        circuit: isDiffSlot ? "general" : "prise_16",
-        amperes: isDiffSlot ? 25 : 16,
-        type: isDiffSlot ? "diff-AC" : "1P",
-        pieces: [],
-      };
+      const defaultBreaker: Breaker = existing ?? { id: uid(), label: "", circuit: isDiffSlot ? "general" : "prise_16", amperes: isDiffSlot ? 25 : 16, type: isDiffSlot ? "diff-AC" : "1P", pieces: [] };
       setEditBreaker({ breaker: defaultBreaker, rowId, slotIdx });
       return;
     }
@@ -1392,25 +1359,19 @@ export default function TableauPage() {
   const updateSlot = (rowId: number, slotIdx: number, breaker: Breaker) => {
     setRows(r => r.map(row => {
       if (row.id !== rowId) return row;
-      const newSlots = [...row.slots];
-      newSlots[slotIdx] = breaker;
-      return { ...row, slots: newSlots };
+      const newSlots = [...row.slots]; newSlots[slotIdx] = breaker; return { ...row, slots: newSlots };
     }));
   };
 
   const removeSlot = (rowId: number, slotIdx: number) => {
     setRows(r => r.map(row => {
       if (row.id !== rowId) return row;
-      const newSlots = [...row.slots];
-      newSlots[slotIdx] = null;
-      return { ...row, slots: newSlots };
+      const newSlots = [...row.slots]; newSlots[slotIdx] = null; return { ...row, slots: newSlots };
     }));
-    setEditBreaker(null);
-    setSelectedSlot(null);
+    setEditBreaker(null); setSelectedSlot(null);
   };
 
-  const getOffset = (ri: number) =>
-    rows.slice(0, ri).reduce((s, r) => s + safeBreakers(r.slots ?? []).length, 0);
+  const getOffset = (ri: number) => rows.slice(0, ri).reduce((s, r) => s + safeBreakers(r.slots ?? []).length, 0);
 
   const scoreColor = compliance.score >= 85 ? "text-emerald-600 bg-emerald-50 border-emerald-200"
     : compliance.score >= 60 ? "text-amber-600 bg-amber-50 border-amber-200"
@@ -1422,12 +1383,9 @@ export default function TableauPage() {
   return (
     <Shell>
       <div className="flex flex-col h-[calc(100vh-4rem)] md:h-screen overflow-hidden">
-
         <div className="flex items-center justify-between px-4 md:px-6 py-3 border-b border-ink-200 bg-white shrink-0 gap-3">
           <div className="flex items-center gap-3">
-            <Link href={`/clients/${clientId}`} className="btn-ghost !px-2 !py-1.5 text-ink-400">
-              <ArrowLeft size={16} />
-            </Link>
+            <Link href={`/clients/${clientId}`} className="btn-ghost !px-2 !py-1.5 text-ink-400"><ArrowLeft size={16} /></Link>
             <div>
               <h1 className="font-display text-lg text-ink-900 leading-tight">Tableau électrique</h1>
               {client && (
@@ -1448,8 +1406,7 @@ export default function TableauPage() {
             </button>
             <button onClick={handleSave} disabled={saving}
               className={`btn-volt ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
-              <Save size={15} />
-              {saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
+              <Save size={15} />{saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
             </button>
           </div>
         </div>
@@ -1461,9 +1418,7 @@ export default function TableauPage() {
         <div className="flex-1 overflow-auto p-4 md:p-8">
           {rows.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 gap-4">
-              <div className="w-16 h-16 rounded-2xl bg-ink-100 flex items-center justify-center">
-                <Zap size={28} className="text-ink-300" />
-              </div>
+              <div className="w-16 h-16 rounded-2xl bg-ink-100 flex items-center justify-center"><Zap size={28} className="text-ink-300" /></div>
               <p className="text-ink-500 font-medium">Tableau vide</p>
               <p className="text-ink-400 text-sm text-center max-w-xs">Ajoutez une rangée pour commencer.</p>
               <button onClick={addRow} className="btn-volt"><Plus size={15} /> Ajouter une rangée</button>
@@ -1496,47 +1451,27 @@ export default function TableauPage() {
               </div>
             </>
           )}
-
           <div className="flex gap-2 mt-6 md:hidden">
             <button onClick={() => setShowReport(true)}
               className={`btn flex-1 text-xs items-center justify-center gap-1.5 px-3 py-2 rounded-xl border font-semibold ${scoreColor}`}>
               <ScoreIcon size={13} /> NFC {compliance.score}/100
             </button>
-            <button onClick={() => printLabels(rows, client?.nom ?? "")} className="btn-ghost">
-              <Printer size={15} />
-            </button>
+            <button onClick={() => printLabels(rows, client?.nom ?? "")} className="btn-ghost"><Printer size={15} /></button>
           </div>
         </div>
       </div>
 
       {editBreaker && (
         <BreakerEditModal
-          breaker={editBreaker.breaker}
-          slotIndex={editBreaker.slotIdx}
-          compliance={compliance}
-          onUpdate={updated => {
-            updateSlot(editBreaker.rowId, editBreaker.slotIdx, updated);
-            setEditBreaker({ ...editBreaker, breaker: updated });
-          }}
+          breaker={editBreaker.breaker} slotIndex={editBreaker.slotIdx} compliance={compliance}
+          onUpdate={updated => { updateSlot(editBreaker.rowId, editBreaker.slotIdx, updated); setEditBreaker({ ...editBreaker, breaker: updated }); }}
           onClose={() => { setEditBreaker(null); setSelectedSlot(null); }}
-          onShowSchema={b => {
-            const row = rows.find(r => r.id === editBreaker.rowId);
-            setEditBreaker(null);
-            setSchemaBreaker({ breaker: b, rowBreakers: row?.slots ?? [] });
-          }}
+          onShowSchema={b => { const row = rows.find(r => r.id === editBreaker.rowId); setEditBreaker(null); setSchemaBreaker({ breaker: b, rowBreakers: row?.slots ?? [] }); }}
           onRemove={() => removeSlot(editBreaker.rowId, editBreaker.slotIdx)}
         />
       )}
-
       {showReport && <CompliancePanel result={compliance} onClose={() => setShowReport(false)} />}
-
-      {schemaBreaker && (
-        <CircuitSchema
-          breaker={schemaBreaker.breaker}
-          rowBreakers={schemaBreaker.rowBreakers}
-          onClose={() => setSchemaBreaker(null)}
-        />
-      )}
+      {schemaBreaker && <CircuitSchema breaker={schemaBreaker.breaker} rowBreakers={schemaBreaker.rowBreakers} onClose={() => setSchemaBreaker(null)} />}
     </Shell>
   );
 }
