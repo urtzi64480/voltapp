@@ -1033,7 +1033,7 @@ export default function CataloguePage() {
                 ) : (
                   <div className="flex gap-2">
                     <input className="input flex-1" placeholder="Nom de la catégorie"
-                      value={newCat.trim()} onChange={e => setNewCat(e.target.value)} />
+                      value={newCat} onChange={e => setNewCat(e.target.value)} />
                     {categories.length > 0 && <button onClick={() => setNewCat("")} className="btn-ghost !px-3 text-xs">Existante</button>}
                   </div>
                 )}
