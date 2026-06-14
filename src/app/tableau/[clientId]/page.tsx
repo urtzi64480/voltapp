@@ -8,7 +8,7 @@ import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, ShieldCheck, ShieldAlert,
-  ShieldX, Plus, Trash2, Zap, Settings2, X,
+  ShieldX, Plus, Trash2, Zap, Settings2,
 } from "lucide-react";
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
@@ -16,12 +16,16 @@ import {
 type CommandeType = "simple" | "vav" | "telerupteur";
 type CircuitCategory = "lumiere" | "prises";
 
+interface GroupeLumineux {
+  nbPoints: number;
+  typeCommande: CommandeType;
+  nbCommandes: number; // nb V&V ou nb BP télérupteur
+}
+
 interface PieceConfig {
   nom: string;
   // lumiere
-  pointsLumineux: number;
-  typeCommande: CommandeType;
-  nbCommandes: number;
+  groupes: GroupeLumineux[];
   // prises
   nbPrises: number;
 }
@@ -80,7 +84,7 @@ const CIRCUITS: Record<string, {
   autre:           { label: "Autre",            icon: "⚙️", ampMax: 32, dedié: false, diffType: "AC", section: "2.5", category: null },
 };
 
-// Diamètres extérieurs câbles (mm) par section — valeurs fabricants typ.
+// Diamètres extérieurs câbles (mm) — valeurs fabricants typ.
 const CABLE_DIAM_MM: Record<string, number> = {
   "1.5": 6.8, "2.5": 7.8, "4.0": 9.0, "6.0": 10.5, "10.0": 13.0,
 };
@@ -109,21 +113,28 @@ function gaineRecommandee(sections: string[]): { gaine: string; tauxPct: number;
   return { gaine: last.label + " (insuffisant)", tauxPct: Math.round((totalSection / sectionInt) * 100), ok: false };
 }
 
-function cablesLumiere(piece: PieceConfig, section: string): string[] {
+// Câbles pour un groupe lumineux (Ph+N+PE + fils de commande)
+function cablesGroupe(groupe: GroupeLumineux, section: string): string[] {
   const cables: string[] = [section, section, section]; // Ph + N + PE
-  if (piece.typeCommande === "simple") {
+  if (groupe.typeCommande === "simple") {
     cables.push("1.5"); // retour lampe
-  } else if (piece.typeCommande === "vav") {
+  } else if (groupe.typeCommande === "vav") {
     cables.push("1.5", "1.5"); // 2 navettes
   } else {
-    for (let i = 0; i < piece.nbCommandes; i++) cables.push("1.5"); // navettes BP
+    for (let i = 0; i < groupe.nbCommandes; i++) cables.push("1.5"); // navettes BP
     cables.push("1.5"); // retour
   }
   return cables;
 }
 
 function cablesPrises(section: string): string[] {
-  return [section, section, section]; // Ph + N + PE
+  return [section, section, section];
+}
+
+function labelCommande(g: GroupeLumineux): string {
+  if (g.typeCommande === "simple") return "Simple allumage";
+  if (g.typeCommande === "vav") return `Va-et-vient (${g.nbCommandes} inter.)`;
+  return `Télérupteur (${g.nbCommandes} BP)`;
 }
 
 const DIFF_HIERARCHY: Record<string, number> = { AC: 0, A: 1, F: 2 };
@@ -135,11 +146,15 @@ const BREAKER_H = 130;
 let _id = 0;
 const uid = () => ++_id;
 
-const defaultPiece = (): PieceConfig => ({
-  nom: "",
-  pointsLumineux: 1,
+const defaultGroupe = (): GroupeLumineux => ({
+  nbPoints: 1,
   typeCommande: "simple",
   nbCommandes: 1,
+});
+
+const defaultPiece = (): PieceConfig => ({
+  nom: "",
+  groupes: [defaultGroupe()],
   nbPrises: 1,
 });
 
@@ -353,8 +368,34 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
     onUpdate({ ...breaker, pieces: newPieces });
   };
 
-  const updatePiece = (idx: number, patch: Partial<PieceConfig>) => {
-    const newPieces = breaker.pieces.map((p, i) => i === idx ? { ...p, ...patch } : p);
+  const updatePiece = (pi: number, patch: Partial<PieceConfig>) => {
+    const newPieces = breaker.pieces.map((p, i) => i === pi ? { ...p, ...patch } : p);
+    onUpdate({ ...breaker, pieces: newPieces });
+  };
+
+  const updateGroupe = (pi: number, gi: number, patch: Partial<GroupeLumineux>) => {
+    const newPieces = breaker.pieces.map((p, i) => {
+      if (i !== pi) return p;
+      const newGroupes = p.groupes.map((g, j) => j === gi ? { ...g, ...patch } : g);
+      return { ...p, groupes: newGroupes };
+    });
+    onUpdate({ ...breaker, pieces: newPieces });
+  };
+
+  const addGroupe = (pi: number) => {
+    const newPieces = breaker.pieces.map((p, i) => {
+      if (i !== pi) return p;
+      return { ...p, groupes: [...p.groupes, defaultGroupe()] };
+    });
+    onUpdate({ ...breaker, pieces: newPieces });
+  };
+
+  const removeGroupe = (pi: number, gi: number) => {
+    const newPieces = breaker.pieces.map((p, i) => {
+      if (i !== pi) return p;
+      const newGroupes = p.groupes.filter((_, j) => j !== gi);
+      return { ...p, groupes: newGroupes.length > 0 ? newGroupes : [defaultGroupe()] };
+    });
     onUpdate({ ...breaker, pieces: newPieces });
   };
 
@@ -363,6 +404,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
       onClick={onClose}>
       <div className="card w-full max-w-sm md:max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl md:rounded-2xl"
         onClick={e => e.stopPropagation()}>
+
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <div className="flex items-center gap-2">
             <span className="text-xl">{isDiff ? "🔲" : (spec || CIRCUITS.autre).icon}</span>
@@ -374,6 +416,8 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
         </div>
 
         <div className="p-4 flex flex-col gap-4">
+
+          {/* Libellé */}
           <div>
             <label className="label">Libellé (étiquette)</label>
             <input className="input" placeholder="Ex: Éclairage RDC, Prises séjour…"
@@ -381,6 +425,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
               onChange={e => onUpdate({ ...breaker, label: e.target.value })} />
           </div>
 
+          {/* Type */}
           <div>
             <label className="label">Type</label>
             <select className="input" value={breaker.type}
@@ -393,6 +438,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
 
           {!isDiff && (
             <>
+              {/* Circuit */}
               <div>
                 <label className="label">Circuit</label>
                 <select className="input" value={breaker.circuit}
@@ -403,6 +449,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                 </select>
               </div>
 
+              {/* Calibre */}
               <div>
                 <label className="label">Calibre</label>
                 <div className="flex flex-wrap gap-2">
@@ -417,6 +464,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                 </div>
               </div>
 
+              {/* NFC hint */}
               {spec && (
                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-700 font-mono leading-relaxed">
                   📋 NFC 15-100 — Max {spec.ampMax}A · Section {spec.section}mm²
@@ -424,6 +472,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                 </div>
               )}
 
+              {/* Pièces */}
               {category && (
                 <div className="flex flex-col gap-3">
                   <div>
@@ -432,83 +481,113 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                       placeholder={category === "lumiere" ? "Ex: Salon · Chambre 1 · Couloir" : "Ex: Séjour · Cuisine · Entrée"}
                       value={piecesText}
                       onChange={e => handlePiecesTextChange(e.target.value)} />
-                    <p className="text-xs text-ink-400 mt-1">
-                      Séparez par · ou , — les détails apparaissent ci-dessous
-                    </p>
+                    <p className="text-xs text-ink-400 mt-1">Séparez par · ou , — les détails apparaissent ci-dessous</p>
                   </div>
 
                   {breaker.pieces.length > 0 && (
-                    <div className="flex flex-col gap-2">
+                    <div className="flex flex-col gap-3">
                       {breaker.pieces.map((piece, pi) => (
-                        <div key={pi} className="border border-ink-200 rounded-xl p-3 flex flex-col gap-2.5 bg-ink-50">
-                          <p className="text-xs font-bold text-ink-700 font-mono">
-                            {category === "lumiere" ? "💡" : "🔌"} {piece.nom || `Pièce ${pi + 1}`}
-                          </p>
+                        <div key={pi} className="border border-ink-200 rounded-xl overflow-hidden">
+                          {/* Pièce header */}
+                          <div className="px-3 py-2 bg-ink-100 flex items-center gap-2">
+                            <span className="text-sm">{category === "lumiere" ? "💡" : "🔌"}</span>
+                            <span className="text-xs font-bold text-ink-700 font-mono">{piece.nom || `Pièce ${pi + 1}`}</span>
+                          </div>
 
-                          {category === "lumiere" && (
-                            <>
+                          <div className="p-3 flex flex-col gap-3">
+                            {category === "lumiere" && (
+                              <>
+                                {piece.groupes.map((groupe, gi) => (
+                                  <div key={gi} className="border border-ink-200 rounded-lg p-2.5 flex flex-col gap-2 bg-white">
+                                    {/* Groupe header */}
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[10px] font-bold text-ink-400 uppercase tracking-wide font-mono">
+                                        Groupe {gi + 1}
+                                      </span>
+                                      {piece.groupes.length > 1 && (
+                                        <button onClick={() => removeGroupe(pi, gi)}
+                                          className="text-ink-300 hover:text-red-400 transition-colors">
+                                          <Trash2 size={11} />
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    {/* Nb points lumineux */}
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs text-ink-500 w-28 shrink-0">Points lumineux</span>
+                                      <div className="flex gap-1 flex-wrap">
+                                        {[1,2,3,4,5,6].map(n => (
+                                          <button key={n} onClick={() => updateGroupe(pi, gi, { nbPoints: n })}
+                                            className={`w-7 h-7 rounded-md text-xs font-bold border transition-all ${
+                                              groupe.nbPoints === n
+                                                ? "bg-amber-400 text-ink-900 border-amber-500"
+                                                : "bg-white text-ink-500 border-ink-200 hover:border-ink-400"
+                                            }`}>{n}</button>
+                                        ))}
+                                      </div>
+                                    </div>
+
+                                    {/* Type de commande */}
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs text-ink-500 w-28 shrink-0">Commande</span>
+                                      <div className="flex gap-1">
+                                        {([["simple","Simple"],["vav","V&V"],["telerupteur","Télér."]] as [CommandeType, string][]).map(([v, l]) => (
+                                          <button key={v}
+                                            onClick={() => updateGroupe(pi, gi, { typeCommande: v, nbCommandes: v === "vav" ? 2 : 1 })}
+                                            className={`px-2 py-1 rounded-md text-xs font-semibold border transition-all ${
+                                              groupe.typeCommande === v
+                                                ? "bg-emerald-700 text-white border-emerald-800"
+                                                : "bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                                            }`}>{l}</button>
+                                        ))}
+                                      </div>
+                                    </div>
+
+                                    {/* Nb commandes (V&V ou BP) */}
+                                    {groupe.typeCommande !== "simple" && (
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs text-ink-500 w-28 shrink-0">
+                                          {groupe.typeCommande === "vav" ? "Nb V&V" : "Nb boutons"}
+                                        </span>
+                                        <div className="flex gap-1">
+                                          {(groupe.typeCommande === "vav" ? [2,3] : [1,2,3,4,5]).map(n => (
+                                            <button key={n} onClick={() => updateGroupe(pi, gi, { nbCommandes: n })}
+                                              className={`w-7 h-7 rounded-md text-xs font-bold border transition-all ${
+                                                groupe.nbCommandes === n
+                                                  ? "bg-orange-500 text-white border-orange-600"
+                                                  : "bg-white text-ink-500 border-ink-200 hover:border-ink-400"
+                                              }`}>{n}</button>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+
+                                {/* Ajouter groupe */}
+                                <button onClick={() => addGroupe(pi)}
+                                  className="flex items-center gap-1.5 text-xs text-volt-600 hover:text-volt-700 font-semibold transition-colors">
+                                  <Plus size={12} /> Ajouter un groupe de points lumineux
+                                </button>
+                              </>
+                            )}
+
+                            {category === "prises" && (
                               <div className="flex items-center gap-2">
-                                <span className="text-xs text-ink-500 w-36 shrink-0">Points lumineux</span>
+                                <span className="text-xs text-ink-500 w-28 shrink-0">Nb de prises</span>
                                 <div className="flex gap-1 flex-wrap">
-                                  {[1,2,3,4,5,6].map(n => (
-                                    <button key={n} onClick={() => updatePiece(pi, { pointsLumineux: n })}
+                                  {[1,2,3,4,5,6,8,10].map(n => (
+                                    <button key={n} onClick={() => updatePiece(pi, { nbPrises: n })}
                                       className={`w-7 h-7 rounded-md text-xs font-bold border transition-all ${
-                                        piece.pointsLumineux === n
-                                          ? "bg-amber-400 text-ink-900 border-amber-500"
+                                        piece.nbPrises === n
+                                          ? "bg-volt-400 text-ink-900 border-volt-500"
                                           : "bg-white text-ink-500 border-ink-200 hover:border-ink-400"
                                       }`}>{n}</button>
                                   ))}
                                 </div>
                               </div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-ink-500 w-36 shrink-0">Commande</span>
-                                <div className="flex gap-1">
-                                  {([["simple","Simple"],["vav","V&V"],["telerupteur","Télér."]] as [CommandeType, string][]).map(([v, l]) => (
-                                    <button key={v}
-                                      onClick={() => updatePiece(pi, { typeCommande: v, nbCommandes: v === "vav" ? 2 : 1 })}
-                                      className={`px-2 py-1 rounded-md text-xs font-semibold border transition-all ${
-                                        piece.typeCommande === v
-                                          ? "bg-emerald-700 text-white border-emerald-800"
-                                          : "bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50"
-                                      }`}>{l}</button>
-                                  ))}
-                                </div>
-                              </div>
-                              {piece.typeCommande !== "simple" && (
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs text-ink-500 w-36 shrink-0">
-                                    {piece.typeCommande === "vav" ? "Nb V&V" : "Nb boutons-poussoirs"}
-                                  </span>
-                                  <div className="flex gap-1">
-                                    {(piece.typeCommande === "vav" ? [2,3] : [1,2,3,4,5]).map(n => (
-                                      <button key={n} onClick={() => updatePiece(pi, { nbCommandes: n })}
-                                        className={`w-7 h-7 rounded-md text-xs font-bold border transition-all ${
-                                          piece.nbCommandes === n
-                                            ? "bg-orange-500 text-white border-orange-600"
-                                            : "bg-white text-ink-500 border-ink-200 hover:border-ink-400"
-                                        }`}>{n}</button>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                            </>
-                          )}
-
-                          {category === "prises" && (
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-ink-500 w-36 shrink-0">Nombre de prises</span>
-                              <div className="flex gap-1 flex-wrap">
-                                {[1,2,3,4,5,6,8,10].map(n => (
-                                  <button key={n} onClick={() => updatePiece(pi, { nbPrises: n })}
-                                    className={`w-7 h-7 rounded-md text-xs font-bold border transition-all ${
-                                      piece.nbPrises === n
-                                        ? "bg-volt-400 text-ink-900 border-volt-500"
-                                        : "bg-white text-ink-500 border-ink-200 hover:border-ink-400"
-                                    }`}>{n}</button>
-                                ))}
-                              </div>
-                            </div>
-                          )}
+                            )}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -620,18 +699,20 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
   const diff    = rowBreakers[0] as Breaker | null;
   const section = spec?.section ?? "2.5";
 
+  // For unifilaire: use first piece / first group
   const firstPiece  = breaker.pieces[0];
-  const switchType  = firstPiece?.typeCommande ?? "simple";
-  const switchCount = firstPiece?.nbCommandes ?? 1;
-  const lampCount   = firstPiece?.pointsLumineux ?? 1;
+  const firstGroupe = firstPiece?.groupes?.[0];
+  const switchType  = firstGroupe?.typeCommande ?? "simple";
+  const switchCount = firstGroupe?.nbCommandes ?? 1;
+  const lampCount   = firstGroupe?.nbPoints ?? 1;
 
   // ── GAINES DATA ──
   interface GaineGroup {
     nom: string;
     cables: string[];
-    circuits: string[];
+    lignes: string[]; // détail lisible
     boiteDerivation: boolean;
-    raison: string;
+    raisonBoite: string;
   }
 
   const gainesData = useMemo((): GaineGroup[] => {
@@ -639,61 +720,85 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
     const groups: GaineGroup[] = [];
 
     if (isLight) {
+      // Si plusieurs pièces : gaine commune tableau → boîte centrale
       if (breaker.pieces.length > 1) {
         groups.push({
-          nom: "Tableau → Zone de dérivation principale",
+          nom: "Tableau → Boîte de dérivation principale",
           cables: cablesPrises(section),
-          circuits: [`Ph/N/PE ${section}mm² commun — se distribue ensuite par pièce`],
+          lignes: [`Ph/N/PE ${section}mm² — alimentation commune`],
           boiteDerivation: true,
-          raison: `${breaker.pieces.length} pièces desservies → 1 boîte centrale économise les passages câble`,
+          raisonBoite: `${breaker.pieces.length} pièces desservies — 1 boîte centrale réduit le câblage depuis le tableau`,
         });
       }
+
+      // Une gaine par pièce
       breaker.pieces.forEach(piece => {
-        const cables = cablesLumiere(piece, section);
-        const desc: string[] = [`Ph/N/PE ${section}mm²`];
-        if (piece.typeCommande === "simple") desc.push("Retour lampe 1.5mm²");
-        else if (piece.typeCommande === "vav") desc.push("2× Navette 1.5mm²");
-        else desc.push(`${piece.nbCommandes}× Navette BP 1.5mm² + Retour 1.5mm²`);
+        const totalGroupes = piece.groupes.length;
+        const totalPoints = piece.groupes.reduce((s, g) => s + g.nbPoints, 0);
+        const allCables: string[] = totalGroupes > 1 ? cablesPrises(section) : [];
+        const lignes: string[] = totalGroupes > 1 ? [`Ph/N/PE ${section}mm² — tronc commun`] : [];
+
+        piece.groupes.forEach((groupe, gi) => {
+          const cablesG = cablesGroupe(groupe, totalGroupes > 1 ? "1.5" : section);
+          allCables.push(...cablesG);
+          lignes.push(
+            `Groupe ${gi + 1} — ${groupe.nbPoints} pt${groupe.nbPoints > 1 ? "s" : ""} · ${labelCommande(groupe)}`
+            + ` → Ph/N${totalGroupes > 1 ? "" : `/PE ${section}mm²`} + ${
+              groupe.typeCommande === "simple" ? "Retour 1.5mm²"
+              : groupe.typeCommande === "vav" ? "2× Navette 1.5mm²"
+              : `${groupe.nbCommandes}× Navette + Retour 1.5mm²`
+            }`
+          );
+        });
+
+        const nomGaine = breaker.pieces.length > 1
+          ? `Boîte → ${piece.nom || "Pièce"}`
+          : `Tableau → ${piece.nom || "Pièce"}`;
+
+        const needsBoite = totalPoints > 1 || totalGroupes > 1;
         groups.push({
-          nom: breaker.pieces.length > 1
-            ? `Dérivation → ${piece.nom || "Pièce"}`
-            : `Tableau → ${piece.nom || "Pièce"}`,
-          cables,
-          circuits: desc,
-          boiteDerivation: piece.pointsLumineux > 1,
-          raison: piece.pointsLumineux > 1
-            ? `${piece.pointsLumineux} points lumineux → boîte de dérivation pour distribuer`
-            : "Point lumineux unique — alimentation directe",
+          nom: nomGaine,
+          cables: allCables,
+          lignes,
+          boiteDerivation: needsBoite,
+          raisonBoite: totalGroupes > 1
+            ? `${totalGroupes} groupes de commande → boîte de dérivation pour distribuer les fils de commande`
+            : totalPoints > 1
+            ? `${totalPoints} points lumineux → boîte de dérivation pour maillage`
+            : "",
         });
       });
     } else {
+      // Prises
       if (breaker.pieces.length > 1) {
         groups.push({
-          nom: "Tableau → Zone de dérivation principale",
+          nom: "Tableau → Boîte de dérivation principale",
           cables: cablesPrises(section),
-          circuits: [`Ph/N/PE ${section}mm² commun`],
+          lignes: [`Ph/N/PE ${section}mm² — alimentation commune`],
           boiteDerivation: true,
-          raison: `${breaker.pieces.length} pièces → mutualiser jusqu'à une boîte centrale réduit le câblage`,
+          raisonBoite: `${breaker.pieces.length} pièces — 1 boîte centrale économise le câblage`,
         });
       }
       breaker.pieces.forEach(piece => {
+        const needsBoite = piece.nbPrises > 1;
         groups.push({
           nom: breaker.pieces.length > 1
-            ? `Dérivation → ${piece.nom || "Pièce"}`
+            ? `Boîte → ${piece.nom || "Pièce"}`
             : `Tableau → ${piece.nom || "Pièce"}`,
           cables: cablesPrises(section),
-          circuits: [`Ph/N/PE ${section}mm²`],
-          boiteDerivation: piece.nbPrises > 1,
-          raison: piece.nbPrises > 1
-            ? `${piece.nbPrises} prises → boîte de dérivation ou maillage prise à prise`
-            : "Prise unique — alimentation directe",
+          lignes: [
+            `Ph/N/PE ${section}mm²`,
+            ...(needsBoite ? [`${piece.nbPrises} prises → maillage prise à prise depuis la boîte`] : []),
+          ],
+          boiteDerivation: needsBoite,
+          raisonBoite: needsBoite ? `${piece.nbPrises} prises — boîte de dérivation ou maillage série` : "",
         });
       });
     }
     return groups;
   }, [breaker.pieces, isLight, section]);
 
-  // ── UNIFILAIRE SVG ──
+  // ── UNIFILAIRE SVG (identique à l'original) ──
   const H = isLight ? 340 : 240;
   const midY = H / 2;
   const elements: React.ReactNode[] = [];
@@ -744,9 +849,7 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
     <line key="bpe"  x1={curX}    y1={midY+38} x2={curX+56} y2={midY+38} stroke={CABLE_COLORS.terre}  strokeWidth={2.5} strokeDasharray="5,3"/>
   );
   if (spec?.section) {
-    elements.push(
-      <text key="sec" x={curX+13} y={midY-26} textAnchor="middle" fontSize={8} fill="#64748b" fontFamily="monospace">{spec.section}mm²</text>
-    );
+    elements.push(<text key="sec" x={curX+13} y={midY-26} textAnchor="middle" fontSize={8} fill="#64748b" fontFamily="monospace">{spec.section}mm²</text>);
   }
   curX += 56;
 
@@ -858,14 +961,14 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
             <line x1={lx-7} y1={phY-7} x2={lx+7} y2={phY+7} stroke="#fbbf24" strokeWidth={1.5}/>
             <line x1={lx+7} y1={phY-7} x2={lx-7} y2={phY+7} stroke="#fbbf24" strokeWidth={1.5}/>
           </g>,
-          <line key={`ln${i}`} x1={lx} y1={phY+12} x2={lx} y2={nY} stroke={CABLE_COLORS.neutre} strokeWidth={2.5}/>,
+          <line key={`ln${i}`} x1={lx} y1={phY+12} x2={lx} y2={midY+20} stroke={CABLE_COLORS.neutre} strokeWidth={2.5}/>,
           <line key={`lc${i}`} x1={i===0?teleX+51:lx-44} y1={phY} x2={lx-12} y2={phY} stroke={CABLE_COLORS.retour} strokeWidth={2.5}/>
         );
       }
       const lastLx = teleX+68+(lampCount-1)*56;
       elements.push(
-        <line key="nline"  x1={curX} y1={nY}  x2={lastLx+56} y2={nY}  stroke={CABLE_COLORS.neutre} strokeWidth={2.5}/>,
-        <line key="peline" x1={curX} y1={peY} x2={lastLx+56} y2={peY} stroke={CABLE_COLORS.terre}  strokeWidth={2.5} strokeDasharray="5,3"/>
+        <line key="nline"  x1={curX} y1={midY+20} x2={lastLx+56} y2={midY+20} stroke={CABLE_COLORS.neutre} strokeWidth={2.5}/>,
+        <line key="peline" x1={curX} y1={midY+38} x2={lastLx+56} y2={midY+38} stroke={CABLE_COLORS.terre}  strokeWidth={2.5} strokeDasharray="5,3"/>
       );
     }
   } else if (isPrise) {
@@ -906,6 +1009,7 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="card w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
 
+        {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <div className="flex items-center gap-2">
             <span className="text-xl">{circuit.icon}</span>
@@ -921,7 +1025,7 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-ink-200">
+        <div className="flex border-b border-ink-200 shrink-0">
           {([["unifilaire", "⚡ Schéma unifilaire"], ["gaines", "🔀 Cheminement gaines"]] as const).map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)}
               className={`flex-1 py-2.5 text-xs font-semibold transition-all border-b-2 ${
@@ -936,8 +1040,8 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
         {tab === "unifilaire" && (
           <>
             {isLight && firstPiece && (
-              <div className="flex flex-wrap gap-3 p-3 border-b border-ink-200 bg-ink-50 text-xs">
-                <span className="text-ink-500">Vue : <strong className="text-ink-800">{firstPiece.nom || "Pièce 1"}</strong></span>
+              <div className="flex flex-wrap gap-3 p-3 border-b border-ink-200 bg-ink-50 text-xs shrink-0">
+                <span className="text-ink-500">Vue : <strong className="text-ink-800">{firstPiece.nom || "Pièce 1"}</strong> — Groupe 1</span>
                 <span className="text-ink-400">
                   {switchType === "simple" ? "Interrupteur simple" : switchType === "vav" ? `Va-et-vient (${switchCount})` : `Télérupteur (${switchCount} BP)`}
                   {" · "}{lampCount} pt{lampCount > 1 ? "s" : ""} lumineux
@@ -950,7 +1054,7 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
                 {elements}
               </svg>
             </div>
-            <div className="flex flex-wrap gap-4 px-4 py-3 border-t border-ink-200 bg-ink-50">
+            <div className="flex flex-wrap gap-4 px-4 py-3 border-t border-ink-200 bg-ink-50 shrink-0">
               {[
                 { color: CABLE_COLORS.phase,   label: "Phase" },
                 { color: CABLE_COLORS.neutre,  label: "Neutre" },
@@ -971,69 +1075,82 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
           </>
         )}
 
-        {/* Gaines */}
+        {/* Gaines — scroll fixé, cartes auto-hauteur */}
         {tab === "gaines" && (
-          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
-            {gainesData.length === 0 ? (
-              <div className="text-center py-12 text-ink-400">
-                <p className="text-sm mb-1">Aucune pièce configurée</p>
-                <p className="text-xs">Renseignez les pièces desservies dans la configuration du disjoncteur</p>
-              </div>
-            ) : (
-              <>
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-700 flex gap-2">
-                  <span className="shrink-0">📋</span>
-                  <span>NFC 15-100 art. 529.1 — Taux de remplissage gaine ≤ 1/3 de la section intérieure. Boîtes de dérivation accessibles obligatoires (art. 526.3).</span>
+          <div className="flex-1 overflow-y-auto">
+            <div className="p-4 flex flex-col gap-3">
+              {gainesData.length === 0 ? (
+                <div className="text-center py-12 text-ink-400">
+                  <p className="text-sm mb-1">Aucune pièce configurée</p>
+                  <p className="text-xs">Renseignez les pièces desservies dans la configuration du disjoncteur</p>
                 </div>
-                {gainesData.map((g, gi) => {
-                  const gaineInfo = gaineRecommandee(g.cables);
-                  const tauxColor = gaineInfo.tauxPct <= 20
-                    ? "text-emerald-700 bg-emerald-50 border-emerald-200"
-                    : gaineInfo.tauxPct <= 33
-                    ? "text-amber-700 bg-amber-50 border-amber-200"
-                    : "text-red-700 bg-red-50 border-red-200";
-                  return (
-                    <div key={gi} className="border border-ink-200 rounded-2xl overflow-hidden">
-                      <div className="flex items-center justify-between px-4 py-2.5 bg-ink-900">
-                        <span className="text-volt-400 font-mono font-bold text-sm">{g.nom}</span>
-                        {g.boiteDerivation && (
-                          <span className="text-[10px] font-bold text-amber-400 bg-amber-400/10 border border-amber-400/30 px-2 py-0.5 rounded-full">
-                            🔀 Boîte dérivation
-                          </span>
+              ) : (
+                <>
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-700 flex gap-2">
+                    <span className="shrink-0">📋</span>
+                    <span>NFC 15-100 art. 529.1 — Taux de remplissage gaine ≤ 1/3. Boîtes de dérivation accessibles obligatoires (art. 526.3).</span>
+                  </div>
+
+                  {gainesData.map((g, gi) => {
+                    const gaineInfo = gaineRecommandee(g.cables);
+                    const tauxColor = gaineInfo.tauxPct <= 20
+                      ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+                      : gaineInfo.tauxPct <= 33
+                      ? "text-amber-700 bg-amber-50 border-amber-200"
+                      : "text-red-700 bg-red-50 border-red-200";
+
+                    return (
+                      <div key={gi} className="border border-ink-200 rounded-2xl overflow-hidden">
+                        {/* Header gaine */}
+                        <div className="flex items-center justify-between px-4 py-2.5 bg-ink-900 gap-2">
+                          <span className="text-volt-400 font-mono font-bold text-sm truncate">{g.nom}</span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {g.boiteDerivation && (
+                              <span className="text-[10px] font-bold text-amber-400 bg-amber-400/10 border border-amber-400/30 px-2 py-0.5 rounded-full whitespace-nowrap">
+                                🔀 Boîte dérivation
+                              </span>
+                            )}
+                            <div className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-mono font-bold ${tauxColor}`}>
+                              <span>{gaineInfo.gaine}</span>
+                              <span className="opacity-70">{gaineInfo.tauxPct}%</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Détail câbles */}
+                        <div className="p-3 flex flex-col gap-1.5">
+                          {g.lignes.map((ligne, li) => (
+                            <div key={li} className="flex items-start gap-2 text-xs text-ink-600">
+                              <span className="w-1.5 h-1.5 rounded-full bg-volt-400 shrink-0 mt-1.5"></span>
+                              <span className="leading-relaxed">{ligne}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Raison boîte */}
+                        {g.boiteDerivation && g.raisonBoite && (
+                          <div className="px-3 py-2 bg-amber-50 border-t border-amber-100">
+                            <p className="text-[10px] text-amber-700 font-mono leading-relaxed">
+                              → {g.raisonBoite}
+                            </p>
+                            <p className="text-[10px] text-amber-500 font-mono mt-0.5">
+                              Art. 526.3 — boîte accessible obligatoire
+                            </p>
+                          </div>
                         )}
                       </div>
-                      <div className="p-3 flex flex-col gap-1.5">
-                        {g.circuits.map((c, ci) => (
-                          <div key={ci} className="flex items-center gap-2 text-xs text-ink-600">
-                            <span className="w-1.5 h-1.5 rounded-full bg-volt-400 shrink-0"></span>
-                            {c}
-                          </div>
-                        ))}
-                      </div>
-                      <div className="flex items-center justify-between px-3 py-2.5 bg-ink-50 border-t border-ink-100 gap-3">
-                        <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                          <span className="text-xs text-ink-500">{g.raison}</span>
-                          {g.boiteDerivation && (
-                            <span className="text-[10px] text-amber-600 font-mono">
-                              → Boîte accessible obligatoire — art. 526.3 NFC 15-100
-                            </span>
-                          )}
-                        </div>
-                        <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-mono font-bold shrink-0 ${tauxColor}`}>
-                          <span>{gaineInfo.gaine}</span>
-                          <span className="opacity-70 text-[10px]">{gaineInfo.tauxPct}%</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-                <div className="flex flex-wrap gap-3 text-[10px] font-mono text-ink-400 pt-1">
-                  <span><span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1"></span>{"< 20%"} — optimal</span>
-                  <span><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1"></span>{"≤ 33%"} — limite NFC</span>
-                  <span><span className="inline-block w-2 h-2 rounded-full bg-red-500 mr-1"></span>{"> 33%"} — hors norme</span>
-                </div>
-              </>
-            )}
+                    );
+                  })}
+
+                  {/* Légende */}
+                  <div className="flex flex-wrap gap-3 text-[10px] font-mono text-ink-400 pt-1">
+                    <span><span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1"></span>{"< 20%"} — optimal</span>
+                    <span><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1"></span>{"≤ 33%"} — limite NFC</span>
+                    <span><span className="inline-block w-2 h-2 rounded-full bg-red-500 mr-1"></span>{">"} 33% — hors norme</span>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -1200,22 +1317,29 @@ export default function TableauPage() {
               const rawSlots = Array.isArray(row.slots) ? row.slots : (Array.isArray(row.breakers) ? row.breakers : []);
               rawSlots.forEach((b: any, i: number) => {
                 if (i >= 9 || b == null || typeof b !== "object" || typeof b.type !== "string") return;
-                slots[i] = {
-                  id: b.id ?? uid(),
-                  label: b.label ?? "",
-                  circuit: b.circuit ?? "autre",
-                  amperes: b.amperes ?? 16,
-                  type: b.type,
-                  pieces: Array.isArray(b.pieces) ? b.pieces : (
-                    (b.switchType || b.lampCount || b.switchCount) ? [{
-                      nom: b.label ?? "",
-                      pointsLumineux: b.lampCount ?? 1,
-                      typeCommande: (b.switchType ?? "simple") as CommandeType,
-                      nbCommandes: b.switchCount ?? 1,
-                      nbPrises: 1,
-                    }] : []
-                  ),
-                } as Breaker;
+                // Migration pieces[] avec groupes[]
+                let pieces: PieceConfig[] = [];
+                if (Array.isArray(b.pieces)) {
+                  pieces = b.pieces.map((p: any) => ({
+                    nom: p.nom ?? "",
+                    nbPrises: p.nbPrises ?? 1,
+                    groupes: Array.isArray(p.groupes) && p.groupes.length > 0
+                      ? p.groupes
+                      : [{
+                          nbPoints: p.pointsLumineux ?? 1,
+                          typeCommande: (p.typeCommande ?? "simple") as CommandeType,
+                          nbCommandes: p.nbCommandes ?? 1,
+                        }],
+                  }));
+                } else if (b.switchType || b.lampCount) {
+                  // Très ancien format
+                  pieces = [{
+                    nom: b.label ?? "",
+                    nbPrises: 1,
+                    groupes: [{ nbPoints: b.lampCount ?? 1, typeCommande: (b.switchType ?? "simple") as CommandeType, nbCommandes: b.switchCount ?? 1 }],
+                  }];
+                }
+                slots[i] = { id: b.id ?? uid(), label: b.label ?? "", circuit: b.circuit ?? "autre", amperes: b.amperes ?? 16, type: b.type, pieces } as Breaker;
               });
               return { id: row.id ?? uid(), name: row.name ?? "Rangée", slots };
             }).filter(Boolean) as BreakerRow[];
@@ -1253,8 +1377,7 @@ export default function TableauPage() {
       const existing = row.slots[slotIdx];
       const isDiffSlot = slotIdx === 0;
       const defaultBreaker: Breaker = existing ?? {
-        id: uid(),
-        label: "",
+        id: uid(), label: "",
         circuit: isDiffSlot ? "general" : "prise_16",
         amperes: isDiffSlot ? 25 : 16,
         type: isDiffSlot ? "diff-AC" : "1P",
