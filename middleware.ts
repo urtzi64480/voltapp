@@ -5,12 +5,14 @@ import type { NextRequest } from "next/server";
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (pathname.startsWith("/login")) {
+  // Routes publiques — pas d'auth
+  // /demande (exact) = formulaire public client
+  // /demandes = page privée VoltApp, protégée normalement
+  if (pathname.startsWith("/login") || pathname === "/demande") {
     return NextResponse.next();
   }
 
   const response = NextResponse.next();
-
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
