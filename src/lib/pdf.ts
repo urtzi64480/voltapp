@@ -11,6 +11,24 @@ interface Acompte {
   created_at: string;
 }
 
+// ── Chargement logo en base64 ─────────────────────────────────────────────────
+
+async function loadLogoBase64(): Promise<string | null> {
+  try {
+    const res = await fetch("/logo.png");
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
 // ── Constructeur interne partagé ─────────────────────────────────────────────
 
 async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
@@ -20,17 +38,25 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
   const W = doc.internal.pageSize.getWidth();
   const M = 18;
 
+  const logoBase64 = await loadLogoBase64();
+
   doc.setFillColor(28, 25, 23);
   doc.rect(0, 0, W, 38, "F");
+
+  if (logoBase64) {
+    doc.addImage(logoBase64, "PNG", M, 6, 24, 24);
+  }
+
+  const textX = logoBase64 ? M + 28 : M;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(20);
   doc.setTextColor(251, 191, 36);
-  doc.text("DEVIS", M, 16);
+  doc.text("DEVIS", textX, 16);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(200, 200, 190);
-  doc.text(`N° ${devis.numero}`, M, 23);
-  doc.text(`Émis le ${fmtDate(devis.date_emission)}${devis.date_validite ? ` · Valable jusqu'au ${fmtDate(devis.date_validite)}` : ""}`, M, 28);
+  doc.text(`N° ${devis.numero}`, textX, 23);
+  doc.text(`Émis le ${fmtDate(devis.date_emission)}${devis.date_validite ? ` · Valable jusqu'au ${fmtDate(devis.date_validite)}` : ""}`, textX, 28);
 
   const artisan = [
     profil.nom_entreprise ?? `${profil.prenom ?? ""} ${profil.nom ?? ""}`.trim(),
@@ -169,17 +195,25 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   const W = doc.internal.pageSize.getWidth();
   const M = 18;
 
+  const logoBase64 = await loadLogoBase64();
+
   doc.setFillColor(28, 25, 23);
   doc.rect(0, 0, W, 38, "F");
+
+  if (logoBase64) {
+    doc.addImage(logoBase64, "PNG", M, 6, 24, 24);
+  }
+
+  const textX = logoBase64 ? M + 28 : M;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(20);
   doc.setTextColor(251, 191, 36);
-  doc.text("FACTURE", M, 16);
+  doc.text("FACTURE", textX, 16);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(200, 200, 190);
-  doc.text(`N° ${facture.numero} · Émise le ${fmtDate(facture.date_emission)}`, M, 23);
-  if (facture.date_echeance) doc.text(`Échéance : ${fmtDate(facture.date_echeance)}`, M, 28);
+  doc.text(`N° ${facture.numero} · Émise le ${fmtDate(facture.date_emission)}`, textX, 23);
+  if (facture.date_echeance) doc.text(`Échéance : ${fmtDate(facture.date_echeance)}`, textX, 28);
 
   const artisan = [
     profil.nom_entreprise ?? `${profil.prenom ?? ""} ${profil.nom ?? ""}`.trim(),
