@@ -312,13 +312,13 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   // ── Pied de page avec coordonnées bancaires ──
   const pH = doc.internal.pageSize.getHeight();
   doc.setFillColor(28, 25, 23);
-  doc.rect(0, pH - 18, W, 18, "F");
+  doc.rect(0, pH - 22, W, 22, "F");
 
   if (profil.iban || profil.bic) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(6.5);
     doc.setTextColor(180, 180, 170);
-    doc.text("RÈGLEMENT PAR VIREMENT", M, pH - 13);
+    doc.text("RÈGLEMENT PAR VIREMENT", M, pH - 17);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(6.5);
     doc.setTextColor(140, 140, 130);
@@ -329,7 +329,7 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
       profil.bic ? `BIC : ${profil.bic}` : null,
     ].filter(Boolean) as string[];
     lignesBanque.forEach((l, i) => {
-      doc.text(l, M, pH - 9 + i * 4);
+      doc.text(l, M, pH - 12 + i * 4);
     });
   }
 
