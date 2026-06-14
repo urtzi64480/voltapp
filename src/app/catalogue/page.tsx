@@ -461,7 +461,6 @@ function CategorieBlock({
 
       {isOpen && (
         <div className="divide-y divide-ink-100">
-          {/* Headers desktop */}
           {branche === "service" && (
             <div className="hidden md:grid grid-cols-[2fr_90px_90px_80px] gap-4 px-5 py-2 text-xs font-semibold text-ink-400 uppercase tracking-wide bg-ink-50">
               <span>Nom</span><span>Unité</span><span className="text-right">Prix</span><span></span>
@@ -478,7 +477,6 @@ function CategorieBlock({
             <div className="px-5 py-4 text-sm text-ink-400 italic">Aucune prestation — catégorie vide.</div>
           )}
 
-          {/* ── Matériaux groupés par marque ── */}
           {branche === "materiau" && (() => {
             const mqs = [...new Set(items.map((p: PrestationExt) => p.marque || "__sans__"))].sort() as string[];
             return mqs.map((mq: string) => {
@@ -501,7 +499,6 @@ function CategorieBlock({
                     return (
                       <div key={p.id} className="px-4 py-3">
                         {editId === p.id ? (
-                          /* ── Formulaire édition matériau ── */
                           <div className="space-y-3">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                               <div>
@@ -562,8 +559,6 @@ function CategorieBlock({
                                   onChange={e => setEditData((d: any) => ({ ...d, sous_categorie: e.target.value }))} />
                               </div>
                             </div>
-
-                            {/* Bloc marge édition */}
                             <MargeFields
                               prixAchat={editPrixAchat}
                               prixVente={editPrixVente}
@@ -573,7 +568,6 @@ function CategorieBlock({
                                 setEditData((d: any) => ({ ...d, prix_unitaire: parseFloat(v) || 0 }));
                               }}
                             />
-
                             <div>
                               <label className="label">Liens fournisseurs</label>
                               <LiensFournisseurs liens={editLiens} setLiens={setEditLiens} />
@@ -594,7 +588,6 @@ function CategorieBlock({
                             </div>
                           </div>
                         ) : (
-                          /* ── Ligne lecture matériau ── */
                           <div className={cn("flex items-center gap-3",
                             "md:grid md:grid-cols-[40px_2fr_90px_90px_120px_minmax(80px,auto)_80px]")}>
                             <div className="hidden md:block">
@@ -620,7 +613,6 @@ function CategorieBlock({
                             </div>
                             <span className="text-xs text-ink-500 hidden md:block">{p.unite}</span>
                             <span className="font-semibold text-ink-900 text-sm ml-auto md:ml-0 md:text-right">{fmt(p.prix_unitaire)}</span>
-                            {/* Marge desktop */}
                             <div className="hidden md:flex items-center justify-end">
                               {p.prix_achat != null && p.prix_achat > 0 ? (
                                 <div className="text-right">
@@ -652,7 +644,6 @@ function CategorieBlock({
             });
           })()}
 
-          {/* ── Services ── */}
           {branche === "service" && items.map((p: PrestationExt) => {
             const sousCat: string = p.sous_categorie ?? "";
             return (
@@ -754,7 +745,6 @@ export default function CataloguePage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
-  // Edit state
   const [editId, setEditId] = useState<string | null>(null);
   const [editData, setEditData] = useState<Partial<PrestationExt>>({});
   const [editNewCat, setEditNewCat] = useState("");
@@ -763,7 +753,6 @@ export default function CataloguePage() {
   const [editPrixAchat, setEditPrixAchat] = useState("");
   const [editPrixVente, setEditPrixVente] = useState("");
 
-  // Form ajout
   const [showForm, setShowForm] = useState(false);
   const [newCat, setNewCat] = useState("");
   const [formLiens, setFormLiens] = useState<string[]>([]);
@@ -775,15 +764,11 @@ export default function CataloguePage() {
     sous_categorie: "", marque: "", image_url: "",
   });
 
-  // Collapse
   const [collapsedServices, setCollapsedServices] = useState<Record<string, boolean>>({});
   const [collapsedMateriaux, setCollapsedMateriaux] = useState<Record<string, boolean>>({});
   const [marques, setMarques] = useState<string[]>([]);
-
-  // Import
   const [showImport, setShowImport] = useState(false);
 
-  // ── Load ──
   async function load() {
     const { data } = await supabase
       .from("prestations")
@@ -818,7 +803,15 @@ export default function CataloguePage() {
     }
     const cat = newCat.trim() || form.categorie || "Divers";
     const prixAchatNum = formPrixAchat !== "" ? parseFloat(formPrixAchat) : null;
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) {
+      alert("Session expirée, veuillez vous reconnecter.");
+      return;
+    }
+
     const { data, error } = await supabase.from("prestations").insert({
+      user_id: session.user.id,
       nom: form.nom,
       description: form.description || null,
       prix_unitaire: prixVente,
@@ -832,7 +825,8 @@ export default function CataloguePage() {
       liens_fournisseurs: formLiens.filter(l => l.trim()),
       image_url: form.image_url || null,
     }).select().single();
-    if (error) { alert("Erreur lors de l'enregistrement : " + error.message); return; }
+
+    if (error) { alert("Erreur : " + error.message); return; }
     if (data) {
       setPrestations(p => [...p, data].sort((a, b) => a.categorie.localeCompare(b.categorie) || a.nom.localeCompare(b.nom)));
       if (!categories.includes(cat)) setCategories(c => [...c, cat].sort());
@@ -842,7 +836,6 @@ export default function CataloguePage() {
     setNewCat(""); setFormLiens([]); setFormPrixAchat(""); setFormPrixVente(""); setShowForm(false);
   }
 
-  // ── Delete ──
   async function del(id: string) {
     if (!confirm("Supprimer cette prestation ?")) return;
     await supabase.from("prestations").update({ actif: false }).eq("id", id);
@@ -854,7 +847,6 @@ export default function CataloguePage() {
     setCategories(c => c.filter(x => x !== cat));
   }
 
-  // ── Save edit ──
   async function saveEdit(id: string) {
     const finalCat = (editCatMode === "new" && editNewCat.trim() ? editNewCat.trim() : editData.categorie) ?? "Divers";
     const prixVenteNum = parseFloat(editPrixVente);
@@ -875,7 +867,6 @@ export default function CataloguePage() {
     setEditPrixAchat(""); setEditPrixVente("");
   }
 
-  // ── Start edit ──
   function startEdit(p: PrestationExt) {
     setEditId(p.id);
     setEditData({
@@ -893,6 +884,9 @@ export default function CataloguePage() {
 
   // ── Import CSV ──
   async function handleImport(rows: ImportRow[]) {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return;
+
     const toInsert: object[] = [];
     const toUpdate: { id: string; data: object }[] = [];
 
@@ -918,7 +912,7 @@ export default function CataloguePage() {
       if (existing) {
         toUpdate.push({ id: existing.id, data: payload });
       } else {
-        toInsert.push({ ...payload });
+        toInsert.push({ user_id: session.user.id, ...payload });
       }
     }
 
@@ -931,7 +925,6 @@ export default function CataloguePage() {
     await load();
   }
 
-  // ── Filtrage recherche ──
   const filtered = prestations.filter(p => matchSearch(p, search));
   const servicesPrests = filtered.filter(p => p.type_branche === "service");
   const materiauxPrests = filtered.filter(p => p.type_branche === "materiau");
@@ -957,7 +950,6 @@ export default function CataloguePage() {
     <Shell>
       <div className="p-4 md:p-8 max-w-4xl mx-auto">
 
-        {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="font-display text-3xl text-ink-900">Catalogue</h1>
@@ -967,12 +959,10 @@ export default function CataloguePage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => exportCSV(prestations)} title="Exporter CSV"
-              className="btn-ghost !px-3">
+            <button onClick={() => exportCSV(prestations)} title="Exporter CSV" className="btn-ghost !px-3">
               <Download size={16} />
             </button>
-            <button onClick={() => setShowImport(true)} title="Importer CSV"
-              className="btn-ghost !px-3">
+            <button onClick={() => setShowImport(true)} title="Importer CSV" className="btn-ghost !px-3">
               <Upload size={16} />
             </button>
             <button onClick={() => setShowForm(!showForm)} className="btn-volt">
@@ -981,7 +971,6 @@ export default function CataloguePage() {
           </div>
         </div>
 
-        {/* Barre de recherche */}
         <div className="relative mb-6">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-400 pointer-events-none" />
           <input
@@ -998,7 +987,6 @@ export default function CataloguePage() {
           )}
         </div>
 
-        {/* Formulaire ajout */}
         {showForm && (
           <div className="card card-inner mb-6 border-volt-400">
             <h2 className="font-semibold text-ink-800 mb-4">Nouvelle prestation</h2>
@@ -1056,7 +1044,6 @@ export default function CataloguePage() {
                   value={form.sous_categorie} onChange={e => setForm(f => ({ ...f, sous_categorie: e.target.value }))} />
               </div>
 
-              {/* Prix : service = simple, matériau = bloc marge */}
               {form.type_branche === "service" ? (
                 <div>
                   <label className="label">Prix unitaire (€) *</label>
@@ -1097,7 +1084,6 @@ export default function CataloguePage() {
           </div>
         )}
 
-        {/* Empty states */}
         {!loading && prestations.length === 0 && !showForm && (
           <div className="card card-inner text-center py-16">
             <p className="text-ink-400 mb-2">Catalogue vide</p>
@@ -1115,7 +1101,6 @@ export default function CataloguePage() {
 
         {loading && <div className="text-center py-10 text-ink-400">Chargement…</div>}
 
-        {/* Section Services */}
         {!loading && servicesPrests.length > 0 && (
           <div className="mb-8">
             <div className="flex items-center gap-2 mb-3">
@@ -1138,7 +1123,6 @@ export default function CataloguePage() {
           </div>
         )}
 
-        {/* Section Matériaux */}
         {!loading && materiauxPrests.length > 0 && (
           <div>
             <div className="flex items-center gap-2 mb-3">
@@ -1162,7 +1146,6 @@ export default function CataloguePage() {
         )}
       </div>
 
-      {/* Import Modal */}
       {showImport && (
         <ImportModal
           onClose={() => { setShowImport(false); }}
