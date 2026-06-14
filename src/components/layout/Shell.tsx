@@ -25,7 +25,7 @@ const NAV = [
 const BOTTOM_NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/clients",   label: "Clients",   icon: Users },
-  { href: "/planning",  label: "Planning",  icon: CalendarDays },
+  { href: "/demandes",  label: "Demandes",  icon: ClipboardList },
   { href: "/devis",     label: "Devis",     icon: FileText },
   { href: "/crm",       label: "CRM",       icon: TrendingUp },
 ];
@@ -56,12 +56,13 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const [drawer, setDrawer] = useState(false);
   const [facturesEnRetard, setFacturesEnRetard] = useState(0);
+  const [demandesNouvelles, setDemandesNouvelles] = useState(0);
 
   const isActive = (href: string) =>
     href === "/dashboard" ? path === href : path.startsWith(href);
 
   useEffect(() => {
-    // Charger les factures en retard de plus de 15 jours
+    // Factures en retard > 15 jours
     const seuilDate = new Date();
     seuilDate.setDate(seuilDate.getDate() - 15);
     const seuil = seuilDate.toISOString().split("T")[0];
@@ -73,6 +74,15 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       .lt("date_echeance", seuil)
       .then(({ count }) => {
         setFacturesEnRetard(count ?? 0);
+      });
+
+    // Demandes non vues
+    supabase
+      .from("demandes_client")
+      .select("id", { count: "exact" })
+      .eq("statut", "nouveau")
+      .then(({ count }) => {
+        setDemandesNouvelles(count ?? 0);
       });
   }, [path]);
 
@@ -92,7 +102,11 @@ export default function Shell({ children }: { children: React.ReactNode }) {
             <NavLink
               key={href} href={href} label={label} Icon={Icon}
               active={isActive(href)}
-              badge={href === "/factures" ? facturesEnRetard : undefined}
+              badge={
+                href === "/factures" ? facturesEnRetard :
+                href === "/demandes" ? demandesNouvelles :
+                undefined
+              }
             />
           ))}
         </nav>
@@ -118,6 +132,11 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           {facturesEnRetard > 0 && (
             <Link href="/factures" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold">
               <AlertTriangle size={12} /> {facturesEnRetard}
+            </Link>
+          )}
+          {demandesNouvelles > 0 && (
+            <Link href="/demandes" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold">
+              <ClipboardList size={12} /> {demandesNouvelles}
             </Link>
           )}
           <Link href="/devis/nouveau"
@@ -147,7 +166,11 @@ export default function Shell({ children }: { children: React.ReactNode }) {
                   key={href} href={href} label={label} Icon={Icon}
                   active={isActive(href)}
                   onClick={() => setDrawer(false)}
-                  badge={href === "/factures" ? facturesEnRetard : undefined}
+                  badge={
+                    href === "/factures" ? facturesEnRetard :
+                    href === "/demandes" ? demandesNouvelles :
+                    undefined
+                  }
                 />
               ))}
             </nav>
@@ -169,6 +192,11 @@ export default function Shell({ children }: { children: React.ReactNode }) {
             {href === "/factures" && facturesEnRetard > 0 && (
               <span className="absolute top-0 right-3 w-4 h-4 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
                 {facturesEnRetard > 9 ? "9+" : facturesEnRetard}
+              </span>
+            )}
+            {href === "/demandes" && demandesNouvelles > 0 && (
+              <span className="absolute top-0 right-3 w-4 h-4 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
+                {demandesNouvelles > 9 ? "9+" : demandesNouvelles}
               </span>
             )}
             <span>{label}</span>
