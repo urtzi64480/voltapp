@@ -98,7 +98,6 @@ function MargeFields({
 }) {
   const [margePct, setMargePct] = useState("");
 
-  // Quand prix achat change → recalcule prix de vente si marge saisie
   function handlePrixAchat(v: string) {
     onPrixAchatChange(v);
     if (margePct !== "" && parseFloat(v) > 0) {
@@ -107,7 +106,6 @@ function MargeFields({
     }
   }
 
-  // Quand marge % change → recalcule prix de vente
   function handleMarge(v: string) {
     setMargePct(v);
     if (parseFloat(prixAchat) > 0) {
@@ -116,7 +114,6 @@ function MargeFields({
     }
   }
 
-  // Quand prix de vente change manuellement → recalcule marge %
   function handlePrixVente(v: string) {
     onPrixVenteChange(v);
     if (parseFloat(prixAchat) > 0 && parseFloat(v) >= 0) {
@@ -264,7 +261,6 @@ function parseCSV(text: string): ImportRow[] {
   if (lines.length < 2) return [];
   const headers = lines[0].split(";").map(h => h.replace(/^"|"$/g, "").trim());
   return lines.slice(1).map(line => {
-    // Parse CSV line with quoted fields
     const values: string[] = [];
     let cur = ""; let inQ = false;
     for (let i = 0; i < line.length; i++) {
@@ -812,23 +808,31 @@ export default function CataloguePage() {
   // ── Add ──
   async function add() {
     const prixVente = parseFloat(formPrixVente);
-    if (!form.nom.trim() || isNaN(prixVente)) return;
+    if (!form.nom.trim()) {
+      alert("Le nom est obligatoire.");
+      return;
+    }
+    if (isNaN(prixVente) || prixVente < 0) {
+      alert("Le prix de vente est obligatoire.");
+      return;
+    }
     const cat = newCat.trim() || form.categorie || "Divers";
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
     const prixAchatNum = formPrixAchat !== "" ? parseFloat(formPrixAchat) : null;
-    const { data } = await supabase.from("prestations").insert({
-      user_id: user.id,
-      nom: form.nom, description: form.description,
+    const { data, error } = await supabase.from("prestations").insert({
+      nom: form.nom,
+      description: form.description || null,
       prix_unitaire: prixVente,
       prix_achat: prixAchatNum,
-      unite: form.unite, type_branche: form.type_branche,
-      categorie: cat, actif: true,
+      unite: form.unite,
+      type_branche: form.type_branche,
+      categorie: cat,
+      actif: true,
       sous_categorie: form.sous_categorie || null,
       marque: form.marque || null,
       liens_fournisseurs: formLiens.filter(l => l.trim()),
       image_url: form.image_url || null,
     }).select().single();
+    if (error) { alert("Erreur lors de l'enregistrement : " + error.message); return; }
     if (data) {
       setPrestations(p => [...p, data].sort((a, b) => a.categorie.localeCompare(b.categorie) || a.nom.localeCompare(b.nom)));
       if (!categories.includes(cat)) setCategories(c => [...c, cat].sort());
@@ -889,8 +893,6 @@ export default function CataloguePage() {
 
   // ── Import CSV ──
   async function handleImport(rows: ImportRow[]) {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
     const toInsert: object[] = [];
     const toUpdate: { id: string; data: object }[] = [];
 
@@ -916,7 +918,7 @@ export default function CataloguePage() {
       if (existing) {
         toUpdate.push({ id: existing.id, data: payload });
       } else {
-        toInsert.push({ user_id: user.id, ...payload });
+        toInsert.push({ ...payload });
       }
     }
 
