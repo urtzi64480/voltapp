@@ -14,7 +14,7 @@ const TYPES_TRAVAUX = [
   "Autre",
 ];
 
-const USER_ID = process.env.NEXT_PUBLIC_ELECTRICIEN_USER_ID ?? "";
+const USER_ID = "d506c94e-40c7-4bcd-a48c-97e86f4ea7c0";
 
 type Step = 1 | 2 | 3;
 
