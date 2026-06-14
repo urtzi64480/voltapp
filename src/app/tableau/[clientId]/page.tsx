@@ -8,7 +8,7 @@ import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, ShieldCheck, ShieldAlert,
-  ShieldX, Plus, Trash2, Zap, Settings2,
+  ShieldX, Plus, Trash2, Zap, Settings2, QrCode,
 } from "lucide-react";
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
@@ -1155,6 +1155,74 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
   );
 }
 
+// ─── QR EXPORT MODAL ─────────────────────────────────────────────────────────
+
+function QRModal({ clientId, clientName, onClose }: {
+  clientId: string; clientName: string; onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const publicUrl = typeof window !== "undefined"
+    ? `${window.location.origin}/tableau/${clientId}/public`
+    : "";
+  const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(publicUrl)}`;
+
+  const copyUrl = () => {
+    navigator.clipboard.writeText(publicUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4"
+      onClick={onClose}>
+      <div className="card w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+
+        <div className="flex items-center justify-between p-4 border-b border-ink-200">
+          <div>
+            <p className="font-semibold text-ink-900">Exporter le tableau</p>
+            <p className="text-xs text-ink-400 mt-0.5">{clientName}</p>
+          </div>
+          <button onClick={onClose} className="btn-ghost !px-2 !py-1 text-ink-400">✕</button>
+        </div>
+
+        <div className="p-6 flex flex-col items-center gap-4">
+          {/* QR Code via API publique */}
+          <div className="bg-white p-3 rounded-2xl border border-ink-200 shadow-sm">
+            <img src={qrApiUrl} alt="QR Code tableau" width={200} height={200} className="block rounded-lg" />
+          </div>
+          <p className="text-xs text-ink-400 text-center leading-relaxed">
+            Scannez pour accéder au tableau en lecture seule —<br />sans connexion requise
+          </p>
+
+          {/* URL */}
+          <div className="w-full flex flex-col gap-2">
+            <div className="flex items-center gap-2 bg-ink-50 border border-ink-200 rounded-xl px-3 py-2">
+              <span className="text-xs font-mono text-ink-500 flex-1 truncate">{publicUrl}</span>
+              <button onClick={copyUrl}
+                className={`text-xs font-semibold shrink-0 transition-colors ${
+                  copied ? "text-emerald-600" : "text-volt-600 hover:text-volt-700"
+                }`}>
+                {copied ? "Copié !" : "Copier"}
+              </button>
+            </div>
+            <a href={publicUrl} target="_blank" rel="noopener noreferrer"
+              className="btn-ghost w-full justify-center text-xs">
+              Ouvrir la page publique ↗
+            </a>
+          </div>
+        </div>
+
+        <div className="px-4 pb-4">
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700 leading-relaxed">
+            💡 Ce lien est accessible sans connexion. Partagez-le avec votre client ou un autre professionnel.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── DIN RAIL ROW ─────────────────────────────────────────────────────────────
 
 function DinRailRow({ row, globalOffset, selectedSlot, compliance, onClickSlot, onDeleteRow, onUpdateName }: {
@@ -1291,6 +1359,7 @@ export default function TableauPage() {
   const [editBreaker, setEditBreaker]     = useState<{ breaker: Breaker; rowId: number; slotIdx: number } | null>(null);
   const [schemaBreaker, setSchemaBreaker] = useState<{ breaker: Breaker; rowBreakers: (Breaker|null)[] } | null>(null);
   const [showReport, setShowReport]       = useState(false);
+  const [showQR, setShowQR]               = useState(false);
 
   useEffect(() => {
     supabase.from("clients").select("*").eq("id", clientId).single().then(({ data: c }) => {
@@ -1404,6 +1473,9 @@ export default function TableauPage() {
             <button onClick={() => printLabels(rows, client?.nom ?? "")} className="btn-ghost hidden md:flex">
               <Printer size={15} /> Étiquettes
             </button>
+            <button onClick={() => setShowQR(true)} className="btn-ghost hidden md:flex">
+              <QrCode size={15} /> Exporter
+            </button>
             <button onClick={handleSave} disabled={saving}
               className={`btn-volt ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
               <Save size={15} />{saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
@@ -1471,6 +1543,7 @@ export default function TableauPage() {
         />
       )}
       {showReport && <CompliancePanel result={compliance} onClose={() => setShowReport(false)} />}
+      {showQR && <QRModal clientId={clientId} clientName={client?.nom ?? ""} onClose={() => setShowQR(false)} />}
       {schemaBreaker && <CircuitSchema breaker={schemaBreaker.breaker} rowBreakers={schemaBreaker.rowBreakers} onClose={() => setSchemaBreaker(null)} />}
     </Shell>
   );
