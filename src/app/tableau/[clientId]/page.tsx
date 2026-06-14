@@ -8,7 +8,7 @@ import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, ShieldCheck, ShieldAlert,
-  ShieldX, Plus, Trash2, Zap, Settings2,
+  ShieldX, Plus, Trash2, Zap, Settings2, Layers, X,
 } from "lucide-react";
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
@@ -22,12 +22,13 @@ interface Breaker {
   switchType?: string;
   switchCount?: number;
   lampCount?: number;
+  pieces?: string;     // ← NEW: e.g. "Salon, Couloir"
+  longueurM?: number;  // ← NEW: estimated cable length in meters
 }
 
 interface BreakerRow {
   id: number;
   name: string;
-  // Fixed: slot 0 = diff, slots 1-8 = breakers (null = empty)
   slots: (Breaker | null)[];
 }
 
@@ -41,47 +42,114 @@ const BREAKER_TYPES: Record<string, { label: string; width: number; desc: string
   "diff-F":  { label: "ID F",  width: 2, desc: "Différentiel Type F",  isDiff: true, diffType: "F" },
 };
 
-const CIRCUITS: Record<string, { label: string; icon: string; ampMax: number; dedié: boolean; diffType: string | null; section: string | null }> = {
-  lumiere:         { label: "Lumière",          icon: "💡", ampMax: 10, dedié: false, diffType: "AC", section: "1.5" },
-  prise_16:        { label: "Prises 16A",       icon: "🔌", ampMax: 16, dedié: false, diffType: "AC", section: "1.5" },
-  prise_20:        { label: "Prises 20A",       icon: "🔌", ampMax: 20, dedié: false, diffType: "AC", section: "2.5" },
-  cuisine_prises:  { label: "Prises cuisine",   icon: "🍳", ampMax: 20, dedié: false, diffType: "AC", section: "2.5" },
-  plaque:          { label: "Plaque cuisson",   icon: "🔥", ampMax: 32, dedié: true,  diffType: "A",  section: "6.0" },
-  four:            { label: "Four",             icon: "🥘", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5" },
-  lave_linge:      { label: "Lave-linge",       icon: "🧺", ampMax: 20, dedié: true,  diffType: "A",  section: "2.5" },
-  lave_vaisselle:  { label: "Lave-vaisselle",   icon: "🍽️", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5" },
-  seche_linge:     { label: "Sèche-linge",      icon: "👕", ampMax: 20, dedié: true,  diffType: "A",  section: "2.5" },
-  chauffe_eau:     { label: "Chauffe-eau",      icon: "🚿", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5" },
-  chauffage:       { label: "Chauffage élec.",  icon: "🌡️", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5" },
-  clim:            { label: "Climatisation",    icon: "❄️", ampMax: 20, dedié: true,  diffType: "F",  section: "2.5" },
-  seche_serviette: { label: "Sèche-serviette",  icon: "🛁", ampMax: 16, dedié: true,  diffType: "AC", section: "1.5" },
-  congelateur:     { label: "Congélateur",      icon: "🧊", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5" },
-  irve:            { label: "IRVE (recharge)",  icon: "🔋", ampMax: 32, dedié: true,  diffType: "A",  section: "6.0" },
-  piscine:         { label: "Piscine/PAC",      icon: "🏊", ampMax: 20, dedié: true,  diffType: "F",  section: "2.5" },
-  vmc:             { label: "VMC",              icon: "💨", ampMax: 10, dedié: true,  diffType: "AC", section: "1.5" },
-  alarme:          { label: "Alarme",           icon: "🔔", ampMax: 6,  dedié: true,  diffType: "AC", section: "1.5" },
-  exterieur:       { label: "Extérieur",        icon: "🌿", ampMax: 16, dedié: false, diffType: "AC", section: "1.5" },
-  garage:          { label: "Garage",           icon: "🏠", ampMax: 16, dedié: false, diffType: "AC", section: "1.5" },
+const CIRCUITS: Record<string, { label: string; icon: string; ampMax: number; dedié: boolean; diffType: string | null; section: string | null; cosFi?: number }> = {
+  lumiere:         { label: "Lumière",          icon: "💡", ampMax: 10, dedié: false, diffType: "AC", section: "1.5", cosFi: 1.0 },
+  prise_16:        { label: "Prises 16A",       icon: "🔌", ampMax: 16, dedié: false, diffType: "AC", section: "1.5", cosFi: 1.0 },
+  prise_20:        { label: "Prises 20A",       icon: "🔌", ampMax: 20, dedié: false, diffType: "AC", section: "2.5", cosFi: 1.0 },
+  cuisine_prises:  { label: "Prises cuisine",   icon: "🍳", ampMax: 20, dedié: false, diffType: "AC", section: "2.5", cosFi: 1.0 },
+  plaque:          { label: "Plaque cuisson",   icon: "🔥", ampMax: 32, dedié: true,  diffType: "A",  section: "6.0", cosFi: 1.0 },
+  four:            { label: "Four",             icon: "🥘", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5", cosFi: 1.0 },
+  lave_linge:      { label: "Lave-linge",       icon: "🧺", ampMax: 20, dedié: true,  diffType: "A",  section: "2.5", cosFi: 0.8 },
+  lave_vaisselle:  { label: "Lave-vaisselle",   icon: "🍽️", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5", cosFi: 0.8 },
+  seche_linge:     { label: "Sèche-linge",      icon: "👕", ampMax: 20, dedié: true,  diffType: "A",  section: "2.5", cosFi: 0.8 },
+  chauffe_eau:     { label: "Chauffe-eau",      icon: "🚿", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5", cosFi: 1.0 },
+  chauffage:       { label: "Chauffage élec.",  icon: "🌡️", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5", cosFi: 1.0 },
+  clim:            { label: "Climatisation",    icon: "❄️", ampMax: 20, dedié: true,  diffType: "F",  section: "2.5", cosFi: 0.85 },
+  seche_serviette: { label: "Sèche-serviette",  icon: "🛁", ampMax: 16, dedié: true,  diffType: "AC", section: "1.5", cosFi: 1.0 },
+  congelateur:     { label: "Congélateur",      icon: "🧊", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5", cosFi: 0.8 },
+  irve:            { label: "IRVE (recharge)",  icon: "🔋", ampMax: 32, dedié: true,  diffType: "A",  section: "6.0", cosFi: 1.0 },
+  piscine:         { label: "Piscine/PAC",      icon: "🏊", ampMax: 20, dedié: true,  diffType: "F",  section: "2.5", cosFi: 0.85 },
+  vmc:             { label: "VMC",              icon: "💨", ampMax: 10, dedié: true,  diffType: "AC", section: "1.5", cosFi: 0.8 },
+  alarme:          { label: "Alarme",           icon: "🔔", ampMax: 6,  dedié: true,  diffType: "AC", section: "1.5", cosFi: 1.0 },
+  exterieur:       { label: "Extérieur",        icon: "🌿", ampMax: 16, dedié: false, diffType: "AC", section: "1.5", cosFi: 1.0 },
+  garage:          { label: "Garage",           icon: "🏠", ampMax: 16, dedié: false, diffType: "AC", section: "1.5", cosFi: 1.0 },
   general:         { label: "Général / Arrivée",icon: "⚡", ampMax: 63, dedié: true,  diffType: null, section: "10.0" },
   parafoudre:      { label: "Parafoudre",       icon: "⛈️", ampMax: 0,  dedié: true,  diffType: null, section: null },
-  autre:           { label: "Autre",            icon: "⚙️", ampMax: 32, dedié: false, diffType: "AC", section: "2.5" },
+  autre:           { label: "Autre",            icon: "⚙️", ampMax: 32, dedié: false, diffType: "AC", section: "2.5", cosFi: 0.9 },
 };
+
+// Conductivité cuivre (S/m), tension nominale
+const RHO_CU = 56; // m/(Ω·mm²)
+const U_NOMINAL = 230; // V
+const CHUTE_MAX_PCT = 3; // %
+
+// Sections normalisées disponibles (mm²)
+const SECTIONS_NORMEES = [1.5, 2.5, 4, 6, 10, 16];
+
+/**
+ * Calcule la section minimale pour respecter la chute de tension ≤ 3% NF C 15-100
+ * Returns: { sectionCalc: number, chutePct: number, sectionNFCMin: number }
+ */
+function calcSection(amperes: number, longueurM: number, circuit: string): {
+  sectionCalcMm2: number;
+  chutePctAvecNFC: number;
+  sectionNFCMm2: number;
+  ok: boolean;
+} {
+  const spec = CIRCUITS[circuit];
+  const nfcMin = parseFloat(spec?.section ?? "1.5");
+  const cosFi = spec?.cosFi ?? 1.0;
+
+  // Section minimale pour chute tension ≤ 3%
+  // ΔU = (2 × L × I × cosφ) / (ρ × S) ≤ U × 3%
+  // S ≥ (2 × L × I × cosφ) / (ρ × ΔUmax)
+  const dUmax = (U_NOMINAL * CHUTE_MAX_PCT) / 100; // V
+  const sectionCalcMm2 = (2 * longueurM * amperes * cosFi) / (RHO_CU * dUmax);
+
+  // Section NFC retenue = max(NFC min, section calculée arrondie au supérieur normé)
+  const sectionRetenue = SECTIONS_NORMEES.find(s => s >= Math.max(sectionCalcMm2, nfcMin)) ?? 16;
+
+  // Chute de tension réelle avec section NFC min
+  const chutePctAvecNFC = ((2 * longueurM * amperes * cosFi) / (RHO_CU * nfcMin * U_NOMINAL)) * 100;
+
+  return {
+    sectionCalcMm2: Math.round(sectionCalcMm2 * 100) / 100,
+    chutePctAvecNFC: Math.round(chutePctAvecNFC * 10) / 10,
+    sectionNFCMm2: sectionRetenue,
+    ok: chutePctAvecNFC <= CHUTE_MAX_PCT,
+  };
+}
+
+// Diamètre extérieur des câbles (mm) — approximatif selon section
+const CABLE_DIAM: Record<string, number> = {
+  "1.5": 6.5, "2.5": 7.5, "4": 8.5, "6": 10.0, "10": 12.5, "16": 15.0,
+};
+
+// Taux de remplissage max gaine NF C 15-100 : 1/3 de la section intérieure
+// Diamètres intérieurs gaines IRL (mm)
+const GAINES_IRL = [
+  { diam: 16, section: Math.PI * 8 * 8 },   // IRL 16 → int ~Ø16
+  { diam: 20, section: Math.PI * 10 * 10 },
+  { diam: 25, section: Math.PI * 12.5 * 12.5 },
+  { diam: 32, section: Math.PI * 16 * 16 },
+  { diam: 40, section: Math.PI * 20 * 20 },
+];
+
+function gaineRecommandee(cables: string[]): { diam: number; tauxRemplissage: number } {
+  const totalSection = cables.reduce((sum, s) => {
+    const d = CABLE_DIAM[s] ?? 8;
+    return sum + Math.PI * (d / 2) * (d / 2);
+  }, 0);
+  const needed = totalSection / (1 / 3); // section gaine nécessaire pour taux ≤ 1/3
+  const gaine = GAINES_IRL.find(g => g.section >= needed) ?? GAINES_IRL[GAINES_IRL.length - 1];
+  const taux = Math.round((totalSection / gaine.section) * 100);
+  return { diam: gaine.diam, tauxRemplissage: taux };
+}
 
 const DIFF_HIERARCHY: Record<string, number> = { AC: 0, A: 1, F: 2 };
 const AMPERES = [2, 6, 10, 16, 20, 25, 32, 40, 63];
 
-// Row dimensions
-const SLOT_W = 52;   // px per breaker slot
-const DIFF_W = 96;   // px for diff slot (double width)
+const SLOT_W = 52;
+const DIFF_W = 96;
 const BREAKER_H = 130;
 
 let _id = 0;
 const uid = () => ++_id;
 
-const emptyRow = (rowNum: number): BreakerRow => ({ // v2
+const emptyRow = (rowNum: number): BreakerRow => ({
   id: uid(),
   name: `Rangée ${rowNum}`,
-  slots: Array(9).fill(null),  // slot 0 = diff, slots 1-8 = breakers
+  slots: Array(9).fill(null),
 });
 
 // ─── NFC CHECKER ──────────────────────────────────────────────────────────────
@@ -102,7 +170,7 @@ function checkNFC(rows: BreakerRow[]) {
   }
 
   const allBreakers = rows.flatMap(r => safeBreakers(r.slots));
-  const diffs = allBreakers.filter(b => b != null && typeof b === "object" && typeof (b as any).type === "string" && !!BREAKER_TYPES[(b as any).type]?.isDiff);
+  const diffs = allBreakers.filter(b => !!BREAKER_TYPES[b.type]?.isDiff);
 
   if (diffs.length === 0) {
     errors.push({ id: "no-diff", msg: "Aucun différentiel 30mA détecté. Minimum 2 obligatoires.", rule: "Art. 531.2" });
@@ -112,7 +180,7 @@ function checkNFC(rows: BreakerRow[]) {
 
   rows.forEach(row => {
     const rawDiff = Array.isArray(row.slots) ? row.slots[0] : null;
-    const diff = (rawDiff != null && typeof rawDiff === 'object' && typeof (rawDiff as any).type === 'string') ? rawDiff as Breaker : null;
+    const diff = (rawDiff != null && typeof rawDiff === "object" && typeof (rawDiff as any).type === "string") ? rawDiff as Breaker : null;
     const breakers = safeBreakers(Array.isArray(row.slots) ? row.slots.slice(1) : []);
     if (breakers.length > 8) {
       errors.push({ id: `max8-${row.id}`, msg: `Rangée "${row.name}" : plus de 8 circuits sous le différentiel.`, rule: "Art. 531.2.4" });
@@ -129,6 +197,13 @@ function checkNFC(rows: BreakerRow[]) {
         const covType = BREAKER_TYPES[diff.type]?.diffType;
         if (covType && (DIFF_HIERARCHY[covType] ?? -1) < (DIFF_HIERARCHY[spec.diffType] ?? -1)) {
           errors.push({ id: `difftype-${b.id}`, msg: `"${b.label || spec.label}" : nécessite diff. Type ${spec.diffType}, protégé par Type ${covType}.`, rule: "NFC §531.2" });
+        }
+      }
+      // Chute tension check si longueur renseignée
+      if (b.longueurM && b.longueurM > 0) {
+        const { chutePctAvecNFC, ok } = calcSection(b.amperes, b.longueurM, b.circuit);
+        if (!ok) {
+          warnings.push({ id: `chute-${b.id}`, msg: `"${b.label || spec.label}" : chute de tension ${chutePctAvecNFC}% > 3% NFC. Augmenter la section.`, rule: "NFC §52" });
         }
       }
     });
@@ -160,11 +235,8 @@ function BreakerSVG({ breaker, isEmpty, isSelected, isDiffSlot }: {
   const h = BREAKER_H;
   const isDiff = breaker ? !!BREAKER_TYPES[breaker.type]?.isDiff : false;
 
-  // Legrand palette: corps gris clair, levier noir
-  const bodyColor = "#e8e8e6";       // gris clair Legrand
-  const bodyDark  = "#c8c8c4";       // liseret
-  const leverColor = "#1a1a1a";      // levier noir mat
-  const leverShine = "#2d2d2d";      // reflet levier
+  const bodyColor = "#e8e8e6";
+  const bodyDark  = "#c8c8c4";
 
   if (isEmpty) {
     return (
@@ -180,7 +252,6 @@ function BreakerSVG({ breaker, isEmpty, isSelected, isDiffSlot }: {
   return (
     <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: "block" }}>
       <defs>
-        {/* Corps: dégradé latéral plastique */}
         <linearGradient id={`body-${breaker!.id}`} x1="0" y1="0" x2="1" y2="0">
           <stop offset="0%"   stopColor="#c8c8c4" />
           <stop offset="8%"   stopColor="#ebebea" />
@@ -188,20 +259,17 @@ function BreakerSVG({ breaker, isEmpty, isSelected, isDiffSlot }: {
           <stop offset="92%"  stopColor="#d8d8d4" />
           <stop offset="100%" stopColor="#b8b8b4" />
         </linearGradient>
-        {/* Reflet vertical */}
         <linearGradient id={`shine-${breaker!.id}`} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%"   stopColor="white" stopOpacity="0.35" />
           <stop offset="25%"  stopColor="white" stopOpacity="0.08" />
           <stop offset="100%" stopColor="black" stopOpacity="0.12" />
         </linearGradient>
-        {/* Levier */}
         <linearGradient id={`lever-${breaker!.id}`} x1="0" y1="0" x2="1" y2="0">
           <stop offset="0%"   stopColor="#111" />
-          <stop offset="30%"  stopColor={leverShine} />
-          <stop offset="60%"  stopColor={leverColor} />
+          <stop offset="30%"  stopColor="#2d2d2d" />
+          <stop offset="60%"  stopColor="#1a1a1a" />
           <stop offset="100%" stopColor="#0a0a0a" />
         </linearGradient>
-        {/* Vis */}
         <radialGradient id={`screw-${breaker!.id}`} cx="35%" cy="35%" r="65%">
           <stop offset="0%"   stopColor="#f0f0ee" />
           <stop offset="60%"  stopColor="#a0a09c" />
@@ -209,33 +277,19 @@ function BreakerSVG({ breaker, isEmpty, isSelected, isDiffSlot }: {
         </radialGradient>
       </defs>
 
-      {/* Ombre portée */}
       <rect x="2" y="3" width={w-3} height={h-3} rx="5" fill="rgba(0,0,0,0.18)" />
-
-      {/* Corps principal */}
       <rect x="0.5" y="0.5" width={w-1} height={h-1} rx="5"
-        fill={`url(#body-${breaker!.id})`}
-        stroke={bodyDark} strokeWidth="1" />
+        fill={`url(#body-${breaker!.id})`} stroke={bodyDark} strokeWidth="1" />
       <rect x="0.5" y="0.5" width={w-1} height={h-1} rx="5"
         fill={`url(#shine-${breaker!.id})`} />
-
-      {/* Liseret haut (zone bornes) */}
-      <rect x="0.5" y="0.5" width={w-1} height="20" rx="5"
-        fill={bodyDark} />
+      <rect x="0.5" y="0.5" width={w-1} height="20" rx="5" fill={bodyDark} />
       <rect x="0.5" y="14" width={w-1} height="6" fill={bodyDark} />
-
-      {/* Liseret bas */}
-      <rect x="0.5" y={h-20} width={w-1} height="20" rx="5"
-        fill={bodyDark} />
+      <rect x="0.5" y={h-20} width={w-1} height="20" rx="5" fill={bodyDark} />
       <rect x="0.5" y={h-20} width={w-1} height="6" fill={bodyDark} />
-
-      {/* Vis haute */}
       <rect x={w*0.18} y="3" width={w*0.64} height="12" rx="2" fill="rgba(0,0,0,0.15)" />
       <circle cx={w/2} cy="9" r="4.5" fill={`url(#screw-${breaker!.id})`} />
       <line x1={w/2-3} y1="9" x2={w/2+3} y2="9" stroke="#444" strokeWidth="1.3" strokeLinecap="round"/>
       <line x1={w/2} y1="5.5" x2={w/2} y2="12.5" stroke="#444" strokeWidth="1.3" strokeLinecap="round"/>
-
-      {/* Vis basse */}
       <rect x={w*0.18} y={h-15} width={w*0.64} height="12" rx="2" fill="rgba(0,0,0,0.15)" />
       <circle cx={w/2} cy={h-9} r="4.5" fill={`url(#screw-${breaker!.id})`} />
       <line x1={w/2-3} y1={h-9} x2={w/2+3} y2={h-9} stroke="#444" strokeWidth="1.3" strokeLinecap="round"/>
@@ -243,51 +297,33 @@ function BreakerSVG({ breaker, isEmpty, isSelected, isDiffSlot }: {
 
       {isDiff ? (
         <>
-          {/* ── DIFFÉRENTIEL : 2 leviers noirs ── */}
           {[w*0.27, w*0.73].map((lx, i) => (
             <g key={i}>
-              {/* Embase levier */}
               <rect x={lx-7} y="22" width="14" height="52" rx="6" fill="rgba(0,0,0,0.3)" />
-              {/* Corps levier */}
-              <rect x={lx-6} y="21" width="12" height="50" rx="5"
-                fill={`url(#lever-${breaker!.id})`} />
-              {/* Encoche */}
+              <rect x={lx-6} y="21" width="12" height="50" rx="5" fill={`url(#lever-${breaker!.id})`} />
               <rect x={lx-4} y="41" width="8" height="3.5" rx="1.5" fill="rgba(255,255,255,0.08)" />
-              {/* Reflet */}
               <ellipse cx={lx-1} cy="30" rx="3.5" ry="6" fill="rgba(255,255,255,0.1)" />
-              {/* Trait ON blanc */}
               <rect x={lx-1.5} y="24" width="3" height="9" rx="1.5" fill="rgba(255,255,255,0.55)" />
             </g>
           ))}
-          {/* Bouton TEST Legrand (rouge, centré) */}
           <rect x={w/2-11} y="76" width="22" height="12" rx="3" fill="#1a0000" />
           <rect x={w/2-10} y="75" width="20" height="11" rx="3" fill="#b91c1c" />
           <rect x={w/2-9}  y="76" width="18" height="7"  rx="2" fill="#ef4444" />
           <rect x={w/2-8}  y="76.5" width="16" height="3" rx="1" fill="rgba(255,255,255,0.2)" />
           <text x={w/2} y="84" textAnchor="middle" fontSize="4.5" fill="white" fontWeight="bold" fontFamily="monospace">TEST</text>
-          {/* Label 30mA */}
           <text x={w/2} y="96" textAnchor="middle" fontSize="6.5" fill="#555" fontFamily="monospace" fontWeight="600">30mA</text>
-          {/* Type diff */}
           <text x={w/2} y="107" textAnchor="middle" fontSize="7.5" fill="#1a1a1a" fontFamily="monospace" fontWeight="800">
             {`Type ${BREAKER_TYPES[breaker!.type]?.diffType ?? ""}`}
           </text>
         </>
       ) : (
         <>
-          {/* ── DISJONCTEUR : 1 levier noir ── */}
-          {/* Embase */}
           <rect x={w/2-8} y="22" width="16" height="60" rx="7" fill="rgba(0,0,0,0.25)" />
-          {/* Corps levier */}
-          <rect x={w/2-7} y="21" width="14" height="58" rx="6"
-            fill={`url(#lever-${breaker!.id})`} />
-          {/* Encoche préhension */}
+          <rect x={w/2-7} y="21" width="14" height="58" rx="6" fill={`url(#lever-${breaker!.id})`} />
           <rect x={w/2-5} y="46" width="10" height="4" rx="2" fill="rgba(255,255,255,0.07)" />
           <rect x={w/2-5} y="47" width="10" height="1.5" rx="1" fill="rgba(255,255,255,0.04)" />
-          {/* Reflet */}
           <ellipse cx={w/2-1} cy="31" rx="4" ry="7" fill="rgba(255,255,255,0.1)" />
-          {/* Trait I blanc (indicateur ON) */}
           <rect x={w/2-1.5} y="24" width="3" height="10" rx="1.5" fill="rgba(255,255,255,0.55)" />
-          {/* Plaque ampérage (fond blanc cassé comme Legrand) */}
           <rect x={w/2-12} y="82" width="24" height="14" rx="2.5" fill="white" opacity="0.9" />
           <rect x={w/2-11} y="83" width="22" height="12" rx="2" fill="#f8f8f6" />
           <text x={w/2} y="93" textAnchor="middle"
@@ -298,7 +334,6 @@ function BreakerSVG({ breaker, isEmpty, isSelected, isDiffSlot }: {
         </>
       )}
 
-      {/* Bordure sélection */}
       {isSelected && (
         <rect x="0.5" y="0.5" width={w-1} height={h-1} rx="5"
           fill="none" stroke="#F59E0B" strokeWidth="2.5" />
@@ -324,6 +359,12 @@ function BreakerEditModal({
   const hasError = compliance.errors.some(e => e.id.includes(String(breaker.id)));
   const spec = CIRCUITS[breaker.circuit];
 
+  // Section calculation
+  const sectionInfo = useMemo(() => {
+    if (!breaker.longueurM || breaker.longueurM <= 0 || isDiff) return null;
+    return calcSection(breaker.amperes, breaker.longueurM, breaker.circuit);
+  }, [breaker.amperes, breaker.longueurM, breaker.circuit, isDiff]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-ink-900/60 backdrop-blur-sm"
       onClick={onClose}>
@@ -342,6 +383,7 @@ function BreakerEditModal({
         </div>
 
         <div className="p-4 flex flex-col gap-4">
+
           {/* Libellé */}
           <div>
             <label className="label">Libellé</label>
@@ -350,6 +392,18 @@ function BreakerEditModal({
               onChange={e => onUpdate({ ...breaker, label: e.target.value })}
             />
           </div>
+
+          {/* Pièces desservies — seulement pour disjoncteurs non-diff */}
+          {!isDiff && (
+            <div>
+              <label className="label">Pièce(s) desservie(s)</label>
+              <input className="input" placeholder="Ex: Salon · Couloir · Entrée"
+                value={breaker.pieces ?? ""}
+                onChange={e => onUpdate({ ...breaker, pieces: e.target.value })}
+              />
+              <p className="text-xs text-ink-400 mt-1">Plusieurs pièces séparées par · ou ,</p>
+            </div>
+          )}
 
           {/* Type */}
           <div>
@@ -392,10 +446,56 @@ function BreakerEditModal({
                 </div>
               </div>
 
+              {/* Longueur câble */}
+              <div>
+                <label className="label">Longueur estimée du câble</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    className="input w-28"
+                    type="number"
+                    min={1}
+                    max={200}
+                    placeholder="ex: 12"
+                    value={breaker.longueurM ?? ""}
+                    onChange={e => {
+                      const val = e.target.value === "" ? undefined : parseFloat(e.target.value);
+                      onUpdate({ ...breaker, longueurM: val });
+                    }}
+                  />
+                  <span className="text-sm text-ink-400 font-mono">mètres</span>
+                </div>
+                <p className="text-xs text-ink-400 mt-1">Optionnel — pour calcul de la section NF C 15-100</p>
+              </div>
+
+              {/* Section calculation result */}
+              {sectionInfo && (
+                <div className={`rounded-xl p-3 text-xs font-mono leading-relaxed border ${
+                  sectionInfo.ok
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                    : "bg-amber-50 border-amber-200 text-amber-800"
+                }`}>
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <span>{sectionInfo.ok ? "✅" : "⚠️"}</span>
+                    <span className="font-bold uppercase tracking-wide text-[10px]">
+                      Calcul section NF C 15-100
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span>Section calculée (chute tension) : <strong>{sectionInfo.sectionCalcMm2} mm²</strong></span>
+                    <span>Section NFC minimum : <strong>{CIRCUITS[breaker.circuit]?.section} mm²</strong></span>
+                    <span>Section recommandée : <strong className="text-base">{sectionInfo.sectionNFCMm2} mm²</strong></span>
+                    <span className={sectionInfo.ok ? "text-emerald-600" : "text-amber-700 font-bold"}>
+                      Chute de tension avec section NFC : {sectionInfo.chutePctAvecNFC}%
+                      {sectionInfo.ok ? " ✓ (≤ 3%)" : " ✗ — augmenter la section !"}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* NFC hint */}
               {spec && (
                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-700 font-mono leading-relaxed">
-                  📋 NFC 15-100 — Max {spec.ampMax}A · Section {spec.section}mm²
+                  📋 NFC 15-100 — Max {spec.ampMax}A · Section min {spec.section}mm²
                   <br />Diff requis : Type {spec.diffType || "—"} · {spec.dedié ? "Circuit dédié" : "Partageable"}
                 </div>
               )}
@@ -537,6 +637,206 @@ function CompliancePanel({ result, onClose }: { result: ReturnType<typeof checkN
   );
 }
 
+// ─── GAINES & DÉRIVATION PANEL ────────────────────────────────────────────────
+
+interface GaineGroup {
+  label: string;
+  breakers: Breaker[];
+  sections: string[];
+  gaine: { diam: number; tauxRemplissage: number };
+  boiteDerivation: boolean;
+  reason: string;
+}
+
+function buildGainesOptimisation(rows: BreakerRow[]): GaineGroup[] {
+  const allBreakers = rows.flatMap(r => safeBreakers(r.slots)).filter(b => !BREAKER_TYPES[b.type]?.isDiff && b.circuit !== "parafoudre" && b.circuit !== "general");
+
+  // Groupe par pièces communes
+  const pieceMap = new Map<string, Breaker[]>();
+
+  allBreakers.forEach(b => {
+    const pieces = b.pieces
+      ? b.pieces.split(/[,·\|\/]/).map(p => p.trim()).filter(Boolean)
+      : ["Non assigné"];
+    pieces.forEach(piece => {
+      const key = piece.toLowerCase();
+      if (!pieceMap.has(key)) pieceMap.set(key, []);
+      pieceMap.get(key)!.push(b);
+    });
+  });
+
+  const groups: GaineGroup[] = [];
+
+  pieceMap.forEach((breakers, pieceKey) => {
+    const pieceName = breakers[0].pieces
+      ? breakers[0].pieces.split(/[,·\|\/]/).map(p => p.trim()).find(p => p.toLowerCase() === pieceKey) ?? pieceKey
+      : pieceKey;
+
+    // Sections de câble pour chaque circuit
+    const sections = breakers.map(b => CIRCUITS[b.circuit]?.section ?? "2.5");
+
+    // Gaine recommandée
+    const gaine = gaineRecommandee(sections);
+
+    // Boîte de dérivation recommandée si plusieurs circuits dans la même pièce
+    const boiteDerivation = breakers.length >= 2;
+
+    // Raison
+    let reason = "";
+    if (breakers.length === 1) {
+      reason = "Circuit unique — passage en gaine individuelle";
+    } else {
+      const circuitTypes = [...new Set(breakers.map(b => CIRCUITS[b.circuit]?.label ?? b.circuit))];
+      reason = `${breakers.length} circuits (${circuitTypes.slice(0, 3).join(", ")}${circuitTypes.length > 3 ? "…" : ""}) — gaine commune possible`;
+    }
+
+    groups.push({
+      label: pieceName.charAt(0).toUpperCase() + pieceName.slice(1),
+      breakers,
+      sections,
+      gaine,
+      boiteDerivation,
+      reason,
+    });
+  });
+
+  // Tri: pièces avec le plus de circuits en premier
+  return groups.sort((a, b) => b.breakers.length - a.breakers.length);
+}
+
+function GainesPanel({ rows, onClose }: { rows: BreakerRow[]; onClose: () => void }) {
+  const groups = useMemo(() => buildGainesOptimisation(rows), [rows]);
+
+  const totalBoites = groups.filter(g => g.boiteDerivation).length;
+  const hasAnyPieces = rows.flatMap(r => safeBreakers(r.slots)).some(b => b.pieces && b.pieces.trim().length > 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4"
+      onClick={onClose}>
+      <div className="card w-full max-w-xl max-h-[92vh] overflow-hidden flex flex-col"
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-ink-200">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center w-11 h-11 rounded-xl bg-violet-50 border border-violet-200">
+              <Layers size={20} className="text-violet-600" />
+            </div>
+            <div>
+              <p className="font-display text-lg text-ink-900">Optimisation des gaines</p>
+              <p className="text-xs text-ink-400 font-mono">NF C 15-100 · Taux de remplissage ≤ 1/3</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="btn-ghost !px-2 !py-1"><X size={16} /></button>
+        </div>
+
+        {/* Summary strip */}
+        <div className="flex gap-3 px-4 py-3 bg-ink-50 border-b border-ink-100">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-ink-600">
+            <span className="w-5 h-5 rounded-md bg-violet-100 flex items-center justify-center text-violet-600 text-[10px] font-bold">{groups.length}</span>
+            zone{groups.length > 1 ? "s" : ""} détectée{groups.length > 1 ? "s" : ""}
+          </div>
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-ink-600">
+            <span className="w-5 h-5 rounded-md bg-amber-100 flex items-center justify-center text-amber-600 text-[10px] font-bold">{totalBoites}</span>
+            boîte{totalBoites > 1 ? "s" : ""} de dérivation
+          </div>
+        </div>
+
+        {!hasAnyPieces && (
+          <div className="mx-4 mt-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-700 flex gap-2">
+            <span className="shrink-0">💡</span>
+            <span>Renseignez le champ <strong>Pièce(s) desservie(s)</strong> sur chaque disjoncteur pour obtenir des suggestions par zone. Sans pièces, les circuits sont groupés par type.</span>
+          </div>
+        )}
+
+        {/* Groups */}
+        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+          {groups.length === 0 ? (
+            <div className="text-center py-12 text-ink-400">
+              <Layers size={32} className="mx-auto mb-3 text-ink-200" />
+              <p className="text-sm">Aucun circuit configuré</p>
+            </div>
+          ) : (
+            groups.map((group, gi) => {
+              const tauxColor = group.gaine.tauxRemplissage <= 25
+                ? "text-emerald-600 bg-emerald-50 border-emerald-200"
+                : group.gaine.tauxRemplissage <= 33
+                ? "text-amber-600 bg-amber-50 border-amber-200"
+                : "text-red-600 bg-red-50 border-red-200";
+
+              return (
+                <div key={gi} className="border border-ink-200 rounded-2xl overflow-hidden">
+                  {/* Zone header */}
+                  <div className="flex items-center justify-between px-4 py-3 bg-ink-900">
+                    <div className="flex items-center gap-2">
+                      <span className="text-volt-400 font-display font-bold text-base">{group.label}</span>
+                      <span className="text-ink-400 text-xs font-mono">{group.breakers.length} circuit{group.breakers.length > 1 ? "s" : ""}</span>
+                    </div>
+                    {group.boiteDerivation && (
+                      <span className="flex items-center gap-1 text-[10px] font-bold text-amber-400 bg-amber-400/10 border border-amber-400/30 px-2 py-0.5 rounded-full">
+                        🔀 Boîte dérivation
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Circuits list */}
+                  <div className="p-3 flex flex-col gap-1.5">
+                    {group.breakers.map((b, bi) => {
+                      const spec = CIRCUITS[b.circuit] || CIRCUITS.autre;
+                      const secInfo = b.longueurM && b.longueurM > 0
+                        ? calcSection(b.amperes, b.longueurM, b.circuit)
+                        : null;
+                      return (
+                        <div key={b.id} className="flex items-center gap-2 text-xs">
+                          <span className="w-5 h-5 rounded-md bg-ink-100 flex items-center justify-center text-ink-500 font-bold font-mono shrink-0">{bi + 1}</span>
+                          <span className="text-base">{spec.icon}</span>
+                          <span className="flex-1 text-ink-700 font-medium truncate">{b.label || spec.label}</span>
+                          <span className="font-mono text-ink-400">{b.amperes}A</span>
+                          <span className={`font-mono font-bold px-1.5 py-0.5 rounded border text-[10px] ${
+                            secInfo
+                              ? secInfo.ok ? "text-emerald-700 bg-emerald-50 border-emerald-200" : "text-amber-700 bg-amber-50 border-amber-200"
+                              : "text-ink-500 bg-ink-50 border-ink-200"
+                          }`}>
+                            {secInfo ? `${secInfo.sectionNFCMm2}mm²` : `${spec.section ?? "?"}mm²`}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Gaine recommendation */}
+                  <div className="flex items-center justify-between px-3 py-2.5 bg-ink-50 border-t border-ink-100">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs text-ink-500">{group.reason}</span>
+                      {group.boiteDerivation && (
+                        <span className="text-[10px] text-amber-600 font-mono">
+                          → 1 boîte de dérivation recommandée au point de jonction
+                        </span>
+                      )}
+                    </div>
+                    <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-mono font-bold shrink-0 ml-3 ${tauxColor}`}>
+                      <span>IRL Ø{group.gaine.diam}</span>
+                      <span className="text-[10px] opacity-70">{group.gaine.tauxRemplissage}%</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Legend */}
+        <div className="p-3 border-t border-ink-200 bg-ink-50 flex flex-wrap gap-4 text-[10px] font-mono text-ink-400">
+          <span><span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1"></span>Taux ≤ 25% — optimal</span>
+          <span><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1"></span>Taux ≤ 33% — limite NFC</span>
+          <span><span className="inline-block w-2 h-2 rounded-full bg-red-500 mr-1"></span>Taux > 33% — hors norme</span>
+          <span className="ml-auto">IRL = gaine isolante rigide lisse</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── CIRCUIT SCHEMA MODAL ─────────────────────────────────────────────────────
 
 const CABLE = {
@@ -560,10 +860,15 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
   const H = isLight ? 340 : 240;
   const midY = H / 2;
 
+  // Section info for display
+  const sectionInfo = useMemo(() => {
+    if (!breaker.longueurM || breaker.longueurM <= 0) return null;
+    return calcSection(breaker.amperes, breaker.longueurM, breaker.circuit);
+  }, [breaker.amperes, breaker.longueurM, breaker.circuit]);
+
   const diff = rowBreakers[0];
   const elements: React.ReactNode[] = [];
 
-  // Input wires
   elements.push(
     <g key="in">
       <line x1={20} y1={midY}    x2={55} y2={midY}    stroke={CABLE.phase.stroke}  strokeWidth={2.5}/>
@@ -577,7 +882,6 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
 
   let curX = 55;
 
-  // Diff block
   if (diff) {
     const dt = BREAKER_TYPES[diff.type]?.diffType || "AC";
     elements.push(
@@ -597,7 +901,6 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
     curX += 58;
   }
 
-  // Breaker block
   elements.push(
     <g key="brk">
       <rect x={curX} y={midY-22} width={28} height={44} rx={4} fill="#e8e8e6" stroke="#c0c0bc" strokeWidth={1.5}/>
@@ -611,12 +914,24 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
     <line key="bn"   x1={curX}    y1={midY+20} x2={curX+56} y2={midY+20} stroke={CABLE.neutre.stroke} strokeWidth={2.5}/>,
     <line key="bpe"  x1={curX}    y1={midY+38} x2={curX+56} y2={midY+38} stroke={CABLE.terre.stroke}  strokeWidth={2.5} strokeDasharray="5,3"/>
   );
-  if (spec?.section) {
-    elements.push(<text key="sec" x={curX+13} y={midY-26} textAnchor="middle" fontSize={8} fill="#64748b" fontFamily="monospace">{spec.section}mm²</text>);
+
+  // Section label on wire
+  const displaySection = sectionInfo ? `${sectionInfo.sectionNFCMm2}mm²` : (spec?.section ? `${spec.section}mm²` : "");
+  const sectionColor = sectionInfo
+    ? (sectionInfo.ok ? "#10b981" : "#f59e0b")
+    : "#64748b";
+  if (displaySection) {
+    elements.push(
+      <text key="sec" x={curX+13} y={midY-26}
+        textAnchor="middle" fontSize={8}
+        fill={sectionColor} fontFamily="monospace" fontWeight="bold">
+        {displaySection}
+      </text>
+    );
   }
   curX += 56;
 
-  // Load
+  // Load (unchanged from original)
   if (isLight) {
     const phY = midY, nY = midY+20, peY = midY+38;
     if (switchType === "simple") {
@@ -758,10 +1073,10 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
           <rect x={outX-18} y={midY-18} width={36} height={36} rx={6} fill="#1e293b" stroke="#475569" strokeWidth={1.5}/>
           <text x={outX} y={midY+7} textAnchor="middle" fontSize={18}>{circuit.icon}</text>
         </g>,
-        <line key="aph"  x1={curX}   y1={midY}    x2={outX-18} y2={midY}    stroke={CABLE.phase.stroke}  strokeWidth={2.5}/>,
-        <line key="an"   x1={curX}   y1={midY+20} x2={outX-18} y2={midY+20} stroke={CABLE.neutre.stroke} strokeWidth={2.5}/>,
+        <line key="aph"  x1={curX}    y1={midY}    x2={outX-18} y2={midY}    stroke={CABLE.phase.stroke}  strokeWidth={2.5}/>,
+        <line key="an"   x1={curX}    y1={midY+20} x2={outX-18} y2={midY+20} stroke={CABLE.neutre.stroke} strokeWidth={2.5}/>,
         <line key="an2"  x1={outX-18} y1={midY+20} x2={outX-18} y2={midY+18} stroke={CABLE.neutre.stroke} strokeWidth={2.5}/>,
-        <line key="ape"  x1={curX}   y1={midY+38} x2={outX-18} y2={midY+38} stroke={CABLE.terre.stroke}  strokeWidth={2.5} strokeDasharray="5,3"/>,
+        <line key="ape"  x1={curX}    y1={midY+38} x2={outX-18} y2={midY+38} stroke={CABLE.terre.stroke}  strokeWidth={2.5} strokeDasharray="5,3"/>,
         <line key="ape2" x1={outX-18} y1={midY+38} x2={outX-18} y2={midY+18} stroke={CABLE.terre.stroke}  strokeWidth={2.5} strokeDasharray="5,3"/>
       );
     }
@@ -780,9 +1095,17 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
           <div className="flex items-center gap-2">
             <span className="text-xl">{circuit.icon}</span>
             <div>
-              <p className="font-semibold text-ink-900">Schéma — {breaker.label || circuit.label}</p>
+              <p className="font-semibold text-ink-900">
+                Schéma — {breaker.label || circuit.label}
+                {breaker.pieces ? <span className="text-ink-400 font-normal"> · {breaker.pieces}</span> : null}
+              </p>
               <p className="text-xs font-mono text-ink-400">
-                {breaker.amperes}A · {spec?.section}mm² · Diff. Type {diff ? BREAKER_TYPES[diff.type]?.diffType : "—"}
+                {breaker.amperes}A ·{" "}
+                {sectionInfo
+                  ? <span className={sectionInfo.ok ? "text-emerald-600" : "text-amber-600"}>{sectionInfo.sectionNFCMm2}mm² ({sectionInfo.chutePctAvecNFC}% ΔU)</span>
+                  : <span>{spec?.section}mm²</span>
+                }
+                {" "}· Diff. Type {diff ? BREAKER_TYPES[diff.type]?.diffType : "—"}
               </p>
             </div>
           </div>
@@ -850,6 +1173,13 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
               <span className="text-xs font-mono text-ink-500">{v.label}</span>
             </div>
           ))}
+          {sectionInfo && (
+            <div className={`ml-auto flex items-center gap-1.5 text-xs font-mono font-bold px-2 py-1 rounded-lg border ${
+              sectionInfo.ok ? "text-emerald-700 bg-emerald-50 border-emerald-200" : "text-amber-700 bg-amber-50 border-amber-200"
+            }`}>
+              {sectionInfo.ok ? "✅" : "⚠️"} {sectionInfo.sectionNFCMm2}mm² · ΔU {sectionInfo.chutePctAvecNFC}%
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -870,7 +1200,7 @@ function DinRailRow({
   onDeleteRow: (rowId: number) => void;
   onUpdateName: (rowId: number, name: string) => void;
 }) {
-  const totalW = DIFF_W + 8 * SLOT_W + 9 * 4 + 40; // diff + 8 slots + gaps + padding
+  const totalW = DIFF_W + 8 * SLOT_W + 9 * 4 + 40;
   const panelW = Math.max(totalW, 400);
 
   const getIssue = (b: Breaker | null) => {
@@ -882,7 +1212,6 @@ function DinRailRow({
 
   return (
     <div className="mb-10">
-      {/* Row header */}
       <div className="flex items-center gap-3 mb-2">
         <input
           value={row.name}
@@ -895,7 +1224,6 @@ function DinRailRow({
         </button>
       </div>
 
-      {/* Panel enclosure */}
       <div style={{
         background: "linear-gradient(160deg,#d1d5db 0%,#9ca3af 60%,#6b7280 100%)",
         borderRadius: 8,
@@ -908,7 +1236,6 @@ function DinRailRow({
         border: "2px solid #9ca3af",
         position: "relative" as const,
       }}>
-        {/* DIN rail bar */}
         <div style={{
           position: "absolute", left: 12, right: 12,
           top: 16 + BREAKER_H * 0.40, height: 7,
@@ -922,7 +1249,6 @@ function DinRailRow({
           background: "linear-gradient(180deg,#4b5563,#374151)",
         }} />
 
-        {/* Corner screws */}
         {[[6,6],[panelW-22,6],[6,16+BREAKER_H+4],[panelW-22,16+BREAKER_H+4]].map(([x,y],i) => (
           <div key={i} style={{
             position: "absolute", left: x, top: y,
@@ -933,7 +1259,6 @@ function DinRailRow({
           }} />
         ))}
 
-        {/* Slot 0: Differential */}
         <SlotCell
           breaker={row.slots[0]}
           slotIdx={0}
@@ -944,7 +1269,6 @@ function DinRailRow({
           onClick={() => onClickSlot(row.id, 0)}
         />
 
-        {/* Slots 1-8: Breakers */}
         {Array.from({ length: 8 }, (_, i) => i + 1).map(slotIdx => (
           <SlotCell
             key={slotIdx}
@@ -970,6 +1294,7 @@ function SlotCell({
 }) {
   const w = isDiffSlot ? DIFF_W : SLOT_W;
   const label = breaker ? (breaker.label || (CIRCUITS[breaker.circuit]?.label ?? "")) : "";
+  const pieces = breaker?.pieces ?? "";
 
   return (
     <div
@@ -990,7 +1315,6 @@ function SlotCell({
         isDiffSlot={isDiffSlot}
       />
 
-      {/* Issue badge */}
       {issue && (
         <div style={{
           position: "absolute", top: 4, right: 4,
@@ -1001,9 +1325,10 @@ function SlotCell({
         }}>!</div>
       )}
 
-      {/* Sticker label */}
+      {/* Sticker label — with pieces on second line */}
       <div style={{
-        position: "absolute", bottom: -34, left: 0, right: 0, height: 32,
+        position: "absolute", bottom: -38, left: 0, right: 0,
+        height: pieces ? 40 : 32,
         background: "#fffde7",
         border: `1px solid ${issue==="error" ? "#ef4444" : issue==="warning" ? "#f59e0b" : "#d4c97a"}`,
         borderRadius: 2,
@@ -1013,26 +1338,38 @@ function SlotCell({
         boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
       }}>
         {breaker && (
-          <div style={{
-            fontSize: Math.max(6, 9 - Math.max(0, label.length - 8)),
-            fontWeight: 700, color: "#1c1917",
-            textAlign: "center", lineHeight: 1.2,
-            fontFamily: "monospace",
-            overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
-            width: "100%", paddingLeft: 2, paddingRight: 2,
-          }}>
-            {(CIRCUITS[breaker.circuit]?.icon ?? "")} {label}
-          </div>
+          <>
+            <div style={{
+              fontSize: Math.max(6, 9 - Math.max(0, label.length - 8)),
+              fontWeight: 700, color: "#1c1917",
+              textAlign: "center", lineHeight: 1.2,
+              fontFamily: "monospace",
+              overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
+              width: "100%", paddingLeft: 2, paddingRight: 2,
+            }}>
+              {(CIRCUITS[breaker.circuit]?.icon ?? "")} {label}
+            </div>
+            {pieces && (
+              <div style={{
+                fontSize: 5.5, color: "#78716c",
+                fontFamily: "monospace", textAlign: "center",
+                overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
+                width: "100%", paddingLeft: 2, paddingRight: 2,
+                lineHeight: 1.1,
+              }}>
+                {pieces}
+              </div>
+            )}
+          </>
         )}
         <div style={{ fontSize: 6, color: "#a8a29e", fontFamily: "monospace" }}>
           {breaker ? `N°${globalNum}` : `—`}
         </div>
       </div>
 
-      {/* Config button on select */}
       {isSelected && (
         <div style={{
-          position: "absolute", bottom: -58, left: "50%",
+          position: "absolute", bottom: pieces ? -64 : -58, left: "50%",
           transform: "translateX(-50%)",
           whiteSpace: "nowrap", zIndex: 10,
           background: "#1c1917", color: "#fbbf24",
@@ -1059,15 +1396,17 @@ function printLabels(rows: BreakerRow[], clientName: string) {
       gn++;
       const c = CIRCUITS[b.circuit] || CIRCUITS.autre;
       const label = b.label || c.label;
+      const pieces = b.pieces ?? "";
       html += `
         <div style="
           display:inline-flex;flex-direction:column;align-items:center;justify-content:center;
-          width:28mm;height:22mm;border:1.5px solid #333;border-radius:2mm;
+          width:28mm;height:${pieces ? "26mm" : "22mm"};border:1.5px solid #333;border-radius:2mm;
           overflow:hidden;background:#fff;vertical-align:top;margin:2mm;
           font-family:'Courier New',monospace;
         ">
-          <div style="font-size:18pt;line-height:1;margin-bottom:2mm;">${c.icon}</div>
+          <div style="font-size:18pt;line-height:1;margin-bottom:1mm;">${c.icon}</div>
           <div style="font-size:8pt;font-weight:700;color:#111;text-align:center;padding:0 2mm;line-height:1.2;">${label}</div>
+          ${pieces ? `<div style="font-size:5.5pt;color:#78716c;text-align:center;padding:0 2mm;margin-top:1mm;line-height:1.2;">${pieces}</div>` : ""}
         </div>
       `;
     });
@@ -1099,13 +1438,12 @@ export default function TableauPage() {
   const [saved, setSaved]     = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Selection: which slot is active
-  const [selectedSlot, setSelectedSlot] = useState<{ rowId: number; slotIdx: number } | null>(null);
-  const [editBreaker, setEditBreaker]   = useState<{ breaker: Breaker; rowId: number; slotIdx: number } | null>(null);
-  const [schemaBreaker, setSchemaBreaker] = useState<{ breaker: Breaker; rowBreakers: (Breaker|null)[] } | null>(null);
-  const [showReport, setShowReport] = useState(false);
+  const [selectedSlot, setSelectedSlot]     = useState<{ rowId: number; slotIdx: number } | null>(null);
+  const [editBreaker, setEditBreaker]       = useState<{ breaker: Breaker; rowId: number; slotIdx: number } | null>(null);
+  const [schemaBreaker, setSchemaBreaker]   = useState<{ breaker: Breaker; rowBreakers: (Breaker|null)[] } | null>(null);
+  const [showReport, setShowReport]         = useState(false);
+  const [showGaines, setShowGaines]         = useState(false);
 
-  // Load
   useEffect(() => {
     supabase.from("clients").select("*").eq("id", clientId).single().then(({ data: c }) => {
       if (c) {
@@ -1116,9 +1454,7 @@ export default function TableauPage() {
             if (!Array.isArray(parsed)) { setLoading(false); return; }
             const normalized = parsed.map((row: any) => {
               if (!row || typeof row !== "object") return null;
-              // New format: has slots[]
               if (Array.isArray(row.slots)) {
-                // Ensure exactly 9 slots, each either valid Breaker or null
                 const slots: (Breaker | null)[] = Array(9).fill(null);
                 row.slots.forEach((b: any, i: number) => {
                   if (i < 9 && b != null && typeof b === "object" && typeof b.type === "string") {
@@ -1127,7 +1463,6 @@ export default function TableauPage() {
                 });
                 return { id: row.id ?? uid(), name: row.name ?? `Rangée`, slots };
               }
-              // Old format: has breakers[]
               const slots: (Breaker | null)[] = Array(9).fill(null);
               (row.breakers ?? []).forEach((b: any, i: number) => {
                 if (i < 9 && b != null && typeof b === "object" && typeof b.type === "string") {
@@ -1155,7 +1490,6 @@ export default function TableauPage() {
     setTimeout(() => setSaved(false), 2000);
   }, [rows, clientId]);
 
-  // Row management
   const addRow = () => {
     setRows(r => [...r, emptyRow(r.length + 1)]);
   };
@@ -1167,14 +1501,11 @@ export default function TableauPage() {
     setRows(r => r.map(x => x.id === rowId ? { ...x, name } : x));
   };
 
-  // Slot click: if empty → open edit with default breaker, if filled → open edit
   const handleClickSlot = (rowId: number, slotIdx: number) => {
     const row = rows.find(r => r.id === rowId);
     if (!row) return;
 
-    // Toggle selection
     if (selectedSlot?.rowId === rowId && selectedSlot?.slotIdx === slotIdx) {
-      // Open edit modal
       const existing = row.slots[slotIdx];
       const isDiffSlot = slotIdx === 0;
       const defaultBreaker: Breaker = existing ?? {
@@ -1190,7 +1521,6 @@ export default function TableauPage() {
     setSelectedSlot({ rowId, slotIdx });
   };
 
-  // Update breaker in slot
   const updateSlot = (rowId: number, slotIdx: number, breaker: Breaker) => {
     setRows(r => r.map(row => {
       if (row.id !== rowId) return row;
@@ -1200,7 +1530,6 @@ export default function TableauPage() {
     }));
   };
 
-  // Remove breaker from slot
   const removeSlot = (rowId: number, slotIdx: number) => {
     setRows(r => r.map(row => {
       if (row.id !== rowId) return row;
@@ -1212,7 +1541,6 @@ export default function TableauPage() {
     setSelectedSlot(null);
   };
 
-  // Global offset for numbering (count filled slots)
   const getOffset = (ri: number) =>
     rows.slice(0, ri).reduce((s, r) => s + safeBreakers(r.slots ?? []).length, 0);
 
@@ -1251,6 +1579,12 @@ export default function TableauPage() {
               className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all ${scoreColor}`}>
               <ScoreIcon size={13} /> NFC {compliance.score}/100
             </button>
+            <button
+              onClick={() => setShowGaines(true)}
+              className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-xs font-semibold hover:bg-violet-100 transition-all"
+            >
+              <Layers size={13} /> Gaines
+            </button>
             <button onClick={() => printLabels(rows, client?.nom ?? "")} className="btn-ghost hidden md:flex">
               <Printer size={15} /> Étiquettes
             </button>
@@ -1285,7 +1619,6 @@ export default function TableauPage() {
             </div>
           ) : (
             <>
-              {/* Enclosure */}
               <div style={{
                 background: "linear-gradient(170deg,#374151 0%,#1f2937 100%)",
                 borderRadius: 14, padding: "24px 24px 12px",
@@ -1293,7 +1626,6 @@ export default function TableauPage() {
                 border: "2px solid #4b5563",
                 display: "inline-block", minWidth: 400,
               }}>
-                {/* Panel label */}
                 <div style={{
                   background: "#111827", borderRadius: 7,
                   padding: "6px 16px", marginBottom: 20,
@@ -1330,7 +1662,6 @@ export default function TableauPage() {
                 ))}
               </div>
 
-              {/* Add row button */}
               <div className="mt-6">
                 <button onClick={addRow} className="btn-ghost border-dashed border-ink-300 text-ink-400 hover:text-volt-600 hover:border-volt-300">
                   <Plus size={15} /> Ajouter une rangée
@@ -1344,6 +1675,10 @@ export default function TableauPage() {
             <button onClick={() => setShowReport(true)}
               className={`btn flex-1 text-xs items-center justify-center gap-1.5 px-3 py-2 rounded-xl border font-semibold ${scoreColor}`}>
               <ScoreIcon size={13} /> NFC {compliance.score}/100
+            </button>
+            <button onClick={() => setShowGaines(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-xs font-semibold">
+              <Layers size={13} />
             </button>
             <button onClick={() => printLabels(rows, client?.nom ?? "")} className="btn-ghost">
               <Printer size={15} />
@@ -1375,6 +1710,10 @@ export default function TableauPage() {
 
       {showReport && (
         <CompliancePanel result={compliance} onClose={() => setShowReport(false)} />
+      )}
+
+      {showGaines && (
+        <GainesPanel rows={rows} onClose={() => setShowGaines(false)} />
       )}
 
       {schemaBreaker && (
