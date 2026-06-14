@@ -27,6 +27,10 @@ export interface Profil {
   taux_cotisations_materiau?: number;
   taux_ir_service?: number;
   taux_ir_materiau?: number;
+  iban?: string;
+  bic?: string;
+  banque_nom?: string;
+  banque_titulaire?: string;
 }
 
 export interface Client {
