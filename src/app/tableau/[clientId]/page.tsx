@@ -829,7 +829,7 @@ function GainesPanel({ rows, onClose }: { rows: BreakerRow[]; onClose: () => voi
         <div className="p-3 border-t border-ink-200 bg-ink-50 flex flex-wrap gap-4 text-[10px] font-mono text-ink-400">
           <span><span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1"></span>Taux ≤ 25% — optimal</span>
           <span><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1"></span>Taux ≤ 33% — limite NFC</span>
-          <span><span className="inline-block w-2 h-2 rounded-full bg-red-500 mr-1"></span>Taux > 33% — hors norme</span>
+          <span><span className="inline-block w-2 h-2 rounded-full bg-red-500 mr-1"></span>Taux {">"}  33% — hors norme</span>
           <span className="ml-auto">IRL = gaine isolante rigide lisse</span>
         </div>
       </div>
