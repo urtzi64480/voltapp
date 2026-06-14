@@ -60,9 +60,13 @@ function LeadCard({ demande, onRefresh }: { demande: DemandeClient; onRefresh: (
   const convertirEnClient = async () => {
     setLoading(true);
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Non connecté");
+
       const { data: client, error: clientErr } = await supabase
         .from("clients")
         .insert({
+          user_id: user.id,
           nom: demande.nom,
           telephone: demande.telephone,
           email: demande.email ?? null,
