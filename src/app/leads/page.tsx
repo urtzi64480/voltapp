@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import Shell from "@/components/Shell";
+import Shell from "@/components/layout/Shell";
 import { supabase } from "@/lib/supabase";
 import { DemandeClient, StatutDemande } from "@/types";
 import {
