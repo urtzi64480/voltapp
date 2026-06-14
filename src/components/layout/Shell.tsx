@@ -8,6 +8,7 @@ import {
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
+import Image from "next/image";
 
 const NAV = [
   { href: "/dashboard",  label: "Dashboard",  icon: LayoutDashboard },
@@ -89,11 +90,19 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen overflow-hidden">
       {/* ── Sidebar desktop ── */}
       <aside className="hidden md:flex flex-col w-56 bg-ink-900 shrink-0">
-        <div className="flex items-center gap-3 px-5 py-5 border-b border-ink-700">
-          <div className="w-8 h-8 rounded-lg bg-volt-500 flex items-center justify-center">
-            <Zap size={16} className="text-ink-900" />
+        <div className="flex items-center gap-3 px-4 py-4 border-b border-ink-700">
+          <Image
+            src="/logo.png"
+            alt="Urtzi Électricien"
+            width={36}
+            height={36}
+            className="shrink-0"
+            style={{ filter: "invert(1)" }}
+          />
+          <div className="flex flex-col leading-tight">
+            <span className="font-display text-white text-base leading-none">Urtzi</span>
+            <span className="text-ink-400 text-xs tracking-widest uppercase">Électricien</span>
           </div>
-          <span className="font-display text-white text-lg leading-none">VoltApp</span>
         </div>
 
         <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto">
@@ -122,10 +131,18 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       {/* ── Mobile header ── */}
       <div className="md:hidden fixed top-0 inset-x-0 z-40 bg-ink-900 border-b border-ink-700 flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-volt-500 flex items-center justify-center">
-            <Zap size={13} className="text-ink-900" />
+          <Image
+            src="/logo.png"
+            alt="Urtzi Électricien"
+            width={28}
+            height={28}
+            className="shrink-0"
+            style={{ filter: "invert(1)" }}
+          />
+          <div className="flex flex-col leading-tight">
+            <span className="font-display text-white text-sm leading-none">Urtzi</span>
+            <span className="text-ink-400 text-[10px] tracking-widest uppercase">Électricien</span>
           </div>
-          <span className="font-display text-white text-base">VoltApp</span>
         </div>
         <div className="flex items-center gap-2">
           {facturesEnRetard > 0 && (
@@ -154,7 +171,19 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           <div className="absolute inset-0 bg-black/60" onClick={() => setDrawer(false)} />
           <aside className="relative w-64 bg-ink-900 flex flex-col h-full shadow-2xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-ink-700">
-              <span className="font-display text-white text-lg">VoltApp</span>
+              <div className="flex items-center gap-2">
+                <Image
+                  src="/logo.png"
+                  alt="Urtzi Électricien"
+                  width={28}
+                  height={28}
+                  style={{ filter: "invert(1)" }}
+                />
+                <div className="flex flex-col leading-tight">
+                  <span className="font-display text-white text-base leading-none">Urtzi</span>
+                  <span className="text-ink-400 text-[10px] tracking-widest uppercase">Électricien</span>
+                </div>
+              </div>
               <button onClick={() => setDrawer(false)} className="text-ink-400 hover:text-white">
                 <X size={20} />
               </button>
