@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, Users, FileText, BookOpen,
-  TrendingUp, Settings, Zap, Menu, X, Receipt, CalendarDays, AlertTriangle, ClipboardList,
+  TrendingUp, Settings, Zap, Menu, X, Receipt, CalendarDays, AlertTriangle, ClipboardList, Inbox,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,7 @@ import { supabase } from "@/lib/supabase";
 const NAV = [
   { href: "/dashboard",  label: "Dashboard",  icon: LayoutDashboard },
   { href: "/clients",    label: "Clients",     icon: Users },
+  { href: "/leads",      label: "Leads web",   icon: Inbox },
   { href: "/demandes",   label: "Demandes",    icon: ClipboardList },
   { href: "/devis",      label: "Devis",       icon: FileText },
   { href: "/planning",   label: "Planning",    icon: CalendarDays },
@@ -25,7 +26,7 @@ const NAV = [
 const BOTTOM_NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/clients",   label: "Clients",   icon: Users },
-  { href: "/demandes",  label: "Demandes",  icon: ClipboardList },
+  { href: "/leads",     label: "Leads",     icon: Inbox },
   { href: "/devis",     label: "Devis",     icon: FileText },
   { href: "/crm",       label: "CRM",       icon: TrendingUp },
 ];
@@ -56,13 +57,12 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const [drawer, setDrawer] = useState(false);
   const [facturesEnRetard, setFacturesEnRetard] = useState(0);
-  const [demandesNouvelles, setDemandesNouvelles] = useState(0);
+  const [leadsNouveaux, setLeadsNouveaux] = useState(0);
 
   const isActive = (href: string) =>
     href === "/dashboard" ? path === href : path.startsWith(href);
 
   useEffect(() => {
-    // Factures en retard > 15 jours
     const seuilDate = new Date();
     seuilDate.setDate(seuilDate.getDate() - 15);
     const seuil = seuilDate.toISOString().split("T")[0];
@@ -76,13 +76,12 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         setFacturesEnRetard(count ?? 0);
       });
 
-    // Demandes non vues
     supabase
       .from("demandes_client")
       .select("id", { count: "exact" })
       .eq("statut", "nouveau")
       .then(({ count }) => {
-        setDemandesNouvelles(count ?? 0);
+        setLeadsNouveaux(count ?? 0);
       });
   }, [path]);
 
@@ -104,7 +103,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
               active={isActive(href)}
               badge={
                 href === "/factures" ? facturesEnRetard :
-                href === "/demandes" ? demandesNouvelles :
+                href === "/leads" ? leadsNouveaux :
                 undefined
               }
             />
@@ -134,9 +133,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
               <AlertTriangle size={12} /> {facturesEnRetard}
             </Link>
           )}
-          {demandesNouvelles > 0 && (
-            <Link href="/demandes" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold">
-              <ClipboardList size={12} /> {demandesNouvelles}
+          {leadsNouveaux > 0 && (
+            <Link href="/leads" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold">
+              <Inbox size={12} /> {leadsNouveaux}
             </Link>
           )}
           <Link href="/devis/nouveau"
@@ -168,7 +167,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
                   onClick={() => setDrawer(false)}
                   badge={
                     href === "/factures" ? facturesEnRetard :
-                    href === "/demandes" ? demandesNouvelles :
+                    href === "/leads" ? leadsNouveaux :
                     undefined
                   }
                 />
@@ -194,9 +193,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
                 {facturesEnRetard > 9 ? "9+" : facturesEnRetard}
               </span>
             )}
-            {href === "/demandes" && demandesNouvelles > 0 && (
+            {href === "/leads" && leadsNouveaux > 0 && (
               <span className="absolute top-0 right-3 w-4 h-4 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
-                {demandesNouvelles > 9 ? "9+" : demandesNouvelles}
+                {leadsNouveaux > 9 ? "9+" : leadsNouveaux}
               </span>
             )}
             <span>{label}</span>
