@@ -7,7 +7,6 @@ export async function middleware(request: NextRequest) {
 
   // Routes publiques — pas d'auth
   // /demande (exact) = formulaire public client
-  // /demandes = page privée VoltApp, protégée normalement
   if (pathname.startsWith("/login") || pathname === "/demande") {
     return NextResponse.next();
   }
@@ -36,7 +35,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // Connecté sur "/" → redirection vers /dashboard
   if (pathname === "/") {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
