@@ -1,7 +1,7 @@
 "use client";
 import { useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { Zap, ChevronRight, ChevronLeft, CheckCircle, Upload, X, Loader2 } from "lucide-react";
+import { ChevronRight, ChevronLeft, CheckCircle, Upload, X, Loader2 } from "lucide-react";
 
 const TYPES_TRAVAUX = [
   "Dépannage électrique",
@@ -78,7 +78,6 @@ export default function DemandePage() {
     setLoading(true);
     setError(null);
     try {
-      // Upload photos
       const photoUrls: string[] = [];
       for (const file of photos) {
         const ext = file.name.split(".").pop();
@@ -91,7 +90,6 @@ export default function DemandePage() {
         photoUrls.push(data.publicUrl);
       }
 
-      // Insert demande
       const { error: insErr } = await supabase.from("demandes_client").insert({
         user_id: USER_ID,
         statut: "nouveau",
@@ -126,11 +124,9 @@ export default function DemandePage() {
             Merci <strong>{form.nom}</strong>, votre demande a bien été reçue.
             Nous vous recontacterons rapidement au <strong>{form.telephone}</strong>.
           </p>
-          <div className="mt-6 pt-6 border-t border-ink-100 flex items-center justify-center gap-2 text-ink-400 text-xs">
-            <div className="w-5 h-5 rounded bg-volt-500 flex items-center justify-center">
-              <Zap size={11} className="text-ink-900" />
-            </div>
-            Urtzi Électricien
+          <div className="mt-6 pt-6 border-t border-ink-100 flex items-center justify-center gap-3">
+            <img src="/logo.png" alt="Urtzi Électricien" width={28} height={28} className="opacity-80" />
+            <span className="text-ink-400 text-xs">Urtzi Électricien</span>
           </div>
         </div>
       </div>
@@ -141,9 +137,14 @@ export default function DemandePage() {
     <div className="min-h-screen bg-ink-50">
       {/* Header */}
       <div className="bg-ink-900 px-4 py-4 flex items-center gap-3">
-        <div className="w-8 h-8 rounded-lg bg-volt-500 flex items-center justify-center shrink-0">
-          <Zap size={16} className="text-ink-900" />
-        </div>
+        <img
+          src="/logo.png"
+          alt="Urtzi Électricien"
+          width={36}
+          height={36}
+          style={{ filter: "invert(1)" }}
+          className="shrink-0"
+        />
         <div>
           <p className="text-white font-semibold text-sm leading-none">Urtzi Électricien</p>
           <p className="text-ink-400 text-xs mt-0.5">Demande de devis gratuit</p>
