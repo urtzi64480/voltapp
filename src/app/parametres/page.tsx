@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Profil } from "@/types";
 import Shell from "@/components/layout/Shell";
-import { Save, Settings, Users, Plus, Trash2, Pencil, X, Check, Calendar, Smartphone } from "lucide-react";
+import { Save, Settings, Users, Plus, Trash2, Pencil, X, Check, Calendar, Smartphone, CreditCard } from "lucide-react";
 
 interface Palier {
   id: string; label: string; seuil_min: number; seuil_max: number | null;
@@ -76,7 +76,6 @@ export default function ParametresPage() {
       if (palAp) setPaliersApporteur(palAp);
       if (appleData) {
         setAppleConnected(true);
-        // Essaie de charger le nouveau format calendars, sinon migre depuis ics_urls
         try {
           const cals = JSON.parse(appleData.calendars ?? "[]");
           if (cals.length > 0) {
@@ -267,13 +266,11 @@ export default function ParametresPage() {
                   {appleCals.map((cal, idx) => (
                     <div key={idx} className="p-3 rounded-xl border border-ink-100 bg-ink-50 space-y-2">
                       <div className="flex items-center gap-2">
-                        {/* Couleur */}
                         <div className="relative shrink-0">
                           <input type="color" value={cal.couleur}
                             onChange={e => updateCal(idx, "couleur", e.target.value)}
                             className="w-8 h-8 rounded-lg cursor-pointer border border-ink-200 p-0.5 bg-white" />
                         </div>
-                        {/* Nom */}
                         <input value={cal.nom} onChange={e => updateCal(idx, "nom", e.target.value)}
                           placeholder="Nom du calendrier"
                           className="input flex-1 text-sm" />
@@ -284,7 +281,6 @@ export default function ParametresPage() {
                           </button>
                         )}
                       </div>
-                      {/* Couleurs preset */}
                       <div className="flex gap-1.5 flex-wrap">
                         {COULEURS_PRESET.map(c => (
                           <button key={c} onClick={() => updateCal(idx, "couleur", c)}
@@ -292,7 +288,6 @@ export default function ParametresPage() {
                             style={{ backgroundColor: c }} />
                         ))}
                       </div>
-                      {/* URL */}
                       <input value={cal.url} onChange={e => updateCal(idx, "url", e.target.value)}
                         placeholder="webcal://p12-caldav.icloud.com/..."
                         className="input w-full text-xs font-mono" />
@@ -348,6 +343,26 @@ export default function ParametresPage() {
                 </div>
               </div>
             </div>
+
+            {/* ── COORDONNÉES BANCAIRES ── */}
+            <div className="card card-inner">
+              <div className="flex items-center gap-2 mb-4">
+                <CreditCard size={16} className="text-ink-500" />
+                <h2 className="font-semibold text-ink-800">Coordonnées bancaires</h2>
+              </div>
+              <p className="text-xs text-ink-400 mb-4">Ces informations apparaîtront uniquement dans le pied de page de vos factures.</p>
+              <div className="grid grid-cols-2 gap-3">
+                <F label="Titulaire du compte" full placeholder="Urtzi Électricien"
+                  value={val("banque_titulaire")} onChange={v => set("banque_titulaire", v)} />
+                <F label="Banque" full placeholder="Crédit Agricole"
+                  value={val("banque_nom")} onChange={v => set("banque_nom", v)} />
+                <F label="IBAN" full placeholder="FR76 0000 0000 0000 0000 0000 000"
+                  value={val("iban")} onChange={v => set("iban", v)} />
+                <F label="BIC / SWIFT" placeholder="AGRIFRPP"
+                  value={val("bic")} onChange={v => set("bic", v)} />
+              </div>
+            </div>
+
             <div className="card card-inner">
               <h2 className="font-semibold text-ink-800 mb-4">Numérotation</h2>
               <div className="grid grid-cols-2 gap-3">
@@ -356,6 +371,7 @@ export default function ParametresPage() {
               </div>
               <p className="text-xs text-ink-400 mt-2">Exemple : DEV-2027-001</p>
             </div>
+
             <div className="card card-inner">
               <h2 className="font-semibold text-ink-800 mb-4">Mentions légales</h2>
               <div className="space-y-3">
@@ -371,6 +387,7 @@ export default function ParametresPage() {
                 </div>
               </div>
             </div>
+
             <div className="card card-inner">
               <h2 className="font-semibold text-ink-800 mb-1">Fiscalité auto-entrepreneur</h2>
               <p className="text-xs text-ink-400 mb-4">Ces taux servent à estimer votre résultat net dans le CRM.</p>
@@ -415,6 +432,7 @@ export default function ParametresPage() {
                 </div>
               </div>
             </div>
+
             <div className="card card-inner">
               <h2 className="font-semibold text-ink-800 mb-1">Paliers de fidélité</h2>
               <p className="text-xs text-ink-400 mb-4">La remise s'applique à partir de la facture suivant le passage de palier.</p>
@@ -453,6 +471,7 @@ export default function ParametresPage() {
                 {savingPaliers ? "Enregistrement…" : savedPaliers ? "Paliers sauvegardés ✓" : "Enregistrer les paliers"}
               </button>
             </div>
+
             <button onClick={save} disabled={saving}
               className={`w-full justify-center flex items-center gap-2 py-3 rounded-xl font-semibold transition-all ${saved ? "bg-emerald-500 text-white" : "bg-ink-900 text-volt-400 hover:bg-ink-800"}`}>
               <Save size={16} />
