@@ -34,7 +34,9 @@ interface Apporteur {
 }
 
 type PrestationExt = Prestation & { est_kit?: boolean; kit_description?: string | null };
-type DevisLigneExt = DevisLigne & { kit_groupe?: string | null };
+
+// kit_ratio_service : ratio [0-1] de la part service dans le kit (calculé à l'ajout)
+type DevisLigneExt = DevisLigne & { kit_description?: string | null; kit_ratio_service?: number | null };
 
 function calcRemise(total: number, type: RemiseType, val: string): number {
   const v = parseFloat(val) || 0;
@@ -60,20 +62,6 @@ function RemiseLine({ label, type, val, onType, onVal, base }: {
       {montant > 0 && <span className="text-xs text-red-500 shrink-0">− {fmt(montant)}</span>}
     </div>
   );
-}
-
-function groupeLignes(lignes: DevisLigneExt[]): Array<{ kit_groupe: string | null; lignes: { ligne: DevisLigneExt; idx: number }[] }> {
-  const groups: Array<{ kit_groupe: string | null; lignes: { ligne: DevisLigneExt; idx: number }[] }> = [];
-  lignes.forEach((ligne, idx) => {
-    if (ligne.kit_groupe) {
-      const existing = groups.find(g => g.kit_groupe === ligne.kit_groupe);
-      if (existing) { existing.lignes.push({ ligne, idx }); return; }
-      groups.push({ kit_groupe: ligne.kit_groupe, lignes: [{ ligne, idx }] });
-    } else {
-      groups.push({ kit_groupe: null, lignes: [{ ligne, idx }] });
-    }
-  });
-  return groups;
 }
 
 function NouveauDevisPage() {
@@ -176,42 +164,38 @@ function NouveauDevisPage() {
         .eq("kit_id", p.id)
         .order("ordre");
 
-      if (!composants || composants.length === 0) return;
+      const comps = composants ?? [];
+      const totalComposants = comps.reduce((s: number, c: any) => s + (c.prestation?.prix_unitaire ?? 0) * c.quantite, 0);
+      const totalService = comps.filter((c: any) => c.prestation?.type_branche === "service")
+        .reduce((s: number, c: any) => s + (c.prestation?.prix_unitaire ?? 0) * c.quantite, 0);
+      const ratioService = totalComposants > 0 ? totalService / totalComposants : 0;
 
-      const kitDejaPresent = lignes.some(l => l.kit_groupe === p.nom);
-      if (kitDejaPresent) {
-        setLignes(prev => prev.map(l => {
-          if (l.kit_groupe !== p.nom) return l;
-          const comp = composants.find((c: any) => c.prestation?.nom === l.nom && c.prestation?.type_branche === l.type_branche);
-          if (!comp) return l;
-          return { ...l, quantite: l.quantite + comp.quantite };
-        }));
-        return;
-      }
-
-      const nouvLignes: DevisLigneExt[] = composants.map((c: any) => ({
-        nom: c.prestation.nom,
-        prix_unitaire: c.prestation.prix_unitaire,
-        quantite: c.quantite,
-        unite: c.prestation.unite,
-        type_branche: c.prestation.type_branche as "service" | "materiau",
-        prestation_id: c.prestation.id,
-        kit_groupe: p.nom,
-      }));
-
-      setLignes(prev => [...prev, ...nouvLignes]);
+      setLignes(prev => {
+        const ex = prev.findIndex(l => l.prestation_id === p.id);
+        if (ex >= 0) {
+          const n = [...prev];
+          n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 };
+          return n;
+        }
+        return [...prev, {
+          nom: p.nom,
+          prix_unitaire: totalComposants,
+          quantite: 1,
+          unite: "forfait",
+          type_branche: ratioService >= 0.5 ? "service" : "materiau",
+          prestation_id: p.id,
+          kit_description: p.kit_description ?? null,
+          kit_ratio_service: ratioService,
+        }];
+      });
       return;
     }
 
     setLignes(prev => {
-      const ex = prev.findIndex(l => l.nom === p.nom && l.type_branche === p.type_branche && !l.kit_groupe);
+      const ex = prev.findIndex(l => l.nom === p.nom && l.type_branche === p.type_branche && !l.kit_description);
       if (ex >= 0) { const n = [...prev]; n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 }; return n; }
       return [...prev, { nom: p.nom, prix_unitaire: p.prix_unitaire, quantite: 1, unite: p.unite, type_branche: p.type_branche, prestation_id: p.id }];
     });
-  }
-
-  function supprimerGroupe(kit_groupe: string) {
-    setLignes(prev => prev.filter(l => l.kit_groupe !== kit_groupe));
   }
 
   function addLibre() {
@@ -221,8 +205,19 @@ function NouveauDevisPage() {
     setShowLibre(false);
   }
 
-  const totServiceBrut = lignes.filter(l => l.type_branche === "service").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
-  const totMateriauBrut = lignes.filter(l => l.type_branche === "materiau").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
+  // Calcul ventilé : les lignes kit utilisent kit_ratio_service pour ventiler
+  const totServiceBrut = lignes.reduce((a, l) => {
+    const total = l.prix_unitaire * l.quantite;
+    if (l.kit_ratio_service != null) return a + total * l.kit_ratio_service;
+    return l.type_branche === "service" ? a + total : a;
+  }, 0);
+
+  const totMateriauBrut = lignes.reduce((a, l) => {
+    const total = l.prix_unitaire * l.quantite;
+    if (l.kit_ratio_service != null) return a + total * (1 - l.kit_ratio_service);
+    return l.type_branche === "materiau" ? a + total : a;
+  }, 0);
+
   const remiseService = calcRemise(totServiceBrut, remise.service_type, remise.service_val);
   const remiseMateriau = calcRemise(totMateriauBrut, remise.materiau_type, remise.materiau_val);
   const totServiceApresRemise = totServiceBrut - remiseService;
@@ -250,7 +245,6 @@ function NouveauDevisPage() {
   });
 
   const filteredAll = [...kitsFiltered, ...prestsFiltered];
-  const groupes = groupeLignes(lignes);
 
   async function enregistrer(statut = "brouillon") {
     setSaving(true);
@@ -276,7 +270,10 @@ function NouveauDevisPage() {
     if (error || !dv) { alert("Erreur : " + error?.message); setSaving(false); return; }
     if (lignes.length > 0) {
       await supabase.from("devis_lignes").insert(
-        lignes.map((l, i) => ({ ...l, devis_id: dv.id, ordre: i }))
+        lignes.map((l, i) => {
+          const { kit_description, kit_ratio_service, ...rest } = l;
+          return { ...rest, devis_id: dv.id, ordre: i };
+        })
       );
     }
     await supabase.from("profil").update({ compteur_devis: (profil?.compteur_devis ?? 0) + 1 }).eq("id", user.id);
@@ -495,65 +492,39 @@ function NouveauDevisPage() {
                   <p className="text-sm text-ink-400 text-center py-10">Ajoutez des prestations depuis le catalogue</p>
                 ) : (
                   <div className="space-y-2">
-                    {groupes.map((groupe, gi) => (
-                      groupe.kit_groupe ? (
-                        <div key={`kit-${gi}`} className="rounded-xl border border-purple-200 overflow-hidden">
-                          <div className="flex items-center justify-between px-3 py-1.5 bg-purple-50">
-                            <div className="flex items-center gap-1.5">
-                              <Layers size={12} className="text-purple-500" />
-                              <span className="text-xs font-semibold text-purple-700">{groupe.kit_groupe}</span>
-                              <span className="text-xs text-purple-400">
-                                — {fmt(groupe.lignes.reduce((s, { ligne }) => s + ligne.prix_unitaire * ligne.quantite, 0))}
-                              </span>
-                            </div>
-                            <button onClick={() => supprimerGroupe(groupe.kit_groupe!)}
-                              className="text-purple-300 hover:text-red-500 transition-colors p-0.5">
-                              <X size={13} />
-                            </button>
-                          </div>
-                          <div className="divide-y divide-purple-50">
-                            {groupe.lignes.map(({ ligne: l, idx }) => (
-                              <div key={idx} className="flex items-center gap-2 px-3 py-2 bg-white">
-                                <span className={cn("badge text-xs shrink-0", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
-                                  {l.type_branche === "service" ? "S" : "M"}
-                                </span>
-                                <span className="text-xs text-ink-700 flex-1 min-w-0 truncate">{l.nom}</span>
-                                <span className="text-xs text-ink-400 shrink-0">{l.unite}</span>
-                                <input type="number" min="0.1" step="0.5" value={l.quantite}
-                                  onChange={e => setLignes(prev => { const n = [...prev]; n[idx] = { ...n[idx], quantite: parseFloat(e.target.value) || 1 }; return n; })}
-                                  className="w-14 text-center text-xs border border-ink-200 rounded-lg py-1 bg-white" />
-                                <span className="text-xs text-ink-400">×</span>
-                                <input type="number" min="0" step="0.5" value={l.prix_unitaire}
-                                  onChange={e => setLignes(prev => { const n = [...prev]; n[idx] = { ...n[idx], prix_unitaire: parseFloat(e.target.value) || 0 }; return n; })}
-                                  className="w-16 text-right text-xs border border-ink-200 rounded-lg py-1 bg-white" />
-                                <span className="text-xs font-semibold text-ink-900 w-14 text-right shrink-0">{fmt(l.prix_unitaire * l.quantite)}</span>
-                                <button onClick={() => setLignes(p => p.filter((_, i) => i !== idx))}
-                                  className="text-ink-200 hover:text-red-400 transition-colors"><X size={13} /></button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : (
-                        groupe.lignes.map(({ ligne: l, idx }) => (
-                          <div key={idx} className="flex items-center gap-2 p-2.5 rounded-xl bg-ink-50 border border-ink-100">
+                    {lignes.map((l, i) => (
+                      <div key={i} className="flex flex-col gap-0.5 p-2.5 rounded-xl bg-ink-50 border border-ink-100">
+                        <div className="flex items-center gap-2">
+                          {l.kit_ratio_service != null ? (
+                            <span className="inline-flex items-center gap-1 badge text-xs shrink-0 bg-purple-100 text-purple-700">
+                              <Layers size={10} /> KIT
+                            </span>
+                          ) : (
                             <span className={cn("badge text-xs shrink-0", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
                               {l.type_branche === "service" ? "S" : "M"}
                             </span>
-                            <span className="text-xs text-ink-800 flex-1 min-w-0 truncate">{l.nom}</span>
-                            <span className="text-xs text-ink-400 shrink-0">{l.unite}</span>
-                            <input type="number" min="1" step="0.5" value={l.quantite}
-                              onChange={e => setLignes(prev => { const n = [...prev]; n[idx] = { ...n[idx], quantite: parseFloat(e.target.value) || 1 }; return n; })}
-                              className="w-14 text-center text-xs border border-ink-200 rounded-lg py-1 bg-white" />
-                            <span className="text-xs text-ink-400">×</span>
-                            <input type="number" min="0" step="0.5" value={l.prix_unitaire}
-                              onChange={e => setLignes(prev => { const n = [...prev]; n[idx] = { ...n[idx], prix_unitaire: parseFloat(e.target.value) || 0 }; return n; })}
-                              className="w-16 text-right text-xs border border-ink-200 rounded-lg py-1 bg-white" />
-                            <span className="text-xs font-semibold text-ink-900 w-14 text-right shrink-0">{fmt(l.prix_unitaire * l.quantite)}</span>
-                            <button onClick={() => setLignes(p => p.filter((_, i) => i !== idx))}
-                              className="text-ink-300 hover:text-red-500 transition-colors"><X size={14} /></button>
-                          </div>
-                        ))
-                      )
+                          )}
+                          <span className="text-xs text-ink-800 flex-1 min-w-0 truncate">{l.nom}</span>
+                          <span className="text-xs text-ink-400 shrink-0">{l.unite}</span>
+                          <input type="number" min="1" step="0.5" value={l.quantite}
+                            onChange={e => setLignes(prev => { const n = [...prev]; n[i] = { ...n[i], quantite: parseFloat(e.target.value) || 1 }; return n; })}
+                            className="w-14 text-center text-xs border border-ink-200 rounded-lg py-1 bg-white" />
+                          <span className="text-xs text-ink-400">×</span>
+                          <input type="number" min="0" step="0.5" value={l.prix_unitaire}
+                            onChange={e => setLignes(prev => { const n = [...prev]; n[i] = { ...n[i], prix_unitaire: parseFloat(e.target.value) || 0 }; return n; })}
+                            className="w-16 text-right text-xs border border-ink-200 rounded-lg py-1 bg-white" />
+                          <span className="text-xs font-semibold text-ink-900 w-14 text-right shrink-0">{fmt(l.prix_unitaire * l.quantite)}</span>
+                          <button onClick={() => setLignes(p => p.filter((_, idx) => idx !== i))} className="text-ink-300 hover:text-red-500 transition-colors"><X size={14} /></button>
+                        </div>
+                        {l.kit_description && (
+                          <p className="text-xs text-ink-400 italic pl-7 truncate">{l.kit_description}</p>
+                        )}
+                        {l.kit_ratio_service != null && (
+                          <p className="text-xs text-purple-400 pl-7">
+                            Ventilation : {fmt(l.prix_unitaire * l.quantite * l.kit_ratio_service)} service · {fmt(l.prix_unitaire * l.quantite * (1 - l.kit_ratio_service))} matériaux
+                          </p>
+                        )}
+                      </div>
                     ))}
                   </div>
                 )}
@@ -636,60 +607,39 @@ function NouveauDevisPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-ink-200 text-xs text-ink-400">
-                        <th className="text-left pb-2">Désignation</th>
-                        <th className="text-left pb-2">Type</th>
-                        <th className="text-left pb-2">Unité</th>
-                        <th className="text-right pb-2">Qté</th>
-                        <th className="text-right pb-2">P.U.</th>
-                        <th className="text-right pb-2">Total</th>
+                        <th className="text-left pb-2">Désignation</th><th className="text-left pb-2">Type</th>
+                        <th className="text-left pb-2">Unité</th><th className="text-right pb-2">Qté</th>
+                        <th className="text-right pb-2">P.U.</th><th className="text-right pb-2">Total</th>
                       </tr>
                     </thead>
                     <tbody>
                       {lignes.length === 0 ? (
                         <tr><td colSpan={6} className="text-center py-8 text-ink-400">Aucune ligne</td></tr>
-                      ) : groupeLignes(lignes).map((groupe, gi) =>
-                        groupe.kit_groupe ? (
-                          <>
-                            <tr key={`kit-header-${gi}`}>
-                              <td colSpan={6} className="pt-3 pb-1">
-                                <div className="flex items-center gap-1.5">
-                                  <Layers size={11} className="text-purple-400" />
-                                  <span className="text-xs font-semibold text-purple-600">{groupe.kit_groupe}</span>
-                                </div>
-                              </td>
-                            </tr>
-                            {groupe.lignes.map(({ ligne: l, idx }) => (
-                              <tr key={idx} className="border-b border-ink-100">
-                                <td className="py-2 pr-2 pl-4 text-ink-600">{l.nom}</td>
-                                <td className="py-2">
-                                  <span className={cn("badge text-xs", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
-                                    {l.type_branche === "service" ? "Service" : "Matériau"}
-                                  </span>
-                                </td>
-                                <td className="py-2 text-ink-500 text-xs">{l.unite}</td>
-                                <td className="py-2 text-right">{l.quantite}</td>
-                                <td className="py-2 text-right text-ink-500">{fmt(l.prix_unitaire)}</td>
-                                <td className="py-2 text-right font-semibold">{fmt(l.prix_unitaire * l.quantite)}</td>
-                              </tr>
-                            ))}
-                          </>
-                        ) : (
-                          groupe.lignes.map(({ ligne: l, idx }) => (
-                            <tr key={idx} className="border-b border-ink-100">
-                              <td className="py-2.5 pr-2">{l.nom}</td>
-                              <td className="py-2.5">
-                                <span className={cn("badge text-xs", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
-                                  {l.type_branche === "service" ? "Service" : "Matériau"}
-                                </span>
-                              </td>
-                              <td className="py-2.5 text-ink-500 text-xs">{l.unite}</td>
-                              <td className="py-2.5 text-right">{l.quantite}</td>
-                              <td className="py-2.5 text-right text-ink-500">{fmt(l.prix_unitaire)}</td>
-                              <td className="py-2.5 text-right font-semibold">{fmt(l.prix_unitaire * l.quantite)}</td>
-                            </tr>
-                          ))
-                        )
-                      )}
+                      ) : lignes.map((l, i) => (
+                        <tr key={i} className="border-b border-ink-100">
+                          <td className="py-2.5 pr-2">
+                            <p>{l.nom}</p>
+                            {l.kit_description && (
+                              <p className="text-xs text-ink-400 italic mt-0.5">{l.kit_description}</p>
+                            )}
+                          </td>
+                          <td className="py-2.5">
+                            {l.kit_ratio_service != null ? (
+                              <span className="inline-flex items-center gap-1 badge text-xs bg-purple-100 text-purple-700">
+                                <Layers size={10} /> Kit
+                              </span>
+                            ) : (
+                              <span className={cn("badge text-xs", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
+                                {l.type_branche === "service" ? "Service" : "Matériau"}
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 text-ink-500 text-xs">{l.unite}</td>
+                          <td className="py-2.5 text-right">{l.quantite}</td>
+                          <td className="py-2.5 text-right text-ink-500">{fmt(l.prix_unitaire)}</td>
+                          <td className="py-2.5 text-right font-semibold">{fmt(l.prix_unitaire * l.quantite)}</td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
