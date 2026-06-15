@@ -5,7 +5,7 @@ import { Client, DevisLigne, Prestation } from "@/types";
 import { fmt, genNumero, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Save, Eye, PenLine, Plus, X, RotateCcw, Check, Download, ChevronDown, Tag, Gift } from "lucide-react";
+import { ArrowLeft, Save, Eye, PenLine, Plus, X, RotateCcw, Check, Download, ChevronDown, Tag, Gift, Search } from "lucide-react";
 import Link from "next/link";
 
 type Tab = "edition" | "apercu" | "signature";
@@ -71,6 +71,7 @@ function NouveauDevisPage() {
   const [apporteurs, setApporteurs] = useState<Apporteur[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [activeCat, setActiveCat] = useState("Tous");
+  const [searchCatalogue, setSearchCatalogue] = useState("");
   const [clientId, setClientId] = useState(clientIdParam ?? "");
   const [apporteurId, setApporteurId] = useState("");
   const [objet, setObjet] = useState("");
@@ -178,7 +179,14 @@ function NouveauDevisPage() {
 
   const selectedClient = clients.find(c => c.id === clientId) ?? null;
   const palierActuelClient = [...paliers].reverse().find(p => caClientPayé >= p.seuil_min) ?? null;
-  const filteredPrests = activeCat === "Tous" ? prestations : prestations.filter(p => p.categorie === activeCat);
+
+  // Filtrage catalogue : recherche textuelle + filtre catégorie
+  const filteredPrests = prestations.filter(p => {
+    const matchCat = activeCat === "Tous" || p.categorie === activeCat;
+    const q = searchCatalogue.trim().toLowerCase();
+    const matchSearch = !q || p.nom.toLowerCase().includes(q) || p.categorie.toLowerCase().includes(q);
+    return matchCat && matchSearch;
+  });
 
   async function enregistrer(statut = "brouillon") {
     setSaving(true);
@@ -336,17 +344,46 @@ function NouveauDevisPage() {
                   </div>
                 ) : (
                   <>
-                    <div className="flex gap-1.5 flex-wrap mb-3">
-                      {["Tous", ...categories].map(cat => (
-                        <button key={cat} onClick={() => setActiveCat(cat)}
-                          className={cn("px-2.5 py-1 rounded-lg text-xs font-medium border transition-all",
-                            activeCat === cat ? "bg-ink-900 text-volt-400 border-ink-900" : "bg-white border-ink-200 text-ink-500 hover:bg-ink-50")}>
-                          {cat}
+                    {/* Barre de recherche */}
+                    <div className="relative mb-3">
+                      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        placeholder="Rechercher une prestation…"
+                        value={searchCatalogue}
+                        onChange={e => {
+                          setSearchCatalogue(e.target.value);
+                          if (e.target.value) setActiveCat("Tous");
+                        }}
+                        className="input pl-8 text-sm py-1.5"
+                      />
+                      {searchCatalogue && (
+                        <button
+                          onClick={() => setSearchCatalogue("")}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-300 hover:text-ink-600 transition-colors"
+                        >
+                          <X size={13} />
                         </button>
-                      ))}
+                      )}
                     </div>
+
+                    {/* Filtres catégorie — masqués pendant une recherche active */}
+                    {!searchCatalogue && (
+                      <div className="flex gap-1.5 flex-wrap mb-3">
+                        {["Tous", ...categories].map(cat => (
+                          <button key={cat} onClick={() => setActiveCat(cat)}
+                            className={cn("px-2.5 py-1 rounded-lg text-xs font-medium border transition-all",
+                              activeCat === cat ? "bg-ink-900 text-volt-400 border-ink-900" : "bg-white border-ink-200 text-ink-500 hover:bg-ink-50")}>
+                            {cat}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
                     <div className="space-y-1 max-h-64 overflow-y-auto">
-                      {filteredPrests.map(p => (
+                      {filteredPrests.length === 0 ? (
+                        <p className="text-center text-xs text-ink-400 py-6">Aucune prestation trouvée pour « {searchCatalogue} »</p>
+                      ) : filteredPrests.map(p => (
                         <button key={p.id} onClick={() => addPrestation(p)}
                           className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border border-ink-100 hover:border-volt-400 hover:bg-volt-50 bg-white transition-all group text-left">
                           <span className={cn("badge text-xs shrink-0", p.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
