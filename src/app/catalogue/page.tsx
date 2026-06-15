@@ -7,39 +7,49 @@ import Shell from "@/components/layout/Shell";
 import {
   Plus, Trash2, Save, Pencil, X, ChevronDown, ChevronUp,
   Link, Wrench, Package, Search, Download, Upload, AlertCircle,
-  CheckCircle2, TrendingUp, Gift
+  CheckCircle2, TrendingUp, Gift, Layers, RefreshCw
 } from "lucide-react";
 
-// ─── Types internes ──────────────────────────────────────────────────────────
+type PrestationExt = Prestation & { prix_achat?: number | null; est_kit?: boolean; kit_description?: string | null };
 
-type PrestationExt = Prestation & { prix_achat?: number | null };
-
-// ─── Helpers ────────────────────────────────────────────────────────────────
+interface KitComposant {
+  id: string;
+  composant_id: string;
+  quantite: number;
+  ordre: number;
+  prestation?: PrestationExt;
+}
 
 function getFavicon(url: string) {
   try { return `https://www.google.com/s2/favicons?domain=${new URL(url).hostname}&sz=64`; }
   catch { return null; }
 }
-
 function getLinkLabel(url: string) {
   try { return new URL(url).hostname.replace("www.", ""); }
   catch { return url; }
 }
-
 function calcMarge(prixAchat: number, prixVente: number): number | null {
   if (!prixAchat || prixAchat <= 0) return null;
   return Math.round(((prixVente - prixAchat) / prixAchat) * 1000) / 10;
 }
-
 function prixVenteFromMarge(prixAchat: number, margePct: number): number {
   return Math.round(prixAchat * (1 + margePct / 100) * 100) / 100;
 }
-
 function matchSearch(p: PrestationExt, q: string): boolean {
   if (!q.trim()) return true;
   const lower = q.toLowerCase();
   return [p.nom, p.description, p.marque, p.sous_categorie, p.categorie]
     .some(v => v?.toLowerCase().includes(lower));
+}
+function genKitDescription(composants: KitComposant[]): string {
+  if (composants.length === 0) return "";
+  const parts = composants.map(c => {
+    const nom = c.prestation?.nom ?? "?";
+    const qte = c.quantite;
+    const unite = c.prestation?.unite ?? "u";
+    return `${qte}× ${nom}${unite !== "u" && unite !== "forfait" ? ` (${unite})` : ""}`;
+  });
+  return "Contient : " + parts.join(", ");
 }
 
 // ─── Sous-composants ────────────────────────────────────────────────────────
@@ -88,16 +98,12 @@ function MargeTag({ prixAchat, prixVente }: { prixAchat?: number | null; prixVen
   );
 }
 
-function MargeFields({
-  prixAchat, prixVente,
-  onPrixAchatChange, onPrixVenteChange,
-}: {
+function MargeFields({ prixAchat, prixVente, onPrixAchatChange, onPrixVenteChange }: {
   prixAchat: string; prixVente: string;
   onPrixAchatChange: (v: string) => void;
   onPrixVenteChange: (v: string) => void;
 }) {
   const [margePct, setMargePct] = useState("");
-
   function handlePrixAchat(v: string) {
     onPrixAchatChange(v);
     if (margePct !== "" && parseFloat(v) > 0) {
@@ -105,7 +111,6 @@ function MargeFields({
       onPrixVenteChange(String(pv));
     }
   }
-
   function handleMarge(v: string) {
     setMargePct(v);
     if (parseFloat(prixAchat) > 0) {
@@ -113,7 +118,6 @@ function MargeFields({
       onPrixVenteChange(String(pv));
     }
   }
-
   function handlePrixVente(v: string) {
     onPrixVenteChange(v);
     if (parseFloat(prixAchat) > 0 && parseFloat(v) >= 0) {
@@ -121,11 +125,9 @@ function MargeFields({
       setMargePct(m !== null ? String(m) : "");
     }
   }
-
   const pa = parseFloat(prixAchat);
   const pv = parseFloat(prixVente);
   const margeCalc = pa > 0 && pv >= 0 ? calcMarge(pa, pv) : null;
-
   return (
     <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3 p-3 bg-emerald-50 rounded-xl border border-emerald-100">
       <div>
@@ -174,9 +176,7 @@ function LiensFournisseurs({ liens, setLiens }: { liens: string[]; setLiens: (l:
               {favicon && <img src={favicon} alt={label} className="w-4 h-4 object-contain" />}
               <span className="text-xs text-ink-600">{label}</span>
               <button onClick={() => setLiens(liens.filter((_, idx) => idx !== i))}
-                className="text-ink-300 hover:text-red-500 transition-colors ml-1">
-                <X size={12} />
-              </button>
+                className="text-ink-300 hover:text-red-500 transition-colors ml-1"><X size={12} /></button>
             </div>
           );
         })}
@@ -185,9 +185,7 @@ function LiensFournisseurs({ liens, setLiens }: { liens: string[]; setLiens: (l:
         <input className="input text-sm flex-1" placeholder="https://www.leroymerlin.fr/…"
           value={newLien} onChange={e => setNewLien(e.target.value)}
           onKeyDown={e => e.key === "Enter" && addLien()} />
-        <button onClick={addLien} className="btn-ghost !px-3 text-xs shrink-0">
-          <Plus size={13} /> Ajouter
-        </button>
+        <button onClick={addLien} className="btn-ghost !px-3 text-xs shrink-0"><Plus size={13} /> Ajouter</button>
       </div>
     </div>
   );
@@ -218,7 +216,293 @@ function FormMarque({ value, onChange, marques }: { value: string; onChange: (v:
   );
 }
 
-// ─── CSV ─────────────────────────────────────────────────────────────────────
+// ─── Modal Kit ───────────────────────────────────────────────────────────────
+
+function KitModal({
+  kit, prestations, onClose, onSaved,
+}: {
+  kit: PrestationExt | null;
+  prestations: PrestationExt[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [nomKit, setNomKit] = useState(kit?.nom ?? "");
+  const [categorieKit, setCategorieKit] = useState(kit?.categorie ?? "Kits");
+  const [composants, setComposants] = useState<KitComposant[]>([]);
+  const [searchComp, setSearchComp] = useState("");
+  const [description, setDescription] = useState(kit?.kit_description ?? "");
+  const [descriptionManuelle, setDescriptionManuelle] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(!!kit);
+
+  const categories = [...new Set(prestations.map(p => p.categorie))].sort();
+  const disponibles = prestations.filter(p =>
+    !p.est_kit &&
+    p.id !== kit?.id &&
+    !composants.some(c => c.composant_id === p.id) &&
+    matchSearch(p, searchComp)
+  );
+
+  const prixTotal = composants.reduce((sum, c) => {
+    return sum + (c.prestation?.prix_unitaire ?? 0) * c.quantite;
+  }, 0);
+
+  const brancheMajoritaire: "service" | "materiau" = (() => {
+    const services = composants.filter(c => c.prestation?.type_branche === "service").length;
+    const materiaux = composants.filter(c => c.prestation?.type_branche === "materiau").length;
+    return services >= materiaux ? "service" : "materiau";
+  })();
+
+  useEffect(() => {
+    if (!kit) return;
+    supabase.from("kit_composants")
+      .select("*, prestation:composant_id(*)")
+      .eq("kit_id", kit.id)
+      .order("ordre")
+      .then(({ data }) => {
+        setComposants((data ?? []).map((d: any) => ({
+          id: d.id,
+          composant_id: d.composant_id,
+          quantite: d.quantite,
+          ordre: d.ordre,
+          prestation: d.prestation,
+        })));
+        setLoading(false);
+      });
+  }, [kit]);
+
+  useEffect(() => {
+    if (descriptionManuelle) return;
+    setDescription(genKitDescription(composants));
+  }, [composants, descriptionManuelle]);
+
+  function addComposant(p: PrestationExt) {
+    setComposants(prev => [...prev, {
+      id: crypto.randomUUID(),
+      composant_id: p.id,
+      quantite: 1,
+      ordre: prev.length,
+      prestation: p,
+    }]);
+    setSearchComp("");
+  }
+
+  function updateQte(idx: number, qte: number) {
+    setComposants(prev => {
+      const n = [...prev];
+      n[idx] = { ...n[idx], quantite: qte };
+      return n;
+    });
+  }
+
+  function removeComposant(idx: number) {
+    setComposants(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  async function handleSave() {
+    if (!nomKit.trim()) { alert("Le nom du kit est obligatoire."); return; }
+    if (composants.length < 2) { alert("Un kit doit contenir au moins 2 composants."); return; }
+    setSaving(true);
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) { setSaving(false); return; }
+
+    let kitId = kit?.id;
+
+    if (!kitId) {
+      const { data, error } = await supabase.from("prestations").insert({
+        user_id: session.user.id,
+        nom: nomKit,
+        categorie: categorieKit,
+        prix_unitaire: prixTotal,
+        unite: "forfait",
+        type_branche: brancheMajoritaire,
+        est_kit: true,
+        kit_description: description,
+        actif: true,
+      }).select().single();
+      if (error || !data) { alert("Erreur : " + error?.message); setSaving(false); return; }
+      kitId = data.id;
+    } else {
+      await supabase.from("prestations").update({
+        nom: nomKit,
+        categorie: categorieKit,
+        prix_unitaire: prixTotal,
+        type_branche: brancheMajoritaire,
+        est_kit: true,
+        kit_description: description,
+      }).eq("id", kitId);
+      await supabase.from("kit_composants").delete().eq("kit_id", kitId);
+    }
+
+    await supabase.from("kit_composants").insert(
+      composants.map((c, i) => ({
+        kit_id: kitId,
+        composant_id: c.composant_id,
+        quantite: c.quantite,
+        ordre: i,
+        user_id: session.user.id,
+      }))
+    );
+
+    setSaving(false);
+    onSaved();
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-ink-100">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center">
+              <Layers size={15} className="text-purple-600" />
+            </div>
+            <h2 className="font-semibold text-ink-900">{kit ? "Modifier le kit" : "Nouveau kit"}</h2>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-ink-100 text-ink-400"><X size={18} /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 space-y-5">
+          {loading ? (
+            <p className="text-center text-ink-400 py-8">Chargement…</p>
+          ) : (
+            <>
+              {/* Infos kit */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Nom du kit *</label>
+                  <input className="input" placeholder="Ex : Prise complète encastrée"
+                    value={nomKit} onChange={e => setNomKit(e.target.value)} />
+                </div>
+                <div>
+                  <label className="label">Catégorie</label>
+                  <select className="input" value={categorieKit} onChange={e => setCategorieKit(e.target.value)}>
+                    <option value="Kits">Kits</option>
+                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* Recherche composants */}
+              <div>
+                <label className="label">Ajouter des composants</label>
+                <div className="relative mb-2">
+                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400 pointer-events-none" />
+                  <input className="input pl-8 text-sm"
+                    placeholder="Rechercher dans le catalogue…"
+                    value={searchComp}
+                    onChange={e => setSearchComp(e.target.value)} />
+                  {searchComp && (
+                    <button onClick={() => setSearchComp("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-300 hover:text-ink-600">
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+                {searchComp && (
+                  <div className="border border-ink-100 rounded-xl overflow-hidden max-h-48 overflow-y-auto">
+                    {disponibles.length === 0 ? (
+                      <p className="text-xs text-ink-400 text-center py-4">Aucun résultat</p>
+                    ) : disponibles.map(p => (
+                      <button key={p.id} onClick={() => addComposant(p)}
+                        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-volt-50 transition-colors text-left border-b border-ink-50 last:border-0">
+                        <span className={cn("badge text-xs shrink-0",
+                          p.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
+                          {p.type_branche === "service" ? "S" : "M"}
+                        </span>
+                        <span className="flex-1 text-sm text-ink-800 truncate">{p.nom}</span>
+                        <span className="text-xs text-ink-400 shrink-0">{p.unite}</span>
+                        <span className="text-sm font-semibold text-ink-900 shrink-0">{fmt(p.prix_unitaire)}</span>
+                        <Plus size={13} className="text-ink-300 shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Liste composants */}
+              <div>
+                <label className="label">Composition du kit</label>
+                {composants.length === 0 ? (
+                  <div className="text-center py-6 border-2 border-dashed border-ink-100 rounded-xl">
+                    <Layers size={24} className="text-ink-200 mx-auto mb-2" />
+                    <p className="text-xs text-ink-400">Recherchez des produits ci-dessus pour les ajouter</p>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {composants.map((c, i) => (
+                      <div key={c.id} className="flex items-center gap-2 px-3 py-2 bg-ink-50 rounded-xl border border-ink-100">
+                        <span className={cn("badge text-xs shrink-0",
+                          c.prestation?.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
+                          {c.prestation?.type_branche === "service" ? "S" : "M"}
+                        </span>
+                        <span className="flex-1 text-sm text-ink-800 truncate">{c.prestation?.nom}</span>
+                        <span className="text-xs text-ink-400 shrink-0">{c.prestation?.unite}</span>
+                        <input type="number" min="0.1" step="0.5" value={c.quantite}
+                          onChange={e => updateQte(i, parseFloat(e.target.value) || 1)}
+                          className="w-16 text-center text-xs border border-ink-200 rounded-lg py-1 bg-white" />
+                        <span className="text-xs font-semibold text-ink-900 w-16 text-right shrink-0">
+                          {fmt((c.prestation?.prix_unitaire ?? 0) * c.quantite)}
+                        </span>
+                        <button onClick={() => removeComposant(i)} className="text-ink-300 hover:text-red-500 transition-colors">
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                    <div className="flex justify-between text-sm font-bold text-ink-900 px-3 pt-2 border-t border-ink-200">
+                      <span>Total kit</span>
+                      <span className="text-purple-600">{fmt(prixTotal)}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Description */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="label mb-0">Description (sur le devis)</label>
+                  {descriptionManuelle && (
+                    <button
+                      onClick={() => {
+                        setDescriptionManuelle(false);
+                        setDescription(genKitDescription(composants));
+                      }}
+                      className="flex items-center gap-1 text-xs text-ink-400 hover:text-ink-700 transition-colors">
+                      <RefreshCw size={11} /> Regénérer
+                    </button>
+                  )}
+                </div>
+                <textarea
+                  className="input text-sm resize-none"
+                  rows={3}
+                  placeholder="Description affichée sous le nom du kit dans le devis…"
+                  value={description}
+                  onChange={e => {
+                    setDescriptionManuelle(true);
+                    setDescription(e.target.value);
+                  }}
+                />
+                {!descriptionManuelle && composants.length > 0 && (
+                  <p className="text-xs text-ink-400 mt-1">Générée automatiquement — modifiez pour personnaliser</p>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="flex gap-3 px-6 py-4 border-t border-ink-100">
+          <button onClick={onClose} className="btn-ghost flex-1 justify-center">Annuler</button>
+          <button onClick={handleSave} disabled={saving || loading}
+            className="btn-volt flex-1 justify-center">
+            <Save size={14} /> {saving ? "Enregistrement…" : kit ? "Mettre à jour" : "Créer le kit"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── CSV ──────────────────────────────────────────────────────────────────────
 
 const CSV_HEADERS = [
   "nom", "description", "type_branche", "categorie", "sous_categorie",
@@ -228,17 +512,10 @@ const CSV_HEADERS = [
 function exportCSV(prestations: PrestationExt[]) {
   const rows = [
     CSV_HEADERS.join(";"),
-    ...prestations.map(p => [
-      p.nom,
-      p.description ?? "",
-      p.type_branche,
-      p.categorie,
-      p.sous_categorie ?? "",
-      p.marque ?? "",
-      p.unite,
-      p.prix_achat ?? "",
-      p.prix_unitaire,
-      p.image_url ?? "",
+    ...prestations.filter(p => !p.est_kit).map(p => [
+      p.nom, p.description ?? "", p.type_branche, p.categorie,
+      p.sous_categorie ?? "", p.marque ?? "", p.unite,
+      p.prix_achat ?? "", p.prix_unitaire, p.image_url ?? "",
       (p.liens_fournisseurs ?? []).join("|"),
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(";"))
   ];
@@ -270,34 +547,23 @@ function parseCSV(text: string): ImportRow[] {
       else cur += ch;
     }
     values.push(cur);
-
     const row: Record<string, string> = {};
     headers.forEach((h, i) => { row[h] = (values[i] ?? "").trim(); });
-
     const errors: string[] = [];
     if (!row.nom?.trim()) errors.push("Nom manquant");
     if (!row.prix_unitaire || isNaN(parseFloat(row.prix_unitaire))) errors.push("Prix de vente invalide");
     if (!["service", "materiau"].includes(row.type_branche)) errors.push("Branche invalide (service/materiau)");
-
     return {
-      nom: row.nom ?? "",
-      description: row.description ?? "",
+      nom: row.nom ?? "", description: row.description ?? "",
       type_branche: row.type_branche ?? "service",
-      categorie: row.categorie || "Divers",
-      sous_categorie: row.sous_categorie ?? "",
-      marque: row.marque ?? "",
-      unite: row.unite || "forfait",
-      prix_achat: row.prix_achat ?? "",
-      prix_unitaire: row.prix_unitaire ?? "",
-      image_url: row.image_url ?? "",
-      liens_fournisseurs: row.liens_fournisseurs ?? "",
-      _valid: errors.length === 0,
-      _errors: errors,
+      categorie: row.categorie || "Divers", sous_categorie: row.sous_categorie ?? "",
+      marque: row.marque ?? "", unite: row.unite || "forfait",
+      prix_achat: row.prix_achat ?? "", prix_unitaire: row.prix_unitaire ?? "",
+      image_url: row.image_url ?? "", liens_fournisseurs: row.liens_fournisseurs ?? "",
+      _valid: errors.length === 0, _errors: errors,
     };
   });
 }
-
-// ─── Import Modal ─────────────────────────────────────────────────────────────
 
 function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (rows: ImportRow[]) => Promise<void> }) {
   const [rows, setRows] = useState<ImportRow[] | null>(null);
@@ -309,20 +575,15 @@ function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (ro
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => {
-      const text = ev.target?.result as string;
-      setRows(parseCSV(text));
-    };
+    reader.onload = ev => { setRows(parseCSV(ev.target?.result as string)); };
     reader.readAsText(file, "utf-8");
   }
 
   async function handleImport() {
     if (!rows) return;
-    const valid = rows.filter(r => r._valid);
     setImporting(true);
-    await onImport(valid);
-    setImporting(false);
-    setDone(true);
+    await onImport(rows.filter(r => r._valid));
+    setImporting(false); setDone(true);
   }
 
   const validCount = rows?.filter(r => r._valid).length ?? 0;
@@ -335,7 +596,6 @@ function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (ro
           <h2 className="font-semibold text-ink-900">Importer un catalogue CSV</h2>
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-ink-100 text-ink-400"><X size={18} /></button>
         </div>
-
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {!rows && !done && (
             <div className="space-y-4">
@@ -344,7 +604,6 @@ function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (ro
                 <p>Colonnes : <code className="text-xs bg-ink-200 px-1 rounded">{CSV_HEADERS.join(" · ")}</code></p>
                 <p>• <code>type_branche</code> : <strong>service</strong> ou <strong>materiau</strong></p>
                 <p>• <code>liens_fournisseurs</code> : URLs séparées par <strong>|</strong></p>
-                <p>• Exporter d'abord pour obtenir le bon format</p>
               </div>
               <div>
                 <input ref={fileRef} type="file" accept=".csv" onChange={handleFile} className="hidden" />
@@ -354,15 +613,12 @@ function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (ro
               </div>
             </div>
           )}
-
           {done && (
             <div className="text-center py-8">
               <CheckCircle2 size={48} className="text-emerald-500 mx-auto mb-3" />
               <p className="font-semibold text-ink-900">{validCount} prestation{validCount > 1 ? "s" : ""} importée{validCount > 1 ? "s" : ""}</p>
-              <p className="text-sm text-ink-400 mt-1">Le catalogue a été mis à jour.</p>
             </div>
           )}
-
           {rows && !done && (
             <div className="space-y-3">
               <div className="flex gap-3">
@@ -373,48 +629,32 @@ function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (ro
                 {invalidCount > 0 && (
                   <div className="flex-1 p-3 bg-red-50 rounded-xl text-center">
                     <p className="text-2xl font-bold text-red-600">{invalidCount}</p>
-                    <p className="text-xs text-red-500">ligne{invalidCount > 1 ? "s" : ""} ignorée{invalidCount > 1 ? "s" : ""}</p>
+                    <p className="text-xs text-red-500">ignorée{invalidCount > 1 ? "s" : ""}</p>
                   </div>
                 )}
               </div>
-
               <div className="border border-ink-100 rounded-xl overflow-hidden">
                 <div className="max-h-64 overflow-y-auto divide-y divide-ink-50">
                   {rows.map((row, i) => (
                     <div key={i} className={cn("px-4 py-2 flex items-start gap-3", row._valid ? "bg-white" : "bg-red-50")}>
-                      {row._valid
-                        ? <CheckCircle2 size={14} className="text-emerald-500 mt-0.5 shrink-0" />
+                      {row._valid ? <CheckCircle2 size={14} className="text-emerald-500 mt-0.5 shrink-0" />
                         : <AlertCircle size={14} className="text-red-500 mt-0.5 shrink-0" />}
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-ink-800 truncate">{row.nom || "(sans nom)"}</p>
-                        {row._errors.length > 0 && (
-                          <p className="text-xs text-red-500">{row._errors.join(", ")}</p>
-                        )}
-                        {row._valid && (
-                          <p className="text-xs text-ink-400">
-                            {row.type_branche} · {row.categorie} · {fmt(parseFloat(row.prix_unitaire))}
-                          </p>
-                        )}
+                        {row._errors.length > 0 && <p className="text-xs text-red-500">{row._errors.join(", ")}</p>}
+                        {row._valid && <p className="text-xs text-ink-400">{row.type_branche} · {row.categorie} · {fmt(parseFloat(row.prix_unitaire))}</p>}
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
-
-              {invalidCount > 0 && (
-                <p className="text-xs text-ink-400 flex items-center gap-1">
-                  <AlertCircle size={12} /> Les lignes invalides seront ignorées.
-                </p>
-              )}
             </div>
           )}
         </div>
-
         {rows && !done && (
           <div className="flex gap-3 px-6 py-4 border-t border-ink-100">
             <button onClick={onClose} className="btn-ghost flex-1 justify-center">Annuler</button>
-            <button onClick={handleImport} disabled={validCount === 0 || importing}
-              className="btn-volt flex-1 justify-center">
+            <button onClick={handleImport} disabled={validCount === 0 || importing} className="btn-volt flex-1 justify-center">
               {importing ? "Import en cours…" : `Importer ${validCount} ligne${validCount > 1 ? "s" : ""}`}
             </button>
           </div>
@@ -433,8 +673,8 @@ function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (ro
 
 function CategorieBlock({
   cat, items, branche, editId, editData, editNewCat, editCatMode, editLiens,
-  editPrixAchat, editPrixVente,
-  categories, marques, collapsed, toggleCollapse, delCategorie, startEdit, saveEdit, del,
+  editPrixAchat, editPrixVente, categories, marques, collapsed,
+  toggleCollapse, delCategorie, startEdit, saveEdit, del, onEditKit,
   setEditId, setEditData, setEditNewCat, setEditCatMode, setEditLiens,
   setEditPrixAchat, setEditPrixVente,
 }: any) {
@@ -472,11 +712,43 @@ function CategorieBlock({
               <span className="text-right">Marge</span><span>Liens</span><span></span>
             </div>
           )}
+          {branche === "kit" && (
+            <div className="hidden md:grid grid-cols-[2fr_90px_80px] gap-4 px-5 py-2 text-xs font-semibold text-ink-400 uppercase tracking-wide bg-ink-50">
+              <span>Nom</span><span className="text-right">Prix total</span><span></span>
+            </div>
+          )}
 
           {items.length === 0 && (
             <div className="px-5 py-4 text-sm text-ink-400 italic">Aucune prestation — catégorie vide.</div>
           )}
 
+          {/* Kits */}
+          {branche === "kit" && items.map((p: PrestationExt) => (
+            <div key={p.id} className="px-4 py-3">
+              <div className="flex items-center gap-3 md:grid md:grid-cols-[2fr_90px_80px]">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-purple-100 text-purple-700 text-xs font-semibold shrink-0">
+                      <Layers size={10} /> KIT
+                    </span>
+                    <p className="font-medium text-ink-900 text-sm truncate">{p.nom}</p>
+                  </div>
+                  {p.kit_description && (
+                    <p className="text-xs text-ink-400 italic mt-0.5 truncate">{p.kit_description}</p>
+                  )}
+                </div>
+                <span className="font-semibold text-ink-900 text-sm ml-auto md:ml-0 md:text-right">{fmt(p.prix_unitaire)}</span>
+                <div className="flex gap-1 shrink-0 justify-end">
+                  <button onClick={() => onEditKit(p)}
+                    className="p-1.5 rounded-lg text-ink-400 hover:bg-ink-100 hover:text-ink-700"><Pencil size={13} /></button>
+                  <button onClick={() => del(p.id)}
+                    className="p-1.5 rounded-lg text-ink-300 hover:bg-red-50 hover:text-red-600"><Trash2 size={13} /></button>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {/* Matériaux */}
           {branche === "materiau" && (() => {
             const mqs = [...new Set(items.map((p: PrestationExt) => p.marque || "__sans__"))].sort() as string[];
             return mqs.map((mq: string) => {
@@ -501,41 +773,27 @@ function CategorieBlock({
                         {editId === p.id ? (
                           <div className="space-y-3">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                              <div>
-                                <label className="label">Nom</label>
+                              <div><label className="label">Nom</label>
                                 <input className="input text-sm" value={(editData as any).nom ?? p.nom}
-                                  onChange={e => setEditData((d: any) => ({ ...d, nom: e.target.value }))} />
-                              </div>
-                              <div>
-                                <label className="label">Description</label>
+                                  onChange={e => setEditData((d: any) => ({ ...d, nom: e.target.value }))} /></div>
+                              <div><label className="label">Description</label>
                                 <input className="input text-sm" value={(editData as any).description ?? p.description ?? ""}
-                                  onChange={e => setEditData((d: any) => ({ ...d, description: e.target.value }))} />
-                              </div>
-                              <div>
-                                <label className="label">Marque</label>
-                                <FormMarque
-                                  value={(editData as any).marque ?? marque}
-                                  onChange={v => setEditData((d: any) => ({ ...d, marque: v }))}
-                                  marques={marques}
-                                />
-                              </div>
-                              <div>
-                                <label className="label">Branche</label>
+                                  onChange={e => setEditData((d: any) => ({ ...d, description: e.target.value }))} /></div>
+                              <div><label className="label">Marque</label>
+                                <FormMarque value={(editData as any).marque ?? marque}
+                                  onChange={v => setEditData((d: any) => ({ ...d, marque: v }))} marques={marques} /></div>
+                              <div><label className="label">Branche</label>
                                 <select className="input text-sm" value={(editData as any).type_branche ?? p.type_branche}
                                   onChange={e => setEditData((d: any) => ({ ...d, type_branche: e.target.value }))}>
                                   <option value="service">Service</option>
                                   <option value="materiau">Matériau</option>
-                                </select>
-                              </div>
-                              <div>
-                                <label className="label">Unité</label>
+                                </select></div>
+                              <div><label className="label">Unité</label>
                                 <select className="input text-sm" value={(editData as any).unite ?? p.unite}
                                   onChange={e => setEditData((d: any) => ({ ...d, unite: e.target.value }))}>
                                   {UNITES.map((u: string) => <option key={u}>{u}</option>)}
-                                </select>
-                              </div>
-                              <div>
-                                <label className="label">Catégorie</label>
+                                </select></div>
+                              <div><label className="label">Catégorie</label>
                                 {editCatMode === "select" ? (
                                   <div className="flex gap-2">
                                     <select className="input text-sm flex-1" value={(editData as any).categorie ?? p.categorie}
@@ -550,38 +808,25 @@ function CategorieBlock({
                                       value={editNewCat} onChange={e => setEditNewCat(e.target.value)} autoFocus />
                                     <button onClick={() => setEditCatMode("select")} className="btn-ghost !px-3 text-xs shrink-0">Existante</button>
                                   </div>
-                                )}
-                              </div>
-                              <div>
-                                <label className="label">Sous-catégorie</label>
+                                )}</div>
+                              <div><label className="label">Sous-catégorie</label>
                                 <input className="input text-sm" placeholder="Ex : Prises, Câblage…"
                                   value={(editData as any).sous_categorie ?? sousCat}
-                                  onChange={e => setEditData((d: any) => ({ ...d, sous_categorie: e.target.value }))} />
-                              </div>
+                                  onChange={e => setEditData((d: any) => ({ ...d, sous_categorie: e.target.value }))} /></div>
                             </div>
-                            <MargeFields
-                              prixAchat={editPrixAchat}
-                              prixVente={editPrixVente}
+                            <MargeFields prixAchat={editPrixAchat} prixVente={editPrixVente}
                               onPrixAchatChange={setEditPrixAchat}
-                              onPrixVenteChange={v => {
-                                setEditPrixVente(v);
-                                setEditData((d: any) => ({ ...d, prix_unitaire: parseFloat(v) || 0 }));
-                              }}
-                            />
-                            <div>
-                              <label className="label">Liens fournisseurs</label>
-                              <LiensFournisseurs liens={editLiens} setLiens={setEditLiens} />
-                            </div>
-                            <div>
-                              <label className="label">Image du produit (URL)</label>
+                              onPrixVenteChange={v => { setEditPrixVente(v); setEditData((d: any) => ({ ...d, prix_unitaire: parseFloat(v) || 0 })); }} />
+                            <div><label className="label">Liens fournisseurs</label>
+                              <LiensFournisseurs liens={editLiens} setLiens={setEditLiens} /></div>
+                            <div><label className="label">Image du produit (URL)</label>
                               <input className="input text-sm" placeholder="https://…/image-produit.jpg"
                                 value={(editData as any).image_url ?? p.image_url ?? ""}
                                 onChange={e => setEditData((d: any) => ({ ...d, image_url: e.target.value }))} />
                               {((editData as any).image_url ?? p.image_url) && (
                                 <img src={(editData as any).image_url ?? p.image_url} alt=""
                                   className="mt-2 h-16 object-contain rounded-lg border border-ink-100 p-1 bg-white" />
-                              )}
-                            </div>
+                              )}</div>
                             <div className="flex gap-2 justify-end">
                               <button onClick={() => saveEdit(p.id)} className="btn-volt text-xs"><Save size={13} /> Sauvegarder</button>
                               <button onClick={() => setEditId(null)} className="btn-ghost text-xs"><X size={13} /> Annuler</button>
@@ -590,19 +835,13 @@ function CategorieBlock({
                         ) : (
                           <div className={cn("flex items-center gap-3",
                             "md:grid md:grid-cols-[40px_2fr_90px_90px_120px_minmax(80px,auto)_80px]")}>
-                            <div className="hidden md:block">
-                              <ProduitThumb imageUrl={p.image_url ?? null} />
-                            </div>
+                            <div className="hidden md:block"><ProduitThumb imageUrl={p.image_url ?? null} /></div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 md:block">
-                                <div className="md:hidden shrink-0">
-                                  <ProduitThumb imageUrl={p.image_url ?? null} />
-                                </div>
+                                <div className="md:hidden shrink-0"><ProduitThumb imageUrl={p.image_url ?? null} /></div>
                                 <div className="min-w-0">
                                   <p className="font-medium text-ink-900 text-sm truncate">{p.nom}</p>
-                                  <p className="text-xs text-ink-400 truncate">
-                                    {[marque, sousCat, p.description].filter(Boolean).join(" · ")}
-                                  </p>
+                                  <p className="text-xs text-ink-400 truncate">{[marque, sousCat, p.description].filter(Boolean).join(" · ")}</p>
                                 </div>
                               </div>
                               {liens.length > 0 && (
@@ -619,9 +858,7 @@ function CategorieBlock({
                                   <MargeTag prixAchat={p.prix_achat} prixVente={p.prix_unitaire} />
                                   <p className="text-xs text-ink-300 mt-0.5">PA {fmt(p.prix_achat)}</p>
                                 </div>
-                              ) : (
-                                <span className="text-ink-200 text-xs">—</span>
-                              )}
+                              ) : <span className="text-ink-200 text-xs">—</span>}
                             </div>
                             <div className="hidden md:flex items-center gap-1.5 flex-wrap">
                               {liens.length > 0
@@ -629,10 +866,8 @@ function CategorieBlock({
                                 : <span className="text-ink-200"><Link size={14} /></span>}
                             </div>
                             <div className="flex gap-1 shrink-0 justify-end">
-                              <button onClick={() => startEdit(p)}
-                                className="p-1.5 rounded-lg text-ink-400 hover:bg-ink-100 hover:text-ink-700"><Pencil size={13} /></button>
-                              <button onClick={() => del(p.id)}
-                                className="p-1.5 rounded-lg text-ink-300 hover:bg-red-50 hover:text-red-600"><Trash2 size={13} /></button>
+                              <button onClick={() => startEdit(p)} className="p-1.5 rounded-lg text-ink-400 hover:bg-ink-100 hover:text-ink-700"><Pencil size={13} /></button>
+                              <button onClick={() => del(p.id)} className="p-1.5 rounded-lg text-ink-300 hover:bg-red-50 hover:text-red-600"><Trash2 size={13} /></button>
                             </div>
                           </div>
                         )}
@@ -644,6 +879,7 @@ function CategorieBlock({
             });
           })()}
 
+          {/* Services */}
           {branche === "service" && items.map((p: PrestationExt) => {
             const sousCat: string = p.sous_categorie ?? "";
             return (
@@ -651,39 +887,28 @@ function CategorieBlock({
                 {editId === p.id ? (
                   <div className="space-y-3">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <label className="label">Nom</label>
+                      <div><label className="label">Nom</label>
                         <input className="input text-sm" value={(editData as any).nom ?? p.nom}
-                          onChange={e => setEditData((d: any) => ({ ...d, nom: e.target.value }))} />
-                      </div>
-                      <div>
-                        <label className="label">Description</label>
+                          onChange={e => setEditData((d: any) => ({ ...d, nom: e.target.value }))} /></div>
+                      <div><label className="label">Description</label>
                         <input className="input text-sm" value={(editData as any).description ?? p.description ?? ""}
-                          onChange={e => setEditData((d: any) => ({ ...d, description: e.target.value }))} />
-                      </div>
-                      <div>
-                        <label className="label">Prix unitaire (€)</label>
+                          onChange={e => setEditData((d: any) => ({ ...d, description: e.target.value }))} /></div>
+                      <div><label className="label">Prix unitaire (€)</label>
                         <input className="input text-sm text-right" type="number" step="0.5"
                           value={(editData as any).prix_unitaire ?? p.prix_unitaire}
-                          onChange={e => setEditData((d: any) => ({ ...d, prix_unitaire: parseFloat(e.target.value) }))} />
-                      </div>
-                      <div>
-                        <label className="label">Branche</label>
+                          onChange={e => setEditData((d: any) => ({ ...d, prix_unitaire: parseFloat(e.target.value) }))} /></div>
+                      <div><label className="label">Branche</label>
                         <select className="input text-sm" value={(editData as any).type_branche ?? p.type_branche}
                           onChange={e => setEditData((d: any) => ({ ...d, type_branche: e.target.value }))}>
                           <option value="service">Service</option>
                           <option value="materiau">Matériau</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="label">Unité</label>
+                        </select></div>
+                      <div><label className="label">Unité</label>
                         <select className="input text-sm" value={(editData as any).unite ?? p.unite}
                           onChange={e => setEditData((d: any) => ({ ...d, unite: e.target.value }))}>
                           {UNITES.map((u: string) => <option key={u}>{u}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="label">Catégorie</label>
+                        </select></div>
+                      <div><label className="label">Catégorie</label>
                         {editCatMode === "select" ? (
                           <div className="flex gap-2">
                             <select className="input text-sm flex-1" value={(editData as any).categorie ?? p.categorie}
@@ -698,14 +923,11 @@ function CategorieBlock({
                               value={editNewCat} onChange={e => setEditNewCat(e.target.value)} autoFocus />
                             <button onClick={() => setEditCatMode("select")} className="btn-ghost !px-3 text-xs shrink-0">Existante</button>
                           </div>
-                        )}
-                      </div>
-                      <div>
-                        <label className="label">Sous-catégorie</label>
+                        )}</div>
+                      <div><label className="label">Sous-catégorie</label>
                         <input className="input text-sm" placeholder="Ex : Prises, Câblage…"
                           value={(editData as any).sous_categorie ?? sousCat}
-                          onChange={e => setEditData((d: any) => ({ ...d, sous_categorie: e.target.value }))} />
-                      </div>
+                          onChange={e => setEditData((d: any) => ({ ...d, sous_categorie: e.target.value }))} /></div>
                     </div>
                     <div className="flex gap-2 justify-end">
                       <button onClick={() => saveEdit(p.id)} className="btn-volt text-xs"><Save size={13} /> Sauvegarder</button>
@@ -721,10 +943,8 @@ function CategorieBlock({
                     <span className="text-xs text-ink-500 hidden md:block">{p.unite}</span>
                     <span className="font-semibold text-ink-900 text-sm ml-auto md:ml-0 md:text-right">{fmt(p.prix_unitaire)}</span>
                     <div className="flex gap-1 shrink-0 justify-end">
-                      <button onClick={() => startEdit(p)}
-                        className="p-1.5 rounded-lg text-ink-400 hover:bg-ink-100 hover:text-ink-700"><Pencil size={13} /></button>
-                      <button onClick={() => del(p.id)}
-                        className="p-1.5 rounded-lg text-ink-300 hover:bg-red-50 hover:text-red-600"><Trash2 size={13} /></button>
+                      <button onClick={() => startEdit(p)} className="p-1.5 rounded-lg text-ink-400 hover:bg-ink-100 hover:text-ink-700"><Pencil size={13} /></button>
+                      <button onClick={() => del(p.id)} className="p-1.5 rounded-lg text-ink-300 hover:bg-red-50 hover:text-red-600"><Trash2 size={13} /></button>
                     </div>
                   </div>
                 )}
@@ -766,8 +986,10 @@ export default function CataloguePage() {
 
   const [collapsedServices, setCollapsedServices] = useState<Record<string, boolean>>({});
   const [collapsedMateriaux, setCollapsedMateriaux] = useState<Record<string, boolean>>({});
+  const [collapsedKits, setCollapsedKits] = useState<Record<string, boolean>>({});
   const [marques, setMarques] = useState<string[]>([]);
   const [showImport, setShowImport] = useState(false);
+  const [kitModal, setKitModal] = useState<PrestationExt | null | "new">(null);
 
   async function load() {
     const { data } = await supabase
@@ -783,6 +1005,7 @@ export default function CataloguePage() {
     const initCollapsed = cats.reduce((acc, c) => ({ ...acc, [c]: true }), {} as Record<string, boolean>);
     setCollapsedServices(initCollapsed);
     setCollapsedMateriaux(initCollapsed);
+    setCollapsedKits(initCollapsed);
     const mqs = [...new Set(prests.map((p: any) => p.marque).filter(Boolean))].sort() as string[];
     setMarques(mqs);
     setLoading(false);
@@ -790,42 +1013,22 @@ export default function CataloguePage() {
 
   useEffect(() => { load(); }, []);
 
-  // ── Add ──
   async function add() {
     const prixVente = parseFloat(formPrixVente);
-    if (!form.nom.trim()) {
-      alert("Le nom est obligatoire.");
-      return;
-    }
-    if (isNaN(prixVente) || prixVente < 0) {
-      alert("Le prix de vente est obligatoire.");
-      return;
-    }
+    if (!form.nom.trim()) { alert("Le nom est obligatoire."); return; }
+    if (isNaN(prixVente) || prixVente < 0) { alert("Le prix de vente est obligatoire."); return; }
     const cat = newCat.trim() || form.categorie || "Divers";
     const prixAchatNum = formPrixAchat !== "" ? parseFloat(formPrixAchat) : null;
-
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.user) {
-      alert("Session expirée, veuillez vous reconnecter.");
-      return;
-    }
-
+    if (!session?.user) { alert("Session expirée."); return; }
     const { data, error } = await supabase.from("prestations").insert({
-      user_id: session.user.id,
-      nom: form.nom,
-      description: form.description || null,
-      prix_unitaire: prixVente,
-      prix_achat: prixAchatNum,
-      unite: form.unite,
-      type_branche: form.type_branche,
-      categorie: cat,
-      actif: true,
-      sous_categorie: form.sous_categorie || null,
-      marque: form.marque || null,
-      liens_fournisseurs: formLiens.filter(l => l.trim()),
+      user_id: session.user.id, nom: form.nom,
+      description: form.description || null, prix_unitaire: prixVente,
+      prix_achat: prixAchatNum, unite: form.unite, type_branche: form.type_branche,
+      categorie: cat, actif: true, sous_categorie: form.sous_categorie || null,
+      marque: form.marque || null, liens_fournisseurs: formLiens.filter(l => l.trim()),
       image_url: form.image_url || null,
     }).select().single();
-
     if (error) { alert("Erreur : " + error.message); return; }
     if (data) {
       setPrestations(p => [...p, data].sort((a, b) => a.categorie.localeCompare(b.categorie) || a.nom.localeCompare(b.nom)));
@@ -852,8 +1055,7 @@ export default function CataloguePage() {
     const prixVenteNum = parseFloat(editPrixVente);
     const prixAchatNum = editPrixAchat !== "" ? parseFloat(editPrixAchat) : null;
     const dataToSave = {
-      ...editData,
-      categorie: finalCat,
+      ...editData, categorie: finalCat,
       liens_fournisseurs: editLiens.filter(l => l.trim()),
       prix_unitaire: isNaN(prixVenteNum) ? editData.prix_unitaire : prixVenteNum,
       prix_achat: prixAchatNum,
@@ -872,8 +1074,7 @@ export default function CataloguePage() {
     setEditData({
       nom: p.nom, description: p.description, prix_unitaire: p.prix_unitaire,
       unite: p.unite, type_branche: p.type_branche, categorie: p.categorie,
-      sous_categorie: p.sous_categorie ?? undefined,
-      marque: p.marque ?? undefined,
+      sous_categorie: p.sous_categorie ?? undefined, marque: p.marque ?? undefined,
       image_url: p.image_url ?? undefined,
     });
     setEditCatMode("select"); setEditNewCat("");
@@ -882,88 +1083,69 @@ export default function CataloguePage() {
     setEditPrixVente(String(p.prix_unitaire));
   }
 
-  // ── Import CSV ──
   async function handleImport(rows: ImportRow[]) {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return;
-
     const toInsert: object[] = [];
     const toUpdate: { id: string; data: object }[] = [];
-
     for (const r of rows) {
       const payload = {
-        nom: r.nom,
-        description: r.description || null,
+        nom: r.nom, description: r.description || null,
         type_branche: r.type_branche as "service" | "materiau",
-        categorie: r.categorie || "Divers",
-        sous_categorie: r.sous_categorie || null,
-        marque: r.marque || null,
-        unite: r.unite || "forfait",
+        categorie: r.categorie || "Divers", sous_categorie: r.sous_categorie || null,
+        marque: r.marque || null, unite: r.unite || "forfait",
         prix_achat: r.prix_achat !== "" ? parseFloat(r.prix_achat) : null,
-        prix_unitaire: parseFloat(r.prix_unitaire),
-        image_url: r.image_url || null,
+        prix_unitaire: parseFloat(r.prix_unitaire), image_url: r.image_url || null,
         liens_fournisseurs: r.liens_fournisseurs ? r.liens_fournisseurs.split("|").filter(Boolean) : [],
         actif: true,
       };
-      const existing = prestations.find(
-        p => p.nom.trim().toLowerCase() === r.nom.trim().toLowerCase()
-          && p.type_branche === r.type_branche
-      );
-      if (existing) {
-        toUpdate.push({ id: existing.id, data: payload });
-      } else {
-        toInsert.push({ user_id: session.user.id, ...payload });
-      }
+      const existing = prestations.find(p => p.nom.trim().toLowerCase() === r.nom.trim().toLowerCase() && p.type_branche === r.type_branche);
+      if (existing) toUpdate.push({ id: existing.id, data: payload });
+      else toInsert.push({ user_id: session.user.id, ...payload });
     }
-
-    if (toInsert.length > 0) {
-      await supabase.from("prestations").insert(toInsert);
-    }
-    for (const { id, data } of toUpdate) {
-      await supabase.from("prestations").update(data).eq("id", id);
-    }
+    if (toInsert.length > 0) await supabase.from("prestations").insert(toInsert);
+    for (const { id, data } of toUpdate) await supabase.from("prestations").update(data).eq("id", id);
     await load();
   }
 
   const filtered = prestations.filter(p => matchSearch(p, search));
-  const servicesPrests = filtered.filter(p => p.type_branche === "service");
-  const materiauxPrests = filtered.filter(p => p.type_branche === "materiau");
+  const kitsPrests = filtered.filter(p => p.est_kit);
+  const servicesPrests = filtered.filter(p => !p.est_kit && p.type_branche === "service");
+  const materiauxPrests = filtered.filter(p => !p.est_kit && p.type_branche === "materiau");
+
+  const catKits = [...new Set(kitsPrests.map(p => p.categorie))].sort();
   const catServices = [...new Set(servicesPrests.map(p => p.categorie))].sort();
   const catMateriaux = [...new Set(materiauxPrests.map(p => p.categorie))].sort();
-  const byCatServices = catServices.reduce((acc, cat) => {
-    acc[cat] = servicesPrests.filter(p => p.categorie === cat); return acc;
-  }, {} as Record<string, PrestationExt[]>);
-  const byCatMateriaux = catMateriaux.reduce((acc, cat) => {
-    acc[cat] = materiauxPrests.filter(p => p.categorie === cat); return acc;
-  }, {} as Record<string, PrestationExt[]>);
+
+  const byCatKits = catKits.reduce((acc, cat) => { acc[cat] = kitsPrests.filter(p => p.categorie === cat); return acc; }, {} as Record<string, PrestationExt[]>);
+  const byCatServices = catServices.reduce((acc, cat) => { acc[cat] = servicesPrests.filter(p => p.categorie === cat); return acc; }, {} as Record<string, PrestationExt[]>);
+  const byCatMateriaux = catMateriaux.reduce((acc, cat) => { acc[cat] = materiauxPrests.filter(p => p.categorie === cat); return acc; }, {} as Record<string, PrestationExt[]>);
 
   const sharedProps = {
-    editId, editData, editNewCat, editCatMode, editLiens,
-    editPrixAchat, editPrixVente,
-    categories, marques,
-    delCategorie, startEdit, saveEdit, del,
+    editId, editData, editNewCat, editCatMode, editLiens, editPrixAchat, editPrixVente,
+    categories, marques, delCategorie, startEdit, saveEdit, del,
     setEditId, setEditData, setEditNewCat, setEditCatMode, setEditLiens,
     setEditPrixAchat, setEditPrixVente,
+    onEditKit: (p: PrestationExt) => setKitModal(p),
   };
 
   return (
     <Shell>
       <div className="p-4 md:p-8 max-w-4xl mx-auto">
-
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="font-display text-3xl text-ink-900">Catalogue</h1>
             <p className="text-ink-500 text-sm mt-1">
-              {prestations.length} prestation{prestations.length > 1 ? "s" : ""}
+              {prestations.filter(p => !p.est_kit).length} article{prestations.filter(p => !p.est_kit).length > 1 ? "s" : ""}
+              {kitsPrests.length > 0 && ` · ${kitsPrests.length} kit${kitsPrests.length > 1 ? "s" : ""}`}
               {search && ` · ${filtered.length} résultat${filtered.length > 1 ? "s" : ""}`}
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => exportCSV(prestations)} title="Exporter CSV" className="btn-ghost !px-3">
-              <Download size={16} />
-            </button>
-            <button onClick={() => setShowImport(true)} title="Importer CSV" className="btn-ghost !px-3">
-              <Upload size={16} />
+            <button onClick={() => exportCSV(prestations)} title="Exporter CSV" className="btn-ghost !px-3"><Download size={16} /></button>
+            <button onClick={() => setShowImport(true)} title="Importer CSV" className="btn-ghost !px-3"><Upload size={16} /></button>
+            <button onClick={() => setKitModal("new")} className="btn-ghost">
+              <Layers size={15} /> Kit
             </button>
             <button onClick={() => setShowForm(!showForm)} className="btn-volt">
               <Plus size={16} /> Ajouter
@@ -973,15 +1155,10 @@ export default function CataloguePage() {
 
         <div className="relative mb-6">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-400 pointer-events-none" />
-          <input
-            className="input pl-9 w-full"
-            placeholder="Rechercher dans le catalogue…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+          <input className="input pl-9 w-full" placeholder="Rechercher dans le catalogue…"
+            value={search} onChange={e => setSearch(e.target.value)} />
           {search && (
-            <button onClick={() => setSearch("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-400 hover:text-ink-700">
+            <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-400 hover:text-ink-700">
               <X size={14} />
             </button>
           )}
@@ -991,37 +1168,26 @@ export default function CataloguePage() {
           <div className="card card-inner mb-6 border-volt-400">
             <h2 className="font-semibold text-ink-800 mb-4">Nouvelle prestation</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="md:col-span-2">
-                <label className="label">Nom *</label>
+              <div className="md:col-span-2"><label className="label">Nom *</label>
                 <input className="input" placeholder="Ex : Pose prise de courant 16A"
-                  value={form.nom} onChange={e => setForm(f => ({ ...f, nom: e.target.value }))} />
-              </div>
-              <div className="md:col-span-2">
-                <label className="label">Description (optionnel)</label>
+                  value={form.nom} onChange={e => setForm(f => ({ ...f, nom: e.target.value }))} /></div>
+              <div className="md:col-span-2"><label className="label">Description (optionnel)</label>
                 <input className="input" placeholder="Détail de la prestation…"
-                  value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
-              </div>
-              <div>
-                <label className="label">Branche AE</label>
+                  value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></div>
+              <div><label className="label">Branche AE</label>
                 <select className="input" value={form.type_branche} onChange={e => setForm(f => ({ ...f, type_branche: e.target.value }))}>
                   <option value="service">Service (main d'œuvre)</option>
                   <option value="materiau">Matériau (achat/revente)</option>
-                </select>
-              </div>
+                </select></div>
               {form.type_branche === "materiau" && (
-                <div>
-                  <label className="label">Marque</label>
-                  <FormMarque value={form.marque} onChange={v => setForm(f => ({ ...f, marque: v }))} marques={marques} />
-                </div>
+                <div><label className="label">Marque</label>
+                  <FormMarque value={form.marque} onChange={v => setForm(f => ({ ...f, marque: v }))} marques={marques} /></div>
               )}
-              <div>
-                <label className="label">Unité</label>
+              <div><label className="label">Unité</label>
                 <select className="input" value={form.unite} onChange={e => setForm(f => ({ ...f, unite: e.target.value }))}>
                   {UNITES.map(u => <option key={u} value={u}>{u}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="label">Catégorie</label>
+                </select></div>
+              <div><label className="label">Catégorie</label>
                 {categories.length > 0 && !newCat ? (
                   <div className="flex gap-2">
                     <select className="input flex-1" value={form.categorie} onChange={e => setForm(f => ({ ...f, categorie: e.target.value }))}>
@@ -1036,43 +1202,28 @@ export default function CataloguePage() {
                       value={newCat} onChange={e => setNewCat(e.target.value)} />
                     {categories.length > 0 && <button onClick={() => setNewCat("")} className="btn-ghost !px-3 text-xs">Existante</button>}
                   </div>
-                )}
-              </div>
-              <div>
-                <label className="label">Sous-catégorie</label>
+                )}</div>
+              <div><label className="label">Sous-catégorie</label>
                 <input className="input" placeholder="Ex : Prises, Câblage, Éclairage…"
-                  value={form.sous_categorie} onChange={e => setForm(f => ({ ...f, sous_categorie: e.target.value }))} />
-              </div>
-
+                  value={form.sous_categorie} onChange={e => setForm(f => ({ ...f, sous_categorie: e.target.value }))} /></div>
               {form.type_branche === "service" ? (
-                <div>
-                  <label className="label">Prix unitaire (€) *</label>
+                <div><label className="label">Prix unitaire (€) *</label>
                   <input className="input" type="number" step="0.5" placeholder="0.00"
-                    value={formPrixVente} onChange={e => setFormPrixVente(e.target.value)} />
-                </div>
+                    value={formPrixVente} onChange={e => setFormPrixVente(e.target.value)} /></div>
               ) : (
-                <MargeFields
-                  prixAchat={formPrixAchat}
-                  prixVente={formPrixVente}
-                  onPrixAchatChange={setFormPrixAchat}
-                  onPrixVenteChange={setFormPrixVente}
-                />
+                <MargeFields prixAchat={formPrixAchat} prixVente={formPrixVente}
+                  onPrixAchatChange={setFormPrixAchat} onPrixVenteChange={setFormPrixVente} />
               )}
-
               {form.type_branche === "materiau" && (
                 <>
-                  <div className="md:col-span-2">
-                    <label className="label">Liens fournisseurs</label>
-                    <LiensFournisseurs liens={formLiens} setLiens={setFormLiens} />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="label">Image du produit (URL)</label>
+                  <div className="md:col-span-2"><label className="label">Liens fournisseurs</label>
+                    <LiensFournisseurs liens={formLiens} setLiens={setFormLiens} /></div>
+                  <div className="md:col-span-2"><label className="label">Image du produit (URL)</label>
                     <input className="input" placeholder="https://…/image-produit.jpg"
                       value={form.image_url ?? ""} onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))} />
                     {form.image_url && (
                       <img src={form.image_url} alt="" className="mt-2 h-16 object-contain rounded-lg border border-ink-100 p-1 bg-white" />
-                    )}
-                  </div>
+                    )}</div>
                 </>
               )}
             </div>
@@ -1101,6 +1252,30 @@ export default function CataloguePage() {
 
         {loading && <div className="text-center py-10 text-ink-400">Chargement…</div>}
 
+        {/* Section Kits */}
+        {!loading && kitsPrests.length > 0 && (
+          <div className="mb-8">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center">
+                <Layers size={16} className="text-purple-600" />
+              </div>
+              <div>
+                <h2 className="font-bold text-ink-900">Kits</h2>
+                <p className="text-xs text-ink-400">{kitsPrests.length} kit{kitsPrests.length > 1 ? "s" : ""} · Compositions multi-produits</p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              {Object.entries(byCatKits).map(([cat, items]) => (
+                <CategorieBlock key={`k-${cat}`} cat={cat} items={items} branche="kit"
+                  collapsed={collapsedKits[cat] ?? true}
+                  toggleCollapse={() => setCollapsedKits(c => ({ ...c, [cat]: !c[cat] }))}
+                  {...sharedProps} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Section Services */}
         {!loading && servicesPrests.length > 0 && (
           <div className="mb-8">
             <div className="flex items-center gap-2 mb-3">
@@ -1123,6 +1298,7 @@ export default function CataloguePage() {
           </div>
         )}
 
+        {/* Section Matériaux */}
         {!loading && materiauxPrests.length > 0 && (
           <div>
             <div className="flex items-center gap-2 mb-3">
@@ -1147,9 +1323,15 @@ export default function CataloguePage() {
       </div>
 
       {showImport && (
-        <ImportModal
-          onClose={() => { setShowImport(false); }}
-          onImport={handleImport}
+        <ImportModal onClose={() => setShowImport(false)} onImport={handleImport} />
+      )}
+
+      {kitModal !== null && (
+        <KitModal
+          kit={kitModal === "new" ? null : kitModal}
+          prestations={prestations}
+          onClose={() => setKitModal(null)}
+          onSaved={() => { setKitModal(null); load(); }}
         />
       )}
     </Shell>
