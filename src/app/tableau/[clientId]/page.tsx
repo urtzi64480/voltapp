@@ -485,9 +485,9 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-ink-900/60 backdrop-blur-sm"
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-ink-900/60 backdrop-blur-sm pb-[env(safe-area-inset-bottom)]"
       onClick={onClose}>
-      <div className="card w-full max-w-sm md:max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl md:rounded-2xl"
+      <div className="card w-full max-w-sm md:max-w-lg flex flex-col rounded-t-2xl md:rounded-2xl" style={{ maxHeight: "min(92vh, calc(100dvh - 4rem - env(safe-area-inset-bottom, 0px)))" }}
         onClick={e => e.stopPropagation()}>
 
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
@@ -500,7 +500,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
           <button onClick={onClose} className="btn-ghost !px-2 !py-1 text-ink-400">✕</button>
         </div>
 
-        <div className="p-4 flex flex-col gap-4">
+        <div className="p-4 flex flex-col gap-4 overflow-y-auto flex-1">
           <div>
             <label className="label">Libellé (étiquette)</label>
             <input className="input" placeholder="Ex: Éclairage RDC, Prises séjour…"
@@ -655,7 +655,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
           )}
         </div>
 
-        <div className="flex gap-2 p-4 border-t border-ink-200">
+        <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0 sticky bottom-0 bg-white">
           <button onClick={onClose} className="btn-primary flex-1"><Save size={14} /> Valider</button>
           {!hasError && !isDiff && (
             <button onClick={() => { onClose(); onShowSchema(breaker); }} className="btn-ghost">
