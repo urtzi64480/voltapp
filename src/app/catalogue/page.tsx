@@ -896,7 +896,7 @@ function CategorieBlock({
                       <div><label className="label">Prix unitaire (€)</label>
                         <input className="input text-sm text-right" type="number" step="0.5"
                           value={(editData as any).prix_unitaire ?? p.prix_unitaire}
-                          onChange={e => setEditData((d: any) => ({ ...d, prix_unitaire: parseFloat(e.target.value) }))} /></div>
+                          onChange={e => { const v = e.target.value; setEditData((d: any) => ({ ...d, prix_unitaire: parseFloat(v) || 0 })); setEditPrixVente(v); }} /></div>
                       <div><label className="label">Branche</label>
                         <select className="input text-sm" value={(editData as any).type_branche ?? p.type_branche}
                           onChange={e => setEditData((d: any) => ({ ...d, type_branche: e.target.value }))}>
