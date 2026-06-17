@@ -14,12 +14,20 @@ export default function ConfirmPage() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    // Force ready après 2s si l'event ne se déclenche pas
+    const timeout = setTimeout(() => setReady(true), 2000);
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_IN" || event === "PASSWORD_RECOVERY") {
+        clearTimeout(timeout);
         setReady(true);
       }
     });
-    return () => subscription.unsubscribe();
+
+    return () => {
+      clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   }, []);
 
   async function handleSetPassword() {
