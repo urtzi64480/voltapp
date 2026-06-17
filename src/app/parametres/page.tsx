@@ -1,9 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { Profil } from "@/types";
 import Shell from "@/components/layout/Shell";
-import { Save, Settings, Users, Plus, Trash2, Pencil, X, Check, Calendar, Smartphone, CreditCard, RefreshCw, CheckCircle, AlertCircle, ExternalLink } from "lucide-react";
+import { Save, Settings, Users, Plus, Trash2, Pencil, X, Check, Calendar, Smartphone, CreditCard, RefreshCw, CheckCircle, AlertCircle, ExternalLink, Upload, ImageIcon } from "lucide-react";
 
 interface Palier {
   id: string; label: string; seuil_min: number; seuil_max: number | null;
@@ -65,6 +65,12 @@ export default function ParametresPage() {
   const [savingPaliersAp, setSavingPaliersAp] = useState(false);
   const [savedPaliersAp, setSavedPaliersAp] = useState(false);
 
+  // Logo
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoError, setLogoError] = useState("");
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
   // Apple Calendar
   const [appleCals, setAppleCals] = useState<AppleCal[]>([{ url: "", nom: "Mon calendrier", couleur: "#3B82F6" }]);
   const [appleConnected, setAppleConnected] = useState(false);
@@ -98,6 +104,7 @@ export default function ParametresPage() {
       ]);
       if (p) {
         setProfil(p);
+        if ((p as any).logo_url) setLogoUrl((p as any).logo_url);
         const gCals: GoogleCal[] = p.google_cals ?? [];
         if (gCals.length > 0) {
           setGoogleCals(gCals);
@@ -137,6 +144,38 @@ export default function ParametresPage() {
     const tab = params.get("tab") as Tab | null;
     if (tab && ["profil", "calendriers", "apporteurs"].includes(tab)) setActiveTab(tab);
   }, []);
+
+  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { setLogoError("Fichier image requis (PNG, JPG, SVG)."); return; }
+    if (file.size > 2 * 1024 * 1024) { setLogoError("Fichier trop lourd (max 2 Mo)."); return; }
+    setLogoError("");
+    setLogoUploading(true);
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { setLogoUploading(false); return; }
+    const userId = session.user.id;
+    const ext = file.name.split(".").pop() ?? "png";
+    const path = `${userId}/logo.${ext}`;
+    const { error: uploadError } = await supabase.storage
+      .from("logos")
+      .upload(path, file, { upsert: true, contentType: file.type });
+    if (uploadError) { setLogoError("Erreur lors de l'upload."); setLogoUploading(false); return; }
+    const { data: { publicUrl } } = supabase.storage.from("logos").getPublicUrl(path);
+    const urlWithCacheBust = `${publicUrl}?t=${Date.now()}`;
+    await supabase.from("profil").update({ logo_url: publicUrl } as any).eq("id", userId);
+    setLogoUrl(urlWithCacheBust);
+    setLogoUploading(false);
+  }
+
+  async function handleLogoDelete() {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+    const userId = session.user.id;
+    await supabase.storage.from("logos").remove([`${userId}/logo.png`, `${userId}/logo.jpg`, `${userId}/logo.jpeg`, `${userId}/logo.svg`, `${userId}/logo.webp`]);
+    await supabase.from("profil").update({ logo_url: null } as any).eq("id", userId);
+    setLogoUrl(null);
+  }
 
   async function save() {
     setSaving(true);
@@ -344,8 +383,6 @@ export default function ParametresPage() {
         {/* ── ONGLET CALENDRIERS ── */}
         {activeTab === "calendriers" && (
           <div className="space-y-4">
-
-            {/* ── Apple Calendar ── */}
             <div className="card card-inner">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-8 h-8 rounded-lg bg-ink-900 flex items-center justify-center">
@@ -412,7 +449,6 @@ export default function ParametresPage() {
               </div>
             </div>
 
-            {/* ── Google Calendar ── */}
             <div className="card card-inner">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-8 h-8 rounded-lg flex items-center justify-center"
@@ -497,7 +533,6 @@ export default function ParametresPage() {
                       )}
                     </div>
                   ))}
-
                   {!showAddGoogle && (
                     <button onClick={() => setShowAddGoogle(true)}
                       className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border-2 border-dashed border-ink-200 text-sm text-ink-500 hover:border-volt-400 hover:text-volt-600 transition-colors">
@@ -551,6 +586,49 @@ export default function ParametresPage() {
         {/* ── ONGLET PROFIL ── */}
         {activeTab === "profil" && (
           <div className="space-y-4">
+
+            {/* ── Logo ── */}
+            <div className="card card-inner">
+              <div className="flex items-center gap-2 mb-4">
+                <ImageIcon size={16} className="text-ink-500" />
+                <h2 className="font-semibold text-ink-800">Logo de l'entreprise</h2>
+              </div>
+              <p className="text-xs text-ink-400 mb-4">Affiché dans la barre de navigation et sur vos devis et factures. PNG ou JPG recommandé, fond transparent idéal.</p>
+              <div className="flex items-center gap-4">
+                <div className="w-20 h-20 rounded-xl border-2 border-dashed border-ink-200 bg-ink-50 flex items-center justify-center shrink-0 overflow-hidden">
+                  {logoUrl ? (
+                    <img src={logoUrl} alt="Logo" className="w-full h-full object-contain p-1" />
+                  ) : (
+                    <ImageIcon size={24} className="text-ink-300" />
+                  )}
+                </div>
+                <div className="flex flex-col gap-2 flex-1">
+                  <input
+                    ref={logoInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleLogoUpload}
+                  />
+                  <button
+                    onClick={() => logoInputRef.current?.click()}
+                    disabled={logoUploading}
+                    className="flex items-center justify-center gap-2 py-2 px-4 rounded-xl border border-ink-200 bg-white text-ink-700 text-sm font-medium hover:bg-ink-50 disabled:opacity-40 transition-colors">
+                    <Upload size={14} />
+                    {logoUploading ? "Upload en cours…" : logoUrl ? "Changer le logo" : "Uploader un logo"}
+                  </button>
+                  {logoUrl && (
+                    <button
+                      onClick={handleLogoDelete}
+                      className="flex items-center justify-center gap-2 py-2 px-4 rounded-xl border border-red-200 text-red-500 text-sm font-medium hover:bg-red-50 transition-colors">
+                      <Trash2 size={14} /> Supprimer
+                    </button>
+                  )}
+                  {logoError && <p className="text-xs text-red-500">{logoError}</p>}
+                </div>
+              </div>
+            </div>
+
             <div className="card card-inner">
               <h2 className="font-semibold text-ink-800 mb-4">Informations de l'entreprise</h2>
               <div className="grid grid-cols-2 gap-3">
