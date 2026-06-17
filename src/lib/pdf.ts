@@ -11,9 +11,11 @@ interface Acompte {
   created_at: string;
 }
 
-async function loadLogoBase64(): Promise<string | null> {
+async function loadLogoBase64(logoUrl?: string | null): Promise<string | null> {
+  const url = logoUrl ?? null;
+  if (!url) return null;
   try {
-    const res = await fetch("/logo.png");
+    const res = await fetch(url);
     if (!res.ok) return null;
     const blob = await res.blob();
     return await new Promise((resolve) => {
@@ -34,7 +36,7 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
   const W = doc.internal.pageSize.getWidth();
   const M = 18;
 
-  const logoBase64 = await loadLogoBase64();
+  const logoBase64 = await loadLogoBase64((profil as any).logo_url);
 
   doc.setFillColor(28, 25, 23);
   doc.rect(0, 0, W, 38, "F");
@@ -191,7 +193,7 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   const W = doc.internal.pageSize.getWidth();
   const M = 18;
 
-  const logoBase64 = await loadLogoBase64();
+  const logoBase64 = await loadLogoBase64((profil as any).logo_url);
 
   doc.setFillColor(28, 25, 23);
   doc.rect(0, 0, W, 38, "F");
@@ -309,7 +311,6 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   doc.setTextColor(163, 163, 163);
   doc.text(profil.mention_tva ?? "TVA non applicable — Art. 293 B du CGI", M, fy + 11);
 
-  // ── Pied de page avec coordonnées bancaires ──
   const pH = doc.internal.pageSize.getHeight();
   doc.setFillColor(28, 25, 23);
   doc.rect(0, pH - 22, W, 22, "F");
@@ -340,8 +341,6 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
 
   return doc;
 }
-
-// ── API publique ─────────────────────────────────────────────────────────────
 
 export async function genPDFDevis(devis: Devis, profil: Profil, sigData?: string) {
   const doc = await buildDevisDoc(devis, profil, sigData);
