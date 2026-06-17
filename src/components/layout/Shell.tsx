@@ -53,7 +53,7 @@ function NavLink({ href, label, Icon, active, onClick, badge }: {
   );
 }
 
-function LogoBlock({ nomEntreprise, size = "md" }: { nomEntreprise: string; size?: "sm" | "md" }) {
+function LogoBlock({ nomEntreprise, logoUrl, size = "md" }: { nomEntreprise: string; logoUrl?: string | null; size?: "sm" | "md" }) {
   const parts = nomEntreprise.trim().split(" ");
   const first = parts[0] ?? "";
   const rest = parts.slice(1).join(" ");
@@ -61,8 +61,10 @@ function LogoBlock({ nomEntreprise, size = "md" }: { nomEntreprise: string; size
   if (size === "sm") {
     return (
       <div className="flex items-center gap-2">
-        <div className="w-7 h-7 rounded-lg bg-volt-500 flex items-center justify-center shrink-0">
-          <Zap size={14} className="text-ink-900" />
+        <div className="w-7 h-7 rounded-lg bg-volt-500 flex items-center justify-center shrink-0 overflow-hidden">
+          {logoUrl
+            ? <img src={logoUrl} alt="logo" className="w-full h-full object-contain p-0.5" />
+            : <Zap size={14} className="text-ink-900" />}
         </div>
         <div className="flex flex-col leading-tight">
           <span className="font-display text-white text-sm leading-none">{first}</span>
@@ -74,8 +76,10 @@ function LogoBlock({ nomEntreprise, size = "md" }: { nomEntreprise: string; size
 
   return (
     <div className="flex items-center gap-3">
-      <div className="w-9 h-9 rounded-xl bg-volt-500 flex items-center justify-center shrink-0">
-        <Zap size={18} className="text-ink-900" />
+      <div className="w-9 h-9 rounded-xl bg-volt-500 flex items-center justify-center shrink-0 overflow-hidden">
+        {logoUrl
+          ? <img src={logoUrl} alt="logo" className="w-full h-full object-contain p-0.5" />
+          : <Zap size={18} className="text-ink-900" />}
       </div>
       <div className="flex flex-col leading-tight">
         <span className="font-display text-white text-base leading-none">{first}</span>
@@ -91,6 +95,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const [facturesEnRetard, setFacturesEnRetard] = useState(0);
   const [leadsNouveaux, setLeadsNouveaux] = useState(0);
   const [nomEntreprise, setNomEntreprise] = useState("VoltApp");
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
 
   const isActive = (href: string) =>
     href === "/dashboard" ? path === href : path.startsWith(href);
@@ -101,7 +106,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       if (!session) return;
       const { data } = await supabase
         .from("profil")
-        .select("nom_entreprise, prenom, nom")
+        .select("nom_entreprise, prenom, nom, logo_url")
         .eq("id", session.user.id)
         .single();
       if (data) {
@@ -109,6 +114,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           || [data.prenom, data.nom].filter(Boolean).join(" ")
           || "VoltApp";
         setNomEntreprise(name);
+        if ((data as any).logo_url) setLogoUrl((data as any).logo_url);
       }
     }
     loadProfil();
@@ -138,7 +144,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       {/* ── Sidebar desktop ── */}
       <aside className="hidden md:flex flex-col w-56 bg-ink-900 shrink-0">
         <div className="flex items-center gap-3 px-4 py-4 border-b border-ink-700">
-          <LogoBlock nomEntreprise={nomEntreprise} size="md" />
+          <LogoBlock nomEntreprise={nomEntreprise} logoUrl={logoUrl} size="md" />
         </div>
 
         <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto">
@@ -166,7 +172,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
 
       {/* ── Mobile header ── */}
       <div className="md:hidden fixed top-0 inset-x-0 z-40 bg-ink-900 border-b border-ink-700 flex items-center justify-between px-4 py-3">
-        <LogoBlock nomEntreprise={nomEntreprise} size="sm" />
+        <LogoBlock nomEntreprise={nomEntreprise} logoUrl={logoUrl} size="sm" />
         <div className="flex items-center gap-2">
           {facturesEnRetard > 0 && (
             <Link href="/factures" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold">
@@ -194,7 +200,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           <div className="absolute inset-0 bg-black/60" onClick={() => setDrawer(false)} />
           <aside className="relative w-64 bg-ink-900 flex flex-col h-full shadow-2xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-ink-700">
-              <LogoBlock nomEntreprise={nomEntreprise} size="sm" />
+              <LogoBlock nomEntreprise={nomEntreprise} logoUrl={logoUrl} size="sm" />
               <button onClick={() => setDrawer(false)} className="text-ink-400 hover:text-white">
                 <X size={20} />
               </button>
