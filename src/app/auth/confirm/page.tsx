@@ -14,12 +14,12 @@ export default function ConfirmPage() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    // Supabase gère automatiquement le token dans l'URL
-    supabase.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY" || event === "SIGNED_IN") {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN" || event === "PASSWORD_RECOVERY") {
         setReady(true);
       }
     });
+    return () => subscription.unsubscribe();
   }, []);
 
   async function handleSetPassword() {
@@ -73,6 +73,12 @@ export default function ConfirmPage() {
             <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl px-3 py-2.5 mb-4 text-sm">
               <AlertCircle size={15} className="shrink-0" />
               {error}
+            </div>
+          )}
+
+          {!ready && (
+            <div className="text-center text-ink-400 text-sm mb-4">
+              Vérification du lien en cours…
             </div>
           )}
 
