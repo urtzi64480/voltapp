@@ -40,8 +40,11 @@ const STATUT_CONFIG: Record<StatutIntervention, { label: string; color: string; 
   annule:   { label: "Annulé",    color: "text-red-700",   bg: "bg-red-100" },
 };
 
-interface AppleCal { url: string; nom: string; couleur: string; }
-type GCalEvent = { id: string; title: string; start: string; end: string; allDay: boolean; calColor?: string; calNom?: string; };
+interface CalSource { url: string; nom: string; couleur: string; }
+type GCalEvent = {
+  id: string; title: string; start: string; end: string; allDay: boolean;
+  calColor?: string; calNom?: string; calSource?: "apple" | "google";
+};
 
 function startOfMonth(y: number, m: number) { return new Date(y, m, 1); }
 function daysInMonth(y: number, m: number) { return new Date(y, m + 1, 0).getDate(); }
@@ -58,6 +61,12 @@ function CalDot({ color }: { color?: string }) {
 
 function VoltBadge() {
   return <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-volt-500 text-ink-900 text-[9px] font-bold shrink-0">V</span>;
+}
+
+function SourceBadge({ source }: { source?: "apple" | "google" }) {
+  if (source === "apple") return <span className="text-[9px] leading-none">🍎</span>;
+  if (source === "google") return <span className="text-[9px] leading-none">🗓️</span>;
+  return null;
 }
 
 function DocBadge({ ok, label }: { ok: boolean; label: string }) {
@@ -183,7 +192,6 @@ function InterventionForm({ initial, clients, devis, calEvents, onSave, onCancel
           className="w-full border border-ink-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-volt-400 resize-none" />
       </div>
 
-      {/* Alerte conflit avec option forcer */}
       {conflict && !forceMode && (
         <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 space-y-2">
           <div className="flex items-center gap-2">
@@ -192,6 +200,7 @@ function InterventionForm({ initial, clients, devis, calEvents, onSave, onCancel
           </div>
           <div className="flex items-center gap-2 text-xs text-amber-600 pl-6">
             <CalDot color={conflict.calColor} />
+            <SourceBadge source={conflict.calSource} />
             <span className="font-medium">{conflict.title}</span>
             <span className="text-amber-500">· {fmt(conflict.start)} → {fmt(conflict.end)}</span>
             {conflict.calNom && <span className="text-amber-400 italic">({conflict.calNom})</span>}
@@ -374,7 +383,7 @@ function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTer
   );
 }
 
-// ── Drawer event calendrier ───────────────────────────────────────────────
+// ── Drawer event calendrier externe ──────────────────────────────────────
 
 function CalDrawer({ event, onClose }: { event: GCalEvent; onClose: () => void }) {
   return (
@@ -385,7 +394,8 @@ function CalDrawer({ event, onClose }: { event: GCalEvent; onClose: () => void }
           <div className="flex-1 pr-4">
             <div className="flex items-center gap-1.5 mb-1.5">
               <CalDot color={event.calColor} />
-              <span className="text-xs text-ink-500">{event.calNom ?? "Apple Calendar"}</span>
+              <SourceBadge source={event.calSource} />
+              <span className="text-xs text-ink-500">{event.calNom ?? (event.calSource === "google" ? "Google Calendar" : "Apple Calendar")}</span>
             </div>
             <h2 className="text-base font-semibold text-ink-900">{event.title}</h2>
           </div>
@@ -437,14 +447,12 @@ function DayView({ year, month, day, interventions, calEvents, onBack, onCreateA
     onDropToTime(ivId, Math.floor(totalMinutes / 60), totalMinutes % 60);
   };
 
-  // Unification items
   type AnyItem = { key: string; startMs: number; endMs: number; startStr: string; kind: "cal" | "iv"; data: any };
   const allItems: AnyItem[] = [
     ...dayEvs.map(ev => ({ key: ev.id, startMs: new Date(ev.start).getTime(), endMs: new Date(ev.end).getTime(), startStr: ev.start, kind: "cal" as const, data: ev })),
     ...dayIvs.map(iv => ({ key: iv.id, startMs: new Date(iv.date_debut).getTime(), endMs: new Date(iv.date_fin).getTime(), startStr: iv.date_debut, kind: "iv" as const, data: iv })),
   ].sort((a, b) => a.startMs - b.startMs);
 
-  // Calcul colonnes
   const colIdxArr: number[] = [];
   const colEnds: number[] = [];
   for (let i = 0; i < allItems.length; i++) {
@@ -479,7 +487,9 @@ function DayView({ year, month, day, interventions, calEvents, onBack, onCreateA
             <button key={ev.id} onClick={() => onSelectCal(ev)}
               className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-left"
               style={{ backgroundColor: (ev.calColor ?? "#9ca3af") + "20", color: ev.calColor ?? "#6b7280", borderLeft: `3px solid ${ev.calColor ?? "#9ca3af"}` }}>
-              <CalDot color={ev.calColor} /> {ev.title} <span className="opacity-60">— Journée entière</span>
+              <CalDot color={ev.calColor} />
+              <SourceBadge source={ev.calSource} />
+              {ev.title} <span className="opacity-60">— Journée entière</span>
             </button>
           ))}
         </div>
@@ -508,6 +518,7 @@ function DayView({ year, month, day, interventions, calEvents, onBack, onCreateA
                 <button key={item.key} onClick={e => { e.stopPropagation(); onSelectCal(ev); }}
                   className="absolute rounded-lg px-2 py-1 text-xs text-left overflow-hidden z-10 flex items-start gap-1"
                   style={{ top, height, left: leftCalc, width: widthCalc, backgroundColor: (ev.calColor ?? "#9ca3af") + "20", borderLeft: `3px solid ${ev.calColor ?? "#9ca3af"}`, color: ev.calColor ?? "#6b7280" }}>
+                  <SourceBadge source={ev.calSource} />
                   <div className="min-w-0">
                     <p className="font-medium truncate">{ev.title}</p>
                     <p className="opacity-70">{fmt(ev.start)} → {fmt(ev.end)}</p>
@@ -538,7 +549,6 @@ function DayView({ year, month, day, interventions, calEvents, onBack, onCreateA
   );
 }
 
-
 // ── Page principale ───────────────────────────────────────────────────────
 
 export default function PlanningPage() {
@@ -551,10 +561,20 @@ export default function PlanningPage() {
   const [loading, setLoading] = useState(true);
   const [dayView, setDayView] = useState<number | null>(null);
 
-  // Apple Calendar
+  // Calendriers externes
   const [appleEvents, setAppleEvents] = useState<GCalEvent[]>([]);
-  const [appleCals, setAppleCals] = useState<AppleCal[]>([]);
+  const [appleCals, setAppleCals] = useState<CalSource[]>([]);
   const [appleConnected, setAppleConnected] = useState(false);
+
+  const [googleEvents, setGoogleEvents] = useState<GCalEvent[]>([]);
+  const [googleCals, setGoogleCals] = useState<CalSource[]>([]);
+  const [googleConnected, setGoogleConnected] = useState(false);
+
+  // Tous les events externes fusionnés
+  const allCalEvents: GCalEvent[] = [
+    ...appleEvents.map(ev => ({ ...ev, calSource: "apple" as const })),
+    ...googleEvents.map(ev => ({ ...ev, calSource: "google" as const })),
+  ];
 
   // Drawers
   const [selected, setSelected] = useState<Intervention | null>(null);
@@ -583,18 +603,32 @@ export default function PlanningPage() {
       const res = await fetch(`/api/apple/ics?year=${year}&month=${month}`);
       const data = await res.json();
       setAppleConnected(data.connected);
-      // Enrichit les events avec les métadonnées du calendrier
-      const cals: AppleCal[] = data.cals ?? [];
+      const cals: CalSource[] = data.cals ?? [];
       setAppleCals(cals);
       const events: GCalEvent[] = (data.events ?? []).map((ev: any) => {
-        const cal = cals.find((c: AppleCal) => ev.calUrl && c.url === ev.calUrl) ?? cals[0];
+        const cal = cals.find((c: CalSource) => ev.calUrl && c.url === ev.calUrl) ?? cals[0];
         return { ...ev, calColor: cal?.couleur, calNom: cal?.nom };
       });
       setAppleEvents(events);
     } catch { setAppleConnected(false); }
   }, [year, month]);
 
-  useEffect(() => { fetchAll(); fetchApple(); }, [year, month]);
+  const fetchGoogle = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/google/ics?year=${year}&month=${month}`);
+      const data = await res.json();
+      setGoogleConnected(data.connected);
+      const cals: CalSource[] = data.cals ?? [];
+      setGoogleCals(cals);
+      const events: GCalEvent[] = (data.events ?? []).map((ev: any) => {
+        const cal = cals.find((c: CalSource) => ev.calUrl && c.url === ev.calUrl) ?? cals[0];
+        return { ...ev, calColor: cal?.couleur, calNom: cal?.nom };
+      });
+      setGoogleEvents(events);
+    } catch { setGoogleConnected(false); }
+  }, [year, month]);
+
+  useEffect(() => { fetchAll(); fetchApple(); fetchGoogle(); }, [year, month]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -635,7 +669,7 @@ export default function PlanningPage() {
   };
   const calForDay = (day: number) => {
     const target = new Date(year, month, day);
-    return appleEvents.filter(ev => isSameDay(new Date(ev.start), target));
+    return allCalEvents.filter(ev => isSameDay(new Date(ev.start), target));
   };
 
   const handleCreate = async (form: FormData) => {
@@ -685,7 +719,7 @@ export default function PlanningPage() {
     const dureeMs = new Date(iv.date_fin).getTime() - oldDebut.getTime();
     const newDebut = new Date(year, month, day, oldDebut.getHours(), oldDebut.getMinutes());
     const newFin = new Date(newDebut.getTime() + dureeMs);
-    const conflict = appleEvents.find(ev => {
+    const conflict = allCalEvents.find(ev => {
       if (ev.allDay) return false;
       return newDebut.getTime() < new Date(ev.end).getTime() && newFin.getTime() > new Date(ev.start).getTime();
     });
@@ -702,7 +736,7 @@ export default function PlanningPage() {
     const dureeMs = new Date(iv.date_fin).getTime() - new Date(iv.date_debut).getTime();
     const newDebut = new Date(year, month, dayView!, h, m, 0);
     const newFin = new Date(newDebut.getTime() + dureeMs);
-    const conflict = appleEvents.find(ev => {
+    const conflict = allCalEvents.find(ev => {
       if (ev.allDay) return false;
       return newDebut.getTime() < new Date(ev.end).getTime() && newFin.getTime() > new Date(ev.start).getTime();
     });
@@ -735,8 +769,6 @@ export default function PlanningPage() {
     await fetchAll();
   };
 
-
-
   const openCreate = (day?: number, h?: number, m?: number) => {
     const base = day ? new Date(year, month, day, h ?? 8, m ?? 0) : new Date();
     if (!day) base.setHours(8, 0, 0, 0);
@@ -766,6 +798,9 @@ export default function PlanningPage() {
     setEditMode(true);
   };
 
+  // Bandeau calendriers connectés
+  const anyCalConnected = appleConnected || googleConnected;
+
   return (
     <Shell>
       <div className="p-4 md:p-6 max-w-5xl mx-auto">
@@ -781,15 +816,20 @@ export default function PlanningPage() {
           )}
         </div>
 
-        {/* Bandeau Apple Calendar */}
+        {/* Bandeau calendriers externes */}
         <div className={cn("flex items-center gap-2 px-4 py-2.5 rounded-xl mb-4 text-sm",
-          appleConnected ? "bg-gray-50 border border-gray-200" : "bg-ink-50 border border-ink-200")}>
-          {appleConnected ? (
+          anyCalConnected ? "bg-gray-50 border border-gray-200" : "bg-ink-50 border border-ink-200")}>
+          {anyCalConnected ? (
             <>
-              <div className="flex items-center gap-2 flex-1 flex-wrap">
-                {appleCals.map((cal, i) => (
-                  <span key={i} className="flex items-center gap-1.5 text-xs font-medium text-ink-700">
-                    <CalDot color={cal.couleur} /> {cal.nom}
+              <div className="flex items-center gap-3 flex-1 flex-wrap">
+                {appleConnected && appleCals.map((cal, i) => (
+                  <span key={`apple-${i}`} className="flex items-center gap-1.5 text-xs font-medium text-ink-700">
+                    🍎 <CalDot color={cal.couleur} /> {cal.nom}
+                  </span>
+                ))}
+                {googleConnected && googleCals.map((cal, i) => (
+                  <span key={`google-${i}`} className="flex items-center gap-1.5 text-xs font-medium text-ink-700">
+                    🗓️ <CalDot color={cal.couleur} /> {cal.nom}
                   </span>
                 ))}
               </div>
@@ -797,15 +837,15 @@ export default function PlanningPage() {
             </>
           ) : (
             <>
-              <span className="text-ink-500 text-xs flex-1">Apple Calendar non connecté</span>
-              <Link href="/parametres" className="text-xs text-volt-700 font-semibold shrink-0 bg-white border border-volt-300 px-2 py-0.5 rounded-lg">Connecter</Link>
+              <span className="text-ink-500 text-xs flex-1">Aucun calendrier externe connecté</span>
+              <Link href="/parametres?tab=calendriers" className="text-xs text-volt-700 font-semibold shrink-0 bg-white border border-volt-300 px-2 py-0.5 rounded-lg">Connecter</Link>
             </>
           )}
         </div>
 
         {dayView ? (
           <DayView year={year} month={month} day={dayView}
-            interventions={interventions} calEvents={appleEvents}
+            interventions={interventions} calEvents={allCalEvents}
             onBack={() => setDayView(null)}
             onCreateAt={(h, m) => openCreate(dayView, h, m)}
             onSelectIv={iv => { setSelected(iv); }} onSelectCal={setSelectedCal}
@@ -849,6 +889,7 @@ export default function PlanningPage() {
                               <button key={ev.id} onClick={e => { e.stopPropagation(); setSelectedCal(ev); }}
                                 className="w-full text-left text-xs px-1.5 py-0.5 rounded-md truncate font-medium flex items-center gap-1"
                                 style={{ backgroundColor: (ev.calColor ?? "#9ca3af") + "20", color: ev.calColor ?? "#6b7280", borderLeft: `2px solid ${ev.calColor ?? "#9ca3af"}` }}>
+                                <SourceBadge source={ev.calSource} />
                                 <span className="truncate">{ev.allDay ? "↔ " : ""}{ev.title}</span>
                               </button>
                             ))}
@@ -876,15 +917,22 @@ export default function PlanningPage() {
               </div>
             </div>
 
+            {/* Légende */}
             <div className="flex flex-wrap gap-3 mt-4">
               {(Object.entries(STATUT_CONFIG) as [StatutIntervention, typeof STATUT_CONFIG[StatutIntervention]][]).map(([, cfg]) => (
                 <span key={cfg.label} className={cn("text-xs px-2.5 py-1 rounded-full font-medium", cfg.bg, cfg.color)}>{cfg.label}</span>
               ))}
               <span className="text-xs px-2.5 py-1 rounded-full font-medium bg-volt-100 text-volt-700 flex items-center gap-1"><VoltBadge /> VoltApp</span>
               {appleCals.map((cal, i) => (
-                <span key={i} className="text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1.5"
+                <span key={`legend-apple-${i}`} className="text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1.5"
                   style={{ backgroundColor: cal.couleur + "20", color: cal.couleur }}>
-                  <CalDot color={cal.couleur} /> {cal.nom}
+                  🍎 <CalDot color={cal.couleur} /> {cal.nom}
+                </span>
+              ))}
+              {googleCals.map((cal, i) => (
+                <span key={`legend-google-${i}`} className="text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1.5"
+                  style={{ backgroundColor: cal.couleur + "20", color: cal.couleur }}>
+                  🗓️ <CalDot color={cal.couleur} /> {cal.nom}
                 </span>
               ))}
             </div>
@@ -907,7 +955,7 @@ export default function PlanningPage() {
                 <button onClick={() => { setShowForm(false); setEditMode(false); }} className="text-ink-400 hover:text-ink-700"><X size={20} /></button>
               </div>
               <div className="p-5">
-                <InterventionForm initial={formInit} clients={clients} devis={devis} calEvents={appleEvents}
+                <InterventionForm initial={formInit} clients={clients} devis={devis} calEvents={allCalEvents}
                   onSave={editMode ? handleUpdate : handleCreate}
                   onCancel={() => { setShowForm(false); setEditMode(false); }} />
               </div>
