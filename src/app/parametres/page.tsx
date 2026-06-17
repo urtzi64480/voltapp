@@ -82,7 +82,6 @@ export default function ParametresPage() {
   const [newGoogleCouleur, setNewGoogleCouleur] = useState(COULEURS_GOOGLE[0].value);
   const [googleTestResults, setGoogleTestResults] = useState<Record<string, "ok" | "error">>({});
   const [googleTesting, setGoogleTesting] = useState<string | null>(null);
-  // Buffer local pour le nom Google (évite un appel Supabase à chaque frappe)
   const [googleNomBuffer, setGoogleNomBuffer] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -91,7 +90,7 @@ export default function ParametresPage() {
       if (!session) return;
       const userId = session.user.id;
       const [{ data: p }, { data: pal }, { data: ap }, { data: palAp }, { data: appleData }] = await Promise.all([
-        supabase.from("profil").select("*").eq("user_id", userId).single(),
+        supabase.from("profil").select("*").eq("id", userId).single(),
         supabase.from("paliers_fidelite").select("*").order("seuil_min"),
         supabase.from("apporteurs").select("*").order("nom"),
         supabase.from("paliers_apporteur").select("*").order("ordre"),
@@ -99,7 +98,6 @@ export default function ParametresPage() {
       ]);
       if (p) {
         setProfil(p);
-        // Charger Google depuis profil
         const gCals: GoogleCal[] = p.google_cals ?? [];
         if (gCals.length > 0) {
           setGoogleCals(gCals);
@@ -113,7 +111,6 @@ export default function ParametresPage() {
       if (ap) setApporteurs(ap);
       if (palAp) setPaliersApporteur(palAp);
 
-      // Apple
       if (appleData) {
         setAppleConnected(true);
         try {
@@ -135,7 +132,6 @@ export default function ParametresPage() {
     load();
   }, []);
 
-  // Lire l'onglet depuis l'URL au montage
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get("tab") as Tab | null;
@@ -147,7 +143,7 @@ export default function ParametresPage() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) { setSaving(false); return; }
     const { id, created_at, updated_at, ...updateData } = profil as any;
-    await supabase.from("profil").update(updateData).eq("user_id", session.user.id);
+    await supabase.from("profil").update(updateData).eq("id", session.user.id);
     setSaving(false); setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   }
@@ -234,7 +230,6 @@ export default function ParametresPage() {
     setPaliersApporteur(ps => ps.map((p, i) => i === idx ? { ...p, [field]: value } : p));
   }
 
-  // ── Apple Calendar ──
   async function saveApple() {
     const valid = appleCals.filter(c => c.url.trim() !== "");
     if (valid.length === 0) { setAppleError("Ajoutez au moins une URL."); return; }
@@ -261,12 +256,11 @@ export default function ParametresPage() {
     setAppleCals(cals => cals.map((c, i) => i === idx ? { ...c, [field]: value } : c));
   }
 
-  // ── Google Calendar ──
   async function saveGoogleCals(updated: GoogleCal[]) {
     setGoogleSaving(true);
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) { setGoogleSaving(false); return; }
-    await supabase.from("profil").update({ google_cals: updated }).eq("user_id", session.user.id);
+    await supabase.from("profil").update({ google_cals: updated }).eq("id", session.user.id);
     setGoogleCals(updated);
     setGoogleConnected(updated.length > 0);
     setGoogleSaving(false);
@@ -310,13 +304,11 @@ export default function ParametresPage() {
     setGoogleNomBuffer(b => { const n = { ...b }; delete n[url]; return n; });
   }
 
-  // Couleur : sauvegarde immédiate (un clic = un choix définitif)
   async function updateGoogleCouleur(url: string, couleur: string) {
     const updated = googleCals.map(c => c.url === url ? { ...c, couleur } : c);
     await saveGoogleCals(updated);
   }
 
-  // Nom : buffer local, sauvegarde au blur uniquement
   function handleGoogleNomChange(url: string, nom: string) {
     setGoogleNomBuffer(b => ({ ...b, [url]: nom }));
   }
@@ -438,7 +430,6 @@ export default function ParametresPage() {
                 )}
               </div>
 
-              {/* Instructions */}
               <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-700 space-y-1.5 mb-4">
                 <p className="font-semibold">Comment obtenir l'URL iCal de votre calendrier Google ?</p>
                 <ol className="space-y-1 pl-3 list-decimal">
@@ -452,7 +443,6 @@ export default function ParametresPage() {
                 <p className="text-blue-500 italic">⚠️ Ne partagez jamais cette URL — elle donne accès à votre agenda.</p>
               </div>
 
-              {/* Liste des calendriers Google */}
               {googleCals.length === 0 && !showAddGoogle ? (
                 <div className="text-center py-6 border-2 border-dashed border-ink-200 rounded-xl">
                   <p className="text-sm text-ink-400 mb-3">Aucun calendrier Google connecté</p>
@@ -467,7 +457,6 @@ export default function ParametresPage() {
                     <div key={cal.url} className="border border-ink-100 rounded-xl p-3 space-y-2 bg-ink-50">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
-                          {/* Nom — buffer local, sauvegarde au blur */}
                           <input
                             value={googleNomBuffer[cal.url] ?? cal.nom}
                             onChange={e => handleGoogleNomChange(cal.url, e.target.value)}
@@ -492,7 +481,6 @@ export default function ParametresPage() {
                           </button>
                         </div>
                       </div>
-                      {/* Couleur — sauvegarde immédiate au clic */}
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-xs text-ink-400 mr-1">Couleur :</span>
                         {COULEURS_GOOGLE.map(c => (
@@ -519,7 +507,6 @@ export default function ParametresPage() {
                 </div>
               )}
 
-              {/* Formulaire ajout Google */}
               {showAddGoogle && (
                 <div className="border border-volt-200 rounded-xl p-4 bg-volt-50 space-y-3 mt-3">
                   <h4 className="text-sm font-semibold text-ink-800">Nouveau calendrier Google</h4>
