@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Profil } from "@/types";
 import Shell from "@/components/layout/Shell";
-import { Save, Settings, Users, Plus, Trash2, Pencil, X, Check, Calendar, Smartphone, CreditCard } from "lucide-react";
+import { Save, Settings, Users, Plus, Trash2, Pencil, X, Check, Calendar, Smartphone, CreditCard, RefreshCw, CheckCircle, AlertCircle, ExternalLink } from "lucide-react";
 
 interface Palier {
   id: string; label: string; seuil_min: number; seuil_max: number | null;
@@ -16,12 +16,24 @@ interface PalierApporteur {
   id?: string; label: string; seuil_min: number; seuil_max: number | null; commission_pct: number; ordre: number;
 }
 interface AppleCal { url: string; nom: string; couleur: string; }
+interface GoogleCal { url: string; nom: string; couleur: string; }
 
 const PALIER_EMOJI: Record<string, string> = { bronze: "🥉", silver: "🥈", gold: "🥇" };
 
 const COULEURS_PRESET = [
   "#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6",
   "#EC4899", "#06B6D4", "#84CC16", "#F97316", "#6366F1",
+];
+
+const COULEURS_GOOGLE = [
+  { label: "Bleu",   value: "#1a73e8" },
+  { label: "Vert",   value: "#0f9d58" },
+  { label: "Rouge",  value: "#d93025" },
+  { label: "Jaune",  value: "#f9ab00" },
+  { label: "Violet", value: "#7b5ea7" },
+  { label: "Cyan",   value: "#00acc1" },
+  { label: "Orange", value: "#e8710a" },
+  { label: "Rose",   value: "#e91e8c" },
 ];
 
 const F = ({ label, type = "text", placeholder = "", full = false, value, onChange }: {
@@ -59,21 +71,49 @@ export default function ParametresPage() {
   const [appleSaving, setAppleSaving] = useState(false);
   const [appleError, setAppleError] = useState("");
 
+  // Google Calendar
+  const [googleCals, setGoogleCals] = useState<GoogleCal[]>([]);
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [googleSaving, setGoogleSaving] = useState(false);
+  const [googleError, setGoogleError] = useState("");
+  const [showAddGoogle, setShowAddGoogle] = useState(false);
+  const [newGoogleUrl, setNewGoogleUrl] = useState("");
+  const [newGoogleNom, setNewGoogleNom] = useState("");
+  const [newGoogleCouleur, setNewGoogleCouleur] = useState(COULEURS_GOOGLE[0].value);
+  const [googleTestResults, setGoogleTestResults] = useState<Record<string, "ok" | "error">>({});
+  const [googleTesting, setGoogleTesting] = useState<string | null>(null);
+  // Buffer local pour le nom Google (évite un appel Supabase à chaque frappe)
+  const [googleNomBuffer, setGoogleNomBuffer] = useState<Record<string, string>>({});
+
   useEffect(() => {
     async function load() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const userId = session.user.id;
       const [{ data: p }, { data: pal }, { data: ap }, { data: palAp }, { data: appleData }] = await Promise.all([
-        supabase.from("profil").select("*").eq("id", user.id).single(),
+        supabase.from("profil").select("*").eq("user_id", userId).single(),
         supabase.from("paliers_fidelite").select("*").order("seuil_min"),
         supabase.from("apporteurs").select("*").order("nom"),
         supabase.from("paliers_apporteur").select("*").order("ordre"),
-        supabase.from("apple_ics").select("*").eq("user_id", user.id).single(),
+        supabase.from("apple_ics").select("*").eq("user_id", userId).single(),
       ]);
-      if (p) setProfil(p);
+      if (p) {
+        setProfil(p);
+        // Charger Google depuis profil
+        const gCals: GoogleCal[] = p.google_cals ?? [];
+        if (gCals.length > 0) {
+          setGoogleCals(gCals);
+          setGoogleConnected(true);
+          const buf: Record<string, string> = {};
+          gCals.forEach(c => { buf[c.url] = c.nom; });
+          setGoogleNomBuffer(buf);
+        }
+      }
       if (pal) setPaliers(pal);
       if (ap) setApporteurs(ap);
       if (palAp) setPaliersApporteur(palAp);
+
+      // Apple
       if (appleData) {
         setAppleConnected(true);
         try {
@@ -83,8 +123,7 @@ export default function ParametresPage() {
           } else {
             const urls = JSON.parse(appleData.ics_urls ?? "[]");
             setAppleCals(urls.map((u: string, i: number) => ({
-              url: u,
-              nom: `Calendrier ${i + 1}`,
+              url: u, nom: `Calendrier ${i + 1}`,
               couleur: COULEURS_PRESET[i % COULEURS_PRESET.length],
             })));
           }
@@ -96,12 +135,19 @@ export default function ParametresPage() {
     load();
   }, []);
 
+  // Lire l'onglet depuis l'URL au montage
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get("tab") as Tab | null;
+    if (tab && ["profil", "calendriers", "apporteurs"].includes(tab)) setActiveTab(tab);
+  }, []);
+
   async function save() {
     setSaving(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setSaving(false); return; }
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { setSaving(false); return; }
     const { id, created_at, updated_at, ...updateData } = profil as any;
-    await supabase.from("profil").update(updateData).eq("id", user.id);
+    await supabase.from("profil").update(updateData).eq("user_id", session.user.id);
     setSaving(false); setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   }
@@ -123,10 +169,10 @@ export default function ParametresPage() {
 
   async function addApporteur() {
     if (!newApporteur.nom.trim()) return;
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
     const { data } = await supabase.from("apporteurs").insert({
-      user_id: user.id, nom: newApporteur.nom, entreprise: newApporteur.entreprise || null,
+      user_id: session.user.id, nom: newApporteur.nom, entreprise: newApporteur.entreprise || null,
       telephone: newApporteur.telephone || null, email: newApporteur.email || null, actif: true,
     }).select().single();
     if (data) setApporteurs(a => [...a, data]);
@@ -154,11 +200,11 @@ export default function ParametresPage() {
   }
 
   async function addPalierApporteur() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
     const ordre = paliersApporteur.length;
     const { data } = await supabase.from("paliers_apporteur").insert({
-      user_id: user.id, label: `Palier ${ordre + 1}`, seuil_min: 0, seuil_max: null,
+      user_id: session.user.id, label: `Palier ${ordre + 1}`, seuil_min: 0, seuil_max: null,
       commission_pct: 5, ordre,
     }).select().single();
     if (data) setPaliersApporteur(p => [...p, data]);
@@ -166,8 +212,8 @@ export default function ParametresPage() {
 
   async function savePaliersApporteur() {
     setSavingPaliersAp(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setSavingPaliersAp(false); return; }
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { setSavingPaliersAp(false); return; }
     for (const p of paliersApporteur) {
       if (p.id) {
         await supabase.from("paliers_apporteur").update({
@@ -194,10 +240,10 @@ export default function ParametresPage() {
     if (valid.length === 0) { setAppleError("Ajoutez au moins une URL."); return; }
     setAppleError("");
     setAppleSaving(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setAppleSaving(false); return; }
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { setAppleSaving(false); return; }
     await supabase.from("apple_ics").upsert({
-      user_id: user.id,
+      user_id: session.user.id,
       ics_urls: JSON.stringify(valid.map(c => c.url)),
       calendars: JSON.stringify(valid),
     }, { onConflict: "user_id" });
@@ -213,6 +259,71 @@ export default function ParametresPage() {
 
   function updateCal(idx: number, field: keyof AppleCal, value: string) {
     setAppleCals(cals => cals.map((c, i) => i === idx ? { ...c, [field]: value } : c));
+  }
+
+  // ── Google Calendar ──
+  async function saveGoogleCals(updated: GoogleCal[]) {
+    setGoogleSaving(true);
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { setGoogleSaving(false); return; }
+    await supabase.from("profil").update({ google_cals: updated }).eq("user_id", session.user.id);
+    setGoogleCals(updated);
+    setGoogleConnected(updated.length > 0);
+    setGoogleSaving(false);
+  }
+
+  async function testGoogleUrl(url: string) {
+    setGoogleTesting(url);
+    try {
+      const res = await fetch(`/api/google/ics/test?url=${encodeURIComponent(url)}`);
+      const data = await res.json();
+      setGoogleTestResults(r => ({ ...r, [url]: data.ok ? "ok" : "error" }));
+    } catch {
+      setGoogleTestResults(r => ({ ...r, [url]: "error" }));
+    }
+    setGoogleTesting(null);
+  }
+
+  async function handleAddGoogle() {
+    setGoogleError("");
+    const url = newGoogleUrl.trim();
+    if (!url) { setGoogleError("L'URL ICS est requise."); return; }
+    if (!url.includes("calendar.google.com") && !url.endsWith(".ics") && !url.startsWith("webcal://")) {
+      setGoogleError("L'URL doit provenir de Google Calendar (ou se terminer par .ics).");
+      return;
+    }
+    if (googleCals.find(c => c.url === url)) { setGoogleError("Ce calendrier est déjà ajouté."); return; }
+    const nom = newGoogleNom.trim() || "Mon calendrier Google";
+    const updated = [...googleCals, { url, nom, couleur: newGoogleCouleur }];
+    await saveGoogleCals(updated);
+    await testGoogleUrl(url);
+    setGoogleNomBuffer(b => ({ ...b, [url]: nom }));
+    setNewGoogleUrl(""); setNewGoogleNom(""); setNewGoogleCouleur(COULEURS_GOOGLE[0].value);
+    setShowAddGoogle(false);
+  }
+
+  async function removeGoogleCal(url: string) {
+    if (!confirm("Supprimer ce calendrier Google ?")) return;
+    const updated = googleCals.filter(c => c.url !== url);
+    await saveGoogleCals(updated);
+    setGoogleTestResults(r => { const n = { ...r }; delete n[url]; return n; });
+    setGoogleNomBuffer(b => { const n = { ...b }; delete n[url]; return n; });
+  }
+
+  // Couleur : sauvegarde immédiate (un clic = un choix définitif)
+  async function updateGoogleCouleur(url: string, couleur: string) {
+    const updated = googleCals.map(c => c.url === url ? { ...c, couleur } : c);
+    await saveGoogleCals(updated);
+  }
+
+  // Nom : buffer local, sauvegarde au blur uniquement
+  function handleGoogleNomChange(url: string, nom: string) {
+    setGoogleNomBuffer(b => ({ ...b, [url]: nom }));
+  }
+  async function handleGoogleNomBlur(url: string) {
+    const nom = (googleNomBuffer[url] ?? "").trim() || "Mon calendrier Google";
+    const updated = googleCals.map(c => c.url === url ? { ...c, nom } : c);
+    await saveGoogleCals(updated);
   }
 
   const set = (k: string, v: any) => setProfil(p => ({ ...p, [k]: v }));
@@ -241,44 +352,39 @@ export default function ParametresPage() {
         {/* ── ONGLET CALENDRIERS ── */}
         {activeTab === "calendriers" && (
           <div className="space-y-4">
+
+            {/* ── Apple Calendar ── */}
             <div className="card card-inner">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-8 h-8 rounded-lg bg-ink-900 flex items-center justify-center">
                   <Smartphone size={16} className="text-white" />
                 </div>
                 <div className="flex-1">
-                  <p className="font-semibold text-ink-800 text-sm">Apple Calendar (iCloud)</p>
+                  <p className="font-semibold text-ink-800 text-sm">🍎 Apple Calendar (iCloud)</p>
                   <p className="text-xs text-ink-400">Synchronisation via lien public ICS</p>
                 </div>
                 {appleConnected && (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">Connecté</span>
                 )}
               </div>
-
               <div className="space-y-4">
                 <div className="bg-ink-50 border border-ink-200 rounded-xl p-3 text-xs text-ink-600 space-y-1.5">
                   <p className="font-semibold text-ink-700">Comment obtenir le lien :</p>
                   <p>Sur iPhone → <strong>Calendrier</strong> → appui long sur le calendrier → <strong>Calendrier public</strong> → activer → <strong>Partager le lien</strong></p>
                   <p>Collez l'URL <code className="bg-ink-200 px-1 rounded">webcal://...</code> ci-dessous.</p>
                 </div>
-
                 <div className="space-y-3">
                   {appleCals.map((cal, idx) => (
                     <div key={idx} className="p-3 rounded-xl border border-ink-100 bg-ink-50 space-y-2">
                       <div className="flex items-center gap-2">
-                        <div className="relative shrink-0">
-                          <input type="color" value={cal.couleur}
-                            onChange={e => updateCal(idx, "couleur", e.target.value)}
-                            className="w-8 h-8 rounded-lg cursor-pointer border border-ink-200 p-0.5 bg-white" />
-                        </div>
+                        <input type="color" value={cal.couleur}
+                          onChange={e => updateCal(idx, "couleur", e.target.value)}
+                          className="w-8 h-8 rounded-lg cursor-pointer border border-ink-200 p-0.5 bg-white shrink-0" />
                         <input value={cal.nom} onChange={e => updateCal(idx, "nom", e.target.value)}
-                          placeholder="Nom du calendrier"
-                          className="input flex-1 text-sm" />
+                          placeholder="Nom du calendrier" className="input flex-1 text-sm" />
                         {appleCals.length > 1 && (
                           <button onClick={() => setAppleCals(c => c.filter((_, i) => i !== idx))}
-                            className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 shrink-0">
-                            <X size={14} />
-                          </button>
+                            className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 shrink-0"><X size={14} /></button>
                         )}
                       </div>
                       <div className="flex gap-1.5 flex-wrap">
@@ -294,14 +400,11 @@ export default function ParametresPage() {
                     </div>
                   ))}
                 </div>
-
                 <button onClick={() => setAppleCals(c => [...c, { url: "", nom: `Calendrier ${c.length + 1}`, couleur: COULEURS_PRESET[c.length % COULEURS_PRESET.length] }])}
                   className="text-xs text-volt-700 font-medium flex items-center gap-1 hover:text-volt-600">
                   <Plus size={12} /> Ajouter un calendrier
                 </button>
-
                 {appleError && <p className="text-xs text-red-600">{appleError}</p>}
-
                 <div className="flex gap-3">
                   {appleConnected && (
                     <button onClick={disconnectApple}
@@ -315,6 +418,145 @@ export default function ParametresPage() {
                   </button>
                 </div>
               </div>
+            </div>
+
+            {/* ── Google Calendar ── */}
+            <div className="card card-inner">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center"
+                  style={{ background: "linear-gradient(135deg, #4285F4 0%, #34A853 50%, #EA4335 100%)" }}>
+                  <Calendar size={16} className="text-white" />
+                </div>
+                <div className="flex-1">
+                  <p className="font-semibold text-ink-800 text-sm">🗓️ Google Calendar</p>
+                  <p className="text-xs text-ink-400">Synchronisation via URL secrète iCal (lecture seule)</p>
+                </div>
+                {googleConnected && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">
+                    {googleCals.length} connecté{googleCals.length > 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+
+              {/* Instructions */}
+              <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-700 space-y-1.5 mb-4">
+                <p className="font-semibold">Comment obtenir l'URL iCal de votre calendrier Google ?</p>
+                <ol className="space-y-1 pl-3 list-decimal">
+                  <li>Ouvrez <a href="https://calendar.google.com" target="_blank" rel="noopener noreferrer"
+                    className="underline font-medium inline-flex items-center gap-0.5">
+                    calendar.google.com <ExternalLink size={10} /></a></li>
+                  <li>Cliquez sur <strong>⋮</strong> à côté du calendrier → <strong>Paramètres et partage</strong></li>
+                  <li>Descendez jusqu'à <strong>«&nbsp;Adresse secrète au format iCal&nbsp;»</strong></li>
+                  <li>Copiez l'URL et collez-la ci-dessous</li>
+                </ol>
+                <p className="text-blue-500 italic">⚠️ Ne partagez jamais cette URL — elle donne accès à votre agenda.</p>
+              </div>
+
+              {/* Liste des calendriers Google */}
+              {googleCals.length === 0 && !showAddGoogle ? (
+                <div className="text-center py-6 border-2 border-dashed border-ink-200 rounded-xl">
+                  <p className="text-sm text-ink-400 mb-3">Aucun calendrier Google connecté</p>
+                  <button onClick={() => setShowAddGoogle(true)}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-volt-500 text-ink-900 text-sm font-semibold hover:bg-volt-400 mx-auto">
+                    <Plus size={15} /> Ajouter un calendrier
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {googleCals.map((cal) => (
+                    <div key={cal.url} className="border border-ink-100 rounded-xl p-3 space-y-2 bg-ink-50">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          {/* Nom — buffer local, sauvegarde au blur */}
+                          <input
+                            value={googleNomBuffer[cal.url] ?? cal.nom}
+                            onChange={e => handleGoogleNomChange(cal.url, e.target.value)}
+                            onBlur={() => handleGoogleNomBlur(cal.url)}
+                            placeholder="Nom du calendrier"
+                            className="text-sm font-medium text-ink-800 bg-transparent border-b border-transparent hover:border-ink-200 focus:border-volt-400 focus:outline-none w-full" />
+                          <p className="text-xs text-ink-400 truncate mt-0.5 font-mono">
+                            {cal.url.length > 55 ? cal.url.slice(0, 55) + "…" : cal.url}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {googleTestResults[cal.url] === "ok" && <CheckCircle size={15} className="text-green-500" />}
+                          {googleTestResults[cal.url] === "error" && <AlertCircle size={15} className="text-red-500" />}
+                          <button onClick={() => testGoogleUrl(cal.url)} disabled={googleTesting === cal.url}
+                            title="Tester la connexion"
+                            className="p-1.5 rounded-lg hover:bg-ink-200 text-ink-400 hover:text-ink-600 disabled:opacity-40">
+                            <RefreshCw size={14} className={googleTesting === cal.url ? "animate-spin" : ""} />
+                          </button>
+                          <button onClick={() => removeGoogleCal(cal.url)}
+                            className="p-1.5 rounded-lg hover:bg-red-50 text-ink-400 hover:text-red-500">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                      {/* Couleur — sauvegarde immédiate au clic */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs text-ink-400 mr-1">Couleur :</span>
+                        {COULEURS_GOOGLE.map(c => (
+                          <button key={c.value} onClick={() => updateGoogleCouleur(cal.url, c.value)}
+                            className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 ${cal.couleur === c.value ? "border-ink-900 scale-110" : "border-transparent"}`}
+                            style={{ backgroundColor: c.value }} title={c.label} />
+                        ))}
+                      </div>
+                      {googleTestResults[cal.url] === "error" && (
+                        <p className="text-xs text-red-500">⚠️ Impossible d'accéder à ce calendrier. Vérifiez l'URL.</p>
+                      )}
+                      {googleTestResults[cal.url] === "ok" && (
+                        <p className="text-xs text-green-600">✓ Calendrier accessible et synchronisé.</p>
+                      )}
+                    </div>
+                  ))}
+
+                  {!showAddGoogle && (
+                    <button onClick={() => setShowAddGoogle(true)}
+                      className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border-2 border-dashed border-ink-200 text-sm text-ink-500 hover:border-volt-400 hover:text-volt-600 transition-colors">
+                      <Plus size={15} /> Ajouter un calendrier
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Formulaire ajout Google */}
+              {showAddGoogle && (
+                <div className="border border-volt-200 rounded-xl p-4 bg-volt-50 space-y-3 mt-3">
+                  <h4 className="text-sm font-semibold text-ink-800">Nouveau calendrier Google</h4>
+                  <div>
+                    <label className="label">URL iCal *</label>
+                    <input value={newGoogleUrl} onChange={e => { setNewGoogleUrl(e.target.value); setGoogleError(""); }}
+                      placeholder="https://calendar.google.com/calendar/ical/…/basic.ics"
+                      className="input w-full text-xs font-mono" />
+                  </div>
+                  <div>
+                    <label className="label">Nom affiché</label>
+                    <input value={newGoogleNom} onChange={e => setNewGoogleNom(e.target.value)}
+                      placeholder="Ex: Perso, Pro, Famille…" className="input w-full" />
+                  </div>
+                  <div>
+                    <label className="label">Couleur</label>
+                    <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                      {COULEURS_GOOGLE.map(c => (
+                        <button key={c.value} onClick={() => setNewGoogleCouleur(c.value)}
+                          className={`w-6 h-6 rounded-full border-2 transition-transform hover:scale-110 ${newGoogleCouleur === c.value ? "border-ink-900 scale-110" : "border-transparent"}`}
+                          style={{ backgroundColor: c.value }} title={c.label} />
+                      ))}
+                    </div>
+                  </div>
+                  {googleError && <p className="text-xs text-red-500">{googleError}</p>}
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={() => { setShowAddGoogle(false); setGoogleError(""); setNewGoogleUrl(""); setNewGoogleNom(""); }}
+                      className="flex-1 py-2 rounded-lg border border-ink-200 text-sm text-ink-600 hover:bg-ink-50">
+                      Annuler
+                    </button>
+                    <button onClick={handleAddGoogle} disabled={googleSaving || !newGoogleUrl.trim()}
+                      className="flex-1 py-2 rounded-lg bg-volt-500 text-ink-900 text-sm font-semibold hover:bg-volt-400 disabled:opacity-40">
+                      {googleSaving ? "Ajout…" : "Ajouter"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -344,7 +586,6 @@ export default function ParametresPage() {
               </div>
             </div>
 
-            {/* ── COORDONNÉES BANCAIRES ── */}
             <div className="card card-inner">
               <div className="flex items-center gap-2 mb-4">
                 <CreditCard size={16} className="text-ink-500" />
