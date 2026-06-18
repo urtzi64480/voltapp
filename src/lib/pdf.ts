@@ -29,11 +29,6 @@ async function loadLogoBase64(logoUrl?: string | null): Promise<string | null> {
   }
 }
 
-/**
- * Construit le contenu de la cellule Désignation.
- * Si une description existe, on la concatène avec \n pour qu'autoTable
- * calcule correctement la hauteur de ligne.
- */
 function designationCell(nom: string, description?: string | null): string {
   if (!description || description.trim() === "") return nom;
   return `${nom}\n${description.trim()}`;
@@ -130,55 +125,6 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
       5: { cellWidth: 25, halign: "right" },
     },
     margin: { left: M, right: M },
-    // Style la première ligne (nom) en gras, la seconde (description) en italique gris
-    didParseCell: (data) => {
-      if (data.column.index !== 0 || data.section !== "body") return;
-      const rawLigne = lignes[data.row.index];
-      if (!rawLigne?.description || rawLigne.description.trim() === "") return;
-      // autoTable gère \n nativement : on ne peut pas styler par sous-ligne,
-      // mais on peut mettre la cellule en italic pour la description.
-      // Le nom sera en normal/bold selon la police par défaut.
-      // Pour distinguer nom vs description, on utilise willDrawCell pour réécrire manuellement.
-    },
-    willDrawCell: (data) => {
-      if (data.column.index !== 0 || data.section !== "body") return;
-      const rawLigne = lignes[data.row.index];
-      if (!rawLigne?.description || rawLigne.description.trim() === "") return;
-
-      // On bloque le rendu autoTable de cette cellule et on redessine manuellement
-      // en séparant nom (bold) et description (italic gris)
-      const { x, y, width, height } = data.cell;
-      const pad = data.cell.padding as any;
-      const padLeft = typeof pad === "number" ? pad : (pad?.left ?? 2);
-      const padTop = typeof pad === "number" ? pad : (pad?.top ?? 2);
-
-      // Fond de la cellule (reprend la couleur alternée)
-      const fillColor = data.row.index % 2 === 1 ? [250, 250, 249] : [255, 255, 255];
-      doc.setFillColor(fillColor[0], fillColor[1], fillColor[2]);
-      doc.rect(x, y, width, height, "F");
-
-      const textX = x + padLeft;
-      const lineHeight = 4.8;
-
-      // Nom en gras
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8.5);
-      doc.setTextColor(44, 38, 34);
-      const nomLines = doc.splitTextToSize(rawLigne.nom, width - padLeft * 2);
-      doc.text(nomLines, textX, y + padTop + 3.5);
-
-      // Description en italic gris, juste dessous
-      doc.setFont("helvetica", "italic");
-      doc.setFontSize(7.5);
-      doc.setTextColor(120, 113, 108);
-      const descLines = doc.splitTextToSize(rawLigne.description.trim(), width - padLeft * 2);
-      doc.text(descLines, textX, y + padTop + 3.5 + nomLines.length * lineHeight);
-
-      // Remettre le style par défaut
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8.5);
-      doc.setTextColor(44, 38, 34);
-    },
   });
 
   const finalY = (doc as any).lastAutoTable.finalY + 6;
@@ -188,16 +134,16 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
   const remiseFideliteEur = devis.remise_fidelite_pct
     ? Math.round(devis.total_service / (1 - devis.remise_fidelite_pct / 100) * devis.remise_fidelite_pct / 100 * 100) / 100
     : 0;
-  const remiseS = totSBrut - devis.total_service - remiseFideliteEur;
-  const remiseM = totMBrut - devis.total_materiau;
+  const remiseS = Math.round((totSBrut - devis.total_service - remiseFideliteEur) * 100) / 100;
+  const remiseM = Math.round((totMBrut - devis.total_materiau) * 100) / 100;
 
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
     { label: "Prestation service :", value: fmt(totSBrut) },
   ];
-  if (remiseS > 0.01) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
+  if (remiseS > 0.5) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
   lignesTotal.push({ label: "Achat / revente :", value: fmt(totMBrut) });
-  if (remiseM > 0.01) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
-  if (remiseFideliteEur > 0.01) lignesTotal.push({ label: `Remise fidélité ${devis.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
+  if (remiseM > 0.5) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
+  if (remiseFideliteEur > 0.5) lignesTotal.push({ label: `Remise fidélité ${devis.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
   lignesTotal.push({ label: "Total net à payer :", value: fmt(devis.total_ttc), bold: true, color: [217, 119, 6] });
 
   const boxH = 8 + lignesTotal.length * 7;
@@ -307,7 +253,7 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
     startY: 78,
     head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
     body: lignes.map(l => [
-      designationCell(l.nom, l.description),
+      designationCell(l.nom, (l as any).description),
       l.type_branche === "service" ? "Service" : "Matériau",
       l.unite,
       l.quantite,
@@ -323,39 +269,6 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
       5: { cellWidth: 25, halign: "right" },
     },
     margin: { left: M, right: M },
-    willDrawCell: (data) => {
-      if (data.column.index !== 0 || data.section !== "body") return;
-      const rawLigne = lignes[data.row.index];
-      if (!rawLigne?.description || rawLigne.description.trim() === "") return;
-
-      const { x, y, width, height } = data.cell;
-      const pad = data.cell.padding as any;
-      const padLeft = typeof pad === "number" ? pad : (pad?.left ?? 2);
-      const padTop = typeof pad === "number" ? pad : (pad?.top ?? 2);
-
-      const fillColor = data.row.index % 2 === 1 ? [250, 250, 249] : [255, 255, 255];
-      doc.setFillColor(fillColor[0], fillColor[1], fillColor[2]);
-      doc.rect(x, y, width, height, "F");
-
-      const textX = x + padLeft;
-      const lineHeight = 4.8;
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8.5);
-      doc.setTextColor(44, 38, 34);
-      const nomLines = doc.splitTextToSize(rawLigne.nom, width - padLeft * 2);
-      doc.text(nomLines, textX, y + padTop + 3.5);
-
-      doc.setFont("helvetica", "italic");
-      doc.setFontSize(7.5);
-      doc.setTextColor(120, 113, 108);
-      const descLines = doc.splitTextToSize(rawLigne.description.trim(), width - padLeft * 2);
-      doc.text(descLines, textX, y + padTop + 3.5 + nomLines.length * lineHeight);
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8.5);
-      doc.setTextColor(44, 38, 34);
-    },
   });
 
   const fy = (doc as any).lastAutoTable.finalY + 6;
@@ -365,18 +278,18 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   const remiseFideliteEur = facture.remise_fidelite_pct
     ? Math.round(facture.total_service / (1 - facture.remise_fidelite_pct / 100) * facture.remise_fidelite_pct / 100 * 100) / 100
     : 0;
-  const remiseS = totSBrut - facture.total_service - remiseFideliteEur;
-  const remiseM = totMBrut - facture.total_materiau;
+  const remiseS = Math.round((totSBrut - facture.total_service - remiseFideliteEur) * 100) / 100;
+  const remiseM = Math.round((totMBrut - facture.total_materiau) * 100) / 100;
   const totalAcomptes = acomptes.reduce((a, ac) => a + ac.montant, 0);
   const soldeRestant = facture.total_ttc - totalAcomptes;
 
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
     { label: "Prestation service :", value: fmt(totSBrut) },
   ];
-  if (remiseS > 0.01) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
+  if (remiseS > 0.5) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
   lignesTotal.push({ label: "Achat / revente :", value: fmt(totMBrut) });
-  if (remiseM > 0.01) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
-  if (remiseFideliteEur > 0.01) lignesTotal.push({ label: `Remise fidélité ${facture.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
+  if (remiseM > 0.5) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
+  if (remiseFideliteEur > 0.5) lignesTotal.push({ label: `Remise fidélité ${facture.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
   lignesTotal.push({ label: "Total TTC :", value: fmt(facture.total_ttc), bold: true, color: [251, 191, 36] });
   if (acomptes.length > 0) {
     acomptes.forEach((ac, i) => {
