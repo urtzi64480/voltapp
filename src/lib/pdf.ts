@@ -29,6 +29,12 @@ async function loadLogoBase64(logoUrl?: string | null): Promise<string | null> {
   }
 }
 
+/** Formate la désignation : nom en gras + description en italique sous-jacente */
+function buildDesignationCell(nom: string, description?: string | null): string {
+  if (!description || description.trim() === "") return nom;
+  return `${nom}\n${description.trim()}`;
+}
+
 async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
@@ -103,7 +109,7 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
     startY: 80,
     head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
     body: lignes.map(l => [
-      l.nom,
+      buildDesignationCell(l.nom, (l as any).description),
       l.type_branche === "service" ? "Service" : "Matériau",
       l.unite,
       l.quantite,
@@ -119,6 +125,51 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
       5: { cellWidth: 25, halign: "right" },
     },
     margin: { left: M, right: M },
+    // Affiche le nom en gras et la description en italique gris dans la cellule Désignation
+    didParseCell: (data) => {
+      if (data.column.index === 0 && data.section === "body") {
+        const rawLigne = lignes[data.row.index];
+        const desc = (rawLigne as any)?.description;
+        if (desc && desc.trim() !== "") {
+          data.cell.styles.fontStyle = "normal";
+        }
+      }
+    },
+    didDrawCell: (data) => {
+      if (data.column.index === 0 && data.section === "body") {
+        const rawLigne = lignes[data.row.index];
+        const desc = (rawLigne as any)?.description;
+        if (!desc || desc.trim() === "") return;
+
+        // Récupère les dimensions de la cellule
+        const { x, y, width } = data.cell;
+        const cellPadding = 2;
+
+        // Calcule la hauteur de la première ligne (nom) pour positionner la description en dessous
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        const nomLines = doc.splitTextToSize(rawLigne.nom, width - cellPadding * 2);
+        const nomHeight = nomLines.length * 4.5;
+
+        // Dessine le nom en gras (réécrit par-dessus)
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        doc.setTextColor(44, 38, 34);
+        doc.text(nomLines, x + cellPadding, y + cellPadding + 3.5);
+
+        // Dessine la description en italique gris sous le nom
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(7.5);
+        doc.setTextColor(120, 113, 108);
+        const descLines = doc.splitTextToSize(desc.trim(), width - cellPadding * 2);
+        doc.text(descLines, x + cellPadding, y + cellPadding + 3.5 + nomHeight);
+
+        // Remet la couleur par défaut
+        doc.setTextColor(44, 38, 34);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8.5);
+      }
+    },
   });
 
   const finalY = (doc as any).lastAutoTable.finalY + 6;
@@ -241,22 +292,62 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
     if (facture.client.telephone) doc.text(facture.client.telephone, M + 4, 65);
   }
 
+  const lignes = facture.lignes ?? [];
   autoTable(doc, {
     startY: 78,
     head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
-    body: (facture.lignes ?? []).map(l => [
-      l.nom, l.type_branche === "service" ? "Service" : "Matériau",
-      l.unite, l.quantite, fmt(l.prix_unitaire), fmt(l.prix_unitaire * l.quantite),
+    body: lignes.map(l => [
+      buildDesignationCell(l.nom, (l as any).description),
+      l.type_branche === "service" ? "Service" : "Matériau",
+      l.unite,
+      l.quantite,
+      fmt(l.prix_unitaire),
+      fmt(l.prix_unitaire * l.quantite),
     ]),
     headStyles: { fillColor: [28, 25, 23], textColor: [251, 191, 36], fontStyle: "bold", fontSize: 8 },
     bodyStyles: { fontSize: 8.5 },
     alternateRowStyles: { fillColor: [250, 250, 249] },
+    columnStyles: {
+      0: { cellWidth: 65 },
+    },
     margin: { left: M, right: M },
+    // Affiche le nom en gras et la description en italique gris dans la cellule Désignation
+    didDrawCell: (data) => {
+      if (data.column.index === 0 && data.section === "body") {
+        const rawLigne = lignes[data.row.index];
+        const desc = (rawLigne as any)?.description;
+        if (!desc || desc.trim() === "") return;
+
+        const { x, y, width } = data.cell;
+        const cellPadding = 2;
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        const nomLines = doc.splitTextToSize(rawLigne.nom, width - cellPadding * 2);
+        const nomHeight = nomLines.length * 4.5;
+
+        // Redessine le nom en gras
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        doc.setTextColor(44, 38, 34);
+        doc.text(nomLines, x + cellPadding, y + cellPadding + 3.5);
+
+        // Description en italique gris
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(7.5);
+        doc.setTextColor(120, 113, 108);
+        const descLines = doc.splitTextToSize(desc.trim(), width - cellPadding * 2);
+        doc.text(descLines, x + cellPadding, y + cellPadding + 3.5 + nomHeight);
+
+        doc.setTextColor(44, 38, 34);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8.5);
+      }
+    },
   });
 
   const fy = (doc as any).lastAutoTable.finalY + 6;
 
-  const lignes = facture.lignes ?? [];
   const totSBrut = lignes.filter(l => l.type_branche === "service").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
   const totMBrut = lignes.filter(l => l.type_branche === "materiau").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
   const remiseFideliteEur = facture.remise_fidelite_pct
