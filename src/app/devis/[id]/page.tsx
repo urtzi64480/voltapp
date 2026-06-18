@@ -61,8 +61,6 @@ function calcRemise(total: number, type: RemiseType, val: string): number {
   return Math.min(total, v);
 }
 
-// ── Aperçu document ──────────────────────────────────────────────────────────
-
 function ApercuDocument({
   devis, lignes, profil, sigData, sigDate,
   totServiceBrut, totMateriauBrut, remiseService, remiseMateriau,
@@ -82,7 +80,6 @@ function ApercuDocument({
   totTTC: number;
 }) {
   const client = devis.client as any;
-
   const artisan = [
     profil?.nom_entreprise ?? `${profil?.prenom ?? ""} ${profil?.nom ?? ""}`.trim(),
     profil?.siret ? `SIRET ${profil.siret}` : "",
@@ -90,13 +87,10 @@ function ApercuDocument({
     profil?.email ?? "",
     [profil?.adresse, profil?.code_postal, profil?.ville].filter(Boolean).join(" "),
   ].filter(Boolean);
-
   const hasRemise = remiseService > 0.01 || remiseMateriau > 0.01;
 
   return (
     <div className="bg-white rounded-2xl overflow-hidden border border-ink-200 shadow-sm text-sm font-sans">
-
-      {/* Header sombre */}
       <div className="bg-ink-900 px-6 py-5 flex items-start justify-between gap-4">
         <div>
           <p className="text-volt-400 font-bold text-xl tracking-wide">DEVIS</p>
@@ -116,15 +110,11 @@ function ApercuDocument({
       </div>
 
       <div className="p-6 space-y-5">
-
-        {/* Blocs client + objet */}
         <div className="flex gap-4 flex-wrap">
           {client && (
             <div className="bg-ink-50 rounded-xl px-4 py-3 min-w-[180px] flex-1">
               <p className="text-xs font-semibold text-ink-400 uppercase tracking-wide mb-1">Client</p>
-              <p className="font-semibold text-ink-900">
-                {client.prenom ? `${client.prenom} ${client.nom}` : client.nom}
-              </p>
+              <p className="font-semibold text-ink-900">{client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</p>
               {client.adresse && <p className="text-xs text-ink-500 mt-0.5">{client.adresse}</p>}
               {(client.code_postal || client.ville) && (
                 <p className="text-xs text-ink-500">{[client.code_postal, client.ville].filter(Boolean).join(" ")}</p>
@@ -140,7 +130,6 @@ function ApercuDocument({
           )}
         </div>
 
-        {/* Tableau lignes */}
         <div className="overflow-hidden rounded-xl border border-ink-100">
           <table className="w-full text-sm">
             <thead>
@@ -157,13 +146,14 @@ function ApercuDocument({
                 <tr key={i} className={cn("border-t border-ink-100", i % 2 === 1 ? "bg-ink-50/50" : "bg-white")}>
                   <td className="px-4 py-2.5 text-ink-900">
                     <span className="font-medium">{l.nom}</span>
-                    {l.description && (
+                    {(l as any).kit_description && (
+                      <p className="text-xs text-ink-400 italic mt-0.5">{(l as any).kit_description}</p>
+                    )}
+                    {!(l as any).kit_description && l.description && (
                       <p className="text-xs text-ink-400 italic mt-0.5">{l.description}</p>
                     )}
                   </td>
-                  <td className="px-3 py-2.5 text-ink-500 text-xs hidden md:table-cell">
-                    {l.type_branche === "service" ? "Service" : "Matériau"}
-                  </td>
+                  <td className="px-3 py-2.5 text-ink-500 text-xs hidden md:table-cell">{l.type_branche === "service" ? "Service" : "Matériau"}</td>
                   <td className="px-3 py-2.5 text-center text-ink-700">{l.quantite}</td>
                   <td className="px-3 py-2.5 text-right text-ink-500">{fmt(l.prix_unitaire)}</td>
                   <td className="px-4 py-2.5 text-right font-semibold text-ink-900">{fmt(l.prix_unitaire * l.quantite)}</td>
@@ -176,25 +166,12 @@ function ApercuDocument({
           </table>
         </div>
 
-        {/* Totaux */}
         <div className="flex justify-end">
           <div className="w-64 bg-ink-50 rounded-xl px-4 py-3 space-y-1.5">
-            <div className="flex justify-between text-xs text-ink-500">
-              <span>Prestation service</span><span>{fmt(totServiceBrut)}</span>
-            </div>
-            {remiseService > 0.01 && (
-              <div className="flex justify-between text-xs text-red-500">
-                <span>Remise service</span><span>− {fmt(remiseService)}</span>
-              </div>
-            )}
-            <div className="flex justify-between text-xs text-ink-500">
-              <span>Achat / revente</span><span>{fmt(totMateriauBrut)}</span>
-            </div>
-            {remiseMateriau > 0.01 && (
-              <div className="flex justify-between text-xs text-red-500">
-                <span>Remise matériaux</span><span>− {fmt(remiseMateriau)}</span>
-              </div>
-            )}
+            <div className="flex justify-between text-xs text-ink-500"><span>Prestation service</span><span>{fmt(totServiceBrut)}</span></div>
+            {remiseService > 0.01 && <div className="flex justify-between text-xs text-red-500"><span>Remise service</span><span>− {fmt(remiseService)}</span></div>}
+            <div className="flex justify-between text-xs text-ink-500"><span>Achat / revente</span><span>{fmt(totMateriauBrut)}</span></div>
+            {remiseMateriau > 0.01 && <div className="flex justify-between text-xs text-red-500"><span>Remise matériaux</span><span>− {fmt(remiseMateriau)}</span></div>}
             {remiseFideliteEur > 0.01 && (
               <div className="flex justify-between text-xs text-emerald-600 font-medium">
                 <span>🎁 Fidélité ({remiseFidelitePct}%)</span><span>− {fmt(remiseFideliteEur)}</span>
@@ -202,8 +179,7 @@ function ApercuDocument({
             )}
             {(hasRemise || remiseFideliteEur > 0.01) && (
               <div className="flex justify-between text-xs text-red-600 font-medium pt-1 border-t border-ink-200">
-                <span>Total remises</span>
-                <span>− {fmt(remiseService + remiseMateriau + remiseFideliteEur)}</span>
+                <span>Total remises</span><span>− {fmt(remiseService + remiseMateriau + remiseFideliteEur)}</span>
               </div>
             )}
             <div className="flex justify-between font-bold text-volt-600 text-base pt-2 border-t border-ink-200">
@@ -212,16 +188,10 @@ function ApercuDocument({
           </div>
         </div>
 
-        {/* Mention TVA */}
-        <p className="text-xs text-ink-300 italic">
-          {profil?.mention_tva ?? "TVA non applicable — Art. 293 B du CGI"}
-        </p>
+        <p className="text-xs text-ink-300 italic">{profil?.mention_tva ?? "TVA non applicable — Art. 293 B du CGI"}</p>
 
-        {/* Zone signature */}
         <div className="border-t border-ink-100 pt-4">
-          <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-3">
-            Bon pour accord — Signature du client
-          </p>
+          <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-3">Bon pour accord — Signature du client</p>
           {sigData ? (
             <div className="space-y-1">
               <img src={sigData} alt="Signature" className="h-20 border border-ink-100 rounded-xl p-2 bg-white" />
@@ -239,7 +209,6 @@ function ApercuDocument({
           )}
         </div>
 
-        {/* Footer conditions */}
         {profil?.conditions_paiement && (
           <div className="bg-ink-900 rounded-xl px-4 py-2.5 text-center">
             <p className="text-xs text-ink-400">{profil.conditions_paiement}</p>
@@ -249,8 +218,6 @@ function ApercuDocument({
     </div>
   );
 }
-
-// ── Page principale ───────────────────────────────────────────────────────────
 
 export default function DevisDetailPage({ params }: { params: { id: string } }) {
   const { id } = params;
@@ -333,7 +300,6 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         }
       });
 
-    // Chercher la facture associée à ce devis
     supabase.from("factures").select("id, numero, statut").eq("devis_id", id).maybeSingle()
       .then(({ data: f }) => { if (f) setFactureAssociee(f as any); });
 
@@ -385,7 +351,6 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   }
   function stopDraw() { drawing.current = false; }
 
-  // ── Canvas view signature ──
   useEffect(() => {
     if (viewSigMode !== "direct" || viewSigInputMode !== "draw" || !viewCanvasRef.current) return;
     const c = viewCanvasRef.current;
@@ -425,10 +390,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   function handleViewUploadSig(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => {
-      setViewSigData(ev.target?.result as string);
-      setViewSigDate(new Date().toLocaleString("fr-FR"));
-    };
+    reader.onload = ev => { setViewSigData(ev.target?.result as string); setViewSigDate(new Date().toLocaleString("fr-FR")); };
     reader.readAsDataURL(file);
   }
   async function validerSignatureDirecte() {
@@ -490,7 +452,15 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     setLignes(prev => {
       const ex = prev.findIndex(l => l.nom === p.nom && l.type_branche === p.type_branche);
       if (ex >= 0) { const n = [...prev]; n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 }; return n; }
-      return [...prev, { nom: p.nom, description: p.description, prix_unitaire: p.prix_unitaire, quantite: 1, unite: p.unite, type_branche: p.type_branche, prestation_id: p.id }];
+      return [...prev, {
+        nom: p.nom,
+        description: p.description,
+        prix_unitaire: p.prix_unitaire,
+        quantite: 1,
+        unite: p.unite,
+        type_branche: p.type_branche,
+        prestation_id: p.id,
+      }];
     });
   }
 
@@ -534,7 +504,19 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       statut: sigData ? "signe" : devis.statut,
     }).eq("id", id);
     if (lignes.length > 0) {
-      await supabase.from("devis_lignes").insert(lignes.map((l, i) => ({ ...l, devis_id: id, ordre: i })));
+      await supabase.from("devis_lignes").insert(lignes.map((l, i) => ({
+        devis_id: id,
+        ordre: i,
+        nom: l.nom,
+        kit_description: (l as any).kit_description ?? l.description ?? null,
+        quantite: l.quantite,
+        prix_unitaire: l.prix_unitaire,
+        unite: l.unite,
+        type_branche: l.type_branche,
+        prestation_id: (l as any).prestation_id ?? null,
+        kit_groupe: (l as any).kit_groupe ?? null,
+        kit_ratio_service: (l as any).kit_ratio_service ?? null,
+      })));
     }
     const { data } = await supabase.from("devis").select("*, client:clients(*), lignes:devis_lignes(*)").eq("id", id).single();
     setDevis(data as any);
@@ -576,7 +558,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       await supabase.from("facture_lignes").insert(devis.lignes.map((l: any, i: number) => ({
         facture_id: f.id,
         nom: l.nom,
-        description: l.description ?? null,
+        kit_description: l.kit_description ?? null,
         quantite: l.quantite,
         prix_unitaire: l.prix_unitaire,
         unite: l.unite,
@@ -585,8 +567,6 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       })));
       await supabase.from("profil").update({ compteur_facture: (p?.compteur_facture ?? 0) + 1 }).eq("id", user.id);
       await supabase.from("devis").update({ statut: "signe" }).eq("id", devis.id);
-
-      // Envoi devis signé par email
       try {
         const { genPDFDevisBlob } = await import("@/lib/pdf");
         const profilFallback = p ?? { id: user.id, prefixe_devis: "DEV", prefixe_facture: "FAC", compteur_devis: 0, compteur_facture: 0, mention_tva: "TVA non applicable — Art. 293 B du CGI", conditions_paiement: "Paiement à réception", taux_horaire: 55, created_at: "", updated_at: "" };
@@ -599,15 +579,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         const email = clientObj?.email ?? "";
         const prenom = clientObj?.prenom ?? "";
         const sujet = encodeURIComponent(`Votre devis signé ${devis.numero}`);
-        const corps = encodeURIComponent(
-          `Bonjour ${prenom},
-
-Veuillez trouver ci-dessous le lien vers votre devis signé ${devis.numero} d'un montant de ${devis.total_ttc.toFixed(2).replace(".", ",")} €.
-
-👉 Télécharger le devis : ${pdfUrl}
-
-Cordialement`
-        );
+        const corps = encodeURIComponent(`Bonjour ${prenom},\n\nVeuillez trouver ci-dessous le lien vers votre devis signé ${devis.numero} d'un montant de ${devis.total_ttc.toFixed(2).replace(".", ",")} €.\n\n👉 Télécharger le devis : ${pdfUrl}\n\nCordialement`);
         window.open(`mailto:${email}?subject=${sujet}&body=${corps}`);
         window.location.href = `/factures/${f.id}`;
       } catch {
@@ -707,8 +679,8 @@ Cordialement`
                           {l.type_branche === "service" ? "S" : "M"}
                         </span>
                         <span className="font-medium">{l.nom}</span>
-                        {l.description && (
-                          <p className="text-xs text-ink-400 italic mt-0.5 ml-6">{l.description}</p>
+                        {l.kit_description && (
+                          <p className="text-xs text-ink-400 italic mt-0.5 ml-6">{l.kit_description}</p>
                         )}
                       </td>
                       <td className="py-2.5 hidden md:table-cell text-ink-500 text-xs">{l.type_branche === "service" ? "Service" : "Matériau"}</td>
@@ -757,9 +729,7 @@ Cordialement`
                   <p className="text-xs text-ink-400">Facture générée</p>
                   <p className="font-semibold text-ink-900 text-sm">{factureAssociee.numero}</p>
                 </div>
-                <Link href={`/factures/${factureAssociee.id}`} className="btn-ghost !px-3 text-xs shrink-0">
-                  Voir →
-                </Link>
+                <Link href={`/factures/${factureAssociee.id}`} className="btn-ghost !px-3 text-xs shrink-0">Voir →</Link>
               </div>
             )}
 
@@ -772,7 +742,6 @@ Cordialement`
 
             {devis.statut !== "signe" && (
               <div className="card card-inner mb-4 space-y-4">
-                {/* Tabs signature directe / SMS */}
                 <div className="flex gap-1 bg-ink-100 p-1 rounded-xl">
                   <button onClick={() => setViewSigMode("direct")}
                     className={cn("flex items-center gap-1.5 flex-1 justify-center px-3 py-2 rounded-lg text-sm font-medium transition-all",
@@ -786,7 +755,6 @@ Cordialement`
                   </button>
                 </div>
 
-                {/* Signature directe */}
                 {viewSigMode === "direct" && (
                   <div className="space-y-3">
                     {viewSigData ? (
@@ -797,10 +765,8 @@ Cordialement`
                         </div>
                         <img src={viewSigData} alt="Signature" className="h-16 border border-ink-100 rounded-xl p-2 bg-white" />
                         <div className="flex gap-2">
-                          <button onClick={() => { setViewSigData(null); setViewSigDate(null); }}
-                            className="btn-ghost flex-1 justify-center text-sm"><RotateCcw size={13} /> Recommencer</button>
-                          <button onClick={validerSignatureDirecte}
-                            className="btn-volt flex-1 justify-center text-sm"><Check size={13} /> Confirmer & signer</button>
+                          <button onClick={() => { setViewSigData(null); setViewSigDate(null); }} className="btn-ghost flex-1 justify-center text-sm"><RotateCcw size={13} /> Recommencer</button>
+                          <button onClick={validerSignatureDirecte} className="btn-volt flex-1 justify-center text-sm"><Check size={13} /> Confirmer & signer</button>
                         </div>
                       </div>
                     ) : (
@@ -845,7 +811,6 @@ Cordialement`
                   </div>
                 )}
 
-                {/* SMS */}
                 {viewSigMode === "sms" && (
                   <div className="space-y-3">
                     <p className="text-xs text-ink-400">Envoyez un lien sécurisé au client pour qu'il signe depuis son téléphone.</p>
@@ -856,16 +821,12 @@ Cordialement`
                         {generatingLink ? "Génération…" : "Envoyer par SMS"}
                       </button>
                       {sigLink && (
-                        <button onClick={copyLink}
-                          className="px-3 py-2.5 rounded-xl border border-ink-200 text-ink-600 hover:bg-ink-50 flex items-center gap-1.5 text-sm">
-                          <Copy size={14} />
-                          {linkCopied ? "Copié !" : "Copier"}
+                        <button onClick={copyLink} className="px-3 py-2.5 rounded-xl border border-ink-200 text-ink-600 hover:bg-ink-50 flex items-center gap-1.5 text-sm">
+                          <Copy size={14} />{linkCopied ? "Copié !" : "Copier"}
                         </button>
                       )}
                     </div>
-                    {sigLink && (
-                      <p className="text-xs text-ink-400 font-mono break-all bg-ink-50 rounded-lg px-3 py-2">{sigLink}</p>
-                    )}
+                    {sigLink && <p className="text-xs text-ink-400 font-mono break-all bg-ink-50 rounded-lg px-3 py-2">{sigLink}</p>}
                   </div>
                 )}
               </div>
@@ -873,9 +834,7 @@ Cordialement`
 
             <div className="flex flex-wrap gap-3">
               <button onClick={dl} className="btn-ghost flex-1 justify-center"><Download size={15} /> Télécharger PDF</button>
-              <button onClick={planifierIntervention} className="btn-ghost flex-1 justify-center">
-                <CalendarDays size={15} /> Planifier
-              </button>
+              <button onClick={planifierIntervention} className="btn-ghost flex-1 justify-center"><CalendarDays size={15} /> Planifier</button>
               {devis.statut !== "signe" && (
                 <button className="flex-1 flex items-center justify-center gap-2 bg-ink-200 text-ink-400 font-semibold rounded-xl px-4 py-2.5 text-sm cursor-not-allowed">
                   <Receipt size={15} /> Convertir en facture
@@ -914,19 +873,15 @@ Cordialement`
                           {clients.map(c => <option key={c.id} value={c.id}>{c.prenom ? `${c.prenom} ${c.nom}` : c.nom}</option>)}
                         </select>
                       </div>
-
                       {apporteurs.length > 0 && (
                         <div>
                           <label className="label">Apporteur d'affaires <span className="text-ink-300 font-normal">(usage interne)</span></label>
                           <select className="input" value={apporteurId} onChange={e => setApporteurId(e.target.value)}>
                             <option value="">— Aucun apporteur —</option>
-                            {apporteurs.map(a => (
-                              <option key={a.id} value={a.id}>{a.nom}{a.entreprise ? ` — ${a.entreprise}` : ""}</option>
-                            ))}
+                            {apporteurs.map(a => <option key={a.id} value={a.id}>{a.nom}{a.entreprise ? ` — ${a.entreprise}` : ""}</option>)}
                           </select>
                         </div>
                       )}
-
                       {palierActuelClient && lignes.length > 0 && totServiceApresRemise > 0 && (
                         <div className={cn("rounded-xl border px-3 py-2.5 text-sm transition-all",
                           remiseFidelitePct > 0 ? "bg-emerald-50 border-emerald-300" : "bg-amber-50 border-amber-300")}>
@@ -946,7 +901,6 @@ Cordialement`
                           {remiseFidelitePct > 0 && <p className="text-xs text-emerald-600 mt-1 pl-5">− {fmt(remiseFideliteEur)} appliqué sur la branche service</p>}
                         </div>
                       )}
-
                       <div>
                         <label className="label">Objet</label>
                         <input className="input" value={objet} onChange={e => setObjet(e.target.value)} placeholder="Ex : Pose borne IRVE" />
@@ -1077,18 +1031,10 @@ Cordialement`
 
             {tab === "apercu" && (
               <ApercuDocument
-                devis={devis}
-                lignes={lignes}
-                profil={profil}
-                sigData={sigData}
-                sigDate={sigDate}
-                totServiceBrut={totServiceBrut}
-                totMateriauBrut={totMateriauBrut}
-                remiseService={remiseService}
-                remiseMateriau={remiseMateriau}
-                remiseFideliteEur={remiseFideliteEur}
-                remiseFidelitePct={remiseFidelitePct}
-                totTTC={totTTC}
+                devis={devis} lignes={lignes} profil={profil} sigData={sigData} sigDate={sigDate}
+                totServiceBrut={totServiceBrut} totMateriauBrut={totMateriauBrut}
+                remiseService={remiseService} remiseMateriau={remiseMateriau}
+                remiseFideliteEur={remiseFideliteEur} remiseFidelitePct={remiseFidelitePct} totTTC={totTTC}
               />
             )}
 
