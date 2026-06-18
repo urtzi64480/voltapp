@@ -155,7 +155,12 @@ function ApercuDocument({
             <tbody>
               {lignes.map((l, i) => (
                 <tr key={i} className={cn("border-t border-ink-100", i % 2 === 1 ? "bg-ink-50/50" : "bg-white")}>
-                  <td className="px-4 py-2.5 text-ink-900">{l.nom}</td>
+                  <td className="px-4 py-2.5 text-ink-900">
+                    <span className="font-medium">{l.nom}</span>
+                    {l.description && (
+                      <p className="text-xs text-ink-400 italic mt-0.5">{l.description}</p>
+                    )}
+                  </td>
                   <td className="px-3 py-2.5 text-ink-500 text-xs hidden md:table-cell">
                     {l.type_branche === "service" ? "Service" : "Matériau"}
                   </td>
@@ -485,7 +490,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     setLignes(prev => {
       const ex = prev.findIndex(l => l.nom === p.nom && l.type_branche === p.type_branche);
       if (ex >= 0) { const n = [...prev]; n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 }; return n; }
-      return [...prev, { nom: p.nom, prix_unitaire: p.prix_unitaire, quantite: 1, unite: p.unite, type_branche: p.type_branche, prestation_id: p.id }];
+      return [...prev, { nom: p.nom, description: p.description, prix_unitaire: p.prix_unitaire, quantite: 1, unite: p.unite, type_branche: p.type_branche, prestation_id: p.id }];
     });
   }
 
@@ -569,8 +574,14 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     }).select().single();
     if (f && devis.lignes) {
       await supabase.from("facture_lignes").insert(devis.lignes.map((l: any, i: number) => ({
-        facture_id: f.id, nom: l.nom, quantite: l.quantite,
-        prix_unitaire: l.prix_unitaire, unite: l.unite, type_branche: l.type_branche, ordre: i,
+        facture_id: f.id,
+        nom: l.nom,
+        description: l.description ?? null,
+        quantite: l.quantite,
+        prix_unitaire: l.prix_unitaire,
+        unite: l.unite,
+        type_branche: l.type_branche,
+        ordre: i,
       })));
       await supabase.from("profil").update({ compteur_facture: (p?.compteur_facture ?? 0) + 1 }).eq("id", user.id);
       await supabase.from("devis").update({ statut: "signe" }).eq("id", devis.id);
@@ -600,7 +611,6 @@ Cordialement`
         window.open(`mailto:${email}?subject=${sujet}&body=${corps}`);
         window.location.href = `/factures/${f.id}`;
       } catch {
-        // Si l'envoi échoue, on redirige quand même
         window.location.href = `/factures/${f.id}`;
       }
     }
@@ -695,7 +705,11 @@ Cordialement`
                       <td className="py-2.5 pr-2">
                         <span className={cn("badge text-xs mr-1.5", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
                           {l.type_branche === "service" ? "S" : "M"}
-                        </span>{l.nom}
+                        </span>
+                        <span className="font-medium">{l.nom}</span>
+                        {l.description && (
+                          <p className="text-xs text-ink-400 italic mt-0.5 ml-6">{l.description}</p>
+                        )}
                       </td>
                       <td className="py-2.5 hidden md:table-cell text-ink-500 text-xs">{l.type_branche === "service" ? "Service" : "Matériau"}</td>
                       <td className="py-2.5 text-right">{l.quantite}</td>
