@@ -121,6 +121,7 @@ export interface FactureLigne {
   id?: string;
   facture_id?: string;
   nom: string;
+  description?: string;
   quantite: number;
   prix_unitaire: number;
   unite: string;
