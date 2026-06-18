@@ -29,8 +29,12 @@ async function loadLogoBase64(logoUrl?: string | null): Promise<string | null> {
   }
 }
 
-/** Formate la désignation : nom en gras + description en italique sous-jacente */
-function buildDesignationCell(nom: string, description?: string | null): string {
+/**
+ * Construit le contenu de la cellule Désignation.
+ * Si une description existe, on la concatène avec \n pour qu'autoTable
+ * calcule correctement la hauteur de ligne.
+ */
+function designationCell(nom: string, description?: string | null): string {
   if (!description || description.trim() === "") return nom;
   return `${nom}\n${description.trim()}`;
 }
@@ -105,11 +109,12 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
   }
 
   const lignes = devis.lignes ?? [];
+
   autoTable(doc, {
     startY: 80,
     head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
     body: lignes.map(l => [
-      buildDesignationCell(l.nom, (l as any).description),
+      designationCell(l.nom, l.description),
       l.type_branche === "service" ? "Service" : "Matériau",
       l.unite,
       l.quantite,
@@ -125,50 +130,54 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
       5: { cellWidth: 25, halign: "right" },
     },
     margin: { left: M, right: M },
-    // Affiche le nom en gras et la description en italique gris dans la cellule Désignation
+    // Style la première ligne (nom) en gras, la seconde (description) en italique gris
     didParseCell: (data) => {
-      if (data.column.index === 0 && data.section === "body") {
-        const rawLigne = lignes[data.row.index];
-        const desc = (rawLigne as any)?.description;
-        if (desc && desc.trim() !== "") {
-          data.cell.styles.fontStyle = "normal";
-        }
-      }
+      if (data.column.index !== 0 || data.section !== "body") return;
+      const rawLigne = lignes[data.row.index];
+      if (!rawLigne?.description || rawLigne.description.trim() === "") return;
+      // autoTable gère \n nativement : on ne peut pas styler par sous-ligne,
+      // mais on peut mettre la cellule en italic pour la description.
+      // Le nom sera en normal/bold selon la police par défaut.
+      // Pour distinguer nom vs description, on utilise willDrawCell pour réécrire manuellement.
     },
-    didDrawCell: (data) => {
-      if (data.column.index === 0 && data.section === "body") {
-        const rawLigne = lignes[data.row.index];
-        const desc = (rawLigne as any)?.description;
-        if (!desc || desc.trim() === "") return;
+    willDrawCell: (data) => {
+      if (data.column.index !== 0 || data.section !== "body") return;
+      const rawLigne = lignes[data.row.index];
+      if (!rawLigne?.description || rawLigne.description.trim() === "") return;
 
-        // Récupère les dimensions de la cellule
-        const { x, y, width } = data.cell;
-        const cellPadding = 2;
+      // On bloque le rendu autoTable de cette cellule et on redessine manuellement
+      // en séparant nom (bold) et description (italic gris)
+      const { x, y, width, height } = data.cell;
+      const pad = data.cell.padding as any;
+      const padLeft = typeof pad === "number" ? pad : (pad?.left ?? 2);
+      const padTop = typeof pad === "number" ? pad : (pad?.top ?? 2);
 
-        // Calcule la hauteur de la première ligne (nom) pour positionner la description en dessous
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(8.5);
-        const nomLines = doc.splitTextToSize(rawLigne.nom, width - cellPadding * 2);
-        const nomHeight = nomLines.length * 4.5;
+      // Fond de la cellule (reprend la couleur alternée)
+      const fillColor = data.row.index % 2 === 1 ? [250, 250, 249] : [255, 255, 255];
+      doc.setFillColor(fillColor[0], fillColor[1], fillColor[2]);
+      doc.rect(x, y, width, height, "F");
 
-        // Dessine le nom en gras (réécrit par-dessus)
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(8.5);
-        doc.setTextColor(44, 38, 34);
-        doc.text(nomLines, x + cellPadding, y + cellPadding + 3.5);
+      const textX = x + padLeft;
+      const lineHeight = 4.8;
 
-        // Dessine la description en italique gris sous le nom
-        doc.setFont("helvetica", "italic");
-        doc.setFontSize(7.5);
-        doc.setTextColor(120, 113, 108);
-        const descLines = doc.splitTextToSize(desc.trim(), width - cellPadding * 2);
-        doc.text(descLines, x + cellPadding, y + cellPadding + 3.5 + nomHeight);
+      // Nom en gras
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.setTextColor(44, 38, 34);
+      const nomLines = doc.splitTextToSize(rawLigne.nom, width - padLeft * 2);
+      doc.text(nomLines, textX, y + padTop + 3.5);
 
-        // Remet la couleur par défaut
-        doc.setTextColor(44, 38, 34);
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(8.5);
-      }
+      // Description en italic gris, juste dessous
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(7.5);
+      doc.setTextColor(120, 113, 108);
+      const descLines = doc.splitTextToSize(rawLigne.description.trim(), width - padLeft * 2);
+      doc.text(descLines, textX, y + padTop + 3.5 + nomLines.length * lineHeight);
+
+      // Remettre le style par défaut
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(44, 38, 34);
     },
   });
 
@@ -293,11 +302,12 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   }
 
   const lignes = facture.lignes ?? [];
+
   autoTable(doc, {
     startY: 78,
     head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
     body: lignes.map(l => [
-      buildDesignationCell(l.nom, (l as any).description),
+      designationCell(l.nom, l.description),
       l.type_branche === "service" ? "Service" : "Matériau",
       l.unite,
       l.quantite,
@@ -305,44 +315,46 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
       fmt(l.prix_unitaire * l.quantite),
     ]),
     headStyles: { fillColor: [28, 25, 23], textColor: [251, 191, 36], fontStyle: "bold", fontSize: 8 },
-    bodyStyles: { fontSize: 8.5 },
+    bodyStyles: { fontSize: 8.5, textColor: [44, 38, 34] },
     alternateRowStyles: { fillColor: [250, 250, 249] },
     columnStyles: {
-      0: { cellWidth: 65 },
+      0: { cellWidth: 65 }, 1: { cellWidth: 22 }, 2: { cellWidth: 18 },
+      3: { cellWidth: 12, halign: "center" }, 4: { cellWidth: 25, halign: "right" },
+      5: { cellWidth: 25, halign: "right" },
     },
     margin: { left: M, right: M },
-    // Affiche le nom en gras et la description en italique gris dans la cellule Désignation
-    didDrawCell: (data) => {
-      if (data.column.index === 0 && data.section === "body") {
-        const rawLigne = lignes[data.row.index];
-        const desc = (rawLigne as any)?.description;
-        if (!desc || desc.trim() === "") return;
+    willDrawCell: (data) => {
+      if (data.column.index !== 0 || data.section !== "body") return;
+      const rawLigne = lignes[data.row.index];
+      if (!rawLigne?.description || rawLigne.description.trim() === "") return;
 
-        const { x, y, width } = data.cell;
-        const cellPadding = 2;
+      const { x, y, width, height } = data.cell;
+      const pad = data.cell.padding as any;
+      const padLeft = typeof pad === "number" ? pad : (pad?.left ?? 2);
+      const padTop = typeof pad === "number" ? pad : (pad?.top ?? 2);
 
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(8.5);
-        const nomLines = doc.splitTextToSize(rawLigne.nom, width - cellPadding * 2);
-        const nomHeight = nomLines.length * 4.5;
+      const fillColor = data.row.index % 2 === 1 ? [250, 250, 249] : [255, 255, 255];
+      doc.setFillColor(fillColor[0], fillColor[1], fillColor[2]);
+      doc.rect(x, y, width, height, "F");
 
-        // Redessine le nom en gras
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(8.5);
-        doc.setTextColor(44, 38, 34);
-        doc.text(nomLines, x + cellPadding, y + cellPadding + 3.5);
+      const textX = x + padLeft;
+      const lineHeight = 4.8;
 
-        // Description en italique gris
-        doc.setFont("helvetica", "italic");
-        doc.setFontSize(7.5);
-        doc.setTextColor(120, 113, 108);
-        const descLines = doc.splitTextToSize(desc.trim(), width - cellPadding * 2);
-        doc.text(descLines, x + cellPadding, y + cellPadding + 3.5 + nomHeight);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.setTextColor(44, 38, 34);
+      const nomLines = doc.splitTextToSize(rawLigne.nom, width - padLeft * 2);
+      doc.text(nomLines, textX, y + padTop + 3.5);
 
-        doc.setTextColor(44, 38, 34);
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(8.5);
-      }
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(7.5);
+      doc.setTextColor(120, 113, 108);
+      const descLines = doc.splitTextToSize(rawLigne.description.trim(), width - padLeft * 2);
+      doc.text(descLines, textX, y + padTop + 3.5 + nomLines.length * lineHeight);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(44, 38, 34);
     },
   });
 
