@@ -109,7 +109,7 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
     startY: 80,
     head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
     body: lignes.map(l => [
-      designationCell(l.nom, l.description),
+      designationCell(l.nom, (l as any).kit_description),
       l.type_branche === "service" ? "Service" : "Matériau",
       l.unite,
       l.quantite,
@@ -140,9 +140,9 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
     { label: "Prestation service :", value: fmt(totSBrut) },
   ];
-  if (remiseS > 0.5) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
+  if ((devis as any).remise_valeur > 0 && remiseS > 0.5) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
   lignesTotal.push({ label: "Achat / revente :", value: fmt(totMBrut) });
-  if (remiseM > 0.5) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
+  if ((devis as any).remise_valeur > 0 && remiseM > 0.5) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
   if (remiseFideliteEur > 0.5) lignesTotal.push({ label: `Remise fidélité ${devis.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
   lignesTotal.push({ label: "Total net à payer :", value: fmt(devis.total_ttc), bold: true, color: [217, 119, 6] });
 
@@ -253,7 +253,7 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
     startY: 78,
     head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
     body: lignes.map(l => [
-      designationCell(l.nom, (l as any).description),
+      designationCell(l.nom, (l as any).kit_description),
       l.type_branche === "service" ? "Service" : "Matériau",
       l.unite,
       l.quantite,
@@ -286,9 +286,9 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
     { label: "Prestation service :", value: fmt(totSBrut) },
   ];
-  if (remiseS > 0.5) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
+  if ((facture as any).remise_valeur > 0 && remiseS > 0.5) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
   lignesTotal.push({ label: "Achat / revente :", value: fmt(totMBrut) });
-  if (remiseM > 0.5) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
+  if ((facture as any).remise_valeur > 0 && remiseM > 0.5) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
   if (remiseFideliteEur > 0.5) lignesTotal.push({ label: `Remise fidélité ${facture.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
   lignesTotal.push({ label: "Total TTC :", value: fmt(facture.total_ttc), bold: true, color: [251, 191, 36] });
   if (acomptes.length > 0) {
