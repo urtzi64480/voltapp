@@ -61,7 +61,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
       });
 
     Promise.all([
-      supabase.from("factures").select("*, client:clients(*), lignes:facture_lignes(*)").eq("id", id).single(),
+      supabase.from("factures").select("*, client:clients(*), lignes:facture_lignes(id, facture_id, nom, kit_description, quantite, prix_unitaire, unite, type_branche, ordre)").eq("id", id).single(),
       supabase.from("apporteurs").select("id,nom,entreprise").eq("actif", true).order("nom"),
       supabase.from("acomptes").select("*").eq("facture_id", id).order("date_versement"),
     ]).then(([{ data: f }, { data: ap }, { data: ac }]) => {
@@ -292,7 +292,6 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
           </button>
         </div>
 
-        {/* Bandeau retard */}
         {estEnRetard && (
           <div className="flex items-center gap-3 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm mb-4">
             <AlertTriangle size={16} className="shrink-0" />
@@ -358,7 +357,11 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
                   <td className="py-2.5 pr-2">
                     <span className={cn("badge text-xs mr-1.5", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
                       {l.type_branche === "service" ? "S" : "M"}
-                    </span>{l.nom}
+                    </span>
+                    <span className="font-medium">{l.nom}</span>
+                    {l.kit_description && (
+                      <p className="text-xs text-ink-400 italic mt-0.5 ml-6">{l.kit_description}</p>
+                    )}
                   </td>
                   <td className="py-2.5 text-right">{l.quantite}</td>
                   <td className="py-2.5 text-right text-ink-500">{fmt(l.prix_unitaire)}</td>
@@ -409,7 +412,6 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
           <p className="text-xs text-ink-300 mt-3">TVA non applicable — Art. 293 B du CGI</p>
         </div>
 
-        {/* Bloc acomptes */}
         {facture.statut !== "payee" && facture.statut !== "envoyee" && (
           <div className="card card-inner mb-4">
             <div className="flex items-center justify-between mb-3">
