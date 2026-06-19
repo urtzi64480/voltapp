@@ -694,9 +694,9 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
               </table>
               <div className="flex justify-end mt-4">
                 <div className="w-56 space-y-1 text-sm">
-                  <div className="flex justify-between text-ink-500"><span>Service</span><span>{fmt(viewTotSBrut)}</span></div>
+                  <div className="flex justify-between text-ink-500"><span>Service</span><span>{fmt(devis.total_service + viewRemiseS)}</span></div>
                   {viewRemiseS > 0.01 && <div className="flex justify-between text-red-500"><span>Remise service</span><span>− {fmt(viewRemiseS)}</span></div>}
-                  <div className="flex justify-between text-ink-500"><span>Matériaux</span><span>{fmt(viewTotMBrut)}</span></div>
+                  <div className="flex justify-between text-ink-500"><span>Matériaux</span><span>{fmt(devis.total_materiau + viewRemiseM)}</span></div>
                   {viewRemiseM > 0.01 && <div className="flex justify-between text-red-500"><span>Remise matériaux</span><span>− {fmt(viewRemiseM)}</span></div>}
                   {viewRemiseFideliteEur > 0.01 && (
                     <div className="flex justify-between text-emerald-600 font-medium">
