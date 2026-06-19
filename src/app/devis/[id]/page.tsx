@@ -351,21 +351,16 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   }
   function stopDraw() { drawing.current = false; }
 
-  useEffect(() => {
-    if (viewSigMode !== "direct" || viewSigInputMode !== "draw") return;
-    const init = () => {
-      if (!viewCanvasRef.current) return;
-      const c = viewCanvasRef.current;
-      c.width = c.offsetWidth * window.devicePixelRatio;
-      c.height = c.offsetHeight * window.devicePixelRatio;
-      const ctx = c.getContext("2d")!;
-      ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-      ctx.strokeStyle = "#1C1917"; ctx.lineWidth = 2.5; ctx.lineCap = "round"; ctx.lineJoin = "round";
-      viewSigCtx.current = ctx;
-    };
-    const t = setTimeout(init, 50);
-    return () => clearTimeout(t);
-  }, [viewSigMode, viewSigInputMode]);
+  const initViewCanvas = (c: HTMLCanvasElement | null) => {
+    (viewCanvasRef as any).current = c;
+    if (!c) return;
+    c.width = c.offsetWidth * window.devicePixelRatio;
+    c.height = c.offsetHeight * window.devicePixelRatio;
+    const ctx = c.getContext("2d")!;
+    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    ctx.strokeStyle = "#1C1917"; ctx.lineWidth = 2.5; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    viewSigCtx.current = ctx;
+  };
 
   function getViewPos(e: any) {
     const c = viewCanvasRef.current!; const r = c.getBoundingClientRect();
@@ -791,7 +786,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                         </div>
                         {viewSigInputMode === "draw" && (
                           <>
-                            <canvas ref={viewCanvasRef}
+                            <canvas ref={initViewCanvas}
                               className="w-full border-2 border-dashed border-ink-200 rounded-2xl bg-white cursor-crosshair touch-none"
                               style={{ height: "160px" }}
                               onMouseDown={startViewDraw} onMouseMove={moveViewDraw} onMouseUp={stopViewDraw} onMouseLeave={stopViewDraw}
