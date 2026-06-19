@@ -34,8 +34,6 @@ interface Apporteur {
 }
 
 type PrestationExt = Prestation & { est_kit?: boolean; kit_description?: string | null };
-
-// kit_ratio_service : ratio [0-1] de la part service dans le kit (calculé à l'ajout)
 type DevisLigneExt = DevisLigne & { kit_description?: string | null; kit_ratio_service?: number | null };
 
 function calcRemise(total: number, type: RemiseType, val: string): number {
@@ -182,11 +180,11 @@ function NouveauDevisPage() {
           prix_unitaire: totalComposants,
           quantite: 1,
           unite: "forfait",
-          type_branche: ratioService >= 0.5 ? "service" : "materiau",
+          type_branche: (ratioService >= 0.5 ? "service" : "materiau") as "service" | "materiau",
           prestation_id: p.id,
           kit_description: p.kit_description ?? null,
           kit_ratio_service: ratioService,
-        }];
+        } as DevisLigneExt];
       });
       return;
     }
@@ -194,18 +192,25 @@ function NouveauDevisPage() {
     setLignes(prev => {
       const ex = prev.findIndex(l => l.nom === p.nom && l.type_branche === p.type_branche && !l.kit_description);
       if (ex >= 0) { const n = [...prev]; n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 }; return n; }
-      return [...prev, { nom: p.nom, prix_unitaire: p.prix_unitaire, quantite: 1, unite: p.unite, type_branche: p.type_branche, prestation_id: p.id }];
+      return [...prev, {
+        nom: p.nom,
+        kit_description: p.description ?? null,
+        prix_unitaire: p.prix_unitaire,
+        quantite: 1,
+        unite: p.unite,
+        type_branche: p.type_branche,
+        prestation_id: p.id,
+      } as DevisLigneExt];
     });
   }
 
   function addLibre() {
     if (!libre.nom.trim() || !libre.prix_unitaire) return;
-    setLignes(prev => [...prev, { nom: libre.nom, prix_unitaire: parseFloat(libre.prix_unitaire), quantite: 1, unite: libre.unite, type_branche: libre.type_branche as any }]);
+    setLignes(prev => [...prev, { nom: libre.nom, prix_unitaire: parseFloat(libre.prix_unitaire), quantite: 1, unite: libre.unite, type_branche: libre.type_branche as any } as DevisLigneExt]);
     setLibre({ nom: "", prix_unitaire: "", unite: "forfait", type_branche: "service" });
     setShowLibre(false);
   }
 
-  // Calcul ventilé : les lignes kit utilisent kit_ratio_service pour ventiler
   const totServiceBrut = lignes.reduce((a, l) => {
     const total = l.prix_unitaire * l.quantite;
     if (l.kit_ratio_service != null) return a + total * l.kit_ratio_service;
@@ -271,17 +276,17 @@ function NouveauDevisPage() {
     if (lignes.length > 0) {
       await supabase.from("devis_lignes").insert(
         lignes.map((l, i) => ({
-  devis_id: dv.id,
-  ordre: i,
-  nom: l.nom,
-  kit_description: l.kit_description ?? null,
-  kit_ratio_service: l.kit_ratio_service ?? null,
-  quantite: l.quantite,
-  prix_unitaire: l.prix_unitaire,
-  unite: l.unite,
-  type_branche: l.type_branche,
-  prestation_id: l.prestation_id ?? null,
-}))
+          devis_id: dv.id,
+          ordre: i,
+          nom: l.nom,
+          kit_description: l.kit_description ?? null,
+          kit_ratio_service: l.kit_ratio_service ?? null,
+          quantite: l.quantite,
+          prix_unitaire: l.prix_unitaire,
+          unite: l.unite,
+          type_branche: l.type_branche,
+          prestation_id: l.prestation_id ?? null,
+        }))
       );
     }
     await supabase.from("profil").update({ compteur_devis: (profil?.compteur_devis ?? 0) + 1 }).eq("id", user.id);
@@ -349,8 +354,8 @@ function NouveauDevisPage() {
                     {selectedClient && (
                       <div className="mt-2 text-xs text-ink-500 space-y-0.5">
                         {selectedClient.adresse && <p>📍 {selectedClient.adresse} {selectedClient.ville}</p>}
-                        {selectedClient.tableau_marque && <p>⚡ Tableau : {selectedClient.tableau_marque}</p>}
-                        {selectedClient.code_acces && <p>🔑 {selectedClient.code_acces}</p>}
+                        {(selectedClient as any).tableau_marque && <p>⚡ Tableau : {(selectedClient as any).tableau_marque}</p>}
+                        {(selectedClient as any).code_acces && <p>🔑 {(selectedClient as any).code_acces}</p>}
                       </div>
                     )}
                   </div>
@@ -368,10 +373,8 @@ function NouveauDevisPage() {
                   )}
 
                   {palierActuelClient && lignes.length > 0 && totServiceApresRemise > 0 && (
-                    <div className={cn(
-                      "rounded-xl border px-3 py-2.5 text-sm transition-all",
-                      remiseFidelitePct > 0 ? "bg-emerald-50 border-emerald-300" : "bg-amber-50 border-amber-300"
-                    )}>
+                    <div className={cn("rounded-xl border px-3 py-2.5 text-sm transition-all",
+                      remiseFidelitePct > 0 ? "bg-emerald-50 border-emerald-300" : "bg-amber-50 border-amber-300")}>
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <Gift size={14} className={remiseFidelitePct > 0 ? "text-emerald-600" : "text-amber-600"} />
