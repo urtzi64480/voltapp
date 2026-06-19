@@ -108,7 +108,7 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
   const remiseFideliteEur = devis.remise_fidelite_pct
     ? Math.round(devis.total_service / (1 - devis.remise_fidelite_pct / 100) * devis.remise_fidelite_pct / 100 * 100) / 100
     : 0;
-  const hasRemise = (devis as any).remise_valeur > 0;
+  const hasRemise = (devis as any).remise_type != null && (devis as any).remise_valeur > 0;
   const remiseValeur = hasRemise ? (devis as any).remise_valeur as number : 0;
   const totNet = devis.total_service + devis.total_materiau;
   const totServiceBrut = hasRemise
