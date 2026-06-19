@@ -270,10 +270,18 @@ function NouveauDevisPage() {
     if (error || !dv) { alert("Erreur : " + error?.message); setSaving(false); return; }
     if (lignes.length > 0) {
       await supabase.from("devis_lignes").insert(
-        lignes.map((l, i) => {
-          const { kit_description, kit_ratio_service, ...rest } = l;
-          return { ...rest, devis_id: dv.id, ordre: i };
-        })
+        lignes.map((l, i) => ({
+  devis_id: dv.id,
+  ordre: i,
+  nom: l.nom,
+  kit_description: l.kit_description ?? null,
+  kit_ratio_service: l.kit_ratio_service ?? null,
+  quantite: l.quantite,
+  prix_unitaire: l.prix_unitaire,
+  unite: l.unite,
+  type_branche: l.type_branche,
+  prestation_id: l.prestation_id ?? null,
+}))
       );
     }
     await supabase.from("profil").update({ compteur_devis: (profil?.compteur_devis ?? 0) + 1 }).eq("id", user.id);
