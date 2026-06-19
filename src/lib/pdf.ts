@@ -104,28 +104,22 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
 
   const finalY = (doc as any).lastAutoTable.finalY + 6;
 
-  // Totaux lus depuis la base — jamais recalculés depuis les lignes
+  const totSBrut = lignes.filter(l => l.type_branche === "service").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
+  const totMBrut = lignes.filter(l => l.type_branche === "materiau").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
   const remiseFideliteEur = devis.remise_fidelite_pct
     ? Math.round(devis.total_service / (1 - devis.remise_fidelite_pct / 100) * devis.remise_fidelite_pct / 100 * 100) / 100
     : 0;
-  const hasRemise = (devis as any).remise_type != null && (devis as any).remise_valeur > 0;
-  const remiseValeur = hasRemise ? (devis as any).remise_valeur as number : 0;
-  const totNet = devis.total_service + devis.total_materiau;
-  const totServiceBrut = hasRemise
-    ? Math.round((devis.total_service + remiseFideliteEur + remiseValeur * (totNet > 0 ? (devis.total_service + remiseFideliteEur) / (totNet + remiseValeur) : 0.5)) * 100) / 100
-    : Math.round((devis.total_service + remiseFideliteEur) * 100) / 100;
-  const totMateriauBrut = hasRemise
-    ? Math.round((devis.total_materiau + remiseValeur * (totNet > 0 ? devis.total_materiau / (totNet + remiseValeur) : 0.5)) * 100) / 100
-    : Math.round(devis.total_materiau * 100) / 100;
-  const remiseS = hasRemise ? Math.round((totServiceBrut - devis.total_service - remiseFideliteEur) * 100) / 100 : 0;
-  const remiseM = hasRemise ? Math.round((totMateriauBrut - devis.total_materiau) * 100) / 100 : 0;
+  const remiseS = Math.round((totSBrut - devis.total_service - remiseFideliteEur) * 100) / 100;
+  const remiseM = Math.round((totMBrut - devis.total_materiau) * 100) / 100;
+  // remise_type est null quand pas de remise intentionnelle — la ventilation kit stocke remise_valeur sans remise_type
+  const hasRemiseIntentionnelle = (devis as any).remise_type != null;
 
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
-    { label: "Prestation service :", value: fmt(totServiceBrut) },
+    { label: "Prestation service :", value: fmt(totSBrut) },
   ];
-  if (remiseS > 0.01) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
-  lignesTotal.push({ label: "Achat / revente :", value: fmt(totMateriauBrut) });
-  if (remiseM > 0.01) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
+  if (hasRemiseIntentionnelle && remiseS > 0.5) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
+  lignesTotal.push({ label: "Achat / revente :", value: fmt(totMBrut) });
+  if (hasRemiseIntentionnelle && remiseM > 0.5) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
   if (remiseFideliteEur > 0.01) lignesTotal.push({ label: `Remise fidélité ${devis.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
   lignesTotal.push({ label: "Total net à payer :", value: fmt(devis.total_ttc), bold: true, color: [217, 119, 6] });
 
@@ -227,19 +221,22 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
 
   const fy = (doc as any).lastAutoTable.finalY + 6;
 
-  // Totaux lus depuis la base — jamais recalculés depuis les lignes
+  const totSBrut = lignes.filter(l => l.type_branche === "service").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
+  const totMBrut = lignes.filter(l => l.type_branche === "materiau").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
   const remiseFideliteEur = facture.remise_fidelite_pct
     ? Math.round(facture.total_service / (1 - facture.remise_fidelite_pct / 100) * facture.remise_fidelite_pct / 100 * 100) / 100
     : 0;
-  const totServiceNet = Math.round(facture.total_service * 100) / 100;
-  const totMateriauNet = Math.round(facture.total_materiau * 100) / 100;
+  const remiseS = Math.round((totSBrut - facture.total_service - remiseFideliteEur) * 100) / 100;
+  const remiseM = Math.round((totMBrut - facture.total_materiau) * 100) / 100;
   const totalAcomptes = acomptes.reduce((a, ac) => a + ac.montant, 0);
   const soldeRestant = facture.total_ttc - totalAcomptes;
 
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
-    { label: "Prestation service :", value: fmt(totServiceNet) },
-    { label: "Achat / revente :", value: fmt(totMateriauNet) },
+    { label: "Prestation service :", value: fmt(totSBrut) },
   ];
+  if (remiseS > 0.5) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
+  lignesTotal.push({ label: "Achat / revente :", value: fmt(totMBrut) });
+  if (remiseM > 0.5) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
   if (remiseFideliteEur > 0.01) lignesTotal.push({ label: `Remise fidélité ${facture.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
   lignesTotal.push({ label: "Total TTC :", value: fmt(facture.total_ttc), bold: true, color: [251, 191, 36] });
   if (acomptes.length > 0) {
