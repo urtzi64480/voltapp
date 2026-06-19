@@ -112,7 +112,7 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
   const remiseS = Math.round((totSBrut - devis.total_service - remiseFideliteEur) * 100) / 100;
   const remiseM = Math.round((totMBrut - devis.total_materiau) * 100) / 100;
   // remise_type est null quand pas de remise intentionnelle — la ventilation kit stocke remise_valeur sans remise_type
-  const hasRemiseIntentionnelle = !!(devis as any).remise_type && (devis as any).remise_type !== "null";
+  const hasRemiseIntentionnelle = (devis as any).remise_valeur > 0;
 
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
     { label: "Prestation service :", value: fmt(totSBrut) },
