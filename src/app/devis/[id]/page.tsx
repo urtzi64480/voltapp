@@ -504,6 +504,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       statut: sigData ? "signe" : devis.statut,
     }).eq("id", id);
     if (lignes.length > 0) {
+  console.log("LIGNES A SAUVEGARDER:", JSON.stringify(lignes.map(l => ({ nom: l.nom, kit_description: (l as any).kit_description, description: (l as any).description }))));
       await supabase.from("devis_lignes").insert(lignes.map((l, i) => ({
         devis_id: id,
         ordre: i,
