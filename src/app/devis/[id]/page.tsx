@@ -605,8 +605,8 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const viewLignes = (devis.lignes ?? []) as any[];
   const viewTotSBrut = viewLignes.filter((l: any) => l.type_branche === "service").reduce((a: number, l: any) => a + l.prix_unitaire * l.quantite, 0);
   const viewTotMBrut = viewLignes.filter((l: any) => l.type_branche === "materiau").reduce((a: number, l: any) => a + l.prix_unitaire * l.quantite, 0);
-  const viewRemiseS = viewTotSBrut - devis.total_service - (devis.remise_fidelite_pct ? viewTotSBrut * devis.remise_fidelite_pct / 100 : 0);
-  const viewRemiseM = viewTotMBrut - devis.total_materiau;
+  const viewRemiseS = (devis as any).remise_valeur > 0.01 ? Math.max(0, Math.round((viewTotSBrut - devis.total_service - (devis.remise_fidelite_pct ? viewTotSBrut * devis.remise_fidelite_pct / 100 : 0)) * 100) / 100) : 0;
+  const viewRemiseM = (devis as any).remise_valeur > 0.01 ? Math.max(0, Math.round((viewTotMBrut - devis.total_materiau) * 100) / 100) : 0;
   const viewRemiseFideliteEur = devis.remise_fidelite_pct
     ? Math.round((viewTotSBrut - Math.max(0, viewRemiseS)) * devis.remise_fidelite_pct / 100 * 100) / 100 : 0;
   const viewHasRemise = viewRemiseS > 0.01 || viewRemiseM > 0.01;
