@@ -43,9 +43,7 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
   const M = 18;
 
   const logoBase64 = await loadLogoBase64((profil as any).logo_url);
-
-  doc.setFillColor(28, 25, 23);
-  doc.rect(0, 0, W, 38, "F");
+  doc.setFillColor(28, 25, 23); doc.rect(0, 0, W, 38, "F");
   if (logoBase64) doc.addImage(logoBase64, "PNG", M, 6, 24, 24);
 
   const textX = logoBase64 ? M + 28 : M;
@@ -106,25 +104,24 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
 
   const finalY = (doc as any).lastAutoTable.finalY + 6;
 
-  // Utilise les totaux stockés en base — pas de recalcul depuis les lignes
-  // pour éviter les remises fantômes dues aux kits avec kit_ratio_service
-  const totSBrut = lignes.filter(l => l.type_branche === "service").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
-  const totMBrut = lignes.filter(l => l.type_branche === "materiau").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
+  // Totaux depuis la base uniquement — pas de recalcul depuis les lignes
+  // (les kits sont ventilés via kit_ratio_service, type_branche ne reflète pas la réalité fiscale)
   const remiseFideliteEur = devis.remise_fidelite_pct
     ? Math.round(devis.total_service / (1 - devis.remise_fidelite_pct / 100) * devis.remise_fidelite_pct / 100 * 100) / 100
     : 0;
-  // Remise réelle = écart entre brut recalculé et total stocké, seuil 0.5€ pour éviter flottants
-  const remiseS = Math.round((totSBrut - devis.total_service - remiseFideliteEur) * 100) / 100;
-  const remiseM = Math.round((totMBrut - devis.total_materiau) * 100) / 100;
-  const hasRemiseS = remiseS > 0.5 && (devis as any).remise_valeur > 0;
-  const hasRemiseM = remiseM > 0.5 && (devis as any).remise_valeur > 0;
+  const totServiceNet = Math.round(devis.total_service * 100) / 100;
+  const totMateriauNet = Math.round(devis.total_materiau * 100) / 100;
+  const totServiceBrut = Math.round((totServiceNet + remiseFideliteEur + ((devis as any).remise_valeur > 0 ? (devis.remise_valeur ?? 0) * (totServiceNet / (totServiceNet + totMateriauNet || 1)) : 0)) * 100) / 100;
+  const totMateriauBrut = Math.round((totMateriauNet + ((devis as any).remise_valeur > 0 ? (devis.remise_valeur ?? 0) * (totMateriauNet / (totServiceNet + totMateriauNet || 1)) : 0)) * 100) / 100;
+  const remiseS = Math.round((totServiceBrut - totServiceNet - remiseFideliteEur) * 100) / 100;
+  const remiseM = Math.round((totMateriauBrut - totMateriauNet) * 100) / 100;
 
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
-    { label: "Prestation service :", value: fmt(totSBrut) },
+    { label: "Prestation service :", value: fmt(totServiceBrut) },
   ];
-  if (hasRemiseS) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
-  lignesTotal.push({ label: "Achat / revente :", value: fmt(totMBrut) });
-  if (hasRemiseM) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
+  if (remiseS > 0.5) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
+  lignesTotal.push({ label: "Achat / revente :", value: fmt(totMateriauBrut) });
+  if (remiseM > 0.5) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
   if (remiseFideliteEur > 0.5) lignesTotal.push({ label: `Remise fidélité ${devis.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
   lignesTotal.push({ label: "Total net à payer :", value: fmt(devis.total_ttc), bold: true, color: [217, 119, 6] });
 
@@ -172,7 +169,6 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   const M = 18;
 
   const logoBase64 = await loadLogoBase64((profil as any).logo_url);
-
   doc.setFillColor(28, 25, 23); doc.rect(0, 0, W, 38, "F");
   if (logoBase64) doc.addImage(logoBase64, "PNG", M, 6, 24, 24);
 
@@ -227,31 +223,20 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
 
   const fy = (doc as any).lastAutoTable.finalY + 6;
 
+  // Totaux depuis la base uniquement
   const remiseFideliteEur = facture.remise_fidelite_pct
     ? Math.round(facture.total_service / (1 - facture.remise_fidelite_pct / 100) * facture.remise_fidelite_pct / 100 * 100) / 100
     : 0;
-
-  // Remise = écart entre total_service/materiau stockés et total_ttc
-  // On ne recalcule PAS depuis les lignes pour éviter les fantômes de kits
-  const totServiceNet = facture.total_service;
-  const totMateriauNet = facture.total_materiau;
-  const totSBrut = lignes.filter(l => l.type_branche === "service").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
-  const totMBrut = lignes.filter(l => l.type_branche === "materiau").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
-  const remiseS = Math.round((totSBrut - totServiceNet - remiseFideliteEur) * 100) / 100;
-  const remiseM = Math.round((totMBrut - totMateriauNet) * 100) / 100;
-  // Remise affichée seulement si > 0.5€ ET écart significatif sur les totaux bruts
-  const hasRemiseS = remiseS > 0.5 && totSBrut > totServiceNet + 0.5;
-  const hasRemiseM = remiseM > 0.5 && totMBrut > totMateriauNet + 0.5;
-
+  const totServiceNet = Math.round(facture.total_service * 100) / 100;
+  const totMateriauNet = Math.round(facture.total_materiau * 100) / 100;
   const totalAcomptes = acomptes.reduce((a, ac) => a + ac.montant, 0);
   const soldeRestant = facture.total_ttc - totalAcomptes;
 
+  // Pas de remise sur facture (la facture copie les totaux nets du devis)
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
-    { label: "Prestation service :", value: fmt(totSBrut) },
+    { label: "Prestation service :", value: fmt(totServiceNet) },
+    { label: "Achat / revente :", value: fmt(totMateriauNet) },
   ];
-  if (hasRemiseS) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
-  lignesTotal.push({ label: "Achat / revente :", value: fmt(totMBrut) });
-  if (hasRemiseM) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
   if (remiseFideliteEur > 0.5) lignesTotal.push({ label: `Remise fidélité ${facture.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
   lignesTotal.push({ label: "Total TTC :", value: fmt(facture.total_ttc), bold: true, color: [251, 191, 36] });
   if (acomptes.length > 0) {
