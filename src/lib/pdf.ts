@@ -124,10 +124,10 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
   const remiseM = remiseValeur > 0 ? Math.round((totMateriauBrut - totMateriau) * 100) / 100 : 0;
 
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
-    { label: "Prestation service :", value: fmt(totServiceBrut) },
+    { label: "Prestation service :", value: fmt(totService) },
   ];
   if (remiseS > 0.01) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
-  lignesTotal.push({ label: "Achat / revente :", value: fmt(totMateriauBrut) });
+  lignesTotal.push({ label: "Achat / revente :", value: fmt(totMateriau) });
   if (remiseM > 0.01) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
   if (remiseFideliteEur > 0.01) lignesTotal.push({ label: `Remise fidélité ${devis.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
   lignesTotal.push({ label: "Total net à payer :", value: fmt(devis.total_ttc), bold: true, color: [217, 119, 6] });
