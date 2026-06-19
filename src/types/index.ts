@@ -84,6 +84,9 @@ export interface DevisLigne {
   prestation_id?: string;
   nom: string;
   description?: string;
+  kit_description?: string;
+  kit_groupe?: string;
+  kit_ratio_service?: number;
   quantite: number;
   prix_unitaire: number;
   unite: string;
@@ -122,6 +125,7 @@ export interface FactureLigne {
   facture_id?: string;
   nom: string;
   description?: string;
+  kit_description?: string;
   quantite: number;
   prix_unitaire: number;
   unite: string;
