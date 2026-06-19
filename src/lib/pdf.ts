@@ -30,6 +30,7 @@ async function loadLogoBase64(logoUrl?: string | null): Promise<string | null> {
 }
 
 function designationCell(nom: string, description?: string | null): string {
+  if (!nom) return "";
   if (!description || description.trim() === "") return nom;
   return `${nom}\n${description.trim()}`;
 }
@@ -109,7 +110,7 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
     startY: 80,
     head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
     body: lignes.map(l => [
-      designationCell(l.nom, (l as any).kit_description),
+      designationCell(l.nom, l.kit_description),
       l.type_branche === "service" ? "Service" : "Matériau",
       l.unite,
       l.quantite,
@@ -253,7 +254,7 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
     startY: 78,
     head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
     body: lignes.map(l => [
-      designationCell(l.nom, (l as any).kit_description),
+      designationCell(l.nom, l.kit_description),
       l.type_branche === "service" ? "Service" : "Matériau",
       l.unite,
       l.quantite,
@@ -278,6 +279,7 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   const remiseFideliteEur = facture.remise_fidelite_pct
     ? Math.round(facture.total_service / (1 - facture.remise_fidelite_pct / 100) * facture.remise_fidelite_pct / 100 * 100) / 100
     : 0;
+  // Remise uniquement si l'écart est significatif (> 0.5€) — évite les fantômes de flottants
   const remiseS = Math.round((totSBrut - facture.total_service - remiseFideliteEur) * 100) / 100;
   const remiseM = Math.round((totMBrut - facture.total_materiau) * 100) / 100;
   const totalAcomptes = acomptes.reduce((a, ac) => a + ac.montant, 0);
@@ -286,9 +288,10 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
     { label: "Prestation service :", value: fmt(totSBrut) },
   ];
-  if ((facture as any).remise_valeur > 0 && remiseS > 0.5) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
+  // Remise affichée uniquement si elle est intentionnelle : écart > 0.5€ ET total_service != totSBrut
+  if (remiseS > 0.5 && Math.abs(facture.total_service - totSBrut) > 0.5) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
   lignesTotal.push({ label: "Achat / revente :", value: fmt(totMBrut) });
-  if ((facture as any).remise_valeur > 0 && remiseM > 0.5) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
+  if (remiseM > 0.5 && Math.abs(facture.total_materiau - totMBrut) > 0.5) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
   if (remiseFideliteEur > 0.5) lignesTotal.push({ label: `Remise fidélité ${facture.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
   lignesTotal.push({ label: "Total TTC :", value: fmt(facture.total_ttc), bold: true, color: [251, 191, 36] });
   if (acomptes.length > 0) {
