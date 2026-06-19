@@ -242,8 +242,8 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
   const lignesMBrut = lignes.filter((l: any) => l.type_branche === "materiau").reduce((a: number, l: any) => a + l.prix_unitaire * l.quantite, 0);
   const remiseFideliteEur = facture.remise_fidelite_pct
     ? Math.round(facture.total_service / (1 - facture.remise_fidelite_pct / 100) * facture.remise_fidelite_pct / 100 * 100) / 100 : 0;
-  const remiseS = lignesSBrut - facture.total_service - remiseFideliteEur;
-  const remiseM = lignesMBrut - facture.total_materiau;
+  const remiseS = (facture as any).remise_valeur > 0.01 ? Math.max(0, Math.round((lignesSBrut - facture.total_service - remiseFideliteEur) * 100) / 100) : 0;
+  const remiseM = (facture as any).remise_valeur > 0.01 ? Math.max(0, Math.round((lignesMBrut - facture.total_materiau) * 100) / 100) : 0;
   const hasRemise = remiseS > 0.01 || remiseM > 0.01;
 
   const retardJours = facture.date_echeance ? joursRetard(facture.date_echeance) : 0;
@@ -373,9 +373,9 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
 
           <div className="flex justify-end mt-4">
             <div className="w-64 space-y-1 text-sm">
-              <div className="flex justify-between text-ink-500"><span>Service</span><span>{fmt(lignesSBrut)}</span></div>
+              <div className="flex justify-between text-ink-500"><span>Service</span><span>{fmt(facture.total_service + remiseS)}</span></div>
               {remiseS > 0.01 && <div className="flex justify-between text-red-500"><span>Remise service</span><span>− {fmt(remiseS)}</span></div>}
-              <div className="flex justify-between text-ink-500"><span>Matériaux</span><span>{fmt(lignesMBrut)}</span></div>
+              <div className="flex justify-between text-ink-500"><span>Matériaux</span><span>{fmt(facture.total_materiau + remiseM)}</span></div>
               {remiseM > 0.01 && <div className="flex justify-between text-red-500"><span>Remise matériaux</span><span>− {fmt(remiseM)}</span></div>}
               {remiseFideliteEur > 0.01 && (
                 <div className="flex justify-between text-emerald-600 font-medium">
