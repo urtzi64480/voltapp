@@ -46,19 +46,12 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
 
   doc.setFillColor(28, 25, 23);
   doc.rect(0, 0, W, 38, "F");
-
-  if (logoBase64) {
-    doc.addImage(logoBase64, "PNG", M, 6, 24, 24);
-  }
+  if (logoBase64) doc.addImage(logoBase64, "PNG", M, 6, 24, 24);
 
   const textX = logoBase64 ? M + 28 : M;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(20);
-  doc.setTextColor(251, 191, 36);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.setTextColor(251, 191, 36);
   doc.text("DEVIS", textX, 16);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
-  doc.setTextColor(200, 200, 190);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(200, 200, 190);
   doc.text(`N° ${devis.numero}`, textX, 23);
   doc.text(`Émis le ${fmtDate(devis.date_emission)}${devis.date_validite ? ` · Valable jusqu'au ${fmtDate(devis.date_validite)}` : ""}`, textX, 28);
 
@@ -76,82 +69,68 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
     doc.text(l, W - M, 13 + i * 5.5, { align: "right" });
   });
 
-  doc.setFillColor(245, 245, 244);
-  doc.rect(M, 44, 80, 28, "F");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(7);
-  doc.setTextColor(120, 113, 108);
+  doc.setFillColor(245, 245, 244); doc.rect(M, 44, 80, 28, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(120, 113, 108);
   doc.text("CLIENT", M + 4, 51);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(28, 25, 23);
-  const clientNom = devis.client ? `${devis.client.prenom ?? ""} ${devis.client.nom}`.trim() : "—";
-  doc.text(clientNom, M + 4, 58);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
-  doc.setTextColor(87, 83, 78);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(28, 25, 23);
+  doc.text(devis.client ? `${devis.client.prenom ?? ""} ${devis.client.nom}`.trim() : "—", M + 4, 58);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(87, 83, 78);
   if (devis.client?.adresse) doc.text(devis.client.adresse, M + 4, 64);
   if (devis.client?.telephone) doc.text(devis.client.telephone, M + 4, 69);
 
   if (devis.objet) {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7);
-    doc.setTextColor(120, 113, 108);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(120, 113, 108);
     doc.text("OBJET", W / 2 + 4, 51);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(28, 25, 23);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(28, 25, 23);
     doc.text(devis.objet, W / 2 + 4, 58);
   }
 
   const lignes = devis.lignes ?? [];
-
   autoTable(doc, {
     startY: 80,
     head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
     body: lignes.map(l => [
       designationCell(l.nom, l.kit_description),
       l.type_branche === "service" ? "Service" : "Matériau",
-      l.unite,
-      l.quantite,
-      fmt(l.prix_unitaire),
-      fmt(l.prix_unitaire * l.quantite),
+      l.unite, l.quantite, fmt(l.prix_unitaire), fmt(l.prix_unitaire * l.quantite),
     ]),
     headStyles: { fillColor: [28, 25, 23], textColor: [251, 191, 36], fontStyle: "bold", fontSize: 8 },
     bodyStyles: { fontSize: 8.5, textColor: [44, 38, 34] },
     alternateRowStyles: { fillColor: [250, 250, 249] },
     columnStyles: {
       0: { cellWidth: 65 }, 1: { cellWidth: 22 }, 2: { cellWidth: 18 },
-      3: { cellWidth: 12, halign: "center" }, 4: { cellWidth: 25, halign: "right" },
-      5: { cellWidth: 25, halign: "right" },
+      3: { cellWidth: 12, halign: "center" }, 4: { cellWidth: 25, halign: "right" }, 5: { cellWidth: 25, halign: "right" },
     },
     margin: { left: M, right: M },
   });
 
   const finalY = (doc as any).lastAutoTable.finalY + 6;
 
+  // Utilise les totaux stockés en base — pas de recalcul depuis les lignes
+  // pour éviter les remises fantômes dues aux kits avec kit_ratio_service
   const totSBrut = lignes.filter(l => l.type_branche === "service").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
   const totMBrut = lignes.filter(l => l.type_branche === "materiau").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
   const remiseFideliteEur = devis.remise_fidelite_pct
     ? Math.round(devis.total_service / (1 - devis.remise_fidelite_pct / 100) * devis.remise_fidelite_pct / 100 * 100) / 100
     : 0;
+  // Remise réelle = écart entre brut recalculé et total stocké, seuil 0.5€ pour éviter flottants
   const remiseS = Math.round((totSBrut - devis.total_service - remiseFideliteEur) * 100) / 100;
   const remiseM = Math.round((totMBrut - devis.total_materiau) * 100) / 100;
+  const hasRemiseS = remiseS > 0.5 && (devis as any).remise_valeur > 0;
+  const hasRemiseM = remiseM > 0.5 && (devis as any).remise_valeur > 0;
 
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
     { label: "Prestation service :", value: fmt(totSBrut) },
   ];
-  if ((devis as any).remise_valeur > 0 && remiseS > 0.5) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
+  if (hasRemiseS) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
   lignesTotal.push({ label: "Achat / revente :", value: fmt(totMBrut) });
-  if ((devis as any).remise_valeur > 0 && remiseM > 0.5) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
+  if (hasRemiseM) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
   if (remiseFideliteEur > 0.5) lignesTotal.push({ label: `Remise fidélité ${devis.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
   lignesTotal.push({ label: "Total net à payer :", value: fmt(devis.total_ttc), bold: true, color: [217, 119, 6] });
 
   const boxH = 8 + lignesTotal.length * 7;
   const bx = W - M - 72;
-  doc.setFillColor(245, 245, 244);
-  doc.rect(bx, finalY, 72, boxH, "F");
-
+  doc.setFillColor(245, 245, 244); doc.rect(bx, finalY, 72, boxH, "F");
   lignesTotal.forEach((row, i) => {
     const y = finalY + 9 + i * 7;
     doc.setFont("helvetica", row.bold ? "bold" : "normal");
@@ -162,18 +141,13 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
     doc.text(row.value, bx + 68, y, { align: "right" });
   });
 
-  doc.setFont("helvetica", "italic");
-  doc.setFontSize(7.5);
-  doc.setTextColor(163, 163, 163);
+  doc.setFont("helvetica", "italic"); doc.setFontSize(7.5); doc.setTextColor(163, 163, 163);
   doc.text(profil.mention_tva ?? "TVA non applicable — Art. 293 B du CGI", M, finalY + 16);
 
   const sigY = finalY + boxH + 10;
   const sig = sigData ?? devis.signature_data;
-  doc.setDrawColor(210, 210, 200);
-  doc.line(M, sigY, W - M, sigY);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
-  doc.setTextColor(120, 113, 108);
+  doc.setDrawColor(210, 210, 200); doc.line(M, sigY, W - M, sigY);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(120, 113, 108);
   doc.text("Bon pour accord — Signature du client :", M, sigY + 7);
   if (sig) {
     doc.addImage(sig, "PNG", M, sigY + 10, 70, 24);
@@ -183,11 +157,8 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
   }
 
   const pH = doc.internal.pageSize.getHeight();
-  doc.setFillColor(28, 25, 23);
-  doc.rect(0, pH - 10, W, 10, "F");
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(7);
-  doc.setTextColor(120, 113, 108);
+  doc.setFillColor(28, 25, 23); doc.rect(0, pH - 10, W, 10, "F");
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(120, 113, 108);
   doc.text(profil.conditions_paiement ?? "", W / 2, pH - 4, { align: "center" });
 
   return doc;
@@ -202,21 +173,13 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
 
   const logoBase64 = await loadLogoBase64((profil as any).logo_url);
 
-  doc.setFillColor(28, 25, 23);
-  doc.rect(0, 0, W, 38, "F");
-
-  if (logoBase64) {
-    doc.addImage(logoBase64, "PNG", M, 6, 24, 24);
-  }
+  doc.setFillColor(28, 25, 23); doc.rect(0, 0, W, 38, "F");
+  if (logoBase64) doc.addImage(logoBase64, "PNG", M, 6, 24, 24);
 
   const textX = logoBase64 ? M + 28 : M;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(20);
-  doc.setTextColor(251, 191, 36);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.setTextColor(251, 191, 36);
   doc.text("FACTURE", textX, 16);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
-  doc.setTextColor(200, 200, 190);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(200, 200, 190);
   doc.text(`N° ${facture.numero} · Émise le ${fmtDate(facture.date_emission)}`, textX, 23);
   if (facture.date_echeance) doc.text(`Échéance : ${fmtDate(facture.date_echeance)}`, textX, 28);
 
@@ -235,63 +198,60 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   });
 
   if (facture.client) {
-    doc.setFillColor(245, 245, 244);
-    doc.rect(M, 44, 80, 24, "F");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(28, 25, 23);
+    doc.setFillColor(245, 245, 244); doc.rect(M, 44, 80, 24, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(28, 25, 23);
     doc.text(`${facture.client.prenom ?? ""} ${facture.client.nom}`.trim(), M + 4, 54);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(87, 83, 78);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(87, 83, 78);
     if (facture.client.adresse) doc.text(facture.client.adresse, M + 4, 60);
     if (facture.client.telephone) doc.text(facture.client.telephone, M + 4, 65);
   }
 
   const lignes = facture.lignes ?? [];
-
   autoTable(doc, {
     startY: 78,
     head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
     body: lignes.map(l => [
       designationCell(l.nom, l.kit_description),
       l.type_branche === "service" ? "Service" : "Matériau",
-      l.unite,
-      l.quantite,
-      fmt(l.prix_unitaire),
-      fmt(l.prix_unitaire * l.quantite),
+      l.unite, l.quantite, fmt(l.prix_unitaire), fmt(l.prix_unitaire * l.quantite),
     ]),
     headStyles: { fillColor: [28, 25, 23], textColor: [251, 191, 36], fontStyle: "bold", fontSize: 8 },
     bodyStyles: { fontSize: 8.5, textColor: [44, 38, 34] },
     alternateRowStyles: { fillColor: [250, 250, 249] },
     columnStyles: {
       0: { cellWidth: 65 }, 1: { cellWidth: 22 }, 2: { cellWidth: 18 },
-      3: { cellWidth: 12, halign: "center" }, 4: { cellWidth: 25, halign: "right" },
-      5: { cellWidth: 25, halign: "right" },
+      3: { cellWidth: 12, halign: "center" }, 4: { cellWidth: 25, halign: "right" }, 5: { cellWidth: 25, halign: "right" },
     },
     margin: { left: M, right: M },
   });
 
   const fy = (doc as any).lastAutoTable.finalY + 6;
 
-  const totSBrut = lignes.filter(l => l.type_branche === "service").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
-  const totMBrut = lignes.filter(l => l.type_branche === "materiau").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
   const remiseFideliteEur = facture.remise_fidelite_pct
     ? Math.round(facture.total_service / (1 - facture.remise_fidelite_pct / 100) * facture.remise_fidelite_pct / 100 * 100) / 100
     : 0;
-  // Remise uniquement si l'écart est significatif (> 0.5€) — évite les fantômes de flottants
-  const remiseS = Math.round((totSBrut - facture.total_service - remiseFideliteEur) * 100) / 100;
-  const remiseM = Math.round((totMBrut - facture.total_materiau) * 100) / 100;
+
+  // Remise = écart entre total_service/materiau stockés et total_ttc
+  // On ne recalcule PAS depuis les lignes pour éviter les fantômes de kits
+  const totServiceNet = facture.total_service;
+  const totMateriauNet = facture.total_materiau;
+  const totSBrut = lignes.filter(l => l.type_branche === "service").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
+  const totMBrut = lignes.filter(l => l.type_branche === "materiau").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
+  const remiseS = Math.round((totSBrut - totServiceNet - remiseFideliteEur) * 100) / 100;
+  const remiseM = Math.round((totMBrut - totMateriauNet) * 100) / 100;
+  // Remise affichée seulement si > 0.5€ ET écart significatif sur les totaux bruts
+  const hasRemiseS = remiseS > 0.5 && totSBrut > totServiceNet + 0.5;
+  const hasRemiseM = remiseM > 0.5 && totMBrut > totMateriauNet + 0.5;
+
   const totalAcomptes = acomptes.reduce((a, ac) => a + ac.montant, 0);
   const soldeRestant = facture.total_ttc - totalAcomptes;
 
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
     { label: "Prestation service :", value: fmt(totSBrut) },
   ];
-  // Remise affichée uniquement si elle est intentionnelle : écart > 0.5€ ET total_service != totSBrut
-  if (remiseS > 0.5 && Math.abs(facture.total_service - totSBrut) > 0.5) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
+  if (hasRemiseS) lignesTotal.push({ label: "Remise service :", value: `- ${fmt(remiseS)}`, color: [220, 50, 50] });
   lignesTotal.push({ label: "Achat / revente :", value: fmt(totMBrut) });
-  if (remiseM > 0.5 && Math.abs(facture.total_materiau - totMBrut) > 0.5) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
+  if (hasRemiseM) lignesTotal.push({ label: "Remise matériaux :", value: `- ${fmt(remiseM)}`, color: [220, 50, 50] });
   if (remiseFideliteEur > 0.5) lignesTotal.push({ label: `Remise fidélité ${facture.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
   lignesTotal.push({ label: "Total TTC :", value: fmt(facture.total_ttc), bold: true, color: [251, 191, 36] });
   if (acomptes.length > 0) {
@@ -312,9 +272,7 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
 
   const boxH = 8 + lignesTotal.length * 7;
   const bx = W - M - 80;
-  doc.setFillColor(28, 25, 23);
-  doc.rect(bx, fy, 80, boxH, "F");
-
+  doc.setFillColor(28, 25, 23); doc.rect(bx, fy, 80, boxH, "F");
   lignesTotal.forEach((row, i) => {
     const y = fy + 9 + i * 7;
     doc.setFont("helvetica", row.bold ? "bold" : "normal");
@@ -325,37 +283,24 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
     doc.text(row.value, bx + 76, y, { align: "right" });
   });
 
-  doc.setFont("helvetica", "italic");
-  doc.setFontSize(7.5);
-  doc.setTextColor(163, 163, 163);
+  doc.setFont("helvetica", "italic"); doc.setFontSize(7.5); doc.setTextColor(163, 163, 163);
   doc.text(profil.mention_tva ?? "TVA non applicable — Art. 293 B du CGI", M, fy + 11);
 
   const pH = doc.internal.pageSize.getHeight();
-  doc.setFillColor(28, 25, 23);
-  doc.rect(0, pH - 22, W, 22, "F");
-
+  doc.setFillColor(28, 25, 23); doc.rect(0, pH - 22, W, 22, "F");
   if (profil.iban || profil.bic) {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.5);
-    doc.setTextColor(180, 180, 170);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.5); doc.setTextColor(180, 180, 170);
     doc.text("RÈGLEMENT PAR VIREMENT", M, pH - 17);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(6.5);
-    doc.setTextColor(140, 140, 130);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(140, 140, 130);
     const lignesBanque = [
       profil.banque_titulaire ? `Titulaire : ${profil.banque_titulaire}` : null,
       profil.banque_nom ? `Banque : ${profil.banque_nom}` : null,
       profil.iban ? `IBAN : ${profil.iban}` : null,
       profil.bic ? `BIC : ${profil.bic}` : null,
     ].filter(Boolean) as string[];
-    lignesBanque.forEach((l, i) => {
-      doc.text(l, M, pH - 12 + i * 4);
-    });
+    lignesBanque.forEach((l, i) => doc.text(l, M, pH - 12 + i * 4));
   }
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(7);
-  doc.setTextColor(120, 113, 108);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(120, 113, 108);
   doc.text(profil.conditions_paiement ?? "", W - M, pH - 4, { align: "right" });
 
   return doc;
