@@ -454,7 +454,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       if (ex >= 0) { const n = [...prev]; n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 }; return n; }
       return [...prev, {
         nom: p.nom,
-        description: p.description,
+        kit_description: p.description,
         prix_unitaire: p.prix_unitaire,
         quantite: 1,
         unite: p.unite,
@@ -508,7 +508,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         devis_id: id,
         ordre: i,
         nom: l.nom,
-        kit_description: (l as any).kit_description ?? l.description ?? null,
+        kit_description: (l as any).kit_description ?? null,
         quantite: l.quantite,
         prix_unitaire: l.prix_unitaire,
         unite: l.unite,
