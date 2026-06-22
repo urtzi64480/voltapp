@@ -86,13 +86,13 @@ function LeadCard({ demande, onRefresh }: { demande: DemandeClient; onRefresh: (
   const convertirEnClient = async () => {
     setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Non connecté");
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Non connecté");
 
       const { data: client, error: clientErr } = await supabase
         .from("clients")
         .insert({
-          user_id: user.id,
+          user_id: session.user.id,
           nom: demande.nom,
           telephone: demande.telephone,
           email: demande.email ?? null,
@@ -124,9 +124,7 @@ function LeadCard({ demande, onRefresh }: { demande: DemandeClient; onRefresh: (
   const supprimerLead = async () => {
     setDeleting(true);
     try {
-      // Supprimer les photos du storage si elles existent
       if (demande.photos.length > 0) {
-        // Les URLs publiques → extraire les paths storage
         const paths = demande.photos.map((url) => {
           const parts = url.split("/demande-photos/");
           return parts[1] ?? null;
@@ -136,7 +134,6 @@ function LeadCard({ demande, onRefresh }: { demande: DemandeClient; onRefresh: (
           await supabase.storage.from("demande-photos").remove(paths);
         }
       }
-      // Supprimer la ligne en base
       await supabase.from("demandes_client").delete().eq("id", demande.id);
       onRefresh();
     } catch (e) {
@@ -282,6 +279,7 @@ export default function LeadsPage() {
   const [leads, setLeads] = useState<DemandeClient[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtre, setFiltre] = useState<StatutDemande | "tous">("tous");
+  const [userId, setUserId] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -293,7 +291,12 @@ export default function LeadsPage() {
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setUserId(data.session?.user.id ?? null);
+    });
+    load();
+  }, []);
 
   const filtered = filtre === "tous" ? leads : leads.filter((d) => d.statut === filtre);
   const nbNouveau = leads.filter((d) => d.statut === "nouveau").length;
@@ -313,8 +316,8 @@ export default function LeadsPage() {
               </p>
             )}
           </div>
-          <a
-            href="/demande"
+          
+            href={userId ? `/demande/${userId}` : "#"}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-1.5 text-xs text-ink-400 hover:text-ink-700 border border-ink-200 rounded-lg px-3 py-1.5 transition-colors">
