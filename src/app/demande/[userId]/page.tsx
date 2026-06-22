@@ -58,7 +58,7 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
       const { data } = await supabase
         .from("profil")
         .select("nom_entreprise, logo_url")
-        .eq("user_id", userId)
+        .eq("id", userId)
         .single();
       setProfil(data ?? { nom_entreprise: null, logo_url: null });
       setProfilLoading(false);
@@ -386,7 +386,7 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
               <button
                 onClick={submit}
                 disabled={loading}
-                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-volt-500 text-ink-900 font-semibold text-semibold text-sm disabled:opacity-60 hover:bg-volt-400 transition-colors">
+                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-volt-500 text-ink-900 font-semibold text-sm disabled:opacity-60 hover:bg-volt-400 transition-colors">
                 {loading ? <><Loader2 size={16} className="animate-spin" /> Envoi…</> : "Envoyer ma demande"}
               </button>
             </div>
