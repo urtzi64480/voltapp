@@ -34,6 +34,7 @@ interface Breaker {
   circuit: string;
   amperes: number;
   type: string;
+  customSection?: string;
   pieces: PieceConfig[];
 }
 
@@ -81,6 +82,8 @@ const CIRCUITS: Record<string, {
   parafoudre:      { label: "Parafoudre",       icon: "⛈️", ampMax: 0,  dedié: true,  diffType: null, section: null,  category: null },
   autre:           { label: "Autre",            icon: "⚙️", ampMax: 32, dedié: false, diffType: "AC", section: "2.5", category: null },
 };
+
+const SECTIONS_CABLE = ["1.5", "2.5", "4.0", "6.0", "10.0"];
 
 const CABLE_DIAM_MM: Record<string, number> = {
   "1.5": 6.8, "2.5": 7.8, "4.0": 9.0, "6.0": 10.5, "10.0": 13.0,
@@ -156,6 +159,10 @@ function getCategory(circuit: string): CircuitCategory | null {
   return CIRCUITS[circuit]?.category ?? null;
 }
 
+function effectiveSection(b: Breaker): string {
+  return b.customSection ?? CIRCUITS[b.circuit]?.section ?? "2.5";
+}
+
 // ─── NFC 15-100 CHECKER ───────────────────────────────────────────────────────
 
 function checkNFC(rows: BreakerRow[]) {
@@ -193,6 +200,7 @@ function checkNFC(rows: BreakerRow[]) {
       const spec = CIRCUITS[b.circuit];
       if (!spec) return;
       const lbl = b.label || spec.label;
+      const section = effectiveSection(b);
 
       // Calibre > max du circuit → ERREUR
       if (spec.ampMax && b.amperes > spec.ampMax) {
@@ -209,23 +217,21 @@ function checkNFC(rows: BreakerRow[]) {
         }
       }
 
-      // ── AVERTISSEMENTS : non-conformités pratiques ──
+      // ── AVERTISSEMENTS uniquement ──
 
-      // Section câble incompatible avec le calibre (NFC §523)
-      if (spec.section) {
-        const section = parseFloat(spec.section);
-        const maxAmpSection =
-          section <= 1.5 ? 10 :
-          section <= 2.5 ? 20 :
-          section <= 4.0 ? 25 :
-          section <= 6.0 ? 32 : 63;
-        if (b.amperes > maxAmpSection) {
-          warnings.push({
-            id: `section-${b.id}`,
-            msg: `"${lbl}" : section ${spec.section}mm² insuffisante pour ${b.amperes}A (max ${maxAmpSection}A sur cette section NFC §523).`,
-            rule: "NFC §523",
-          });
-        }
+      // Section câble insuffisante pour le calibre
+      const sectionNum = parseFloat(section);
+      const maxAmpSection =
+        sectionNum <= 1.5 ? 10 :
+        sectionNum <= 2.5 ? 20 :
+        sectionNum <= 4.0 ? 25 :
+        sectionNum <= 6.0 ? 32 : 63;
+      if (b.amperes > maxAmpSection) {
+        warnings.push({
+          id: `section-${b.id}`,
+          msg: `"${lbl}" : section ${section}mm² insuffisante pour ${b.amperes}A (max recommandé ${maxAmpSection}A sur cette section).`,
+          rule: "NFC §523",
+        });
       }
 
       // Calibre trop faible pour le type de circuit
@@ -255,7 +261,7 @@ function checkNFC(rows: BreakerRow[]) {
         });
       }
 
-      // Nombre de socles max par circuit (NFC art. 771.314)
+      // Nombre de socles max par circuit
       const totalPrises = b.pieces.reduce((s, p) => s + (p.nbPrises ?? 0), 0);
       if (totalPrises > 0) {
         if ((b.circuit === "prise_16" || b.circuit === "exterieur" || b.circuit === "garage") && totalPrises > 8) {
@@ -283,7 +289,7 @@ function checkNFC(rows: BreakerRow[]) {
         });
       }
 
-      // Points lumineux : vérifier cohérence nb points vs calibre 10A
+      // Points lumineux trop nombreux
       if (b.circuit === "lumiere") {
         const totalPoints = b.pieces.flatMap(p => p.groupes).reduce((s, g) => s + g.nbPoints, 0);
         if (totalPoints > 8 && b.amperes <= 10) {
@@ -309,12 +315,10 @@ function checkNFC(rows: BreakerRow[]) {
     infos.push({ id: "spec", msg: `${found} circuit(s) spécialisé(s) sur 5 recommandés.`, rule: "Art. 771.314.2" });
   }
 
-  // Pas de circuit lumière du tout
   if (!allBreakers.some(b => b.circuit === "lumiere")) {
     infos.push({ id: "no-lumiere", msg: "Aucun circuit lumière détecté.", rule: "Art. 771.312" });
   }
 
-  // Pas de circuit prises du tout
   const hasPrises = allBreakers.some(b => ["prise_16","prise_20","cuisine_prises"].includes(b.circuit));
   if (!hasPrises) {
     infos.push({ id: "no-prises", msg: "Aucun circuit prises détecté.", rule: "Art. 771.314" });
@@ -437,9 +441,9 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
   onRemove: () => void;
 }) {
   const isDiff = !!BREAKER_TYPES[breaker.type]?.isDiff;
-  const hasError = compliance.errors.some(e => e.id.includes(String(breaker.id)));
   const spec = CIRCUITS[breaker.circuit];
   const category = getCategory(breaker.circuit);
+  const section = effectiveSection(breaker);
 
   const [piecesText, setPiecesText] = useState(breaker.pieces.map(p => p.nom).join(" · "));
 
@@ -484,6 +488,15 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
     });
   };
 
+  // Section recommandée max pour le calibre choisi
+  const sectionNum = parseFloat(section);
+  const maxAmpSection =
+    sectionNum <= 1.5 ? 10 :
+    sectionNum <= 2.5 ? 20 :
+    sectionNum <= 4.0 ? 25 :
+    sectionNum <= 6.0 ? 32 : 63;
+  const sectionWarning = !isDiff && breaker.amperes > maxAmpSection;
+
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-ink-900/60 backdrop-blur-sm pb-[env(safe-area-inset-bottom)]"
       onClick={onClose}>
@@ -508,22 +521,29 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
               onChange={e => onUpdate({ ...breaker, label: e.target.value })} />
           </div>
 
-          <div>
-            <label className="label">Type</label>
-            <select className="input" value={breaker.type}
-              onChange={e => onUpdate({ ...breaker, type: e.target.value })}>
-              {Object.entries(BREAKER_TYPES)
-                .filter(([k]) => isDiff ? BREAKER_TYPES[k].isDiff : !BREAKER_TYPES[k].isDiff)
-                .map(([k, v]) => <option key={k} value={k}>{v.label} — {v.desc}</option>)}
-            </select>
-          </div>
+          {/* Sélecteur type différentiel uniquement pour les diffs */}
+          {isDiff && (
+            <div>
+              <label className="label">Type différentiel</label>
+              <select className="input" value={breaker.type}
+                onChange={e => onUpdate({ ...breaker, type: e.target.value })}>
+                {Object.entries(BREAKER_TYPES)
+                  .filter(([k]) => BREAKER_TYPES[k].isDiff)
+                  .map(([k, v]) => <option key={k} value={k}>{v.label} — {v.desc}</option>)}
+              </select>
+            </div>
+          )}
 
           {!isDiff && (
             <>
               <div>
                 <label className="label">Circuit</label>
                 <select className="input" value={breaker.circuit}
-                  onChange={e => onUpdate({ ...breaker, circuit: e.target.value, pieces: [] })}>
+                  onChange={e => {
+                    const newCircuit = e.target.value;
+                    const defaultSec = CIRCUITS[newCircuit]?.section ?? "2.5";
+                    onUpdate({ ...breaker, circuit: newCircuit, customSection: defaultSec, pieces: [] });
+                  }}>
                   {Object.entries(CIRCUITS).map(([k, v]) => (
                     <option key={k} value={k}>{v.icon} {v.label} (max {v.ampMax}A)</option>
                   ))}
@@ -544,9 +564,29 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                 </div>
               </div>
 
+              {/* ── SECTION CÂBLE ── */}
+              <div>
+                <label className="label">Section câble</label>
+                <div className="flex flex-wrap gap-2">
+                  {SECTIONS_CABLE.map(s => (
+                    <button key={s} onClick={() => onUpdate({ ...breaker, customSection: s })}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-mono font-bold border transition-all ${
+                        section === s
+                          ? "bg-ink-900 text-volt-400 border-ink-700"
+                          : "bg-ink-50 text-ink-500 border-ink-200 hover:border-ink-400"
+                      }`}>{s} mm²</button>
+                  ))}
+                </div>
+                {sectionWarning && (
+                  <p className="text-xs text-amber-600 mt-1.5 font-mono">
+                    ⚠️ Section {section}mm² recommandée pour max {maxAmpSection}A — avertissement NFC §523
+                  </p>
+                )}
+              </div>
+
               {spec && (
                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-700 font-mono leading-relaxed">
-                  📋 NFC 15-100 — Max {spec.ampMax}A · Section {spec.section}mm²
+                  📋 NFC 15-100 — Max {spec.ampMax}A · Section recommandée {spec.section}mm²
                   <br />Diff requis : Type {spec.diffType || "—"} · {spec.dedié ? "Circuit dédié" : "Partageable"}
                 </div>
               )}
@@ -657,7 +697,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
 
         <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0 sticky bottom-0 bg-white">
           <button onClick={onClose} className="btn-primary flex-1"><Save size={14} /> Valider</button>
-          {!hasError && !isDiff && (
+          {!isDiff && (
             <button onClick={() => { onClose(); onShowSchema(breaker); }} className="btn-ghost">
               <Zap size={14} /> Schéma
             </button>
@@ -743,7 +783,7 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
   const isLight = breaker.circuit === "lumiere";
   const isPrise = ["prise_16","prise_20","cuisine_prises","exterieur","garage"].includes(breaker.circuit);
   const diff    = rowBreakers[0] as Breaker | null;
-  const section = spec?.section ?? "2.5";
+  const section = effectiveSection(breaker);
   const firstPiece  = breaker.pieces[0];
   const firstGroupe = firstPiece?.groupes?.[0];
   const switchType  = firstGroupe?.typeCommande ?? "simple";
@@ -870,7 +910,7 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
     <line key="bn"   x1={curX}    y1={midY+20} x2={curX+56} y2={midY+20} stroke={CABLE_COLORS.neutre} strokeWidth={2.5}/>,
     <line key="bpe"  x1={curX}    y1={midY+38} x2={curX+56} y2={midY+38} stroke={CABLE_COLORS.terre}  strokeWidth={2.5} strokeDasharray="5,3"/>
   );
-  if (spec?.section) elements.push(<text key="sec" x={curX+13} y={midY-26} textAnchor="middle" fontSize={8} fill="#64748b" fontFamily="monospace">{spec.section}mm²</text>);
+  elements.push(<text key="sec" x={curX+13} y={midY-26} textAnchor="middle" fontSize={8} fill="#64748b" fontFamily="monospace">{section}mm²</text>);
   curX += 56;
 
   if (isLight) {
@@ -1034,7 +1074,7 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
             <div>
               <p className="font-semibold text-ink-900">Schéma — {breaker.label || circuit.label}</p>
               <p className="text-xs font-mono text-ink-400">
-                {breaker.amperes}A · {spec?.section}mm² · Diff. Type {diff ? BREAKER_TYPES[diff.type]?.diffType : "—"}
+                {breaker.amperes}A · {section}mm² · Diff. Type {diff ? BREAKER_TYPES[diff.type]?.diffType : "—"}
                 {breaker.pieces.length > 0 && ` · ${breaker.pieces.map(p => p.nom).filter(Boolean).join(", ")}`}
               </p>
             </div>
@@ -1177,7 +1217,6 @@ function QRModal({ clientId, clientName, onClose }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4"
       onClick={onClose}>
       <div className="card w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
-
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <div>
             <p className="font-semibold text-ink-900">Exporter le tableau</p>
@@ -1185,17 +1224,13 @@ function QRModal({ clientId, clientName, onClose }: {
           </div>
           <button onClick={onClose} className="btn-ghost !px-2 !py-1 text-ink-400">✕</button>
         </div>
-
         <div className="p-6 flex flex-col items-center gap-4">
-          {/* QR Code via API publique */}
           <div className="bg-white p-3 rounded-2xl border border-ink-200 shadow-sm">
             <img src={qrApiUrl} alt="QR Code tableau" width={200} height={200} className="block rounded-lg" />
           </div>
           <p className="text-xs text-ink-400 text-center leading-relaxed">
             Scannez pour accéder au tableau en lecture seule —<br />sans connexion requise
           </p>
-
-          {/* URL */}
           <div className="w-full flex flex-col gap-2">
             <div className="flex items-center gap-2 bg-ink-50 border border-ink-200 rounded-xl px-3 py-2">
               <span className="text-xs font-mono text-ink-500 flex-1 truncate">{publicUrl}</span>
@@ -1212,7 +1247,6 @@ function QRModal({ clientId, clientName, onClose }: {
             </a>
           </div>
         </div>
-
         <div className="px-4 pb-4">
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700 leading-relaxed">
             💡 Ce lien est accessible sans connexion. Partagez-le avec votre client ou un autre professionnel.
@@ -1387,7 +1421,15 @@ export default function TableauPage() {
                 } else if (b.switchType || b.lampCount) {
                   pieces = [{ nom: b.label ?? "", nbPrises: 1, groupes: [{ nbPoints: b.lampCount ?? 1, typeCommande: (b.switchType ?? "simple") as CommandeType, nbCommandes: b.switchCount ?? 1 }] }];
                 }
-                slots[i] = { id: b.id ?? uid(), label: b.label ?? "", circuit: b.circuit ?? "autre", amperes: b.amperes ?? 16, type: b.type, pieces } as Breaker;
+                slots[i] = {
+                  id: b.id ?? uid(),
+                  label: b.label ?? "",
+                  circuit: b.circuit ?? "autre",
+                  amperes: b.amperes ?? 16,
+                  type: b.type,
+                  customSection: b.customSection ?? CIRCUITS[b.circuit ?? "autre"]?.section ?? "2.5",
+                  pieces,
+                } as Breaker;
               });
               return { id: row.id ?? uid(), name: row.name ?? "Rangée", slots };
             }).filter(Boolean) as BreakerRow[];
@@ -1418,7 +1460,12 @@ export default function TableauPage() {
     if (selectedSlot?.rowId === rowId && selectedSlot?.slotIdx === slotIdx) {
       const existing = row.slots[slotIdx];
       const isDiffSlot = slotIdx === 0;
-      const defaultBreaker: Breaker = existing ?? { id: uid(), label: "", circuit: isDiffSlot ? "general" : "prise_16", amperes: isDiffSlot ? 25 : 16, type: isDiffSlot ? "diff-AC" : "1P", pieces: [] };
+      const defaultBreaker: Breaker = existing ?? {
+        id: uid(), label: "", circuit: isDiffSlot ? "general" : "prise_16",
+        amperes: isDiffSlot ? 25 : 16, type: isDiffSlot ? "diff-AC" : "1P",
+        customSection: isDiffSlot ? "10.0" : "1.5",
+        pieces: [],
+      };
       setEditBreaker({ breaker: defaultBreaker, rowId, slotIdx });
       return;
     }
