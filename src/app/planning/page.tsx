@@ -552,7 +552,10 @@ function DayView({ year, month, day, interventions, calEvents, onBack, onCreateA
 // ── Page principale ───────────────────────────────────────────────────────
 
 export default function PlanningPage() {
-  const today = new Date();
+  // ✅ CORRECTION : today normalisé à minuit heure locale pour éviter le décalage UTC
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [interventions, setInterventions] = useState<Intervention[]>([]);
@@ -864,6 +867,7 @@ export default function PlanningPage() {
               </div>
               <div className="grid grid-cols-7 divide-x divide-y divide-ink-100">
                 {cells.map((day, idx) => {
+                  // ✅ CORRECTION : comparaison avec today normalisé à minuit heure locale
                   const isToday = day !== null && isSameDay(new Date(year, month, day), today);
                   const dayIvs = day ? ivsForDay(day) : [];
                   const dayEvs = day ? calForDay(day) : [];
