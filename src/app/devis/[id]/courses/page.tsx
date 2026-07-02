@@ -13,7 +13,13 @@ interface CourseItem {
   unite?: string;
 }
 
-const LABOR_REGEX = /main\s*d.?[oœ]uvre|heure(s)?\s*suppl/i;
+// Termes désignant une prestation (main d'œuvre, déplacement, étude...) à exclure de la liste d'achat
+const SERVICE_REGEX = /main\s*d.?[oœ]uvre|heure(s)?(\s*suppl(émentaire)?)?|d[ée]placement|mise\s+en\s+service|intervention|diagnostic|[ée]tude|forfait\s*d[ée]placement|conseil/i;
+
+// Retire le préfixe "Contient :" (ou variantes) placé avant la liste des composants
+function stripKitPrefix(text: string): string {
+  return text.replace(/^\s*contient\s*:?\s*/i, "").trim();
+}
 
 function parseKitPart(part: string): { qty: number; nom: string } {
   const m = part.trim().match(/^(\d+)\s*×\s*(.+)$/);
@@ -26,10 +32,11 @@ function buildCourseItems(lignes: any[]): CourseItem[] {
 
   for (const l of lignes) {
     if (l.kit_description) {
-      const parts = String(l.kit_description).split(",").map((s: string) => s.trim()).filter(Boolean);
+      const cleaned = stripKitPrefix(String(l.kit_description));
+      const parts = cleaned.split(",").map((s: string) => s.trim()).filter(Boolean);
       for (const part of parts) {
         const { qty: qtyUnit, nom } = parseKitPart(part);
-        if (LABOR_REGEX.test(nom)) continue;
+        if (SERVICE_REGEX.test(nom)) continue;
         const qty = qtyUnit * (l.quantite || 1);
         const key = nom.toLowerCase();
         if (map.has(key)) {
