@@ -53,38 +53,36 @@ function NavLink({ href, label, Icon, active, onClick, badge }: {
   );
 }
 
+// Affichage uniforme : le nom complet sur une seule ligne, tronqué proprement
+// s'il est trop long, que ce soit "VoltApp" ou "Urtzi Électricien".
 function LogoBlock({ nomEntreprise, logoUrl, size = "md" }: { nomEntreprise: string; logoUrl?: string | null; size?: "sm" | "md" }) {
-  const parts = nomEntreprise.trim().split(" ");
-  const first = parts[0] ?? "";
-  const rest = parts.slice(1).join(" ");
+  const nom = nomEntreprise.trim() || "VoltApp";
 
   if (size === "sm") {
     return (
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 min-w-0">
         <div className="w-7 h-7 rounded-lg bg-volt-500 flex items-center justify-center shrink-0 overflow-hidden">
           {logoUrl
             ? <img src={logoUrl} alt="logo" className="w-full h-full object-contain p-0.5" />
             : <Zap size={14} className="text-ink-900" />}
         </div>
-        <div className="flex flex-col leading-tight">
-          <span className="font-display text-white text-sm leading-none">{first}</span>
-          {rest && <span className="text-ink-400 text-[10px] tracking-widest uppercase">{rest}</span>}
-        </div>
+        <span className="font-display text-white text-sm leading-none truncate max-w-[150px]" title={nom}>
+          {nom}
+        </span>
       </div>
     );
   }
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-3 min-w-0">
       <div className="w-9 h-9 rounded-xl bg-volt-500 flex items-center justify-center shrink-0 overflow-hidden">
         {logoUrl
           ? <img src={logoUrl} alt="logo" className="w-full h-full object-contain p-0.5" />
           : <Zap size={18} className="text-ink-900" />}
       </div>
-      <div className="flex flex-col leading-tight">
-        <span className="font-display text-white text-base leading-none">{first}</span>
-        {rest && <span className="text-ink-400 text-xs tracking-widest uppercase">{rest}</span>}
-      </div>
+      <span className="font-display text-white text-base leading-tight truncate max-w-[170px]" title={nom}>
+        {nom}
+      </span>
     </div>
   );
 }
