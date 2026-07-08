@@ -158,18 +158,19 @@ export default function ParametresPage() {
     const userId = session.user.id;
 
     const ext = (file.name.split(".").pop() ?? "png").toLowerCase();
-    const path = `${userId}/logo.${ext}`;
+    // Nom de fichier unique à chaque upload (pas de query string ?t= qui casse le lien public).
+    const path = `${userId}/logo-${Date.now()}.${ext}`;
 
-    // Nettoie les anciennes variantes d'extension (ex: ancien logo.png si le nouveau est .jpg)
-    // pour éviter qu'un vieux fichier orphelin ne traîne dans le bucket.
-    const autresExtensions = ["png", "jpg", "jpeg", "svg", "webp"].filter(e => e !== ext);
-    if (autresExtensions.length > 0) {
-      await supabase.storage.from("logos").remove(autresExtensions.map(e => `${userId}/logo.${e}`));
+    // Supprime tous les anciens logos du dossier de l'utilisateur pour ne pas accumuler
+    // des fichiers orphelins dans le bucket.
+    const { data: existingFiles } = await supabase.storage.from("logos").list(userId);
+    if (existingFiles && existingFiles.length > 0) {
+      await supabase.storage.from("logos").remove(existingFiles.map(f => `${userId}/${f.name}`));
     }
 
     const { error: uploadError } = await supabase.storage
       .from("logos")
-      .upload(path, file, { upsert: true, contentType: file.type });
+      .upload(path, file, { contentType: file.type });
 
     if (uploadError) {
       console.error("Erreur upload storage (bucket 'logos') :", uploadError);
@@ -179,7 +180,6 @@ export default function ParametresPage() {
     }
 
     const { data: { publicUrl } } = supabase.storage.from("logos").getPublicUrl(path);
-    const urlWithCacheBust = `${publicUrl}?t=${Date.now()}`;
 
     const { error: updateError } = await supabase
       .from("profil")
@@ -193,7 +193,7 @@ export default function ParametresPage() {
       return;
     }
 
-    setLogoUrl(urlWithCacheBust);
+    setLogoUrl(publicUrl);
     setProfil(p => ({ ...p, logo_url: publicUrl } as any));
     setLogoUploading(false);
   }
@@ -203,11 +203,12 @@ export default function ParametresPage() {
     if (!session) return;
     const userId = session.user.id;
 
-    const { error: removeError } = await supabase.storage.from("logos").remove([
-      `${userId}/logo.png`, `${userId}/logo.jpg`, `${userId}/logo.jpeg`, `${userId}/logo.svg`, `${userId}/logo.webp`,
-    ]);
-    if (removeError) {
-      console.error("Erreur suppression storage :", removeError);
+    const { data: existingFiles } = await supabase.storage.from("logos").list(userId);
+    if (existingFiles && existingFiles.length > 0) {
+      const { error: removeError } = await supabase.storage
+        .from("logos")
+        .remove(existingFiles.map(f => `${userId}/${f.name}`));
+      if (removeError) console.error("Erreur suppression storage :", removeError);
     }
 
     const { error: updateError } = await supabase
@@ -646,7 +647,8 @@ export default function ParametresPage() {
               <div className="flex items-center gap-4">
                 <div className="w-20 h-20 rounded-xl border-2 border-dashed border-ink-200 bg-ink-50 flex items-center justify-center shrink-0 overflow-hidden">
                   {logoUrl ? (
-                    <img src={logoUrl} alt="Logo" className="w-full h-full object-contain p-1" />
+                    <img src={logoUrl} alt="Logo" className="w-full h-full object-contain p-1"
+                      onError={() => { console.error("Lien logo cassé :", logoUrl); setLogoError("Le lien du logo semble cassé (fichier introuvable dans le bucket)."); }} />
                   ) : (
                     <ImageIcon size={24} className="text-ink-300" />
                   )}
