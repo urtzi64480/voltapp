@@ -68,7 +68,7 @@ function LogoBlock({ nomEntreprise, logoUrl, size = "md" }: { nomEntreprise: str
       <div className="flex items-center gap-2 min-w-0">
         <div className="w-7 h-7 rounded-lg bg-volt-500 flex items-center justify-center shrink-0 overflow-hidden">
           {showLogo
-            ? <img src={logoUrl!} alt="logo" className="w-full h-full object-contain p-0.5" onError={() => setLogoBroken(true)} />
+            ? <img src={logoUrl!} alt="logo" className="w-full h-full object-cover" onError={() => setLogoBroken(true)} />
             : <Zap size={14} className="text-ink-900" />}
         </div>
         <span className="font-display text-white text-sm leading-none truncate max-w-[150px]" title={nom}>
@@ -82,7 +82,7 @@ function LogoBlock({ nomEntreprise, logoUrl, size = "md" }: { nomEntreprise: str
     <div className="flex items-center gap-3 min-w-0">
       <div className="w-9 h-9 rounded-xl bg-volt-500 flex items-center justify-center shrink-0 overflow-hidden">
         {showLogo
-          ? <img src={logoUrl!} alt="logo" className="w-full h-full object-contain p-0.5" onError={() => setLogoBroken(true)} />
+          ? <img src={logoUrl!} alt="logo" className="w-full h-full object-cover" onError={() => setLogoBroken(true)} />
           : <Zap size={18} className="text-ink-900" />}
       </div>
       <span className="font-display text-white text-base leading-tight truncate max-w-[170px]" title={nom}>
