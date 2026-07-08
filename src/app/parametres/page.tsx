@@ -152,19 +152,49 @@ export default function ParametresPage() {
     if (file.size > 2 * 1024 * 1024) { setLogoError("Fichier trop lourd (max 2 Mo)."); return; }
     setLogoError("");
     setLogoUploading(true);
+
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) { setLogoUploading(false); return; }
+    if (!session) { setLogoUploading(false); setLogoError("Session expirée, reconnectez-vous."); return; }
     const userId = session.user.id;
-    const ext = file.name.split(".").pop() ?? "png";
+
+    const ext = (file.name.split(".").pop() ?? "png").toLowerCase();
     const path = `${userId}/logo.${ext}`;
+
+    // Nettoie les anciennes variantes d'extension (ex: ancien logo.png si le nouveau est .jpg)
+    // pour éviter qu'un vieux fichier orphelin ne traîne dans le bucket.
+    const autresExtensions = ["png", "jpg", "jpeg", "svg", "webp"].filter(e => e !== ext);
+    if (autresExtensions.length > 0) {
+      await supabase.storage.from("logos").remove(autresExtensions.map(e => `${userId}/logo.${e}`));
+    }
+
     const { error: uploadError } = await supabase.storage
       .from("logos")
       .upload(path, file, { upsert: true, contentType: file.type });
-    if (uploadError) { setLogoError("Erreur lors de l'upload."); setLogoUploading(false); return; }
+
+    if (uploadError) {
+      console.error("Erreur upload storage (bucket 'logos') :", uploadError);
+      setLogoError(`Erreur upload : ${uploadError.message}`);
+      setLogoUploading(false);
+      return;
+    }
+
     const { data: { publicUrl } } = supabase.storage.from("logos").getPublicUrl(path);
     const urlWithCacheBust = `${publicUrl}?t=${Date.now()}`;
-    await supabase.from("profil").update({ logo_url: publicUrl } as any).eq("id", userId);
+
+    const { error: updateError } = await supabase
+      .from("profil")
+      .update({ logo_url: publicUrl } as any)
+      .eq("id", userId);
+
+    if (updateError) {
+      console.error("Erreur update profil.logo_url :", updateError);
+      setLogoError(`Logo uploadé mais non enregistré (vérifie la colonne logo_url) : ${updateError.message}`);
+      setLogoUploading(false);
+      return;
+    }
+
     setLogoUrl(urlWithCacheBust);
+    setProfil(p => ({ ...p, logo_url: publicUrl } as any));
     setLogoUploading(false);
   }
 
@@ -172,9 +202,28 @@ export default function ParametresPage() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
     const userId = session.user.id;
-    await supabase.storage.from("logos").remove([`${userId}/logo.png`, `${userId}/logo.jpg`, `${userId}/logo.jpeg`, `${userId}/logo.svg`, `${userId}/logo.webp`]);
-    await supabase.from("profil").update({ logo_url: null } as any).eq("id", userId);
+
+    const { error: removeError } = await supabase.storage.from("logos").remove([
+      `${userId}/logo.png`, `${userId}/logo.jpg`, `${userId}/logo.jpeg`, `${userId}/logo.svg`, `${userId}/logo.webp`,
+    ]);
+    if (removeError) {
+      console.error("Erreur suppression storage :", removeError);
+    }
+
+    const { error: updateError } = await supabase
+      .from("profil")
+      .update({ logo_url: null } as any)
+      .eq("id", userId);
+
+    if (updateError) {
+      console.error("Erreur update profil.logo_url (suppression) :", updateError);
+      setLogoError(`Erreur lors de la suppression : ${updateError.message}`);
+      return;
+    }
+
     setLogoUrl(null);
+    setProfil(p => ({ ...p, logo_url: null } as any));
+    setLogoError("");
   }
 
   async function save() {
