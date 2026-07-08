@@ -57,13 +57,18 @@ function NavLink({ href, label, Icon, active, onClick, badge }: {
 // s'il est trop long, que ce soit "VoltApp" ou "Urtzi Électricien".
 function LogoBlock({ nomEntreprise, logoUrl, size = "md" }: { nomEntreprise: string; logoUrl?: string | null; size?: "sm" | "md" }) {
   const nom = nomEntreprise.trim() || "VoltApp";
+  // Si le lien du logo est cassé (fichier supprimé, bucket mal configuré...), on retombe
+  // proprement sur l'icône par défaut au lieu d'afficher l'icône "image cassée" du navigateur.
+  const [logoBroken, setLogoBroken] = useState(false);
+  useEffect(() => { setLogoBroken(false); }, [logoUrl]);
+  const showLogo = logoUrl && !logoBroken;
 
   if (size === "sm") {
     return (
       <div className="flex items-center gap-2 min-w-0">
         <div className="w-7 h-7 rounded-lg bg-volt-500 flex items-center justify-center shrink-0 overflow-hidden">
-          {logoUrl
-            ? <img src={logoUrl} alt="logo" className="w-full h-full object-contain p-0.5" />
+          {showLogo
+            ? <img src={logoUrl!} alt="logo" className="w-full h-full object-contain p-0.5" onError={() => setLogoBroken(true)} />
             : <Zap size={14} className="text-ink-900" />}
         </div>
         <span className="font-display text-white text-sm leading-none truncate max-w-[150px]" title={nom}>
@@ -76,8 +81,8 @@ function LogoBlock({ nomEntreprise, logoUrl, size = "md" }: { nomEntreprise: str
   return (
     <div className="flex items-center gap-3 min-w-0">
       <div className="w-9 h-9 rounded-xl bg-volt-500 flex items-center justify-center shrink-0 overflow-hidden">
-        {logoUrl
-          ? <img src={logoUrl} alt="logo" className="w-full h-full object-contain p-0.5" />
+        {showLogo
+          ? <img src={logoUrl!} alt="logo" className="w-full h-full object-contain p-0.5" onError={() => setLogoBroken(true)} />
           : <Zap size={18} className="text-ink-900" />}
       </div>
       <span className="font-display text-white text-base leading-tight truncate max-w-[170px]" title={nom}>
