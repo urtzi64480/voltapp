@@ -647,7 +647,7 @@ export default function ParametresPage() {
               <div className="flex items-center gap-4">
                 <div className="w-20 h-20 rounded-xl border-2 border-dashed border-ink-200 bg-ink-50 flex items-center justify-center shrink-0 overflow-hidden">
                   {logoUrl ? (
-                    <img src={logoUrl} alt="Logo" className="w-full h-full object-contain p-1"
+                    <img src={logoUrl} alt="Logo" className="w-full h-full object-cover"
                       onError={() => { console.error("Lien logo cassé :", logoUrl); setLogoError("Le lien du logo semble cassé (fichier introuvable dans le bucket)."); }} />
                   ) : (
                     <ImageIcon size={24} className="text-ink-300" />
