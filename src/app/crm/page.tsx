@@ -4,12 +4,20 @@ import { supabase } from "@/lib/supabase";
 import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, PLAFOND_SERVICE, PLAFOND_MATERIAU, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { TrendingUp, FileText, Receipt, CheckCircle, Clock, AlertTriangle, BarChart3, PieChart, Euro, Users, Download } from "lucide-react";
+import { TrendingUp, FileText, Receipt, CheckCircle, Clock, AlertTriangle, BarChart3, PieChart, Euro, Users, Download, Landmark, ShoppingBag } from "lucide-react";
+
+// Seuils de franchise en base de TVA 2026 (distincts des plafonds de CA du régime micro)
+const FRANCHISE_TVA_SERVICE = 37500;
+const FRANCHISE_TVA_MATERIAU = 85000;
 
 interface CATStat { categorie: string; type_branche: string; total: number; nb: number; }
 interface CommissionApporteur {
   id: string; nom: string; entreprise?: string;
   caMois: number; commissionPct: number; commissionEur: number;
+}
+interface DevisRentabilite {
+  id: string; numero: string; date_emission: string; client_nom: string;
+  total_materiau: number; cout_achat: number;
 }
 
 function BarMois({ mois, service, materiau, serviceN1, materiauN1, maxMois, label }: {
@@ -67,9 +75,10 @@ export default function CRMPage() {
   const [topClients, setTopClients] = useState<{ nom: string; prenom?: string; ca: number; nb: number }[]>([]);
   const [devisEnAttente, setDevisEnAttente] = useState<any[]>([]);
   const [facturesImpayees, setFacturesImpayees] = useState<any[]>([]);
-  const [tauxFiscaux, setTauxFiscaux] = useState({ cotis_service: 22, cotis_materiau: 6, ir_service: 0, ir_materiau: 0 });
+  const [tauxFiscaux, setTauxFiscaux] = useState({ cotis_service: 21.2, cotis_materiau: 12.3, ir_service: 0, ir_materiau: 0 });
   const [commissionsApporteurs, setCommissionsApporteurs] = useState<CommissionApporteur[]>([]);
   const [totalCommissions, setTotalCommissions] = useState(0);
+  const [devisRentabilite, setDevisRentabilite] = useState<DevisRentabilite[]>([]);
 
   const MOIS_LONG = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
   const MOIS = ["J","F","M","A","M","J","J","A","S","O","N","D"];
@@ -99,6 +108,7 @@ export default function CRMPage() {
         { data: apporteurs },
         { data: paliersAp },
         { data: facsMois },
+        { data: devisSignesRentab },
       ] = await Promise.all([
         supabase.from("factures").select("total_service,total_materiau,date_emission,statut").gte("paye_le", debut).lte("paye_le", fin).eq("statut", "payee"),
         supabase.from("factures").select("total_service,total_materiau,date_emission,statut").gte("paye_le", debutN1).lte("paye_le", finN1).eq("statut", "payee"),
@@ -112,12 +122,13 @@ export default function CRMPage() {
         supabase.from("apporteurs").select("*").eq("actif", true).order("nom"),
         supabase.from("paliers_apporteur").select("*").order("seuil_min"),
         supabase.from("factures").select("total_ttc,apporteur_id").eq("statut","payee").gte("paye_le", debutMois).lte("paye_le", finMois).not("apporteur_id", "is", null),
+        supabase.from("devis").select("id,numero,date_emission,total_materiau,client:clients(nom,prenom),lignes:devis_lignes(quantite,type_branche,prestation:prestations(prix_achat))").eq("statut","signe").gte("date_emission", debut).lte("date_emission", fin),
       ]);
 
       if (profil) {
         setTauxFiscaux({
-          cotis_service:  (profil as any).taux_cotisations_service ?? 22,
-          cotis_materiau: (profil as any).taux_cotisations_materiau ?? 6,
+          cotis_service:  (profil as any).taux_cotisations_service ?? 21.2,
+          cotis_materiau: (profil as any).taux_cotisations_materiau ?? 12.3,
           ir_service:     (profil as any).taux_ir_service ?? 0,
           ir_materiau:    (profil as any).taux_ir_materiau ?? 0,
         });
@@ -182,6 +193,22 @@ export default function CRMPage() {
 
       setDevisEnAttente(devisAttente ?? []);
       setFacturesImpayees(facsImp ?? []);
+
+      // ── Rentabilité achat-revente par devis signé ──
+      const rentab: DevisRentabilite[] = (devisSignesRentab ?? []).map((d: any) => {
+        const coutAchat = (d.lignes ?? [])
+          .filter((l: any) => l.type_branche === "materiau")
+          .reduce((a: number, l: any) => a + (l.quantite ?? 0) * (l.prestation?.prix_achat ?? 0), 0);
+        return {
+          id: d.id,
+          numero: d.numero,
+          date_emission: d.date_emission,
+          client_nom: d.client ? `${d.client.prenom ?? ""} ${d.client.nom}`.trim() : "—",
+          total_materiau: d.total_materiau ?? 0,
+          cout_achat: coutAchat,
+        };
+      }).filter((d: DevisRentabilite) => d.total_materiau > 0 || d.cout_achat > 0);
+      setDevisRentabilite(rentab.sort((a, b) => new Date(b.date_emission).getTime() - new Date(a.date_emission).getTime()));
 
       const aps = apporteurs ?? [];
       const pals = (paliersAp ?? []).sort((a: any, b: any) => a.seuil_min - b.seuil_min);
@@ -275,10 +302,37 @@ export default function CRMPage() {
   const pctNet        = caTotal > 0 ? Math.round(resultatNet / caTotal * 100) : 0;
   const pctService  = Math.min(100, Math.round(caAnnuel.service / PLAFOND_SERVICE * 100));
   const pctMateriau = Math.min(100, Math.round(caAnnuel.materiau / PLAFOND_MATERIAU * 100));
+  // ── Progression franchise TVA (distincte des plafonds micro) ──
+  const pctFranchiseService  = Math.min(100, Math.round(caAnnuel.service  / FRANCHISE_TVA_SERVICE  * 100));
+  const pctFranchiseMateriau = Math.min(100, Math.round(caAnnuel.materiau / FRANCHISE_TVA_MATERIAU * 100));
+  const franchiseServiceDepassee  = caAnnuel.service  > FRANCHISE_TVA_SERVICE;
+  const franchiseMateriauDepassee = caAnnuel.materiau > FRANCHISE_TVA_MATERIAU;
   const maxMois = Math.max(...caMensuel.map(m => m.service + m.materiau), ...caMensuelN1.map(m => m.service + m.materiau), 1);
   const devisDecides = devisStats.envoye + devisStats.signe + devisStats.refuse;
   const txConversion = devisDecides > 0 ? Math.round(devisStats.signe / devisDecides * 100) : 0;
   const evol = caTotalN1 > 0 ? Math.round((caTotal - caTotalN1) / caTotalN1 * 100) : null;
+
+  // ── Cotisations URSSAF dues par mois ──
+  const moisActuel = new Date().getMonth() + 1;
+  const cotisMensuelles = caMensuel.map(m => {
+    const cService  = m.service  * tauxFiscaux.cotis_service  / 100;
+    const cMateriau = m.materiau * tauxFiscaux.cotis_materiau / 100;
+    return { mois: m.mois, cService, cMateriau, total: cService + cMateriau, ca: m.service + m.materiau };
+  });
+  const totalCotisAnnee = cotisMensuelles.reduce((a, m) => a + m.total, 0);
+
+  // ── Rentabilité achat-revente par devis, avec agrégats ──
+  const rentabCalc = devisRentabilite.map(d => {
+    const cotisation = d.total_materiau * tauxFiscaux.cotis_materiau / 100;
+    const margeNette = d.total_materiau - cotisation - d.cout_achat;
+    return { ...d, cotisation, margeNette };
+  });
+  const rentabTotaux = rentabCalc.reduce((a, d) => ({
+    vente: a.vente + d.total_materiau,
+    achat: a.achat + d.cout_achat,
+    cotisation: a.cotisation + d.cotisation,
+    margeNette: a.margeNette + d.margeNette,
+  }), { vente: 0, achat: 0, cotisation: 0, margeNette: 0 });
 
   return (
     <Shell>
@@ -439,6 +493,55 @@ export default function CRMPage() {
               )}
             </div>
 
+            {/* Rentabilité nette achat-revente par devis */}
+            <div className="card card-inner">
+              <div className="flex items-center gap-2 mb-4">
+                <ShoppingBag size={18} className="text-volt-600" />
+                <h2 className="font-semibold text-ink-800">Rentabilité matériel — devis signés {annee}</h2>
+              </div>
+              <p className="text-xs text-ink-400 mb-4">
+                Frais d'achat matériel réellement engagés vs argent gagné après cotisations sociales de la branche achat-revente ({tauxFiscaux.cotis_materiau}%).
+                Basé sur le prix d'achat actuel du catalogue — peut différer légèrement du coût réel si vos tarifs fournisseurs ont changé depuis le devis.
+              </p>
+              {rentabCalc.length === 0 ? (
+                <p className="text-ink-400 text-sm text-center py-6">Aucun devis signé avec ligne matériaux sur cette période</p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    <div className="bg-ink-50 rounded-xl p-3">
+                      <p className="text-xs text-ink-400 mb-0.5">Vente matériel</p>
+                      <p className="text-lg font-bold text-ink-900">{fmt(rentabTotaux.vente)}</p>
+                    </div>
+                    <div className="bg-red-50 border border-red-100 rounded-xl p-3">
+                      <p className="text-xs text-red-400 mb-0.5">Achat matériel</p>
+                      <p className="text-lg font-bold text-red-700">− {fmt(rentabTotaux.achat)}</p>
+                    </div>
+                    <div className="bg-red-50 border border-red-100 rounded-xl p-3">
+                      <p className="text-xs text-red-400 mb-0.5">Cotisations ({tauxFiscaux.cotis_materiau}%)</p>
+                      <p className="text-lg font-bold text-red-700">− {fmt(rentabTotaux.cotisation)}</p>
+                    </div>
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                      <p className="text-xs text-emerald-500 mb-0.5">Marge nette réelle</p>
+                      <p className="text-lg font-bold text-emerald-700">{fmt(rentabTotaux.margeNette)}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5 max-h-80 overflow-y-auto">
+                    {rentabCalc.map(d => (
+                      <div key={d.id} className="flex items-center gap-3 p-2.5 rounded-xl bg-ink-50">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-ink-900 truncate">{d.numero} · {d.client_nom}</p>
+                          <p className="text-xs text-ink-400">{fmtDate(d.date_emission)} · Vente {fmt(d.total_materiau)} · Achat {fmt(d.cout_achat)} · Cotis. {fmt(d.cotisation)}</p>
+                        </div>
+                        <span className={cn("text-sm font-bold shrink-0", d.margeNette >= 0 ? "text-emerald-600" : "text-red-600")}>
+                          {fmt(d.margeNette)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
             {/* Commissions apporteurs */}
             <div className="card card-inner">
               <div className="flex items-center justify-between mb-4">
@@ -488,6 +591,48 @@ export default function CRMPage() {
               )}
             </div>
 
+            {/* Cotisations URSSAF dues par mois */}
+            <div className="card card-inner">
+              <div className="flex items-center gap-2 mb-4">
+                <Landmark size={17} className="text-volt-600" />
+                <h2 className="font-semibold text-ink-800">Cotisations URSSAF dues par mois {annee}</h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-ink-400 uppercase tracking-wide border-b border-ink-100">
+                      <th className="text-left py-2 pr-2">Mois</th>
+                      <th className="text-right py-2 px-2">CA encaissé</th>
+                      <th className="text-right py-2 px-2">Cotis. service ({tauxFiscaux.cotis_service}%)</th>
+                      <th className="text-right py-2 px-2">Cotis. matériaux ({tauxFiscaux.cotis_materiau}%)</th>
+                      <th className="text-right py-2 pl-2">Total dû</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cotisMensuelles.map(m => (
+                      <tr key={m.mois} className={cn("border-b border-ink-50", m.mois === moisActuel && annee === new Date().getFullYear() ? "bg-volt-50" : "")}>
+                        <td className="py-2 pr-2 font-medium text-ink-700">{MOIS_LONG[m.mois - 1]}</td>
+                        <td className="text-right py-2 px-2 text-ink-500">{m.ca > 0 ? fmt(m.ca) : "—"}</td>
+                        <td className="text-right py-2 px-2 text-ink-600">{m.cService > 0 ? fmt(m.cService) : "—"}</td>
+                        <td className="text-right py-2 px-2 text-ink-600">{m.cMateriau > 0 ? fmt(m.cMateriau) : "—"}</td>
+                        <td className="text-right py-2 pl-2 font-semibold text-red-600">{m.total > 0 ? fmt(m.total) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-ink-200">
+                      <td className="py-2 pr-2 font-bold text-ink-900">Total {annee}</td>
+                      <td className="text-right py-2 px-2 font-semibold text-ink-700">{fmt(caTotal)}</td>
+                      <td className="text-right py-2 px-2 font-semibold text-ink-700">{fmt(cotisService)}</td>
+                      <td className="text-right py-2 px-2 font-semibold text-ink-700">{fmt(cotisMatriau)}</td>
+                      <td className="text-right py-2 pl-2 font-bold text-red-700">{fmt(totalCotisAnnee)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              <p className="text-xs text-ink-400 mt-3">Calcul basé sur le CA encaissé (factures payées) du mois × taux de cotisation par branche · à titre indicatif, la déclaration URSSAF réelle peut suivre un rythme mensuel ou trimestriel selon votre option</p>
+            </div>
+
             {/* Graphique CA mensuel */}
             <div className="card card-inner">
               <div className="flex items-center justify-between mb-5">
@@ -511,7 +656,7 @@ export default function CRMPage() {
               </div>
             </div>
 
-            {/* Plafonds + CA par type */}
+            {/* Plafonds + Franchise TVA + CA par type */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <div className="card card-inner">
                 <div className="flex items-center gap-2 mb-4">
@@ -540,7 +685,38 @@ export default function CRMPage() {
                   </div>
                 </div>
               </div>
+
               <div className="card card-inner">
+                <div className="flex items-center gap-2 mb-4">
+                  <Landmark size={17} className="text-volt-600" />
+                  <h2 className="font-semibold text-ink-800">Franchise TVA {annee}</h2>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <div className="flex justify-between text-sm mb-1.5">
+                      <span className="text-ink-600">Service <span className="text-ink-400 text-xs">/ {fmt(FRANCHISE_TVA_SERVICE)}</span></span>
+                      <span className="font-semibold text-volt-600">{fmt(caAnnuel.service)} ({pctFranchiseService} %)</span>
+                    </div>
+                    <div className="h-3 bg-ink-100 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full transition-all ${pctFranchiseService >= 100 ? "bg-red-500" : pctFranchiseService > 80 ? "bg-amber-500" : "bg-volt-500"}`} style={{ width: `${pctFranchiseService}%` }} />
+                    </div>
+                    {franchiseServiceDepassee && <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertTriangle size={11} /> Franchise TVA dépassée — TVA applicable sur la branche service</p>}
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-sm mb-1.5">
+                      <span className="text-ink-600">Achat/revente <span className="text-ink-400 text-xs">/ {fmt(FRANCHISE_TVA_MATERIAU)}</span></span>
+                      <span className="font-semibold text-emerald-600">{fmt(caAnnuel.materiau)} ({pctFranchiseMateriau} %)</span>
+                    </div>
+                    <div className="h-3 bg-ink-100 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full transition-all ${pctFranchiseMateriau >= 100 ? "bg-red-500" : pctFranchiseMateriau > 80 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pctFranchiseMateriau}%` }} />
+                    </div>
+                    {franchiseMateriauDepassee && <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertTriangle size={11} /> Franchise TVA dépassée — TVA applicable sur la branche achat-revente</p>}
+                  </div>
+                  <p className="text-xs text-ink-400 pt-1 border-t border-ink-100">Seuils distincts du plafond micro : dépasser la franchise TVA vous rend redevable de la TVA, sans vous faire sortir du régime auto-entrepreneur.</p>
+                </div>
+              </div>
+
+              <div className="card card-inner md:col-span-2">
                 <div className="flex items-center gap-2 mb-4">
                   <PieChart size={17} className="text-volt-600" />
                   <h2 className="font-semibold text-ink-800">CA par branche</h2>
