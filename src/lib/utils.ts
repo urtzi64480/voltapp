@@ -23,8 +23,8 @@ export const UNITES = ["forfait", "heure", "u", "ml", "m2"] as const;
 export const BRANCHES = ["service", "materiau"] as const;
 export const STATUTS_DEVIS = ["brouillon", "envoye", "signe", "refuse", "expire"] as const;
 export const STATUTS_FACTURE = ["a_envoyer", "envoyee", "payee", "relance", "impayee"] as const;
-export const PLAFOND_SERVICE = 77700;
-export const PLAFOND_MATERIAU = 188700;
+export const PLAFOND_SERVICE = 83600;
+export const PLAFOND_MATERIAU = 203100;
 export const STATUT_LABELS: Record<string, string> = {
   brouillon: "Brouillon", envoye: "Envoyé", signe: "Signé",
   refuse: "Refusé", expire: "Expiré",
