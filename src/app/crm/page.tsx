@@ -207,13 +207,20 @@ export default function CRMPage() {
       const devisIds = Array.from(new Set((facsRentabBase ?? []).map((f: any) => f.devis_id).filter(Boolean)));
       const coutParDevis: Record<string, number> = {};
       if (devisIds.length > 0) {
+        // Pas de filtre type_branche ici : une ligne de kit porte toujours type_branche="service"
+        // (le kit_ratio_service ventile la CA a posteriori), mais elle peut contenir du matériel
+        // acheté au fournisseur. Le coût réel d'achat doit donc inclure toutes les lignes liées
+        // à une prestation catalogue, kit ou non.
         const { data: lignesAchat } = await supabase
           .from("devis_lignes")
-          .select("devis_id,quantite,type_branche,prestation:prestations(prix_achat)")
+          .select("devis_id,quantite,prestation_id,prestation:prestations(prix_achat)")
           .in("devis_id", devisIds)
-          .eq("type_branche", "materiau");
+          .not("prestation_id", "is", null);
         (lignesAchat ?? []).forEach((l: any) => {
-          coutParDevis[l.devis_id] = (coutParDevis[l.devis_id] ?? 0) + (l.quantite ?? 0) * (l.prestation?.prix_achat ?? 0);
+          const prixAchat = l.prestation?.prix_achat ?? 0;
+          if (prixAchat > 0) {
+            coutParDevis[l.devis_id] = (coutParDevis[l.devis_id] ?? 0) + (l.quantite ?? 0) * prixAchat;
+          }
         });
       }
 
