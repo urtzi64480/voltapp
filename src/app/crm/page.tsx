@@ -17,7 +17,7 @@ interface CommissionApporteur {
 }
 interface DevisRentabilite {
   id: string; numero: string; date_emission: string; client_nom: string;
-  total_materiau: number; cout_achat: number;
+  total_materiau: number; cout_achat: number; sans_devis?: boolean;
 }
 
 function BarMois({ mois, service, materiau, serviceN1, materiauN1, maxMois, label }: {
@@ -108,7 +108,6 @@ export default function CRMPage() {
         { data: apporteurs },
         { data: paliersAp },
         { data: facsMois },
-        { data: devisSignesRentab },
       ] = await Promise.all([
         supabase.from("factures").select("total_service,total_materiau,date_emission,statut").gte("paye_le", debut).lte("paye_le", fin).eq("statut", "payee"),
         supabase.from("factures").select("total_service,total_materiau,date_emission,statut").gte("paye_le", debutN1).lte("paye_le", finN1).eq("statut", "payee"),
@@ -122,7 +121,6 @@ export default function CRMPage() {
         supabase.from("apporteurs").select("*").eq("actif", true).order("nom"),
         supabase.from("paliers_apporteur").select("*").order("seuil_min"),
         supabase.from("factures").select("total_ttc,apporteur_id").eq("statut","payee").gte("paye_le", debutMois).lte("paye_le", finMois).not("apporteur_id", "is", null),
-        supabase.from("devis").select("id,numero,date_emission,total_materiau,client:clients(nom,prenom),lignes:devis_lignes(quantite,type_branche,prestation:prestations(prix_achat))").eq("statut","signe").gte("date_emission", debut).lte("date_emission", fin),
       ]);
 
       if (profil) {
@@ -194,20 +192,40 @@ export default function CRMPage() {
       setDevisEnAttente(devisAttente ?? []);
       setFacturesImpayees(facsImp ?? []);
 
-      // ── Rentabilité achat-revente par devis signé ──
-      const rentab: DevisRentabilite[] = (devisSignesRentab ?? []).map((d: any) => {
-        const coutAchat = (d.lignes ?? [])
-          .filter((l: any) => l.type_branche === "materiau")
-          .reduce((a: number, l: any) => a + (l.quantite ?? 0) * (l.prestation?.prix_achat ?? 0), 0);
-        return {
-          id: d.id,
-          numero: d.numero,
-          date_emission: d.date_emission,
-          client_nom: d.client ? `${d.client.prenom ?? ""} ${d.client.nom}`.trim() : "—",
-          total_materiau: d.total_materiau ?? 0,
-          cout_achat: coutAchat,
-        };
-      }).filter((d: DevisRentabilite) => d.total_materiau > 0 || d.cout_achat > 0);
+      // ── Rentabilité achat-revente par facture payée ──
+      // Basé sur l'argent réellement encaissé (statut payee), pas sur les devis signés.
+      // Le coût d'achat est récupéré via le devis d'origine (facture.devis_id -> devis_lignes),
+      // car facture_lignes ne porte pas de prestation_id.
+      const { data: facsRentabBase } = await supabase
+        .from("factures")
+        .select("id,numero,paye_le,total_materiau,devis_id,client:clients(nom,prenom)")
+        .eq("statut", "payee")
+        .gte("paye_le", debut)
+        .lte("paye_le", fin)
+        .gt("total_materiau", 0);
+
+      const devisIds = Array.from(new Set((facsRentabBase ?? []).map((f: any) => f.devis_id).filter(Boolean)));
+      const coutParDevis: Record<string, number> = {};
+      if (devisIds.length > 0) {
+        const { data: lignesAchat } = await supabase
+          .from("devis_lignes")
+          .select("devis_id,quantite,type_branche,prestation:prestations(prix_achat)")
+          .in("devis_id", devisIds)
+          .eq("type_branche", "materiau");
+        (lignesAchat ?? []).forEach((l: any) => {
+          coutParDevis[l.devis_id] = (coutParDevis[l.devis_id] ?? 0) + (l.quantite ?? 0) * (l.prestation?.prix_achat ?? 0);
+        });
+      }
+
+      const rentab: DevisRentabilite[] = (facsRentabBase ?? []).map((f: any) => ({
+        id: f.id,
+        numero: f.numero,
+        date_emission: f.paye_le,
+        client_nom: f.client ? `${f.client.prenom ?? ""} ${f.client.nom}`.trim() : "—",
+        total_materiau: f.total_materiau ?? 0,
+        cout_achat: f.devis_id ? (coutParDevis[f.devis_id] ?? 0) : 0,
+        sans_devis: !f.devis_id,
+      }));
       setDevisRentabilite(rentab.sort((a, b) => new Date(b.date_emission).getTime() - new Date(a.date_emission).getTime()));
 
       const aps = apporteurs ?? [];
@@ -497,14 +515,14 @@ export default function CRMPage() {
             <div className="card card-inner">
               <div className="flex items-center gap-2 mb-4">
                 <ShoppingBag size={18} className="text-volt-600" />
-                <h2 className="font-semibold text-ink-800">Rentabilité matériel — devis signés {annee}</h2>
+                <h2 className="font-semibold text-ink-800">Rentabilité matériel — factures payées {annee}</h2>
               </div>
               <p className="text-xs text-ink-400 mb-4">
-                Frais d'achat matériel réellement engagés vs argent gagné après cotisations sociales de la branche achat-revente ({tauxFiscaux.cotis_materiau}%).
-                Basé sur le prix d'achat actuel du catalogue — peut différer légèrement du coût réel si vos tarifs fournisseurs ont changé depuis le devis.
+                Frais d'achat matériel réellement engagés vs argent réellement encaissé, après cotisations sociales de la branche achat-revente ({tauxFiscaux.cotis_materiau}%).
+                Coût d'achat basé sur le prix catalogue actuel des lignes du devis d'origine — peut différer légèrement du coût réel si vos tarifs fournisseurs ont changé depuis.
               </p>
               {rentabCalc.length === 0 ? (
-                <p className="text-ink-400 text-sm text-center py-6">Aucun devis signé avec ligne matériaux sur cette période</p>
+                <p className="text-ink-400 text-sm text-center py-6">Aucune facture payée avec CA matériaux sur cette période</p>
               ) : (
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
@@ -531,6 +549,7 @@ export default function CRMPage() {
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-ink-900 truncate">{d.numero} · {d.client_nom}</p>
                           <p className="text-xs text-ink-400">{fmtDate(d.date_emission)} · Vente {fmt(d.total_materiau)} · Achat {fmt(d.cout_achat)} · Cotis. {fmt(d.cotisation)}</p>
+                          {d.sans_devis && <p className="text-xs text-amber-600 flex items-center gap-1 mt-0.5"><AlertTriangle size={11} /> Facture sans devis lié — coût d'achat indisponible, marge surestimée</p>}
                         </div>
                         <span className={cn("text-sm font-bold shrink-0", d.margeNette >= 0 ? "text-emerald-600" : "text-red-600")}>
                           {fmt(d.margeNette)}
