@@ -328,13 +328,30 @@ export default function CRMPage() {
 
   const caTotal = caAnnuel.service + caAnnuel.materiau;
   const caTotalN1 = caAnnuelN1.service + caAnnuelN1.materiau;
+
+  // ── Rentabilité achat-revente par facture, avec agrégats ──
+  // Calculé en premier car le coût d'achat matériel réel entre dans le résultat net annuel ci-dessous.
+  const rentabCalc = devisRentabilite.map(d => {
+    const cotisation = d.total_materiau * tauxFiscaux.cotis_materiau / 100;
+    const margeNette = d.total_materiau - cotisation - d.cout_achat;
+    return { ...d, cotisation, margeNette };
+  });
+  const rentabTotaux = rentabCalc.reduce((a, d) => ({
+    vente: a.vente + d.total_materiau,
+    achat: a.achat + d.cout_achat,
+    cotisation: a.cotisation + d.cotisation,
+    margeNette: a.margeNette + d.margeNette,
+  }), { vente: 0, achat: 0, cotisation: 0, margeNette: 0 });
+  const coutAchatMateriel = rentabTotaux.achat;
+
   const cotisService  = caAnnuel.service  * tauxFiscaux.cotis_service  / 100;
   const cotisMatriau  = caAnnuel.materiau * tauxFiscaux.cotis_materiau / 100;
   const irService     = caAnnuel.service  * tauxFiscaux.ir_service     / 100;
   const irMateriau    = caAnnuel.materiau * tauxFiscaux.ir_materiau    / 100;
   const totalCotis    = cotisService + cotisMatriau;
   const totalIR       = irService + irMateriau;
-  const totalCharges  = totalCotis + totalIR;
+  // Charges réelles = cotisations sociales + IR libératoire + coût d'achat matériel effectivement engagé
+  const totalCharges  = totalCotis + totalIR + coutAchatMateriel;
   const resultatNet   = caTotal - totalCharges;
   const pctCharges    = caTotal > 0 ? Math.round(totalCharges / caTotal * 100) : 0;
   const pctNet        = caTotal > 0 ? Math.round(resultatNet / caTotal * 100) : 0;
@@ -358,19 +375,6 @@ export default function CRMPage() {
     return { mois: m.mois, cService, cMateriau, total: cService + cMateriau, ca: m.service + m.materiau };
   });
   const totalCotisAnnee = cotisMensuelles.reduce((a, m) => a + m.total, 0);
-
-  // ── Rentabilité achat-revente par devis, avec agrégats ──
-  const rentabCalc = devisRentabilite.map(d => {
-    const cotisation = d.total_materiau * tauxFiscaux.cotis_materiau / 100;
-    const margeNette = d.total_materiau - cotisation - d.cout_achat;
-    return { ...d, cotisation, margeNette };
-  });
-  const rentabTotaux = rentabCalc.reduce((a, d) => ({
-    vente: a.vente + d.total_materiau,
-    achat: a.achat + d.cout_achat,
-    cotisation: a.cotisation + d.cotisation,
-    margeNette: a.margeNette + d.margeNette,
-  }), { vente: 0, achat: 0, cotisation: 0, margeNette: 0 });
 
   return (
     <Shell>
@@ -492,6 +496,7 @@ export default function CRMPage() {
                       <div className="mt-2 space-y-0.5">
                         {totalCotis > 0 && <p className="text-xs text-red-500">Cotisations : {fmt(totalCotis)}</p>}
                         {totalIR > 0 && <p className="text-xs text-red-500">IR libératoire : {fmt(totalIR)}</p>}
+                        {coutAchatMateriel > 0 && <p className="text-xs text-red-500">Achat matériel : {fmt(coutAchatMateriel)}</p>}
                         <p className="text-xs text-red-400">{pctCharges}% du CA</p>
                       </div>
                     </div>
@@ -522,7 +527,8 @@ export default function CRMPage() {
                           <div className="flex justify-between"><span>CA</span><span className="font-semibold">{fmt(caAnnuel.materiau)}</span></div>
                           <div className="flex justify-between text-red-500"><span>Cotisations ({tauxFiscaux.cotis_materiau}%)</span><span>− {fmt(cotisMatriau)}</span></div>
                           {irMateriau > 0 && <div className="flex justify-between text-red-500"><span>IR ({tauxFiscaux.ir_materiau}%)</span><span>− {fmt(irMateriau)}</span></div>}
-                          <div className="flex justify-between font-semibold text-emerald-600 pt-1 border-t border-emerald-200"><span>Net</span><span>{fmt(caAnnuel.materiau - cotisMatriau - irMateriau)}</span></div>
+                          {coutAchatMateriel > 0 && <div className="flex justify-between text-red-500"><span>Achat matériel</span><span>− {fmt(coutAchatMateriel)}</span></div>}
+                          <div className="flex justify-between font-semibold text-emerald-600 pt-1 border-t border-emerald-200"><span>Net</span><span>{fmt(caAnnuel.materiau - cotisMatriau - irMateriau - coutAchatMateriel)}</span></div>
                         </div>
                       </div>
                     </div>
