@@ -207,17 +207,30 @@ export default function CRMPage() {
       const devisIds = Array.from(new Set((facsRentabBase ?? []).map((f: any) => f.devis_id).filter(Boolean)));
       const coutParDevis: Record<string, number> = {};
       if (devisIds.length > 0) {
-        // Pas de filtre type_branche ici : une ligne de kit porte toujours type_branche="service"
-        // (le kit_ratio_service ventile la CA a posteriori), mais elle peut contenir du matériel
-        // acheté au fournisseur. Le coût réel d'achat doit donc inclure toutes les lignes liées
-        // à une prestation catalogue, kit ou non.
-        const { data: lignesAchat } = await supabase
+        // Deux requêtes séparées + jointure manuelle en JS, plutôt qu'un embed imbriqué
+        // prestation:prestations(...) qui dépend d'une FK déclarée en base entre
+        // devis_lignes.prestation_id et prestations.id. Si cette FK n'existe pas explicitement,
+        // l'embed échoue silencieusement et le coût d'achat reste à 0.
+        const { data: lignesAchat, error: errLignes } = await supabase
           .from("devis_lignes")
-          .select("devis_id,quantite,prestation_id,prestation:prestations(prix_achat)")
+          .select("devis_id,quantite,prestation_id")
           .in("devis_id", devisIds)
           .not("prestation_id", "is", null);
+        if (errLignes) console.error("Erreur récupération devis_lignes (rentabilité) :", errLignes);
+
+        const prestationIds = Array.from(new Set((lignesAchat ?? []).map((l: any) => l.prestation_id).filter(Boolean)));
+        const prixAchatParPrestation: Record<string, number> = {};
+        if (prestationIds.length > 0) {
+          const { data: prestationsAchat, error: errPrest } = await supabase
+            .from("prestations")
+            .select("id,prix_achat")
+            .in("id", prestationIds);
+          if (errPrest) console.error("Erreur récupération prestations (prix_achat) :", errPrest);
+          (prestationsAchat ?? []).forEach((p: any) => { prixAchatParPrestation[p.id] = p.prix_achat ?? 0; });
+        }
+
         (lignesAchat ?? []).forEach((l: any) => {
-          const prixAchat = l.prestation?.prix_achat ?? 0;
+          const prixAchat = prixAchatParPrestation[l.prestation_id] ?? 0;
           if (prixAchat > 0) {
             coutParDevis[l.devis_id] = (coutParDevis[l.devis_id] ?? 0) + (l.quantite ?? 0) * prixAchat;
           }
