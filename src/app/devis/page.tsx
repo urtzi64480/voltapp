@@ -4,8 +4,9 @@ import { supabase } from "@/lib/supabase";
 import { Devis } from "@/types";
 import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import Link from "next/link";
-import { Plus, Search, FileText, ChevronRight, ChevronDown, ChevronUp, User, Receipt, CalendarDays, CalendarX } from "lucide-react";
+import { Plus, Search, FileText, ChevronRight, ChevronDown, ChevronUp, User, Receipt, CalendarDays, CalendarX, Trash2 } from "lucide-react";
 
 const FILTRES = ["tous", "brouillon", "envoye", "signe", "refuse", "non_planifie"] as const;
 const STATUTS_VISIBLES = ["envoye", "signe", "brouillon", "refuse"];
@@ -18,6 +19,8 @@ export default function DevisPage() {
   const [filtre, setFiltre] = useState("tous");
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [toDelete, setToDelete] = useState<Devis | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     supabase.from("devis").select("*, client:clients(nom,prenom)")
@@ -69,6 +72,21 @@ export default function DevisPage() {
     byClient[key].items.push(d);
   });
   const groups = Object.entries(byClient).sort((a, b) => a[1].label.localeCompare(b[1].label, "fr"));
+
+  async function handleDelete() {
+    if (!toDelete) return;
+    setDeleting(true);
+    // Supprime d'abord les lignes liées (contrainte FK), puis le devis
+    await supabase.from("devis_lignes").delete().eq("devis_id", toDelete.id);
+    const { error } = await supabase.from("devis").delete().eq("id", toDelete.id);
+    setDeleting(false);
+    if (error) {
+      alert("Erreur lors de la suppression du devis.");
+      return;
+    }
+    setDevis(prev => prev.filter(d => d.id !== toDelete.id));
+    setToDelete(null);
+  }
 
   return (
     <Shell>
@@ -152,6 +170,13 @@ export default function DevisPage() {
                               <p className="text-xs text-ink-400">{fmtDate(d.date_emission)}</p>
                             </div>
                             <p className="text-base font-bold text-volt-600 shrink-0">{fmt(d.total_ttc)}</p>
+                            <button
+                              onClick={e => { e.preventDefault(); e.stopPropagation(); setToDelete(d); }}
+                              className="text-ink-300 hover:text-red-600 transition-colors shrink-0 p-1"
+                              title="Supprimer"
+                            >
+                              <Trash2 size={15} />
+                            </button>
                             <ChevronRight size={15} className="text-ink-300 group-hover:text-volt-500 transition-colors shrink-0" />
                           </Link>
                         );
@@ -163,6 +188,15 @@ export default function DevisPage() {
             </div>
           )}
       </div>
+
+      <ConfirmDialog
+        open={!!toDelete}
+        title="Supprimer ce devis ?"
+        message={toDelete ? `Le devis ${toDelete.numero} et ses lignes seront supprimés définitivement. Cette action est irréversible.` : ""}
+        onConfirm={handleDelete}
+        onCancel={() => setToDelete(null)}
+        loading={deleting}
+      />
     </Shell>
   );
 }
