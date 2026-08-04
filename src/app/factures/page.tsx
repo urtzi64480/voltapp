@@ -4,8 +4,9 @@ import { supabase } from "@/lib/supabase";
 import { Facture } from "@/types";
 import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import Link from "next/link";
-import { Search, Receipt, ChevronRight, ChevronDown, ChevronUp, AlertCircle, User } from "lucide-react";
+import { Search, Receipt, ChevronRight, ChevronDown, ChevronUp, AlertCircle, User, Trash2 } from "lucide-react";
 
 export default function FacturesPage() {
   const [factures, setFactures] = useState<Facture[]>([]);
@@ -13,6 +14,8 @@ export default function FacturesPage() {
   const [filtre, setFiltre] = useState("tous");
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [toDelete, setToDelete] = useState<Facture | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     supabase.from("factures").select("*, client:clients(nom,prenom)").order("created_at", { ascending: false })
@@ -36,6 +39,21 @@ export default function FacturesPage() {
     byClient[key].items.push(f);
   });
   const groups = Object.entries(byClient).sort((a, b) => a[1].label.localeCompare(b[1].label, "fr"));
+
+  async function handleDelete() {
+    if (!toDelete) return;
+    setDeleting(true);
+    // Supprime d'abord les lignes liées (contrainte FK), puis la facture
+    await supabase.from("facture_lignes").delete().eq("facture_id", toDelete.id);
+    const { error } = await supabase.from("factures").delete().eq("id", toDelete.id);
+    setDeleting(false);
+    if (error) {
+      alert("Erreur lors de la suppression de la facture.");
+      return;
+    }
+    setFactures(prev => prev.filter(f => f.id !== toDelete.id));
+    setToDelete(null);
+  }
 
   return (
     <Shell>
@@ -113,6 +131,13 @@ export default function FacturesPage() {
                             <p className={cn("text-base font-bold shrink-0", ["impayee", "relance"].includes(f.statut) ? "text-red-600" : "text-emerald-600")}>
                               {fmt(f.total_ttc)}
                             </p>
+                            <button
+                              onClick={e => { e.preventDefault(); e.stopPropagation(); setToDelete(f); }}
+                              className="text-ink-300 hover:text-red-600 transition-colors shrink-0 p-1"
+                              title="Supprimer"
+                            >
+                              <Trash2 size={15} />
+                            </button>
                             <ChevronRight size={15} className="text-ink-300 group-hover:text-volt-500 transition-colors shrink-0" />
                           </Link>
                         ))}
@@ -124,6 +149,15 @@ export default function FacturesPage() {
             </div>
           )}
       </div>
+
+      <ConfirmDialog
+        open={!!toDelete}
+        title="Supprimer cette facture ?"
+        message={toDelete ? `La facture ${toDelete.numero} et ses lignes seront supprimées définitivement. Cette action est irréversible.` : ""}
+        onConfirm={handleDelete}
+        onCancel={() => setToDelete(null)}
+        loading={deleting}
+      />
     </Shell>
   );
 }
