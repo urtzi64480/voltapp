@@ -4,6 +4,7 @@ export type StatutFacture = "a_envoyer" | "envoyee" | "payee" | "relance" | "imp
 export type StatutTransmission = "en_attente" | "transmise" | "acceptee" | "rejetee";
 export type StatutIntervention = "planifie" | "en_cours" | "termine" | "annule";
 export type StatutDemande = "nouveau" | "vu" | "converti";
+export type TypeClient = "particulier" | "professionnel";
 
 export interface Profil {
   id: string;
@@ -43,6 +44,8 @@ export interface Client {
   adresse?: string;
   code_postal?: string;
   ville?: string;
+  type_client: TypeClient;
+  siret_client?: string;
   type_logement?: string;
   annee_construction?: number;
   surface_m2?: number;
