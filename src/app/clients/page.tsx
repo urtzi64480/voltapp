@@ -5,7 +5,7 @@ import { Client } from "@/types";
 import { initiales, STATUT_LABELS, STATUT_COLORS, cn, fmtDate } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { UserPlus, Search, Phone, MapPin, ChevronRight, CalendarDays } from "lucide-react";
+import { UserPlus, Search, Phone, MapPin, ChevronRight, CalendarDays, Building2 } from "lucide-react";
 
 const STATUT_IV: Record<string, { label: string; color: string }> = {
   planifie: { label: "Planifiée", color: "text-blue-600" },
@@ -14,10 +14,17 @@ const STATUT_IV: Record<string, { label: string; color: string }> = {
   annule:   { label: "Annulée",   color: "text-red-500" },
 };
 
+const TYPE_FILTERS: { id: "tous" | "particulier" | "professionnel"; label: string }[] = [
+  { id: "tous", label: "Tous" },
+  { id: "particulier", label: "Particuliers" },
+  { id: "professionnel", label: "Professionnels" },
+];
+
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [lastIvMap, setLastIvMap] = useState<Record<string, { titre: string; date_debut: string; statut: string }>>({});
   const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"tous" | "particulier" | "professionnel">("tous");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -44,9 +51,13 @@ export default function ClientsPage() {
     });
   }, []);
 
-  const filtered = clients.filter(c =>
-    `${c.nom} ${c.prenom ?? ""} ${c.telephone ?? ""} ${c.ville ?? ""}`.toLowerCase().includes(search.toLowerCase())
-  );
+  const nbPro = clients.filter(c => c.type_client === "professionnel").length;
+
+  const filtered = clients
+    .filter(c =>
+      `${c.nom} ${c.prenom ?? ""} ${c.telephone ?? ""} ${c.ville ?? ""}`.toLowerCase().includes(search.toLowerCase())
+    )
+    .filter(c => typeFilter === "tous" ? true : (c.type_client ?? "particulier") === typeFilter);
 
   return (
     <Shell>
@@ -54,13 +65,30 @@ export default function ClientsPage() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="font-display text-3xl text-ink-900">Clients</h1>
-            <p className="text-ink-500 text-sm mt-1">{clients.length} client{clients.length > 1 ? "s" : ""} enregistré{clients.length > 1 ? "s" : ""}</p>
+            <p className="text-ink-500 text-sm mt-1">
+              {clients.length} client{clients.length > 1 ? "s" : ""} enregistré{clients.length > 1 ? "s" : ""}
+              {nbPro > 0 && ` · ${nbPro} professionnel${nbPro > 1 ? "s" : ""}`}
+            </p>
           </div>
           <Link href="/clients/nouveau" className="btn-volt"><UserPlus size={16} /> Nouveau</Link>
         </div>
-        <div className="relative mb-4">
+        <div className="relative mb-3">
           <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-400" />
           <input className="input pl-10" placeholder="Rechercher un client…" value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        <div className="flex gap-1.5 mb-4">
+          {TYPE_FILTERS.map(f => (
+            <button
+              key={f.id}
+              onClick={() => setTypeFilter(f.id)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                typeFilter === f.id ? "bg-ink-900 text-volt-400" : "text-ink-500 bg-ink-100 hover:bg-ink-200"
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
         </div>
         {loading ? (
           <div className="text-center py-16 text-ink-400">Chargement…</div>
@@ -81,7 +109,14 @@ export default function ClientsPage() {
                     {initiales(c.nom, c.prenom)}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-ink-900">{c.prenom ? `${c.prenom} ${c.nom}` : c.nom}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-semibold text-ink-900">{c.prenom ? `${c.prenom} ${c.nom}` : c.nom}</p>
+                      {c.type_client === "professionnel" && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-ink-300 text-ink-600 bg-ink-50">
+                          <Building2 size={9} /> Pro
+                        </span>
+                      )}
+                    </div>
                     <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-0.5">
                       {c.telephone && <span className="text-xs text-ink-500 flex items-center gap-1"><Phone size={11} />{c.telephone}</span>}
                       {c.ville && <span className="text-xs text-ink-500 flex items-center gap-1"><MapPin size={11} />{c.ville}</span>}
