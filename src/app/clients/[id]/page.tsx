@@ -6,7 +6,7 @@ import { fmt, fmtDate, fmtDatetime, initiales, STATUT_LABELS, STATUT_COLORS, cn 
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Phone, Mail, MapPin, Home, Key, FileText, Camera, X, Plus, Pencil, Save, Trash2, ChevronLeft, ChevronRight, Receipt, CalendarDays, MessageSquare } from "lucide-react";
+import { ArrowLeft, Phone, Mail, MapPin, Home, Key, FileText, Camera, X, Plus, Pencil, Save, Trash2, ChevronLeft, ChevronRight, Receipt, CalendarDays, MessageSquare, Building2 } from "lucide-react";
 import TableauClientWidget from "@/components/tableau/TableauClientWidget";
 
 interface Palier {
@@ -136,6 +136,8 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
       email: form.email, adresse: form.adresse, code_postal: form.code_postal,
       ville: form.ville, contact_prefere: form.contact_prefere,
       disponibilites: form.disponibilites, source: form.source, statut: form.statut,
+      type_client: form.type_client ?? "particulier",
+      siret_client: form.type_client === "professionnel" ? (form.siret_client ?? null) : null,
     }).eq("id", id);
     setClient(c => c ? { ...c, ...form } : c);
     setEditInfos(false); setSaving(false);
@@ -268,6 +270,11 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="font-display text-2xl text-ink-900">{client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</h1>
               {palierActuel && <MedailleBadge palier={palierActuel} />}
+              {client.type_client === "professionnel" && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border border-ink-300 text-ink-600 bg-ink-50">
+                  <Building2 size={11} /> Professionnel
+                </span>
+              )}
             </div>
             {client.statut && <span className={cn("badge text-xs", STATUT_COLORS[client.statut])}>{STATUT_LABELS[client.statut]}</span>}
           </div>
@@ -321,6 +328,10 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
             </div>
             {editInfos ? (
               <div className="grid grid-cols-2 gap-3">
+                <S label="Type de client" k="type_client" form={form} set={setF} options={[["particulier","Particulier"],["professionnel","Professionnel"]]} />
+                {form.type_client === "professionnel" && (
+                  <F label="SIRET" k="siret_client" placeholder="14 chiffres" form={form} set={setF} />
+                )}
                 <F label="Prénom" k="prenom" form={form} set={setF} />
                 <F label="Nom *" k="nom" form={form} set={setF} />
                 <F label="Téléphone" k="telephone" type="tel" form={form} set={setF} />
@@ -335,6 +346,12 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
               </div>
             ) : (
               <div className="space-y-3">
+                {client.type_client === "professionnel" && (
+                  <div className="flex items-center gap-3">
+                    <Building2 size={15} className="text-ink-400 shrink-0" />
+                    <span className="text-sm">{client.siret_client ? `SIRET ${client.siret_client}` : "SIRET non renseigné"}</span>
+                  </div>
+                )}
                 {client.telephone && (
                   <div className="flex items-center gap-3">
                     <Phone size={15} className="text-ink-400 shrink-0" />
