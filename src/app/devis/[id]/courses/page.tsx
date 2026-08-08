@@ -1,9 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { ArrowLeft, Check, ShoppingCart, RotateCcw, Share2, Check as CheckIcon } from "lucide-react";
+import { ArrowLeft, Check, ShoppingCart, RotateCcw, Share2, Link2, MessageSquare, Mail } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buildCourseItems, CourseItem } from "@/lib/courseItems";
 
@@ -14,11 +14,13 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   const [items, setItems] = useState<CourseItem[]>([]);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     supabase
       .from("devis")
-      .select("numero, statut, objet, liste_courses_token, liste_courses_checked, client:clients(nom, prenom), lignes:devis_lignes(*)")
+      .select("numero, statut, objet, liste_courses_token, liste_courses_checked, client:clients(nom, prenom, email, telephone), lignes:devis_lignes(*)")
       .eq("id", id)
       .single()
       .then(({ data }) => {
@@ -30,6 +32,16 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
         setLoading(false);
       });
   }, [id]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    if (menuOpen) document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuOpen]);
 
   async function persistChecked(next: Record<string, boolean>) {
     setChecked(next);
@@ -46,18 +58,58 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
     persistChecked(next);
   }
 
-  async function handleShare() {
+  async function ensureToken(): Promise<string | null> {
     let token = devisInfo?.liste_courses_token;
     if (!token) {
       token = crypto.randomUUID();
       const { error } = await supabase.from("devis").update({ liste_courses_token: token }).eq("id", id);
-      if (error) return;
+      if (error) return null;
       setDevisInfo(prev => prev ? { ...prev, liste_courses_token: token } : prev);
     }
+    return token;
+  }
+
+  function shareMessage(url: string) {
+    const client = devisInfo?.client as any;
+    const prenom = client?.prenom ? `${client.prenom}, ` : "";
+    return `${prenom}voici la liste de courses pour le devis ${devisInfo?.numero} : ${url}`;
+  }
+
+  async function handleOpenMenu() {
+    const token = await ensureToken();
+    if (!token) return;
+    setMenuOpen(true);
+  }
+
+  async function handleCopy() {
+    const token = devisInfo?.liste_courses_token;
+    if (!token) return;
     const url = `${window.location.origin}/liste/${token}`;
     await navigator.clipboard.writeText(url);
     setCopied(true);
+    setMenuOpen(false);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  function handleSendSms() {
+    const token = devisInfo?.liste_courses_token;
+    const client = devisInfo?.client as any;
+    if (!token || !client?.telephone) return;
+    const url = `${window.location.origin}/liste/${token}`;
+    const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const sep = isIos ? "&" : "?";
+    window.location.href = `sms:${client.telephone}${sep}body=${encodeURIComponent(shareMessage(url))}`;
+    setMenuOpen(false);
+  }
+
+  function handleSendEmail() {
+    const token = devisInfo?.liste_courses_token;
+    const client = devisInfo?.client as any;
+    if (!token || !client?.email) return;
+    const url = `${window.location.origin}/liste/${token}`;
+    const subject = `Liste de courses — Devis ${devisInfo?.numero}`;
+    window.location.href = `mailto:${client.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(shareMessage(url))}`;
+    setMenuOpen(false);
   }
 
   const totalChecked = items.filter(it => checked[it.key]).length;
@@ -97,13 +149,41 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
               {client && ` · ${client.prenom ? `${client.prenom} ${client.nom}` : client.nom}`}
             </p>
           </div>
-          <button
-            onClick={handleShare}
-            className="btn-ghost !px-3 !py-2 inline-flex items-center gap-1.5 text-xs shrink-0"
-          >
-            {copied ? <CheckIcon size={14} className="text-emerald-500" /> : <Share2 size={14} />}
-            {copied ? "Lien copié" : "Partager"}
-          </button>
+          <div className="relative shrink-0" ref={menuRef}>
+            <button
+              onClick={handleOpenMenu}
+              className="btn-ghost !px-3 !py-2 inline-flex items-center gap-1.5 text-xs"
+            >
+              {copied ? <Check size={14} className="text-emerald-500" /> : <Share2 size={14} />}
+              {copied ? "Lien copié" : "Partager"}
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 top-full mt-1 w-56 bg-white border border-ink-100 rounded-xl shadow-lg py-1 z-10">
+                <button
+                  onClick={handleCopy}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-ink-700 hover:bg-ink-50 text-left"
+                >
+                  <Link2 size={15} className="text-ink-400" /> Copier le lien
+                </button>
+                <button
+                  onClick={handleSendSms}
+                  disabled={!(devisInfo?.client as any)?.telephone}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-ink-700 hover:bg-ink-50 text-left disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <MessageSquare size={15} className="text-ink-400" />
+                  {(devisInfo?.client as any)?.telephone ? "Envoyer par SMS" : "Envoyer par SMS (pas de tél.)"}
+                </button>
+                <button
+                  onClick={handleSendEmail}
+                  disabled={!(devisInfo?.client as any)?.email}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-ink-700 hover:bg-ink-50 text-left disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Mail size={15} className="text-ink-400" />
+                  {(devisInfo?.client as any)?.email ? "Envoyer par email" : "Envoyer par email (pas d'adresse)"}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {items.length === 0 ? (
