@@ -3,92 +3,61 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { ArrowLeft, Check, ShoppingCart, RotateCcw } from "lucide-react";
+import { ArrowLeft, Check, ShoppingCart, RotateCcw, Share2, Check as CheckIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-interface CourseItem {
-  key: string;
-  nom: string;
-  qty: number;
-  unite?: string;
-}
-
-// Termes désignant une prestation (main d'œuvre, déplacement, étude...) à exclure de la liste d'achat
-const SERVICE_REGEX = /main\s*d.?[oœ]uvre|heure(s)?(\s*suppl(émentaire)?)?|d[ée]placement|mise\s+en\s+service|intervention|diagnostic|[ée]tude|forfait\s*d[ée]placement|conseil/i;
-
-// Retire le préfixe "Contient :" (ou variantes) placé avant la liste des composants
-function stripKitPrefix(text: string): string {
-  return text.replace(/^\s*contient\s*:?\s*/i, "").trim();
-}
-
-function parseKitPart(part: string): { qty: number; nom: string } {
-  const m = part.trim().match(/^(\d+)\s*×\s*(.+)$/);
-  if (m) return { qty: parseInt(m[1], 10), nom: m[2].trim() };
-  return { qty: 1, nom: part.trim() };
-}
-
-function buildCourseItems(lignes: any[]): CourseItem[] {
-  const map = new Map<string, CourseItem>();
-
-  for (const l of lignes) {
-    if (l.kit_description) {
-      const cleaned = stripKitPrefix(String(l.kit_description));
-      const parts = cleaned.split(",").map((s: string) => s.trim()).filter(Boolean);
-      for (const part of parts) {
-        const { qty: qtyUnit, nom } = parseKitPart(part);
-        if (SERVICE_REGEX.test(nom)) continue;
-        const qty = qtyUnit * (l.quantite || 1);
-        const key = nom.toLowerCase();
-        if (map.has(key)) {
-          map.get(key)!.qty += qty;
-        } else {
-          map.set(key, { key, nom, qty });
-        }
-      }
-    } else if (l.type_branche === "materiau") {
-      const key = l.nom.toLowerCase();
-      const qty = l.quantite || 1;
-      if (map.has(key)) {
-        map.get(key)!.qty += qty;
-      } else {
-        map.set(key, { key, nom: l.nom, qty, unite: l.unite });
-      }
-    }
-  }
-
-  return Array.from(map.values()).sort((a, b) => a.nom.localeCompare(b.nom));
-}
+import { buildCourseItems, CourseItem } from "@/lib/courseItems";
 
 export default function ListeCoursesPage({ params }: { params: { id: string } }) {
   const { id } = params;
   const [loading, setLoading] = useState(true);
-  const [devisInfo, setDevisInfo] = useState<{ numero: string; statut: string; objet?: string; client?: any } | null>(null);
+  const [devisInfo, setDevisInfo] = useState<{ numero: string; statut: string; objet?: string; client?: any; liste_courses_token?: string } | null>(null);
   const [items, setItems] = useState<CourseItem[]>([]);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     supabase
       .from("devis")
-      .select("numero, statut, objet, client:clients(nom, prenom), lignes:devis_lignes(*)")
+      .select("numero, statut, objet, liste_courses_token, liste_courses_checked, client:clients(nom, prenom), lignes:devis_lignes(*)")
       .eq("id", id)
       .single()
       .then(({ data }) => {
         if (data) {
           setDevisInfo(data as any);
           setItems(buildCourseItems((data as any).lignes ?? []));
+          setChecked(((data as any).liste_courses_checked as Record<string, boolean>) || {});
         }
         setLoading(false);
       });
   }, [id]);
 
+  async function persistChecked(next: Record<string, boolean>) {
+    setChecked(next);
+    await supabase.from("devis").update({ liste_courses_checked: next }).eq("id", id);
+  }
+
   function toggle(key: string) {
-    setChecked(prev => ({ ...prev, [key]: !prev[key] }));
+    persistChecked({ ...checked, [key]: !checked[key] });
   }
 
   function toggleAll(value: boolean) {
     const next: Record<string, boolean> = {};
     items.forEach(it => { next[it.key] = value; });
-    setChecked(next);
+    persistChecked(next);
+  }
+
+  async function handleShare() {
+    let token = devisInfo?.liste_courses_token;
+    if (!token) {
+      token = crypto.randomUUID();
+      const { error } = await supabase.from("devis").update({ liste_courses_token: token }).eq("id", id);
+      if (error) return;
+      setDevisInfo(prev => prev ? { ...prev, liste_courses_token: token } : prev);
+    }
+    const url = `${window.location.origin}/liste/${token}`;
+    await navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }
 
   const totalChecked = items.filter(it => checked[it.key]).length;
@@ -128,6 +97,13 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
               {client && ` · ${client.prenom ? `${client.prenom} ${client.nom}` : client.nom}`}
             </p>
           </div>
+          <button
+            onClick={handleShare}
+            className="btn-ghost !px-3 !py-2 inline-flex items-center gap-1.5 text-xs shrink-0"
+          >
+            {copied ? <CheckIcon size={14} className="text-emerald-500" /> : <Share2 size={14} />}
+            {copied ? "Lien copié" : "Partager"}
+          </button>
         </div>
 
         {items.length === 0 ? (
