@@ -2,7 +2,7 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { ChevronRight, ChevronLeft, CheckCircle, Upload, X, Loader2 } from "lucide-react";
+import { ChevronRight, ChevronLeft, CheckCircle, Upload, X, Loader2, FileText, CalendarDays } from "lucide-react";
 
 const TYPES_TRAVAUX = [
   "Dépannage électrique",
@@ -16,6 +16,7 @@ const TYPES_TRAVAUX = [
 ];
 
 type Step = 1 | 2 | 3;
+type Mode = "devis" | "rdv" | null;
 
 interface FormData {
   nom: string;
@@ -37,6 +38,8 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
 
   const [profil, setProfil] = useState<Profil | null>(null);
   const [profilLoading, setProfilLoading] = useState(true);
+
+  const [mode, setMode] = useState<Mode>(null);
 
   const [step, setStep] = useState<Step>(1);
   const [form, setForm] = useState<FormData>({
@@ -96,6 +99,11 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
 
   const canNext1 = form.nom.trim() && form.telephone.trim();
   const canNext2 = form.adresse_chantier.trim() && form.type_travaux.length > 0;
+
+  const backToChoice = () => {
+    setMode(null);
+    setStep(1);
+  };
 
   const submit = async () => {
     setLoading(true);
@@ -184,219 +192,284 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
         )}
         <div>
           <p className="text-white font-semibold text-sm leading-none">{nomEntreprise}</p>
-          <p className="text-ink-400 text-xs mt-0.5">Demande de devis gratuit</p>
+          <p className="text-ink-400 text-xs mt-0.5">
+            {mode === null ? "Que souhaitez-vous faire ?" : mode === "devis" ? "Demande de devis gratuit" : "Prise de rendez-vous"}
+          </p>
         </div>
       </div>
 
-      {/* Progress */}
-      <div className="bg-white border-b border-ink-200 px-4 py-3">
-        <div className="flex items-center gap-2 max-w-lg mx-auto">
-          {([1, 2, 3] as Step[]).map((s) => (
-            <div key={s} className="flex items-center gap-2 flex-1">
-              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-colors ${
-                step > s ? "bg-volt-500 text-ink-900" :
-                step === s ? "bg-ink-900 text-white" :
-                "bg-ink-100 text-ink-400"
-              }`}>
-                {step > s ? "✓" : s}
-              </div>
-              <span className={`text-xs font-medium hidden sm:block ${step === s ? "text-ink-900" : "text-ink-400"}`}>
-                {s === 1 ? "Coordonnées" : s === 2 ? "Chantier" : "Détails"}
-              </span>
-              {s < 3 && <div className={`h-0.5 flex-1 rounded ${step > s ? "bg-volt-500" : "bg-ink-100"}`} />}
+      {/* ÉCRAN DE CHOIX */}
+      {mode === null && (
+        <div className="px-4 py-8 max-w-lg mx-auto space-y-4">
+          <button
+            onClick={() => setMode("devis")}
+            className="w-full bg-white rounded-2xl border border-ink-200 p-5 flex items-center gap-4 text-left hover:border-volt-500 hover:shadow-sm transition-all">
+            <div className="w-12 h-12 rounded-xl bg-volt-500/15 flex items-center justify-center shrink-0">
+              <FileText size={22} className="text-volt-600" />
             </div>
-          ))}
-        </div>
-      </div>
+            <div className="flex-1">
+              <p className="font-display text-lg text-ink-900">Demande de devis</p>
+              <p className="text-ink-500 text-sm mt-0.5">Décrivez votre projet, réponse sous 24h.</p>
+            </div>
+            <ChevronRight size={20} className="text-ink-300 shrink-0" />
+          </button>
 
-      {/* Form */}
-      <div className="px-4 py-6 max-w-lg mx-auto">
-        {/* ÉTAPE 1 */}
-        {step === 1 && (
-          <div className="space-y-4">
-            <div>
-              <h1 className="font-display text-2xl text-ink-900">Vos coordonnées</h1>
-              <p className="text-ink-500 text-sm mt-1">Pour vous recontacter rapidement.</p>
+          <button
+            onClick={() => setMode("rdv")}
+            className="w-full bg-white rounded-2xl border border-ink-200 p-5 flex items-center gap-4 text-left hover:border-volt-500 hover:shadow-sm transition-all">
+            <div className="w-12 h-12 rounded-xl bg-volt-500/15 flex items-center justify-center shrink-0">
+              <CalendarDays size={22} className="text-volt-600" />
             </div>
-            <div className="bg-white rounded-2xl border border-ink-200 p-4 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-ink-600 mb-1.5">Nom complet *</label>
-                <input
-                  type="text"
-                  value={form.nom}
-                  onChange={(e) => set("nom", e.target.value)}
-                  placeholder="Jean Dupont"
-                  className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-ink-600 mb-1.5">Téléphone *</label>
-                <input
-                  type="tel"
-                  value={form.telephone}
-                  onChange={(e) => set("telephone", e.target.value)}
-                  placeholder="06 00 00 00 00"
-                  className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-ink-600 mb-1.5">Email <span className="text-ink-300 font-normal">(optionnel)</span></label>
-                <input
-                  type="email"
-                  value={form.email}
-                  onChange={(e) => set("email", e.target.value)}
-                  placeholder="jean@email.com"
-                  className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20"
-                />
-              </div>
+            <div className="flex-1">
+              <p className="font-display text-lg text-ink-900">Prise de rendez-vous</p>
+              <p className="text-ink-500 text-sm mt-0.5">Choisissez un créneau disponible.</p>
             </div>
+            <ChevronRight size={20} className="text-ink-300 shrink-0" />
+          </button>
+        </div>
+      )}
+
+      {/* PRISE DE RENDEZ-VOUS (placeholder — développement à venir) */}
+      {mode === "rdv" && (
+        <div className="px-4 py-8 max-w-lg mx-auto space-y-4">
+          <button onClick={backToChoice} className="flex items-center gap-1.5 text-ink-500 text-sm font-medium hover:text-ink-900 transition-colors">
+            <ChevronLeft size={16} /> Retour
+          </button>
+          <div className="bg-white rounded-2xl border border-ink-200 p-6 text-center">
+            <div className="w-14 h-14 rounded-full bg-volt-500/15 flex items-center justify-center mx-auto mb-4">
+              <CalendarDays size={24} className="text-volt-600" />
+            </div>
+            <h1 className="font-display text-xl text-ink-900 mb-2">Bientôt disponible</h1>
+            <p className="text-ink-500 text-sm leading-relaxed">
+              La prise de rendez-vous en ligne arrive prochainement. En attendant, faites une demande de devis et nous vous recontacterons pour fixer un créneau.
+            </p>
             <button
-              onClick={() => setStep(2)}
-              disabled={!canNext1}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-volt-500 text-ink-900 font-semibold text-sm disabled:opacity-40 disabled:cursor-not-allowed hover:bg-volt-400 transition-colors">
-              Suivant <ChevronRight size={16} />
+              onClick={() => setMode("devis")}
+              className="mt-5 w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-volt-500 text-ink-900 font-semibold text-sm hover:bg-volt-400 transition-colors">
+              Faire une demande de devis
             </button>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* ÉTAPE 2 */}
-        {step === 2 && (
-          <div className="space-y-4">
-            <div>
-              <h1 className="font-display text-2xl text-ink-900">Le chantier</h1>
-              <p className="text-ink-500 text-sm mt-1">Dites-nous où et quoi.</p>
-            </div>
-            <div className="bg-white rounded-2xl border border-ink-200 p-4 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-ink-600 mb-1.5">Adresse du chantier *</label>
-                <input
-                  type="text"
-                  value={form.adresse_chantier}
-                  onChange={(e) => set("adresse_chantier", e.target.value)}
-                  placeholder="12 rue des Fleurs, 64100 Bayonne"
-                  className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-ink-600 mb-1.5">Type de travaux * <span className="text-ink-300 font-normal">(plusieurs possibles)</span></label>
-                <div className="flex flex-wrap gap-2">
-                  {TYPES_TRAVAUX.map((t) => (
-                    <button
-                      key={t}
-                      onClick={() => toggleType(t)}
-                      className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                        form.type_travaux.includes(t)
-                          ? "bg-volt-500 border-volt-500 text-ink-900"
-                          : "bg-white border-ink-200 text-ink-600 hover:border-ink-400"
-                      }`}>
-                      {t}
-                    </button>
-                  ))}
+      {/* DEMANDE DE DEVIS (formulaire existant) */}
+      {mode === "devis" && (
+        <>
+          {/* Progress */}
+          <div className="bg-white border-b border-ink-200 px-4 py-3">
+            <div className="flex items-center gap-2 max-w-lg mx-auto">
+              {([1, 2, 3] as Step[]).map((s) => (
+                <div key={s} className="flex items-center gap-2 flex-1">
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-colors ${
+                    step > s ? "bg-volt-500 text-ink-900" :
+                    step === s ? "bg-ink-900 text-white" :
+                    "bg-ink-100 text-ink-400"
+                  }`}>
+                    {step > s ? "✓" : s}
+                  </div>
+                  <span className={`text-xs font-medium hidden sm:block ${step === s ? "text-ink-900" : "text-ink-400"}`}>
+                    {s === 1 ? "Coordonnées" : s === 2 ? "Chantier" : "Détails"}
+                  </span>
+                  {s < 3 && <div className={`h-0.5 flex-1 rounded ${step > s ? "bg-volt-500" : "bg-ink-100"}`} />}
                 </div>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <button onClick={() => setStep(1)} className="flex items-center gap-1.5 px-4 py-3 rounded-xl border border-ink-200 text-ink-600 text-sm font-medium hover:bg-ink-100 transition-colors">
-                <ChevronLeft size={16} /> Retour
-              </button>
-              <button
-                onClick={() => setStep(3)}
-                disabled={!canNext2}
-                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-volt-500 text-ink-900 font-semibold text-sm disabled:opacity-40 disabled:cursor-not-allowed hover:bg-volt-400 transition-colors">
-                Suivant <ChevronRight size={16} />
-              </button>
+              ))}
             </div>
           </div>
-        )}
 
-        {/* ÉTAPE 3 */}
-        {step === 3 && (
-          <div className="space-y-4">
-            <div>
-              <h1 className="font-display text-2xl text-ink-900">Détails</h1>
-              <p className="text-ink-500 text-sm mt-1">Plus d'infos = devis plus précis.</p>
-            </div>
-            <div className="bg-white rounded-2xl border border-ink-200 p-4 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-ink-600 mb-1.5">Description <span className="text-ink-300 font-normal">(optionnel)</span></label>
-                <textarea
-                  value={form.description}
-                  onChange={(e) => set("description", e.target.value)}
-                  placeholder="Décrivez votre problème ou projet…"
-                  rows={3}
-                  className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20 resize-none"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-ink-600 mb-1.5">Disponibilités <span className="text-ink-300 font-normal">(optionnel)</span></label>
-                <input
-                  type="text"
-                  value={form.disponibilites}
-                  onChange={(e) => set("disponibilites", e.target.value)}
-                  placeholder="Ex : semaine prochaine, matin de préférence"
-                  className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-ink-600 mb-1.5">
-                  Photos <span className="text-ink-300 font-normal">(optionnel, max 5)</span>
-                </label>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => addPhotos(e.target.files)}
-                />
-                {photos.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mb-3">
-                    {photoPreviews.map((src, i) => (
-                      <div key={i} className="relative">
-                        <img src={src} alt="" className="w-16 h-16 object-cover rounded-lg border border-ink-200" />
-                        <button
-                          onClick={() => removePhoto(i)}
-                          className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center">
-                          <X size={10} />
-                        </button>
-                      </div>
-                    ))}
+          {/* Form */}
+          <div className="px-4 py-6 max-w-lg mx-auto">
+            <button onClick={backToChoice} className="flex items-center gap-1.5 text-ink-400 text-xs font-medium hover:text-ink-900 transition-colors mb-4">
+              <ChevronLeft size={14} /> Retour au choix
+            </button>
+
+            {/* ÉTAPE 1 */}
+            {step === 1 && (
+              <div className="space-y-4">
+                <div>
+                  <h1 className="font-display text-2xl text-ink-900">Vos coordonnées</h1>
+                  <p className="text-ink-500 text-sm mt-1">Pour vous recontacter rapidement.</p>
+                </div>
+                <div className="bg-white rounded-2xl border border-ink-200 p-4 space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1.5">Nom complet *</label>
+                    <input
+                      type="text"
+                      value={form.nom}
+                      onChange={(e) => set("nom", e.target.value)}
+                      placeholder="Jean Dupont"
+                      className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20"
+                    />
                   </div>
-                )}
-                {photos.length < 5 && (
-                  <button
-                    onClick={() => fileRef.current?.click()}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed border-ink-200 text-ink-400 text-sm hover:border-volt-500 hover:text-volt-600 transition-colors w-full justify-center">
-                    <Upload size={16} /> Ajouter des photos
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {error && (
-              <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
-                {error}
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1.5">Téléphone *</label>
+                    <input
+                      type="tel"
+                      value={form.telephone}
+                      onChange={(e) => set("telephone", e.target.value)}
+                      placeholder="06 00 00 00 00"
+                      className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1.5">Email <span className="text-ink-300 font-normal">(optionnel)</span></label>
+                    <input
+                      type="email"
+                      value={form.email}
+                      onChange={(e) => set("email", e.target.value)}
+                      placeholder="jean@email.com"
+                      className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20"
+                    />
+                  </div>
+                </div>
+                <button
+                  onClick={() => setStep(2)}
+                  disabled={!canNext1}
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-volt-500 text-ink-900 font-semibold text-sm disabled:opacity-40 disabled:cursor-not-allowed hover:bg-volt-400 transition-colors">
+                  Suivant <ChevronRight size={16} />
+                </button>
               </div>
             )}
 
-            <div className="flex gap-3">
-              <button onClick={() => setStep(2)} className="flex items-center gap-1.5 px-4 py-3 rounded-xl border border-ink-200 text-ink-600 text-sm font-medium hover:bg-ink-100 transition-colors">
-                <ChevronLeft size={16} /> Retour
-              </button>
-              <button
-                onClick={submit}
-                disabled={loading}
-                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-volt-500 text-ink-900 font-semibold text-sm disabled:opacity-60 hover:bg-volt-400 transition-colors">
-                {loading ? <><Loader2 size={16} className="animate-spin" /> Envoi…</> : "Envoyer ma demande"}
-              </button>
-            </div>
+            {/* ÉTAPE 2 */}
+            {step === 2 && (
+              <div className="space-y-4">
+                <div>
+                  <h1 className="font-display text-2xl text-ink-900">Le chantier</h1>
+                  <p className="text-ink-500 text-sm mt-1">Dites-nous où et quoi.</p>
+                </div>
+                <div className="bg-white rounded-2xl border border-ink-200 p-4 space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1.5">Adresse du chantier *</label>
+                    <input
+                      type="text"
+                      value={form.adresse_chantier}
+                      onChange={(e) => set("adresse_chantier", e.target.value)}
+                      placeholder="12 rue des Fleurs, 64100 Bayonne"
+                      className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1.5">Type de travaux * <span className="text-ink-300 font-normal">(plusieurs possibles)</span></label>
+                    <div className="flex flex-wrap gap-2">
+                      {TYPES_TRAVAUX.map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => toggleType(t)}
+                          className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                            form.type_travaux.includes(t)
+                              ? "bg-volt-500 border-volt-500 text-ink-900"
+                              : "bg-white border-ink-200 text-ink-600 hover:border-ink-400"
+                          }`}>
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <button onClick={() => setStep(1)} className="flex items-center gap-1.5 px-4 py-3 rounded-xl border border-ink-200 text-ink-600 text-sm font-medium hover:bg-ink-100 transition-colors">
+                    <ChevronLeft size={16} /> Retour
+                  </button>
+                  <button
+                    onClick={() => setStep(3)}
+                    disabled={!canNext2}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-volt-500 text-ink-900 font-semibold text-sm disabled:opacity-40 disabled:cursor-not-allowed hover:bg-volt-400 transition-colors">
+                    Suivant <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
 
-            <p className="text-center text-ink-300 text-xs">
-              Devis gratuit · Réponse sous 24h · Sans engagement
-            </p>
+            {/* ÉTAPE 3 */}
+            {step === 3 && (
+              <div className="space-y-4">
+                <div>
+                  <h1 className="font-display text-2xl text-ink-900">Détails</h1>
+                  <p className="text-ink-500 text-sm mt-1">Plus d'infos = devis plus précis.</p>
+                </div>
+                <div className="bg-white rounded-2xl border border-ink-200 p-4 space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1.5">Description <span className="text-ink-300 font-normal">(optionnel)</span></label>
+                    <textarea
+                      value={form.description}
+                      onChange={(e) => set("description", e.target.value)}
+                      placeholder="Décrivez votre problème ou projet…"
+                      rows={3}
+                      className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20 resize-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1.5">Disponibilités <span className="text-ink-300 font-normal">(optionnel)</span></label>
+                    <input
+                      type="text"
+                      value={form.disponibilites}
+                      onChange={(e) => set("disponibilites", e.target.value)}
+                      placeholder="Ex : semaine prochaine, matin de préférence"
+                      className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1.5">
+                      Photos <span className="text-ink-300 font-normal">(optionnel, max 5)</span>
+                    </label>
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => addPhotos(e.target.files)}
+                    />
+                    {photos.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mb-3">
+                        {photoPreviews.map((src, i) => (
+                          <div key={i} className="relative">
+                            <img src={src} alt="" className="w-16 h-16 object-cover rounded-lg border border-ink-200" />
+                            <button
+                              onClick={() => removePhoto(i)}
+                              className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center">
+                              <X size={10} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {photos.length < 5 && (
+                      <button
+                        onClick={() => fileRef.current?.click()}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed border-ink-200 text-ink-400 text-sm hover:border-volt-500 hover:text-volt-600 transition-colors w-full justify-center">
+                        <Upload size={16} /> Ajouter des photos
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
+                    {error}
+                  </div>
+                )}
+
+                <div className="flex gap-3">
+                  <button onClick={() => setStep(2)} className="flex items-center gap-1.5 px-4 py-3 rounded-xl border border-ink-200 text-ink-600 text-sm font-medium hover:bg-ink-100 transition-colors">
+                    <ChevronLeft size={16} /> Retour
+                  </button>
+                  <button
+                    onClick={submit}
+                    disabled={loading}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-volt-500 text-ink-900 font-semibold text-sm disabled:opacity-60 hover:bg-volt-400 transition-colors">
+                    {loading ? <><Loader2 size={16} className="animate-spin" /> Envoi…</> : "Envoyer ma demande"}
+                  </button>
+                </div>
+
+                <p className="text-center text-ink-300 text-xs">
+                  Devis gratuit · Réponse sous 24h · Sans engagement
+                </p>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 }
