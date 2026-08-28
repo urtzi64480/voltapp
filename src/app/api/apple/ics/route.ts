@@ -1,56 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-
-function parseICSDate(val: string, tzid?: string): Date {
-  // All-day event : date seule
-  if (val.length === 8) {
-    return new Date(`${val.slice(0,4)}-${val.slice(4,6)}-${val.slice(6,8)}T00:00:00`);
-  }
-  const y = val.slice(0,4), mo = val.slice(4,6), d = val.slice(6,8);
-  const h = val.slice(9,11), mi = val.slice(11,13), s = val.slice(13,15);
-  // UTC explicite
-  if (val.endsWith("Z")) return new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}Z`);
-  // Heure locale (TZID présent ou absent) - on interprète comme Europe/Paris
-  // En construisant la date ISO sans Z, JS l'interprète en local du serveur (UTC sur Vercel)
-  // On doit donc ajouter l'offset Europe/Paris (+1h hiver, +2h été)
-  const localStr = `${y}-${mo}-${d}T${h}:${mi}:${s}`;
-  const utcDate = new Date(localStr + "Z"); // parse as UTC first
-  // Calcule l'offset Paris pour cette date
-  const parisStr = utcDate.toLocaleString("fr-FR", { timeZone: "Europe/Paris", hour12: false });
-  // On utilise Intl pour trouver l'offset
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Europe/Paris",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-    hour12: false,
-  });
-  const parts = fmt.formatToParts(utcDate);
-  const get = (t: string) => parts.find(p => p.type === t)?.value ?? "0";
-  const parisDate = new Date(`${get("year")}-${get("month")}-${get("day")}T${get("hour").padStart(2,"0")}:${get("minute")}:${get("second")}Z`);
-  const offsetMs = utcDate.getTime() - parisDate.getTime();
-  return new Date(utcDate.getTime() + offsetMs);
-}
-
-function parseICS(icsText: string, timeMin: Date, timeMax: Date, calUrl: string) {
-  const events: { id: string; title: string; start: string; end: string; allDay: boolean; calUrl: string }[] = [];
-  const blocks = icsText.split("BEGIN:VEVENT");
-  for (let i = 1; i < blocks.length; i++) {
-    const block = blocks[i];
-    const uid = block.match(/^UID:(.+)$/m)?.[1]?.trim() ?? `ev-${i}`;
-    const summary = block.match(/^SUMMARY:(.+)$/m)?.[1]?.trim() ?? "(Sans titre)";
-    const dtstart = block.match(/^DTSTART(?:;[^:]*)?:(.+)$/m)?.[1]?.trim();
-    const dtend = block.match(/^DTEND(?:;[^:]*)?:(.+)$/m)?.[1]?.trim();
-    const tzid = block.match(/^DTSTART;TZID=([^:]+):/m)?.[1]?.trim();
-    if (!dtstart) continue;
-    const allDay = dtstart.length === 8;
-    const startDate = parseICSDate(dtstart, tzid);
-    const endDate = dtend ? parseICSDate(dtend, tzid) : startDate;
-    if (endDate < timeMin || startDate > timeMax) continue;
-    events.push({ id: uid, title: summary, start: startDate.toISOString(), end: endDate.toISOString(), allDay, calUrl });
-  }
-  return events;
-}
+import { parseICS } from "@/lib/ics";
 
 export async function GET(req: NextRequest) {
   const cookieStore = cookies();
@@ -86,7 +37,7 @@ export async function GET(req: NextRequest) {
   const timeMin = new Date(year, month - 1, 1);
   const timeMax = new Date(year, month + 2, 0, 23, 59, 59);
 
-  const allEvents: { id: string; title: string; start: string; end: string; allDay: boolean; calUrl: string }[] = [];
+  const allEvents: ReturnType<typeof parseICS> = [];
 
   for (const cal of cals) {
     if (!cal.url.trim()) continue;
