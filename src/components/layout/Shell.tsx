@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, Users, FileText, BookOpen,
-  TrendingUp, Settings, Zap, Menu, X, Receipt, CalendarDays, AlertTriangle, ClipboardList, Inbox,
+  TrendingUp, Settings, Zap, Menu, X, Receipt, CalendarDays, AlertTriangle, ClipboardList, Inbox, CalendarCheck,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,7 @@ const NAV = [
   { href: "/dashboard",  label: "Dashboard",  icon: LayoutDashboard },
   { href: "/clients",    label: "Clients",     icon: Users },
   { href: "/leads",      label: "Leads web",   icon: Inbox },
+  { href: "/rdv",        label: "RDV",         icon: CalendarCheck },
   { href: "/demandes",   label: "Demandes",    icon: ClipboardList },
   { href: "/devis",      label: "Devis",       icon: FileText },
   { href: "/planning",   label: "Planning",    icon: CalendarDays },
@@ -97,6 +98,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const [drawer, setDrawer] = useState(false);
   const [facturesEnRetard, setFacturesEnRetard] = useState(0);
   const [leadsNouveaux, setLeadsNouveaux] = useState(0);
+  const [rdvNouveaux, setRdvNouveaux] = useState(0);
   const [nomEntreprise, setNomEntreprise] = useState("VoltApp");
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
 
@@ -140,6 +142,12 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       .select("id", { count: "exact" })
       .eq("statut", "nouveau")
       .then(({ count }) => setLeadsNouveaux(count ?? 0));
+
+    supabase
+      .from("rdv")
+      .select("id", { count: "exact" })
+      .eq("consulte", false)
+      .then(({ count }) => setRdvNouveaux(count ?? 0));
   }, [path]);
 
   return (
@@ -158,6 +166,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
               badge={
                 href === "/factures" ? facturesEnRetard :
                 href === "/leads" ? leadsNouveaux :
+                href === "/rdv" ? rdvNouveaux :
                 undefined
               }
             />
@@ -185,6 +194,11 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           {leadsNouveaux > 0 && (
             <Link href="/leads" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold">
               <Inbox size={12} /> {leadsNouveaux}
+            </Link>
+          )}
+          {rdvNouveaux > 0 && (
+            <Link href="/rdv" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold">
+              <CalendarCheck size={12} /> {rdvNouveaux}
             </Link>
           )}
           <Link href="/devis/nouveau"
@@ -217,6 +231,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
                   badge={
                     href === "/factures" ? facturesEnRetard :
                     href === "/leads" ? leadsNouveaux :
+                    href === "/rdv" ? rdvNouveaux :
                     undefined
                   }
                 />
@@ -247,7 +262,6 @@ export default function Shell({ children }: { children: React.ReactNode }) {
                 {leadsNouveaux > 9 ? "9+" : leadsNouveaux}
               </span>
             )}
-            <span>{label}</span>
           </Link>
         ))}
       </nav>
