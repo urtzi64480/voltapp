@@ -2,7 +2,7 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { ChevronRight, ChevronLeft, CheckCircle, Upload, X, Loader2, FileText, CalendarDays } from "lucide-react";
+import { ChevronRight, ChevronLeft, CheckCircle, Upload, X, Loader2, FileText, CalendarDays, Phone } from "lucide-react";
 
 const TYPES_TRAVAUX = [
   "Dépannage électrique",
@@ -33,6 +33,34 @@ interface Profil {
   logo_url: string | null;
 }
 
+interface DispoDay {
+  date: string; // YYYY-MM-DD
+  matin: boolean;
+  aprem: boolean;
+}
+
+interface RdvSlot {
+  date: string;
+  periode: "matin" | "aprem";
+}
+
+interface RdvFormData {
+  nom: string;
+  telephone: string;
+  email: string;
+  adresse: string;
+  description: string;
+}
+
+const EMPTY_RDV_FORM: RdvFormData = { nom: "", telephone: "", email: "", adresse: "", description: "" };
+
+function fmtDateLabel(dateKey: string) {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  const label = date.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 export default function DemandePage({ params }: { params: { userId: string } }) {
   const userId = params.userId;
 
@@ -41,6 +69,7 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
 
   const [mode, setMode] = useState<Mode>(null);
 
+  // ── Devis ──
   const [step, setStep] = useState<Step>(1);
   const [form, setForm] = useState<FormData>({
     nom: "", telephone: "", email: "",
@@ -56,6 +85,16 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // ── RDV ──
+  const [dispoLoading, setDispoLoading] = useState(false);
+  const [dispoAvailable, setDispoAvailable] = useState(true);
+  const [dispoDays, setDispoDays] = useState<DispoDay[]>([]);
+  const [rdvSlot, setRdvSlot] = useState<RdvSlot | null>(null);
+  const [rdvForm, setRdvForm] = useState<RdvFormData>(EMPTY_RDV_FORM);
+  const [rdvSubmitting, setRdvSubmitting] = useState(false);
+  const [rdvSuccess, setRdvSuccess] = useState(false);
+  const [rdvError, setRdvError] = useState<string | null>(null);
+
   useEffect(() => {
     async function loadProfil() {
       const { data } = await supabase
@@ -68,6 +107,24 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
     }
     loadProfil();
   }, [userId]);
+
+  useEffect(() => {
+    if (mode !== "rdv" || dispoDays.length > 0 || dispoLoading) return;
+    async function loadDispo() {
+      setDispoLoading(true);
+      try {
+        const res = await fetch(`/api/public/disponibilites?userId=${userId}`);
+        const data = await res.json();
+        setDispoAvailable(!!data.available);
+        setDispoDays(data.days ?? []);
+      } catch {
+        setDispoAvailable(false);
+      } finally {
+        setDispoLoading(false);
+      }
+    }
+    loadDispo();
+  }, [mode, userId, dispoDays.length, dispoLoading]);
 
   const nomEntreprise = profil?.nom_entreprise ?? "Électricien";
   const logoUrl = profil?.logo_url ?? null;
@@ -103,6 +160,9 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
   const backToChoice = () => {
     setMode(null);
     setStep(1);
+    setRdvSlot(null);
+    setRdvSuccess(false);
+    setRdvError(null);
   };
 
   const submit = async () => {
@@ -143,6 +203,54 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
     }
   };
 
+  const setRdv = (k: keyof RdvFormData, v: string) =>
+    setRdvForm((f) => ({ ...f, [k]: v }));
+
+  const canSubmitRdv = rdvForm.nom.trim() && rdvForm.telephone.trim();
+
+  const submitRdv = async () => {
+    if (!rdvSlot) return;
+    setRdvSubmitting(true);
+    setRdvError(null);
+    try {
+      const res = await fetch("/api/public/rdv", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          date: rdvSlot.date,
+          periode: rdvSlot.periode,
+          nom: rdvForm.nom.trim(),
+          telephone: rdvForm.telephone.trim(),
+          email: rdvForm.email.trim() || undefined,
+          adresse: rdvForm.adresse.trim() || undefined,
+          description: rdvForm.description.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setRdvError(data.error || "Une erreur est survenue.");
+        if (res.status === 409) {
+          // créneau pris entre-temps : on retire ce créneau et on revient à la sélection
+          setDispoDays((days) =>
+            days.map((d) =>
+              d.date === rdvSlot.date
+                ? { ...d, [rdvSlot.periode]: false }
+                : d
+            )
+          );
+          setRdvSlot(null);
+        }
+        return;
+      }
+      setRdvSuccess(true);
+    } catch (e) {
+      setRdvError("Une erreur est survenue. Veuillez réessayer ou nous appeler directement.");
+    } finally {
+      setRdvSubmitting(false);
+    }
+  };
+
   if (profilLoading) {
     return (
       <div className="min-h-screen bg-ink-50 flex items-center justify-center">
@@ -162,6 +270,29 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
           <p className="text-ink-500 text-sm leading-relaxed">
             Merci <strong>{form.nom}</strong>, votre demande a bien été reçue.
             Nous vous recontacterons rapidement au <strong>{form.telephone}</strong>.
+          </p>
+          <div className="mt-6 pt-6 border-t border-ink-100 flex items-center justify-center gap-3">
+            {logoUrl ? (
+              <img src={logoUrl} alt={nomEntreprise} width={28} height={28} className="opacity-80 object-contain" />
+            ) : null}
+            <span className="text-ink-400 text-xs">{nomEntreprise}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (rdvSuccess && rdvSlot) {
+    return (
+      <div className="min-h-screen bg-ink-50 flex flex-col items-center justify-center px-4">
+        <div className="bg-white rounded-2xl shadow-sm border border-ink-200 p-8 max-w-sm w-full text-center">
+          <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
+            <CheckCircle size={32} className="text-green-600" />
+          </div>
+          <h2 className="font-display text-2xl text-ink-900 mb-2">Rendez-vous confirmé !</h2>
+          <p className="text-ink-500 text-sm leading-relaxed">
+            Merci <strong>{rdvForm.nom}</strong>, votre rendez-vous est fixé le{" "}
+            <strong>{fmtDateLabel(rdvSlot.date)}</strong>, {rdvSlot.periode === "matin" ? "le matin (8h-12h)" : "l'après-midi (13h-17h)"}.
           </p>
           <div className="mt-6 pt-6 border-t border-ink-100 flex items-center justify-center gap-3">
             {logoUrl ? (
@@ -229,26 +360,154 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
         </div>
       )}
 
-      {/* PRISE DE RENDEZ-VOUS (placeholder — développement à venir) */}
+      {/* PRISE DE RENDEZ-VOUS */}
       {mode === "rdv" && (
-        <div className="px-4 py-8 max-w-lg mx-auto space-y-4">
-          <button onClick={backToChoice} className="flex items-center gap-1.5 text-ink-500 text-sm font-medium hover:text-ink-900 transition-colors">
+        <div className="px-4 py-6 max-w-lg mx-auto space-y-4">
+          <button
+            onClick={() => (rdvSlot ? setRdvSlot(null) : backToChoice())}
+            className="flex items-center gap-1.5 text-ink-500 text-sm font-medium hover:text-ink-900 transition-colors">
             <ChevronLeft size={16} /> Retour
           </button>
-          <div className="bg-white rounded-2xl border border-ink-200 p-6 text-center">
-            <div className="w-14 h-14 rounded-full bg-volt-500/15 flex items-center justify-center mx-auto mb-4">
-              <CalendarDays size={24} className="text-volt-600" />
+
+          {/* Chargement */}
+          {dispoLoading && (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 size={28} className="animate-spin text-ink-400" />
             </div>
-            <h1 className="font-display text-xl text-ink-900 mb-2">Bientôt disponible</h1>
-            <p className="text-ink-500 text-sm leading-relaxed">
-              La prise de rendez-vous en ligne arrive prochainement. En attendant, faites une demande de devis et nous vous recontacterons pour fixer un créneau.
-            </p>
-            <button
-              onClick={() => setMode("devis")}
-              className="mt-5 w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-volt-500 text-ink-900 font-semibold text-sm hover:bg-volt-400 transition-colors">
-              Faire une demande de devis
-            </button>
-          </div>
+          )}
+
+          {/* Système indisponible (calendrier non connecté) */}
+          {!dispoLoading && !dispoAvailable && (
+            <div className="bg-white rounded-2xl border border-ink-200 p-6 text-center">
+              <div className="w-14 h-14 rounded-full bg-volt-500/15 flex items-center justify-center mx-auto mb-4">
+                <Phone size={22} className="text-volt-600" />
+              </div>
+              <h1 className="font-display text-xl text-ink-900 mb-2">Réservation en ligne indisponible</h1>
+              <p className="text-ink-500 text-sm leading-relaxed">
+                Contactez-nous directement par téléphone pour fixer un rendez-vous.
+              </p>
+            </div>
+          )}
+
+          {/* Sélection du créneau */}
+          {!dispoLoading && dispoAvailable && !rdvSlot && (
+            <>
+              <div>
+                <h1 className="font-display text-2xl text-ink-900">Choisissez un créneau</h1>
+                <p className="text-ink-500 text-sm mt-1">Du lundi au vendredi, par demi-journée.</p>
+              </div>
+              <div className="space-y-2">
+                {dispoDays.map((day) => (
+                  <div key={day.date} className="bg-white rounded-xl border border-ink-200 p-3 flex items-center justify-between gap-3">
+                    <span className="text-sm font-medium text-ink-700 capitalize">{fmtDateLabel(day.date)}</span>
+                    <div className="flex gap-2 shrink-0">
+                      <button
+                        disabled={!day.matin}
+                        onClick={() => setRdvSlot({ date: day.date, periode: "matin" })}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                          day.matin
+                            ? "bg-volt-500 text-ink-900 hover:bg-volt-400"
+                            : "bg-ink-100 text-ink-300 cursor-not-allowed"
+                        }`}>
+                        {day.matin ? "Matin" : "Indisponible"}
+                      </button>
+                      <button
+                        disabled={!day.aprem}
+                        onClick={() => setRdvSlot({ date: day.date, periode: "aprem" })}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                          day.aprem
+                            ? "bg-volt-500 text-ink-900 hover:bg-volt-400"
+                            : "bg-ink-100 text-ink-300 cursor-not-allowed"
+                        }`}>
+                        {day.aprem ? "Après-midi" : "Indisponible"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-center text-ink-300 text-xs pt-2">
+                Week-end ? Contactez-nous directement par téléphone.
+              </p>
+            </>
+          )}
+
+          {/* Formulaire de contact pour le créneau choisi */}
+          {rdvSlot && (
+            <div className="space-y-4">
+              <div>
+                <h1 className="font-display text-2xl text-ink-900">Vos coordonnées</h1>
+                <p className="text-ink-500 text-sm mt-1">
+                  Créneau : <strong>{fmtDateLabel(rdvSlot.date)}</strong>,{" "}
+                  {rdvSlot.periode === "matin" ? "matin (8h-12h)" : "après-midi (13h-17h)"}
+                </p>
+              </div>
+              <div className="bg-white rounded-2xl border border-ink-200 p-4 space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-ink-600 mb-1.5">Nom complet *</label>
+                  <input
+                    type="text"
+                    value={rdvForm.nom}
+                    onChange={(e) => setRdv("nom", e.target.value)}
+                    placeholder="Jean Dupont"
+                    className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-ink-600 mb-1.5">Téléphone *</label>
+                  <input
+                    type="tel"
+                    value={rdvForm.telephone}
+                    onChange={(e) => setRdv("telephone", e.target.value)}
+                    placeholder="06 00 00 00 00"
+                    className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-ink-600 mb-1.5">Email <span className="text-ink-300 font-normal">(optionnel)</span></label>
+                  <input
+                    type="email"
+                    value={rdvForm.email}
+                    onChange={(e) => setRdv("email", e.target.value)}
+                    placeholder="jean@email.com"
+                    className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-ink-600 mb-1.5">Adresse du chantier <span className="text-ink-300 font-normal">(optionnel)</span></label>
+                  <input
+                    type="text"
+                    value={rdvForm.adresse}
+                    onChange={(e) => setRdv("adresse", e.target.value)}
+                    placeholder="12 rue des Fleurs, 64100 Bayonne"
+                    className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-ink-600 mb-1.5">Motif du rendez-vous <span className="text-ink-300 font-normal">(optionnel)</span></label>
+                  <textarea
+                    value={rdvForm.description}
+                    onChange={(e) => setRdv("description", e.target.value)}
+                    placeholder="Décrivez brièvement votre besoin…"
+                    rows={3}
+                    className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20 resize-none"
+                  />
+                </div>
+              </div>
+
+              {rdvError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
+                  {rdvError}
+                </div>
+              )}
+
+              <button
+                onClick={submitRdv}
+                disabled={!canSubmitRdv || rdvSubmitting}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-volt-500 text-ink-900 font-semibold text-sm disabled:opacity-40 disabled:cursor-not-allowed hover:bg-volt-400 transition-colors">
+                {rdvSubmitting ? <><Loader2 size={16} className="animate-spin" /> Confirmation…</> : "Confirmer le rendez-vous"}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
