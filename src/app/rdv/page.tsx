@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { CalendarCheck, Phone, Mail, MapPin, Clock, MessageSquare } from "lucide-react";
+import { CalendarCheck, Phone, Mail, MapPin, Clock, MessageSquare, Trash2 } from "lucide-react";
 import Shell from "@/components/layout/Shell";
 
 interface Rdv {
@@ -15,6 +15,7 @@ interface Rdv {
   description: string | null;
   statut: string;
   consulte: boolean;
+  confirme: boolean;
   created_at: string;
 }
 
@@ -62,6 +63,17 @@ export default function RdvPage() {
   const aVenir = rdvs.filter(r => !isPast(r));
   const passes = rdvs.filter(r => isPast(r));
 
+  const markConfirme = (id: string) => {
+    setRdvs(list => list.map(r => r.id === id ? { ...r, confirme: true } : r));
+    supabase.from("rdv").update({ confirme: true }).eq("id", id);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Supprimer ce rendez-vous ?")) return;
+    await supabase.from("rdv").delete().eq("id", id);
+    setRdvs(list => list.filter(r => r.id !== id));
+  };
+
   const smsHref = (rdv: Rdv) => {
     const msg = `Bonjour ${rdv.nom}, votre rendez-vous avec ${nomEntreprise} est confirmé le ${fmtDateLabel(rdv.date).toLowerCase()}, ${rdv.periode === "matin" ? "le matin (8h-12h)" : "l'après-midi (13h-17h)"}. À bientôt !`;
     return `sms:${rdv.telephone.replace(/\s/g, "")}&body=${encodeURIComponent(msg)}`;
@@ -85,9 +97,17 @@ export default function RdvPage() {
             <span>{rdv.periode === "matin" ? "Matin (8h-12h)" : "Après-midi (13h-17h)"}</span>
           </div>
         </div>
-        {!rdv.consulte && (
-          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium shrink-0">Nouveau</span>
-        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {!rdv.consulte && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">Nouveau</span>
+          )}
+          {rdv.confirme && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">✓ Confirmé</span>
+          )}
+          <button onClick={() => handleDelete(rdv.id)} className="p-1.5 rounded-lg text-ink-300 hover:text-red-500 hover:bg-red-50 transition-colors">
+            <Trash2 size={14} />
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-col gap-1 text-sm text-ink-600">
@@ -111,11 +131,11 @@ export default function RdvPage() {
       )}
 
       <div className="flex gap-2 pt-1">
-        <a href={smsHref(rdv)}
+        <a href={smsHref(rdv)} onClick={() => markConfirme(rdv.id)}
           className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border border-ink-200 text-ink-700 text-xs font-semibold hover:bg-ink-50 transition-colors">
           <MessageSquare size={13} /> Confirmation SMS
         </a>
-        <a href={rdv.email ? mailHref(rdv) : undefined}
+        <a href={rdv.email ? mailHref(rdv) : undefined} onClick={() => rdv.email && markConfirme(rdv.id)}
           aria-disabled={!rdv.email}
           className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border text-xs font-semibold transition-colors ${
             rdv.email ? "border-ink-200 text-ink-700 hover:bg-ink-50" : "border-ink-100 text-ink-300 cursor-not-allowed pointer-events-none"
