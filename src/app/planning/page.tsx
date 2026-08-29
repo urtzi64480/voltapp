@@ -675,15 +675,77 @@ export default function PlanningPage() {
     return allCalEvents.filter(ev => isSameDay(new Date(ev.start), target));
   };
 
+  // Sync CalDAV best-effort : ne bloque jamais l'action VoltApp si iCloud échoue
+  const syncCalDAV = async (action: "create" | "update" | "delete", data: {
+    eventUrl?: string; summary?: string; description?: string; start?: string; end?: string;
+  }): Promise<string | null> => {
+    try {
+      const res = await fetch("/api/apple/sync-event", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ...data }),
+      });
+      const json = await res.json();
+      if (!res.ok) { console.error("Erreur sync CalDAV:", json.error); return null; }
+      return json.eventUrl ?? null;
+    } catch (e) {
+      console.error("Erreur sync CalDAV:", e);
+      return null;
+    }
+  };
+
+  // Construit le titre + description iCloud d'après un formulaire (avant insertion)
+  const buildCalDAVContentFromForm = (form: FormData) => {
+    const client = clients.find(c => c.id === form.client_id);
+    const devisSel = devis.find(d => d.id === form.devis_id);
+    const nomClient = client ? `${client.prenom ?? ""} ${client.nom ?? ""}`.trim() : null;
+    const summary = nomClient ? `${form.titre} — ${nomClient}` : form.titre;
+    const description = [
+      nomClient ? `Client: ${nomClient}` : null,
+      client?.telephone ? `Tél: ${client.telephone}` : null,
+      form.adresse_chantier ? `Adresse: ${form.adresse_chantier}` : null,
+      devisSel ? `Devis: ${devisSel.numero}` : null,
+      form.description ? `Notes: ${form.description}` : null,
+    ].filter(Boolean).join("\n") || undefined;
+    return { summary, description };
+  };
+
+  // Même chose mais à partir d'une intervention déjà chargée (avec client/devis joints)
+  const buildCalDAVContentFromIv = (iv: Intervention) => {
+    const nomClient = iv.client ? `${iv.client.prenom ?? ""} ${iv.client.nom ?? ""}`.trim() : null;
+    const summary = nomClient ? `${iv.titre} — ${nomClient}` : iv.titre;
+    const description = [
+      nomClient ? `Client: ${nomClient}` : null,
+      iv.client?.telephone ? `Tél: ${iv.client.telephone}` : null,
+      iv.adresse_chantier ? `Adresse: ${iv.adresse_chantier}` : null,
+      iv.devis?.numero ? `Devis: ${iv.devis.numero}` : null,
+      iv.description ? `Notes: ${iv.description}` : null,
+    ].filter(Boolean).join("\n") || undefined;
+    return { summary, description };
+  };
+
   const handleCreate = async (form: FormData) => {
-    await supabase.from("interventions").insert({
+    const { data: inserted } = await supabase.from("interventions").insert({
       client_id: form.client_id || null, devis_id: form.devis_id || null,
       titre: form.titre, description: form.description || null,
       adresse_chantier: form.adresse_chantier || null,
       date_debut: new Date(form.date_debut).toISOString(),
       date_fin: new Date(form.date_fin).toISOString(),
       statut: form.statut, notes: form.notes || null,
-    });
+    }).select().single();
+
+    if (inserted) {
+      const { summary, description } = buildCalDAVContentFromForm(form);
+      const eventUrl = await syncCalDAV("create", {
+        summary, description,
+        start: new Date(form.date_debut).toISOString(),
+        end: new Date(form.date_fin).toISOString(),
+      });
+      if (eventUrl) {
+        await supabase.from("interventions").update({ caldav_url: eventUrl }).eq("id", inserted.id);
+      }
+    }
+
     setShowForm(false); await fetchAll();
   };
 
@@ -697,11 +759,28 @@ export default function PlanningPage() {
       date_fin: new Date(form.date_fin).toISOString(),
       statut: form.statut, notes: form.notes || null,
     }).eq("id", selected.id);
+
+    const existingUrl = (selected as any).caldav_url as string | null | undefined;
+    const { summary, description } = buildCalDAVContentFromForm(form);
+    const eventUrl = await syncCalDAV(existingUrl ? "update" : "create", {
+      eventUrl: existingUrl ?? undefined,
+      summary, description,
+      start: new Date(form.date_debut).toISOString(),
+      end: new Date(form.date_fin).toISOString(),
+    });
+    if (eventUrl && !existingUrl) {
+      await supabase.from("interventions").update({ caldav_url: eventUrl }).eq("id", selected.id);
+    }
+
     setEditMode(false); setSelected(null); await fetchAll();
   };
 
   const handleDelete = async () => {
-    if (!selected || !confirm("Supprimer cette intervention ?")) return;
+    if (!selected || !confirm("Supprimer cette intervention ? Elle sera aussi retirée de votre calendrier Apple.")) return;
+    const existingUrl = (selected as any).caldav_url as string | null | undefined;
+    if (existingUrl) {
+      await syncCalDAV("delete", { eventUrl: existingUrl });
+    }
     await supabase.from("interventions").delete().eq("id", selected.id);
     setSelected(null); await fetchAll();
   };
@@ -730,6 +809,14 @@ export default function PlanningPage() {
       if (!confirm(`⚠️ Conflit avec "${conflict.title}" (${fmt(conflict.start)} → ${fmt(conflict.end)})\n\nForcer quand même ?`)) return;
     }
     await supabase.from("interventions").update({ date_debut: newDebut.toISOString(), date_fin: newFin.toISOString() }).eq("id", ivId);
+    const existingUrl = (iv as any).caldav_url as string | null | undefined;
+    if (existingUrl) {
+      const { summary, description } = buildCalDAVContentFromIv(iv);
+      await syncCalDAV("update", {
+        eventUrl: existingUrl, summary, description,
+        start: newDebut.toISOString(), end: newFin.toISOString(),
+      });
+    }
     await fetchAll();
   };
 
@@ -747,6 +834,14 @@ export default function PlanningPage() {
       if (!confirm(`⚠️ Conflit avec "${conflict.title}" (${fmt(conflict.start)} → ${fmt(conflict.end)})\n\nForcer quand même ?`)) return;
     }
     await supabase.from("interventions").update({ date_debut: newDebut.toISOString(), date_fin: newFin.toISOString() }).eq("id", ivId);
+    const existingUrl = (iv as any).caldav_url as string | null | undefined;
+    if (existingUrl) {
+      const { summary, description } = buildCalDAVContentFromIv(iv);
+      await syncCalDAV("update", {
+        eventUrl: existingUrl, summary, description,
+        start: newDebut.toISOString(), end: newFin.toISOString(),
+      });
+    }
     await fetchAll();
   };
 
