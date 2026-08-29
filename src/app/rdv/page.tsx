@@ -16,6 +16,7 @@ interface Rdv {
   statut: string;
   consulte: boolean;
   confirme: boolean;
+  caldav_url: string | null;
   created_at: string;
 }
 
@@ -68,10 +69,22 @@ export default function RdvPage() {
     supabase.from("rdv").update({ confirme: true }).eq("id", id);
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Supprimer ce rendez-vous ?")) return;
-    await supabase.from("rdv").delete().eq("id", id);
-    setRdvs(list => list.filter(r => r.id !== id));
+  const handleDelete = async (rdv: Rdv) => {
+    if (!confirm("Supprimer ce rendez-vous ? Il sera aussi retiré de votre calendrier Apple.")) return;
+    if (rdv.caldav_url) {
+      try {
+        await fetch("/api/apple/sync-event", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "delete", eventUrl: rdv.caldav_url }),
+        });
+      } catch (e) {
+        console.error("Erreur suppression iCloud:", e);
+        // On continue quand même la suppression côté VoltApp
+      }
+    }
+    await supabase.from("rdv").delete().eq("id", rdv.id);
+    setRdvs(list => list.filter(r => r.id !== rdv.id));
   };
 
   const smsHref = (rdv: Rdv) => {
@@ -104,7 +117,7 @@ export default function RdvPage() {
           {rdv.confirme && (
             <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">✓ Confirmé</span>
           )}
-          <button onClick={() => handleDelete(rdv.id)} className="p-1.5 rounded-lg text-ink-300 hover:text-red-500 hover:bg-red-50 transition-colors">
+          <button onClick={() => handleDelete(rdv)} className="p-1.5 rounded-lg text-ink-300 hover:text-red-500 hover:bg-red-50 transition-colors">
             <Trash2 size={14} />
           </button>
         </div>
