@@ -98,6 +98,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Écriture dans iCloud
+  let caldavUrl: string;
   try {
     const calendarUrl = await discoverCalendarUrl(token.apple_id, token.app_password, CALENDRIER_ECRITURE);
     const descriptionLines = [
@@ -107,7 +108,7 @@ export async function POST(req: NextRequest) {
       description?.trim() ? `Notes: ${description.trim()}` : null,
     ].filter(Boolean).join("\n");
 
-    await createCalDAVEvent({
+    caldavUrl = await createCalDAVEvent({
       appleId: token.apple_id,
       appPassword: token.app_password,
       calendarUrl,
@@ -132,6 +133,7 @@ export async function POST(req: NextRequest) {
     adresse: adresse?.trim() || null,
     description: description?.trim() || null,
     statut: "confirme",
+    caldav_url: caldavUrl,
   });
   if (insErr) console.error("Erreur insertion rdv:", insErr);
 
