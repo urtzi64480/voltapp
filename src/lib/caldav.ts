@@ -80,25 +80,11 @@ export async function discoverCalendarUrl(appleId: string, appPassword: string, 
 }
 
 function pad(n: number) { return String(n).padStart(2, "0"); }
-function toICSDateTime(d: Date): string {
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}T${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-}
 function toICSUTC(d: Date): string {
   return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
 }
 
-export async function createCalDAVEvent(params: {
-  appleId: string;
-  appPassword: string;
-  calendarUrl: string;
-  summary: string;
-  description?: string;
-  start: Date; // instant UTC réel du début
-  end: Date;   // instant UTC réel de la fin
-}): Promise<void> {
-  const uid = `voltapp-${Date.now()}-${Math.random().toString(36).slice(2)}@voltapp`;
-
-  // On reconstruit les composants heure locale Europe/Paris pour DTSTART/DTEND avec TZID
+function buildICS(params: { uid: string; summary: string; description?: string; start: Date; end: Date }): string {
   const fmt = new Intl.DateTimeFormat("en-US", {
     timeZone: "Europe/Paris",
     year: "numeric", month: "2-digit", day: "2-digit",
@@ -118,19 +104,35 @@ export async function createCalDAVEvent(params: {
     ? `DESCRIPTION:${params.description.replace(/\\/g, "\\\\").replace(/\n/g, "\\n")}\r\n`
     : "";
 
-  const ics =
+  return (
     "BEGIN:VCALENDAR\r\n" +
     "VERSION:2.0\r\n" +
-    "PRODID:-//VoltApp//RDV//FR\r\n" +
+    "PRODID:-//VoltApp//Events//FR\r\n" +
     "BEGIN:VEVENT\r\n" +
-    `UID:${uid}\r\n` +
+    `UID:${params.uid}\r\n` +
     `DTSTAMP:${dtstamp}\r\n` +
     `DTSTART;TZID=Europe/Paris:${dtstart}\r\n` +
     `DTEND;TZID=Europe/Paris:${dtend}\r\n` +
     `SUMMARY:${params.summary}\r\n` +
     descLine +
     "END:VEVENT\r\n" +
-    "END:VCALENDAR\r\n";
+    "END:VCALENDAR\r\n"
+  );
+}
+
+// Crée un événement dans le calendrier iCloud donné. Retourne l'URL de
+// l'événement créé (à conserver en base pour permettre modification/suppression).
+export async function createCalDAVEvent(params: {
+  appleId: string;
+  appPassword: string;
+  calendarUrl: string;
+  summary: string;
+  description?: string;
+  start: Date;
+  end: Date;
+}): Promise<string> {
+  const uid = `voltapp-${Date.now()}-${Math.random().toString(36).slice(2)}@voltapp`;
+  const ics = buildICS({ uid, summary: params.summary, description: params.description, start: params.start, end: params.end });
 
   const base = params.calendarUrl.endsWith("/") ? params.calendarUrl : `${params.calendarUrl}/`;
   const eventUrl = `${base}${uid}.ics`;
@@ -146,5 +148,50 @@ export async function createCalDAVEvent(params: {
 
   if (!res.ok) {
     throw new Error(`Échec de l'écriture dans iCloud (${res.status}).`);
+  }
+  return eventUrl;
+}
+
+// Met à jour un événement existant (même UID/URL, nouveau contenu).
+export async function updateCalDAVEvent(params: {
+  appleId: string;
+  appPassword: string;
+  eventUrl: string;
+  summary: string;
+  description?: string;
+  start: Date;
+  end: Date;
+}): Promise<void> {
+  // On extrait l'UID depuis l'URL (dernier segment sans .ics) pour garder le même UID
+  const uid = params.eventUrl.split("/").pop()?.replace(/\.ics$/, "") ?? `voltapp-${Date.now()}@voltapp`;
+  const ics = buildICS({ uid, summary: params.summary, description: params.description, start: params.start, end: params.end });
+
+  const res = await fetch(params.eventUrl, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "text/calendar; charset=utf-8",
+      "Authorization": authHeader(params.appleId, params.appPassword),
+    },
+    body: ics,
+  });
+
+  if (!res.ok) {
+    throw new Error(`Échec de la mise à jour dans iCloud (${res.status}).`);
+  }
+}
+
+// Supprime un événement iCloud existant.
+export async function deleteCalDAVEvent(params: {
+  appleId: string;
+  appPassword: string;
+  eventUrl: string;
+}): Promise<void> {
+  const res = await fetch(params.eventUrl, {
+    method: "DELETE",
+    headers: { "Authorization": authHeader(params.appleId, params.appPassword) },
+  });
+  // 404 = déjà supprimé côté iCloud, on considère ça comme un succès (idempotent)
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`Échec de la suppression dans iCloud (${res.status}).`);
   }
 }
