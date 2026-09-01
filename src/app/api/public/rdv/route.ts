@@ -7,6 +7,7 @@ import { discoverCalendarUrl, createCalDAVEvent } from "@/lib/caldav";
 const MATIN_START = 8, MATIN_END = 12;
 const APREM_START = 13, APREM_END = 17;
 const CALENDRIER_ECRITURE = "Personnel";
+const CALENDRIER_EXCLU = "Ninou";
 
 function parisDateTime(year: number, month: number, day: number, hour: number, minute: number): Date {
   const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
@@ -67,8 +68,8 @@ export async function POST(req: NextRequest) {
     cals = JSON.parse(token.calendars ?? "[]");
   } catch { cals = []; }
 
-  // Cohérent avec /api/public/disponibilites : seul le calendrier "Personnel" compte
-  cals = cals.filter(c => c.nom?.trim().toLowerCase() === CALENDRIER_ECRITURE.toLowerCase());
+  // Cohérent avec /api/public/disponibilites : on exclut le calendrier de ta femme
+  cals = cals.filter(c => c.nom?.trim().toLowerCase() !== CALENDRIER_EXCLU.toLowerCase());
 
   const blockStart = parisDateTime(y, mo, d, periode === "matin" ? MATIN_START : APREM_START, 0);
   const blockEnd = parisDateTime(y, mo, d, periode === "matin" ? MATIN_END : APREM_END, 0);
