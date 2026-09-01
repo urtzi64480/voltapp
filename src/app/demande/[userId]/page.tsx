@@ -87,6 +87,7 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
 
   // ── RDV ──
   const [dispoLoading, setDispoLoading] = useState(false);
+  const [dispoLoaded, setDispoLoaded] = useState(false);
   const [dispoAvailable, setDispoAvailable] = useState(true);
   const [dispoDays, setDispoDays] = useState<DispoDay[]>([]);
   const [rdvSlot, setRdvSlot] = useState<RdvSlot | null>(null);
@@ -109,7 +110,7 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
   }, [userId]);
 
   useEffect(() => {
-    if (mode !== "rdv" || dispoDays.length > 0 || dispoLoading) return;
+    if (mode !== "rdv" || dispoLoaded) return;
     async function loadDispo() {
       setDispoLoading(true);
       try {
@@ -121,10 +122,11 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
         setDispoAvailable(false);
       } finally {
         setDispoLoading(false);
+        setDispoLoaded(true);
       }
     }
     loadDispo();
-  }, [mode, userId, dispoDays.length, dispoLoading]);
+  }, [mode, userId, dispoLoaded]);
 
   const nomEntreprise = profil?.nom_entreprise ?? "Électricien";
   const logoUrl = profil?.logo_url ?? null;
@@ -163,6 +165,8 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
     setRdvSlot(null);
     setRdvSuccess(false);
     setRdvError(null);
+    setDispoLoaded(false);
+    setDispoDays([]);
   };
 
   const submit = async () => {
