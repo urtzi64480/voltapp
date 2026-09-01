@@ -62,14 +62,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Écriture calendrier non configurée. Contactez-nous par téléphone." }, { status: 400 });
   }
 
-  let cals: { url: string }[] = [];
+  let cals: { url: string; nom?: string }[] = [];
   try {
     cals = JSON.parse(token.calendars ?? "[]");
-    if (cals.length === 0) {
-      const urls = JSON.parse(token.ics_urls ?? "[]");
-      cals = urls.map((u: string) => ({ url: u }));
-    }
   } catch { cals = []; }
+
+  // Cohérent avec /api/public/disponibilites : seul le calendrier "Personnel" compte
+  cals = cals.filter(c => c.nom?.trim().toLowerCase() === CALENDRIER_ECRITURE.toLowerCase());
 
   const blockStart = parisDateTime(y, mo, d, periode === "matin" ? MATIN_START : APREM_START, 0);
   const blockEnd = parisDateTime(y, mo, d, periode === "matin" ? MATIN_END : APREM_END, 0);
