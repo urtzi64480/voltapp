@@ -41,16 +41,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ available: false, days: [] });
   }
 
-  const CALENDRIER_DISPO = "Personnel";
+  const CALENDRIER_EXCLU = "Ninou";
 
   let cals: { url: string; nom?: string }[] = [];
   try {
     cals = JSON.parse(token.calendars ?? "[]");
   } catch { cals = []; }
 
-  // On ne tient compte que du calendrier "Personnel" pour la disponibilité
-  // client — les autres calendriers connectés (ex: partagé en famille) sont ignorés.
-  cals = cals.filter(c => c.nom?.trim().toLowerCase() === CALENDRIER_DISPO.toLowerCase());
+  // On exclut le calendrier de ta femme ("Ninou") de la disponibilité client —
+  // tous tes autres calendriers connectés comptent normalement.
+  cals = cals.filter(c => c.nom?.trim().toLowerCase() !== CALENDRIER_EXCLU.toLowerCase());
 
   if (cals.length === 0) {
     return NextResponse.json({ available: false, days: [] });
