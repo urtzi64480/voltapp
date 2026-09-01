@@ -41,14 +41,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ available: false, days: [] });
   }
 
-  let cals: { url: string }[] = [];
+  const CALENDRIER_DISPO = "Personnel";
+
+  let cals: { url: string; nom?: string }[] = [];
   try {
     cals = JSON.parse(token.calendars ?? "[]");
-    if (cals.length === 0) {
-      const urls = JSON.parse(token.ics_urls ?? "[]");
-      cals = urls.map((u: string) => ({ url: u }));
-    }
   } catch { cals = []; }
+
+  // On ne tient compte que du calendrier "Personnel" pour la disponibilité
+  // client — les autres calendriers connectés (ex: partagé en famille) sont ignorés.
+  cals = cals.filter(c => c.nom?.trim().toLowerCase() === CALENDRIER_DISPO.toLowerCase());
 
   if (cals.length === 0) {
     return NextResponse.json({ available: false, days: [] });
