@@ -319,8 +319,7 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
             alt={nomEntreprise}
             width={36}
             height={36}
-            className="shrink-0 object-contain"
-            style={{ filter: "invert(1)" }}
+            className="shrink-0 object-contain rounded-lg"
           />
         ) : (
           <div className="w-9 h-9 rounded-full bg-volt-500 shrink-0" />
