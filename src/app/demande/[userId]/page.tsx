@@ -2,7 +2,7 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { ChevronRight, ChevronLeft, CheckCircle, Upload, X, Loader2, FileText, CalendarDays, Phone } from "lucide-react";
+import { ChevronRight, ChevronLeft, CheckCircle, Upload, X, Loader2, FileText, CalendarDays, Phone, UserPlus } from "lucide-react";
 
 const TYPES_TRAVAUX = [
   "Dépannage électrique",
@@ -53,6 +53,9 @@ interface RdvFormData {
 }
 
 const EMPTY_RDV_FORM: RdvFormData = { nom: "", telephone: "", email: "", adresse: "", description: "" };
+
+// URL de la carte de contact (vCard) — fichier statique servi depuis public/carte-nfc/
+const VCARD_URL = "/carte-nfc/index.html";
 
 function fmtDateLabel(dateKey: string) {
   const [y, m, d] = dateKey.split("-").map(Number);
@@ -324,12 +327,20 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
         ) : (
           <div className="w-9 h-9 rounded-full bg-volt-500 shrink-0" />
         )}
-        <div>
+        <div className="flex-1 min-w-0">
           <p className="text-white font-semibold text-sm leading-none">{nomEntreprise}</p>
           <p className="text-ink-400 text-xs mt-0.5">
             {mode === null ? "Que souhaitez-vous faire ?" : mode === "devis" ? "Demande de devis gratuit" : "Prise de rendez-vous"}
           </p>
         </div>
+        <a
+          href={VCARD_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-volt-500 text-ink-900 font-semibold text-xs hover:bg-volt-400 transition-colors">
+          <UserPlus size={14} />
+          <span className="hidden sm:inline">Ajouter à mes contacts</span>
+        </a>
       </div>
 
       {/* ÉCRAN DE CHOIX */}
