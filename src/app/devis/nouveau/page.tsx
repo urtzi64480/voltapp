@@ -254,7 +254,7 @@ function NouveauDevisPage() {
   async function enregistrer(statut = "brouillon") {
     setSaving(true);
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) { setSaving(false); return; }
     const { data: profil } = await supabase.from("profil").select("*").eq("id", user.id).single();
     const numero = genNumero(profil?.prefixe_devis ?? "DEV", profil?.compteur_devis ?? 0);
     const dateV = new Date(); dateV.setDate(dateV.getDate() + validite);
@@ -263,6 +263,7 @@ function NouveauDevisPage() {
       user_id: user.id, client_id: clientId || null,
       apporteur_id: apporteurId || null,
       numero, objet,
+      date_emission: new Date().toISOString().split("T")[0],
       date_validite: dateV.toISOString().split("T")[0],
       statut: sigData ? "signe" : statut,
       total_service: totService, total_materiau: totMateriau, total_ttc: totTTC,
