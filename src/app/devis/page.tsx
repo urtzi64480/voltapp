@@ -17,6 +17,12 @@ function moisKey(dateStr: string | null | undefined) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+// Certains devis anciens n'ont pas de date_emission renseignée (bug de création corrigé) :
+// on retombe sur created_at pour ne pas les perdre dans "Sans date".
+function dateGroupe(d: Devis) {
+  return d.date_emission ?? (d as any).created_at ?? null;
+}
+
 function moisLabel(key: string) {
   if (key === "__sans_date__") return "Sans date";
   const [y, m] = key.split("-").map(Number);
@@ -81,7 +87,7 @@ export default function DevisPage() {
 
   const byMonth: Record<string, Devis[]> = {};
   filtered.forEach(d => {
-    const key = moisKey(d.date_emission);
+    const key = moisKey(dateGroupe(d));
     if (!byMonth[key]) byMonth[key] = [];
     byMonth[key].push(d);
   });
@@ -186,7 +192,7 @@ export default function DevisPage() {
                                 )}
                               </div>
                               <p className="text-xs text-ink-500 truncate">{clientLabel}{d.objet ? ` — ${d.objet}` : ""}</p>
-                              <p className="text-xs text-ink-400">{fmtDate(d.date_emission)}</p>
+                              <p className="text-xs text-ink-400">{fmtDate(dateGroupe(d))}</p>
                             </div>
                             <p className="text-base font-bold text-volt-600 shrink-0">{fmt(d.total_ttc)}</p>
                             <button
