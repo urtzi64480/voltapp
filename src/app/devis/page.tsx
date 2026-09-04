@@ -6,10 +6,24 @@ import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Link from "next/link";
-import { Plus, Search, FileText, ChevronRight, ChevronDown, ChevronUp, User, Receipt, CalendarDays, CalendarX, Trash2 } from "lucide-react";
+import { Plus, Search, FileText, ChevronRight, ChevronDown, ChevronUp, Receipt, CalendarDays, CalendarX, Trash2 } from "lucide-react";
 
 const FILTRES = ["tous", "brouillon", "envoye", "signe", "refuse", "non_planifie"] as const;
 const STATUTS_VISIBLES = ["envoye", "signe", "brouillon", "refuse"];
+
+function moisKey(dateStr: string | null | undefined) {
+  if (!dateStr) return "__sans_date__";
+  const d = new Date(dateStr);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function moisLabel(key: string) {
+  if (key === "__sans_date__") return "Sans date";
+  const [y, m] = key.split("-").map(Number);
+  const d = new Date(y, m - 1, 1);
+  const label = d.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
 
 export default function DevisPage() {
   const [devis, setDevis] = useState<Devis[]>([]);
@@ -25,7 +39,7 @@ export default function DevisPage() {
   useEffect(() => {
     supabase.from("devis").select("*, client:clients(nom,prenom)")
       .in("statut", STATUTS_VISIBLES)
-      .order("created_at", { ascending: false })
+      .order("date_emission", { ascending: false })
       .then(async ({ data }) => {
         const dvs = data ?? [];
         setDevis(dvs);
@@ -57,21 +71,26 @@ export default function DevisPage() {
   }, []);
 
   const filtered = devis.filter(d => {
-    const s = `${d.numero} ${d.objet ?? ""} ${(d.client as any)?.nom ?? ""}`.toLowerCase();
+    const client = d.client as any;
+    const clientNom = client ? `${client.prenom ?? ""} ${client.nom ?? ""}` : "";
+    const s = `${d.numero} ${d.objet ?? ""} ${clientNom}`.toLowerCase();
     const matchSearch = s.includes(search.toLowerCase());
     if (filtre === "non_planifie") return matchSearch && !interventionsMap[d.id];
     return matchSearch && (filtre === "tous" || d.statut === filtre);
   });
 
-  const byClient: Record<string, { label: string; items: Devis[] }> = {};
+  const byMonth: Record<string, Devis[]> = {};
   filtered.forEach(d => {
-    const client = d.client as any;
-    const key = d.client_id ?? "__sans_client__";
-    const label = client ? `${client.prenom ?? ""} ${client.nom}`.trim() : "Sans client";
-    if (!byClient[key]) byClient[key] = { label, items: [] };
-    byClient[key].items.push(d);
+    const key = moisKey(d.date_emission);
+    if (!byMonth[key]) byMonth[key] = [];
+    byMonth[key].push(d);
   });
-  const groups = Object.entries(byClient).sort((a, b) => a[1].label.localeCompare(b[1].label, "fr"));
+  // Tri des mois décroissant (plus récent en premier), "sans date" à la fin
+  const groups = Object.entries(byMonth).sort((a, b) => {
+    if (a[0] === "__sans_date__") return 1;
+    if (b[0] === "__sans_date__") return -1;
+    return b[0].localeCompare(a[0]);
+  });
 
   async function handleDelete() {
     if (!toDelete) return;
@@ -102,7 +121,7 @@ export default function DevisPage() {
         <div className="flex flex-col sm:flex-row gap-3 mb-4">
           <div className="relative flex-1">
             <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-400" />
-            <input className="input pl-10" placeholder="Rechercher…" value={search} onChange={e => setSearch(e.target.value)} />
+            <input className="input pl-10" placeholder="Rechercher (client, n°, objet)…" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
           <div className="flex gap-1.5 flex-wrap">
             {FILTRES.map(f => (
@@ -123,14 +142,13 @@ export default function DevisPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {groups.map(([key, { label, items }]) => (
+              {groups.map(([key, items]) => (
                 <div key={key} className="card overflow-hidden">
                   <button
                     onClick={() => setCollapsed(c => ({ ...c, [key]: !c[key] }))}
                     className="w-full flex items-center justify-between px-5 py-3 bg-ink-900 hover:bg-ink-800 transition-colors text-left">
                     <div className="flex items-center gap-3">
-                      <User size={14} className="text-ink-400 shrink-0" />
-                      <span className="font-semibold text-white text-sm">{label}</span>
+                      <span className="font-semibold text-white text-sm">{moisLabel(key)}</span>
                       <span className="text-ink-400 text-xs">{items.length} devis</span>
                     </div>
                     {collapsed[key] ? <ChevronDown size={16} className="text-ink-400" /> : <ChevronUp size={16} className="text-ink-400" />}
@@ -141,6 +159,8 @@ export default function DevisPage() {
                       {items.map(d => {
                         const factureId = facturesMap[d.id];
                         const planifie = interventionsMap[d.id] ?? false;
+                        const client = d.client as any;
+                        const clientLabel = client ? `${client.prenom ?? ""} ${client.nom ?? ""}`.trim() : "Sans client";
                         return (
                           <Link key={d.id} href={`/devis/${d.id}`}
                             className="flex items-center gap-4 px-5 py-3 hover:bg-ink-50 transition-colors group">
@@ -155,7 +175,6 @@ export default function DevisPage() {
                                     <Receipt size={11} /> Facturé
                                   </span>
                                 )}
-                                {/* Badge planification — visible sur tous les devis */}
                                 {planifie ? (
                                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">
                                     <CalendarDays size={11} /> Planifié
@@ -166,7 +185,7 @@ export default function DevisPage() {
                                   </span>
                                 )}
                               </div>
-                              {d.objet && <p className="text-xs text-ink-500 truncate">{d.objet}</p>}
+                              <p className="text-xs text-ink-500 truncate">{clientLabel}{d.objet ? ` — ${d.objet}` : ""}</p>
                               <p className="text-xs text-ink-400">{fmtDate(d.date_emission)}</p>
                             </div>
                             <p className="text-base font-bold text-volt-600 shrink-0">{fmt(d.total_ttc)}</p>
