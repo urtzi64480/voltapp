@@ -6,7 +6,21 @@ import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Link from "next/link";
-import { Search, Receipt, ChevronRight, ChevronDown, ChevronUp, AlertCircle, User, Trash2 } from "lucide-react";
+import { Search, Receipt, ChevronRight, ChevronDown, ChevronUp, AlertCircle, Trash2 } from "lucide-react";
+
+function moisKey(dateStr: string | null | undefined) {
+  if (!dateStr) return "__sans_date__";
+  const d = new Date(dateStr);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function moisLabel(key: string) {
+  if (key === "__sans_date__") return "Sans date";
+  const [y, m] = key.split("-").map(Number);
+  const d = new Date(y, m - 1, 1);
+  const label = d.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
 
 export default function FacturesPage() {
   const [factures, setFactures] = useState<Facture[]>([]);
@@ -18,7 +32,7 @@ export default function FacturesPage() {
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    supabase.from("factures").select("*, client:clients(nom,prenom)").order("created_at", { ascending: false })
+    supabase.from("factures").select("*, client:clients(nom,prenom)").order("date_emission", { ascending: false })
       .then(({ data }) => { setFactures(data ?? []); setLoading(false); });
   }, []);
 
@@ -29,16 +43,18 @@ export default function FacturesPage() {
 
   const totalImpaye = factures.filter(f => ["impayee", "relance"].includes(f.statut)).reduce((a, f) => a + f.total_ttc, 0);
 
-  // Grouper par client alphabétiquement
-  const byClient: Record<string, { label: string; items: Facture[] }> = {};
+  // Grouper par mois (date_emission), plus récent en premier
+  const byMonth: Record<string, Facture[]> = {};
   filtered.forEach(f => {
-    const client = f.client as any;
-    const key = f.client_id ?? "__sans_client__";
-    const label = client ? `${client.prenom ?? ""} ${client.nom}`.trim() : "Sans client";
-    if (!byClient[key]) byClient[key] = { label, items: [] };
-    byClient[key].items.push(f);
+    const key = moisKey(f.date_emission);
+    if (!byMonth[key]) byMonth[key] = [];
+    byMonth[key].push(f);
   });
-  const groups = Object.entries(byClient).sort((a, b) => a[1].label.localeCompare(b[1].label, "fr"));
+  const groups = Object.entries(byMonth).sort((a, b) => {
+    if (a[0] === "__sans_date__") return 1;
+    if (b[0] === "__sans_date__") return -1;
+    return b[0].localeCompare(a[0]);
+  });
 
   async function handleDelete() {
     if (!toDelete) return;
@@ -74,7 +90,7 @@ export default function FacturesPage() {
         <div className="flex flex-col sm:flex-row gap-3 mb-4">
           <div className="relative flex-1">
             <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-400" />
-            <input className="input pl-10" placeholder="Rechercher…" value={search} onChange={e => setSearch(e.target.value)} />
+            <input className="input pl-10" placeholder="Rechercher (client, n°, objet)…" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
           <div className="flex gap-1.5 flex-wrap">
             {["tous", "envoyee", "payee", "relance", "impayee"].map(f => (
@@ -95,7 +111,7 @@ export default function FacturesPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {groups.map(([key, { label, items }]) => {
+              {groups.map(([key, items]) => {
                 const impaye = items.filter(f => ["impayee", "relance"].includes(f.statut)).reduce((a, f) => a + f.total_ttc, 0);
                 return (
                   <div key={key} className="card overflow-hidden">
@@ -103,8 +119,7 @@ export default function FacturesPage() {
                       onClick={() => setCollapsed(c => ({ ...c, [key]: !c[key] }))}
                       className="w-full flex items-center justify-between px-5 py-3 bg-ink-900 hover:bg-ink-800 transition-colors text-left">
                       <div className="flex items-center gap-3">
-                        <User size={14} className="text-ink-400 shrink-0" />
-                        <span className="font-semibold text-white text-sm">{label}</span>
+                        <span className="font-semibold text-white text-sm">{moisLabel(key)}</span>
                         <span className="text-ink-400 text-xs">{items.length} facture{items.length > 1 ? "s" : ""}</span>
                         {impaye > 0 && (
                           <span className="px-2 py-0.5 rounded-md bg-red-500/20 text-red-300 text-xs font-medium">
@@ -117,30 +132,34 @@ export default function FacturesPage() {
 
                     {!collapsed[key] && (
                       <div className="divide-y divide-ink-100">
-                        {items.map(f => (
-                          <Link key={f.id} href={`/factures/${f.id}`}
-                            className="flex items-center gap-4 px-5 py-3 hover:bg-ink-50 transition-colors group">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-0.5">
-                                <span className="font-bold text-ink-900 text-sm">{f.numero}</span>
-                                <span className={cn("badge", STATUT_COLORS[f.statut])}>{STATUT_LABELS[f.statut]}</span>
+                        {items.map(f => {
+                          const client = f.client as any;
+                          const clientLabel = client ? `${client.prenom ?? ""} ${client.nom ?? ""}`.trim() : "Sans client";
+                          return (
+                            <Link key={f.id} href={`/factures/${f.id}`}
+                              className="flex items-center gap-4 px-5 py-3 hover:bg-ink-50 transition-colors group">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-0.5">
+                                  <span className="font-bold text-ink-900 text-sm">{f.numero}</span>
+                                  <span className={cn("badge", STATUT_COLORS[f.statut])}>{STATUT_LABELS[f.statut]}</span>
+                                </div>
+                                <p className="text-xs text-ink-500 truncate">{clientLabel}{f.objet ? ` — ${f.objet}` : ""}</p>
+                                <p className="text-xs text-ink-400">{fmtDate(f.date_emission)}{f.date_echeance ? ` · Éch. ${fmtDate(f.date_echeance)}` : ""}</p>
                               </div>
-                              {f.objet && <p className="text-xs text-ink-500 truncate">{f.objet}</p>}
-                              <p className="text-xs text-ink-400">{fmtDate(f.date_emission)}{f.date_echeance ? ` · Éch. ${fmtDate(f.date_echeance)}` : ""}</p>
-                            </div>
-                            <p className={cn("text-base font-bold shrink-0", ["impayee", "relance"].includes(f.statut) ? "text-red-600" : "text-emerald-600")}>
-                              {fmt(f.total_ttc)}
-                            </p>
-                            <button
-                              onClick={e => { e.preventDefault(); e.stopPropagation(); setToDelete(f); }}
-                              className="text-ink-300 hover:text-red-600 transition-colors shrink-0 p-1"
-                              title="Supprimer"
-                            >
-                              <Trash2 size={15} />
-                            </button>
-                            <ChevronRight size={15} className="text-ink-300 group-hover:text-volt-500 transition-colors shrink-0" />
-                          </Link>
-                        ))}
+                              <p className={cn("text-base font-bold shrink-0", ["impayee", "relance"].includes(f.statut) ? "text-red-600" : "text-emerald-600")}>
+                                {fmt(f.total_ttc)}
+                              </p>
+                              <button
+                                onClick={e => { e.preventDefault(); e.stopPropagation(); setToDelete(f); }}
+                                className="text-ink-300 hover:text-red-600 transition-colors shrink-0 p-1"
+                                title="Supprimer"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                              <ChevronRight size={15} className="text-ink-300 group-hover:text-volt-500 transition-colors shrink-0" />
+                            </Link>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
