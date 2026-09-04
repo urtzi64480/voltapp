@@ -17,10 +17,9 @@ function moisKey(dateStr: string | null | undefined) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-// Certains devis anciens n'ont pas de date_emission renseignée (bug de création corrigé) :
-// on retombe sur created_at pour ne pas les perdre dans "Sans date".
+// La table devis n'a pas de colonne date_emission : on groupe/affiche sur created_at.
 function dateGroupe(d: Devis) {
-  return d.date_emission ?? (d as any).created_at ?? null;
+  return (d as any).created_at ?? null;
 }
 
 function moisLabel(key: string) {
@@ -45,7 +44,7 @@ export default function DevisPage() {
   useEffect(() => {
     supabase.from("devis").select("*, client:clients(nom,prenom)")
       .in("statut", STATUTS_VISIBLES)
-      .order("date_emission", { ascending: false })
+      .order("created_at", { ascending: false })
       .then(async ({ data }) => {
         const dvs = data ?? [];
         setDevis(dvs);
