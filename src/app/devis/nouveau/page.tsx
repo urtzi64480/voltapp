@@ -263,7 +263,6 @@ function NouveauDevisPage() {
       user_id: user.id, client_id: clientId || null,
       apporteur_id: apporteurId || null,
       numero, objet,
-      date_emission: new Date().toISOString().split("T")[0],
       date_validite: dateV.toISOString().split("T")[0],
       statut: sigData ? "signe" : statut,
       total_service: totService, total_materiau: totMateriau, total_ttc: totTTC,
