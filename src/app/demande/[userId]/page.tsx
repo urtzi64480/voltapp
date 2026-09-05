@@ -2,7 +2,7 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { ChevronRight, ChevronLeft, CheckCircle, Upload, X, Loader2, FileText, CalendarDays, Phone, UserPlus } from "lucide-react";
+import { ChevronRight, ChevronLeft, CheckCircle, Upload, X, Loader2, FileText, CalendarDays, Phone, UserPlus, Zap } from "lucide-react";
 
 const TYPES_TRAVAUX = [
   "Dépannage électrique",
@@ -16,7 +16,7 @@ const TYPES_TRAVAUX = [
 ];
 
 type Step = 1 | 2 | 3;
-type Mode = "devis" | "rdv" | null;
+type Mode = "devis" | "rdv" | "urgence" | null;
 
 interface FormData {
   nom: string;
@@ -56,6 +56,10 @@ const EMPTY_RDV_FORM: RdvFormData = { nom: "", telephone: "", email: "", adresse
 
 // URL de la carte de contact (vCard) — fichier statique servi depuis public/carte-nfc/
 const VCARD_URL = "/carte-nfc/index.html";
+
+// Numéro d'urgence — affiché en clair et cliquable (tel:)
+const URGENCE_TEL_AFFICHE = "07 69 99 52 22";
+const URGENCE_TEL_LIEN = "tel:+33769995222";
 
 function fmtDateLabel(dateKey: string) {
   const [y, m, d] = dateKey.split("-").map(Number);
@@ -331,7 +335,13 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
           <div className="flex-1 min-w-0">
             <p className="text-white font-semibold text-sm leading-none">{nomEntreprise}</p>
             <p className="text-ink-400 text-xs mt-0.5">
-              {mode === null ? "Que souhaitez-vous faire ?" : mode === "devis" ? "Demande de devis gratuit" : "Prise de rendez-vous"}
+              {mode === null
+                ? "Que souhaitez-vous faire ?"
+                : mode === "devis"
+                ? "Demande de devis gratuit"
+                : mode === "rdv"
+                ? "Prise de rendez-vous"
+                : "Urgence électrique"}
             </p>
           </div>
         </div>
@@ -349,6 +359,19 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
       {/* ÉCRAN DE CHOIX */}
       {mode === null && (
         <div className="px-4 py-8 max-w-lg mx-auto space-y-4">
+          <button
+            onClick={() => setMode("urgence")}
+            className="w-full bg-white rounded-2xl border-2 border-red-200 p-5 flex items-center gap-4 text-left hover:border-red-400 hover:shadow-sm transition-all">
+            <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
+              <Zap size={22} className="text-red-600" />
+            </div>
+            <div className="flex-1">
+              <p className="font-display text-lg text-ink-900">Urgences électriques</p>
+              <p className="text-ink-500 text-sm mt-0.5">Panne, danger : appelez-moi directement.</p>
+            </div>
+            <ChevronRight size={20} className="text-ink-300 shrink-0" />
+          </button>
+
           <button
             onClick={() => setMode("devis")}
             className="w-full bg-white rounded-2xl border border-ink-200 p-5 flex items-center gap-4 text-left hover:border-volt-500 hover:shadow-sm transition-all">
@@ -374,6 +397,34 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
             </div>
             <ChevronRight size={20} className="text-ink-300 shrink-0" />
           </button>
+        </div>
+      )}
+
+      {/* URGENCE ÉLECTRIQUE */}
+      {mode === "urgence" && (
+        <div className="px-4 py-8 max-w-lg mx-auto space-y-4">
+          <button
+            onClick={backToChoice}
+            className="flex items-center gap-1.5 text-ink-500 text-sm font-medium hover:text-ink-900 transition-colors">
+            <ChevronLeft size={16} /> Retour
+          </button>
+
+          <div className="bg-white rounded-2xl border-2 border-red-200 p-6 text-center">
+            <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+              <Zap size={28} className="text-red-600" />
+            </div>
+            <h1 className="font-display text-xl text-ink-900 mb-2">Urgence électrique</h1>
+            <p className="text-ink-500 text-sm leading-relaxed mb-6">
+              Panne, court-circuit, danger électrique : appelez-moi directement, je vous réponds au plus vite.
+            </p>
+            <a
+              href={URGENCE_TEL_LIEN}
+              className="w-full inline-flex items-center justify-center gap-2 py-4 rounded-xl bg-red-600 text-white font-bold text-lg hover:bg-red-500 transition-colors">
+              <Phone size={20} />
+              {URGENCE_TEL_AFFICHE}
+            </a>
+            <p className="text-ink-300 text-xs mt-4">Appuyez pour appeler directement</p>
+          </div>
         </div>
       )}
 
