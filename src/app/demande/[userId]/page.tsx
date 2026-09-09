@@ -125,7 +125,9 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
         user_agent: ua,
         device_type: detectDeviceType(ua),
       })
-      .then(() => {});
+      .then(({ error }) => {
+        if (error) console.error("Erreur tracking visite :", error);
+      });
   }, [userId]);
 
   useEffect(() => {
