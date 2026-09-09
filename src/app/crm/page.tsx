@@ -58,14 +58,13 @@ function BarMois({ mois, service, materiau, serviceN1, materiauN1, maxMois, labe
   );
 }
 import VisitesStats from "@/components/VisitesStats";
-// ...
-<VisitesStats userId={session.user.id} />
 export default function CRMPage() {
   const [annee, setAnnee] = useState(new Date().getFullYear());
   const [moisCommission, setMoisCommission] = useState(new Date().getMonth() + 1);
   const [anneeExport, setAnneeExport] = useState(new Date().getFullYear());
   const [moisExport, setMoisExport] = useState(new Date().getMonth() + 1);
   const [loading, setLoading] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
 
   const [caAnnuel, setCaAnnuel] = useState({ service: 0, materiau: 0 });
   const [caMensuel, setCaMensuel] = useState<{ mois: number; service: number; materiau: number }[]>([]);
@@ -97,6 +96,7 @@ export default function CRMPage() {
       const finMois = new Date(annee, moisCommission, 0).toISOString().split("T")[0];
 
       const { data: { user } } = await supabase.auth.getUser();
+      if (user) setUserId(user.id);
       const [
         { data: facsPayees },
         { data: facsPayeesN1 },
@@ -381,6 +381,7 @@ export default function CRMPage() {
   return (
     <Shell>
       <div className="p-4 md:p-8 max-w-5xl mx-auto">
+        {userId && <VisitesStats userId={userId} />}
         <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
           <div>
             <h1 className="font-display text-3xl text-ink-900">CRM</h1>
