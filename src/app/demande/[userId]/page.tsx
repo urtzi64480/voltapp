@@ -68,6 +68,14 @@ function fmtDateLabel(dateKey: string) {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+// Déduit le type d'appareil à partir du user-agent (simple, pas de dépendance externe)
+function detectDeviceType(ua: string): "mobile" | "tablette" | "desktop" {
+  const s = ua.toLowerCase();
+  if (/ipad|tablet|nexus 7|nexus 9|nexus 10|kfapwi/.test(s)) return "tablette";
+  if (/mobi|android|iphone|ipod/.test(s)) return "mobile";
+  return "desktop";
+}
+
 export default function DemandePage({ params }: { params: { userId: string } }) {
   const userId = params.userId;
 
@@ -102,6 +110,23 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
   const [rdvSubmitting, setRdvSubmitting] = useState(false);
   const [rdvSuccess, setRdvSuccess] = useState(false);
   const [rdvError, setRdvError] = useState<string | null>(null);
+
+  // ── Tracking visite (une seule fois par montage) ──
+  const visitLoggedRef = useRef(false);
+  useEffect(() => {
+    if (visitLoggedRef.current) return;
+    visitLoggedRef.current = true;
+    const ua = navigator.userAgent;
+    supabase
+      .from("demande_visites")
+      .insert({
+        user_id: userId,
+        referrer: document.referrer || null,
+        user_agent: ua,
+        device_type: detectDeviceType(ua),
+      })
+      .then(() => {});
+  }, [userId]);
 
   useEffect(() => {
     async function loadProfil() {
