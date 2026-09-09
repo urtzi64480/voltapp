@@ -2,7 +2,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { Loader2, Smartphone, Monitor, Tablet, Globe } from "lucide-react";
+import { Loader2, Smartphone, Monitor, Tablet, Globe, MapPin } from "lucide-react";
 
 interface Visite {
   created_at: string;
@@ -46,7 +46,7 @@ export default function VisitesStats({ userId }: { userId: string }) {
 
   if (loading) {
     return (
-      <div className="bg-white rounded-2xl border border-ink-200 p-5 flex items-center justify-center py-10">
+      <div className="card card-inner flex items-center justify-center py-10">
         <Loader2 size={20} className="animate-spin text-ink-400" />
       </div>
     );
@@ -72,10 +72,13 @@ export default function VisitesStats({ userId }: { userId: string }) {
   const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
 
   return (
-    <div className="bg-white rounded-2xl border border-ink-200 p-5 space-y-5">
+    <div className="card card-inner space-y-5">
       <div>
-        <h3 className="font-display text-lg text-ink-900">Visiteurs de la page demande</h3>
-        <p className="text-ink-400 text-xs mt-0.5">
+        <div className="flex items-center gap-2">
+          <Globe size={18} className="text-volt-600" />
+          <h2 className="font-semibold text-ink-800">Visiteurs de la page demande</h2>
+        </div>
+        <p className="text-ink-400 text-xs mt-1">
           {total} visite{total > 1 ? "s" : ""} (500 dernières)
         </p>
       </div>
@@ -100,7 +103,7 @@ export default function VisitesStats({ userId }: { userId: string }) {
 
       <div>
         <p className="text-xs font-semibold text-ink-600 mb-2 flex items-center gap-1.5">
-          <Globe size={14} /> Sources principales
+          <MapPin size={14} /> Sources principales
         </p>
         <div className="space-y-1.5">
           {topReferrers.map(([label, count]) => (
