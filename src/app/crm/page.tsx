@@ -57,7 +57,9 @@ function BarMois({ mois, service, materiau, serviceN1, materiauN1, maxMois, labe
     </div>
   );
 }
-
+import VisitesStats from "@/components/VisitesStats";
+// ...
+<VisitesStats userId={session.user.id} />
 export default function CRMPage() {
   const [annee, setAnnee] = useState(new Date().getFullYear());
   const [moisCommission, setMoisCommission] = useState(new Date().getMonth() + 1);
