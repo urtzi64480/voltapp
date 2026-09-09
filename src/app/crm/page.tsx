@@ -5,6 +5,7 @@ import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, PLAFOND_SERVICE, PLAFOND_MA
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { TrendingUp, FileText, Receipt, CheckCircle, Clock, AlertTriangle, BarChart3, PieChart, Euro, Users, Download, Landmark, ShoppingBag } from "lucide-react";
+import VisitesStats from "@/components/VisitesStats";
 
 // Seuils de franchise en base de TVA 2026 (distincts des plafonds de CA du régime micro)
 const FRANCHISE_TVA_SERVICE = 37500;
@@ -57,7 +58,7 @@ function BarMois({ mois, service, materiau, serviceN1, materiauN1, maxMois, labe
     </div>
   );
 }
-import VisitesStats from "@/components/VisitesStats";
+
 export default function CRMPage() {
   const [annee, setAnnee] = useState(new Date().getFullYear());
   const [moisCommission, setMoisCommission] = useState(new Date().getMonth() + 1);
@@ -381,7 +382,6 @@ export default function CRMPage() {
   return (
     <Shell>
       <div className="p-4 md:p-8 max-w-5xl mx-auto">
-        {userId && <VisitesStats userId={userId} />}
         <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
           <div>
             <h1 className="font-display text-3xl text-ink-900">CRM</h1>
@@ -396,6 +396,9 @@ export default function CRMPage() {
 
         {loading ? <div className="text-center py-16 text-ink-400">Chargement…</div> : (
           <div className="space-y-5">
+
+            {/* Visiteurs de la page demande */}
+            {userId && <VisitesStats userId={userId} />}
 
             {/* Export comptable */}
             <div className="card card-inner">
