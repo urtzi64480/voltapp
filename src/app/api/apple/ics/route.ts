@@ -3,19 +3,22 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { parseICS } from "@/lib/ics";
 
-// Les événements créés par VoltApp dans iCloud (interventions ET demandes de
-// rendez-vous) portent un UID au format "voltapp-{timestamp}-{random}@voltapp"
-// (voir src/lib/caldav.ts, fonction createCalDAVEvent). On les exclut de la
-// relecture du calendrier Apple pour éviter qu'ils apparaissent en double :
-// une fois via la DB VoltApp (badge "V"), une fois via ce fetch ICS (badge 🍎).
-const VOLTAPP_UID_PATTERN = /(^voltapp-|@voltapp$)/i;
-
-function isVoltAppEvent(ev: unknown): boolean {
-  const record = ev as Record<string, unknown>;
-  const candidates = [record?.id, record?.uid, (record as any)?.raw?.uid];
-  return candidates.some(
-    (val) => typeof val === "string" && VOLTAPP_UID_PATTERN.test(val)
-  );
+// Certains événements iCloud sont créés par VoltApp lui-même. Deux cas :
+// 1. Interventions (src/app/planning/page.tsx) : déjà affichées dans le
+//    Planning via la table `interventions` (badge "V") -> il faut les
+//    exclure de cette lecture Apple pour éviter le doublon visuel.
+// 2. Demandes de RDV client (src/app/api/public/rdv/route.ts) : PAS
+//    affichées dans le Planning (seulement sur la page /rdv), donc leur
+//    événement Apple doit rester visible ici, sinon elles disparaissent
+//    complètement du calendrier VoltApp.
+// On ne peut donc pas filtrer par simple motif d'UID "@voltapp" (ça retirait
+// aussi les RDV) : on exclut uniquement les événements dont l'URL correspond
+// à une intervention déjà chargée en base (caldav_url), au cas par cas.
+function extractUidFromCaldavUrl(url: string | null): string | null {
+  if (!url) return null;
+  const last = url.split("/").pop();
+  if (!last) return null;
+  return last.replace(/\.ics$/i, "");
 }
 
 export async function GET(req: NextRequest) {
@@ -52,6 +55,24 @@ export async function GET(req: NextRequest) {
   const timeMin = new Date(year, month - 1, 1);
   const timeMax = new Date(year, month + 2, 0, 23, 59, 59);
 
+  // UID des interventions déjà écrites dans iCloud, pour ce user et cette
+  // période affichée dans le Planning : seuls ceux-là doivent être exclus
+  // de la relecture Apple (RLS bypassée par la service role key -> filtre
+  // explicite par user_id obligatoire).
+  const { data: ivRows } = await supabase
+    .from("interventions")
+    .select("caldav_url")
+    .eq("user_id", user.id)
+    .not("caldav_url", "is", null)
+    .gte("date_debut", timeMin.toISOString())
+    .lte("date_debut", timeMax.toISOString());
+
+  const interventionUids = new Set(
+    (ivRows ?? [])
+      .map(r => extractUidFromCaldavUrl((r as { caldav_url: string | null }).caldav_url))
+      .filter((uid): uid is string => !!uid)
+  );
+
   const allEvents: ReturnType<typeof parseICS> = [];
 
   for (const cal of cals) {
@@ -62,8 +83,8 @@ export async function GET(req: NextRequest) {
       if (!res.ok) continue;
       const text = await res.text();
       const parsed = parseICS(text, timeMin, timeMax, cal.url);
-      const parsedSansDoublonsVoltApp = parsed.filter(ev => !isVoltAppEvent(ev));
-      allEvents.push(...parsedSansDoublonsVoltApp);
+      const parsedSansDoublonsIntervention = parsed.filter(ev => !interventionUids.has((ev as { id: string }).id));
+      allEvents.push(...parsedSansDoublonsIntervention);
     } catch { continue; }
   }
 
