@@ -6,7 +6,7 @@ import { fmt, fmtDate, fmtDatetime, STATUT_LABELS, STATUT_COLORS, cn } from "@/l
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, X, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart } from "lucide-react";
+import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, X, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro, AlertTriangle } from "lucide-react";
 
 type Mode = "view" | "edit";
 type Tab = "edition" | "apercu" | "signature";
@@ -59,6 +59,12 @@ function calcRemise(total: number, type: RemiseType, val: string): number {
   const v = parseFloat(val) || 0;
   if (type === "pct") return Math.min(total, total * v / 100);
   return Math.min(total, v);
+}
+
+function margeColor(pct: number) {
+  if (pct < 0) return "text-red-600";
+  if (pct < 20) return "text-amber-600";
+  return "text-emerald-600";
 }
 
 function ApercuDocument({
@@ -256,6 +262,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const [viewSigInputMode, setViewSigInputMode] = useState<"draw" | "upload">("draw");
   const [viewSigData, setViewSigData] = useState<string | null>(null);
   const [viewSigDate, setViewSigDate] = useState<string | null>(null);
+  const [showRentabilite, setShowRentabilite] = useState(false);
   const viewCanvasRef = useRef<HTMLCanvasElement>(null);
   const viewFileInputRef = useRef<HTMLInputElement>(null);
   const viewDrawing = useRef(false);
@@ -267,8 +274,14 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const last = useRef({ x: 0, y: 0 });
   const sigCtx = useRef<CanvasRenderingContext2D | null>(null);
 
+  // Requête de chargement du devis : on embarque le prix_achat catalogue actuel de chaque
+  // ligne via sa prestation_id (alias "prestation"), pour pouvoir calculer la rentabilité
+  // sans requête séparée. Les lignes libres ou dont la prestation a été supprimée n'ont
+  // pas de prix_achat exploitable — géré côté calcul (sansCoutAchat).
+  const SELECT_DEVIS = "*, client:clients(*), lignes:devis_lignes(*, prestation:prestation_id(prix_achat))";
+
   useEffect(() => {
-    supabase.from("devis").select("*, client:clients(*), lignes:devis_lignes(*)")
+    supabase.from("devis").select(SELECT_DEVIS)
       .eq("id", id).single().then(({ data }) => {
         if (!data) return;
         const d = data as any;
@@ -504,7 +517,6 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       statut: sigData ? "signe" : devis.statut,
     }).eq("id", id);
     if (lignes.length > 0) {
-  console.log("LIGNES A SAUVEGARDER:", JSON.stringify(lignes.map(l => ({ nom: l.nom, kit_description: (l as any).kit_description, description: (l as any).description }))));
       await supabase.from("devis_lignes").insert(lignes.map((l, i) => ({
         devis_id: id,
         ordre: i,
@@ -519,7 +531,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         kit_ratio_service: (l as any).kit_ratio_service ?? null,
       })));
     }
-    const { data } = await supabase.from("devis").select("*, client:clients(*), lignes:devis_lignes(*)").eq("id", id).single();
+    const { data } = await supabase.from("devis").select(SELECT_DEVIS).eq("id", id).single();
     setDevis(data as any);
     setMode("view");
     setSaving(false);
@@ -613,6 +625,36 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const client = devis.client as any;
   const peutModifier = devis.statut !== "signe";
   const apporteurActuel = apporteurs.find(a => a.id === (devis as any).apporteur_id);
+
+  // ── Rentabilité du devis ──
+  // Cotisations URSSAF par branche issues du profil (mêmes taux et mêmes clés que dans le CRM).
+  // Coût d'achat calculé ligne par ligne à partir du prix_achat catalogue actuel de chaque
+  // prestation liée (récupéré via l'embed prestation:prestation_id). Les lignes libres ou
+  // dont la prestation n'a pas de prix d'achat renseigné ne contribuent pas au coût d'achat
+  // et sont signalées individuellement.
+  const tauxCotisService = (profil as any)?.taux_cotisations_service ?? 21.2;
+  const tauxCotisMateriau = (profil as any)?.taux_cotisations_materiau ?? 12.3;
+  const tauxIrService = (profil as any)?.taux_ir_service ?? 0;
+  const tauxIrMateriau = (profil as any)?.taux_ir_materiau ?? 0;
+
+  const lignesRentab = viewLignes.map((l: any) => {
+    const prixAchatUnitaire: number | null = l.prestation?.prix_achat ?? null;
+    const coutAchat = prixAchatUnitaire && prixAchatUnitaire > 0 ? prixAchatUnitaire * l.quantite : 0;
+    const venteLigne = l.prix_unitaire * l.quantite;
+    const margeLigne = l.type_branche === "materiau" ? venteLigne - coutAchat : null;
+    const sansCoutAchat = l.type_branche === "materiau" && (!prixAchatUnitaire || prixAchatUnitaire <= 0);
+    return { ...l, coutAchat, venteLigne, margeLigne, sansCoutAchat };
+  });
+  const coutAchatTotal = lignesRentab.reduce((a: number, l: any) => a + l.coutAchat, 0);
+  const cotisationService = devis.total_service * tauxCotisService / 100;
+  const cotisationMateriau = devis.total_materiau * tauxCotisMateriau / 100;
+  const irService = devis.total_service * tauxIrService / 100;
+  const irMateriau = devis.total_materiau * tauxIrMateriau / 100;
+  const netService = devis.total_service - cotisationService - irService;
+  const netMateriau = devis.total_materiau - cotisationMateriau - irMateriau - coutAchatTotal;
+  const netGlobal = netService + netMateriau;
+  const margeGlobalePct = devis.total_ttc > 0 ? Math.round(netGlobal / devis.total_ttc * 1000) / 10 : 0;
+  const hasLigneSansCoutAchat = lignesRentab.some((l: any) => l.sansCoutAchat);
 
   const TABS: { id: Tab; label: string; icon: any }[] = [
     { id: "edition", label: "Composition", icon: Plus },
@@ -711,6 +753,97 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                   <div className="flex justify-between font-bold text-volt-600 text-base pt-2 border-t border-ink-200"><span>Total</span><span>{fmt(devis.total_ttc)}</span></div>
                 </div>
               </div>
+            </div>
+
+            {/* Rentabilité de ce devis */}
+            <div className="card card-inner mb-4">
+              <button onClick={() => setShowRentabilite(v => !v)} className="w-full flex items-center gap-2">
+                <Euro size={17} className="text-volt-600" />
+                <h2 className="font-semibold text-ink-800 flex-1 text-left">Rentabilité de ce devis</h2>
+                <span className={cn("text-sm font-bold", margeColor(margeGlobalePct))}>{fmt(netGlobal)} ({margeGlobalePct}%)</span>
+                <ChevronDown size={16} className={cn("text-ink-400 transition-transform", showRentabilite && "rotate-180")} />
+              </button>
+
+              {showRentabilite && (
+                <div className="mt-4 pt-4 border-t border-ink-100 space-y-4">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <div className="bg-ink-50 rounded-xl p-3">
+                      <p className="text-xs text-ink-400 mb-0.5">Vente TTC</p>
+                      <p className="text-base font-bold text-ink-900">{fmt(devis.total_ttc)}</p>
+                    </div>
+                    <div className="bg-red-50 border border-red-100 rounded-xl p-3">
+                      <p className="text-xs text-red-400 mb-0.5">Achat matériel</p>
+                      <p className="text-base font-bold text-red-700">− {fmt(coutAchatTotal)}</p>
+                    </div>
+                    <div className="bg-red-50 border border-red-100 rounded-xl p-3">
+                      <p className="text-xs text-red-400 mb-0.5">Cotisations{tauxIrService > 0 || tauxIrMateriau > 0 ? " + IR" : ""}</p>
+                      <p className="text-base font-bold text-red-700">− {fmt(cotisationService + cotisationMateriau + irService + irMateriau)}</p>
+                    </div>
+                    <div className={cn("rounded-xl p-3 border", margeGlobalePct < 0 ? "bg-red-50 border-red-100" : "bg-emerald-50 border-emerald-200")}>
+                      <p className="text-xs text-ink-400 mb-0.5">Marge nette</p>
+                      <p className={cn("text-base font-bold", margeColor(margeGlobalePct))}>{fmt(netGlobal)}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="p-3 rounded-xl bg-volt-50 border border-volt-100">
+                      <p className="text-xs font-semibold text-volt-700 mb-1">⚡ Service</p>
+                      <div className="space-y-0.5 text-xs text-ink-600">
+                        <div className="flex justify-between"><span>CA</span><span className="font-semibold">{fmt(devis.total_service)}</span></div>
+                        <div className="flex justify-between text-red-500"><span>Cotisations ({tauxCotisService}%)</span><span>− {fmt(cotisationService)}</span></div>
+                        {irService > 0 && <div className="flex justify-between text-red-500"><span>IR ({tauxIrService}%)</span><span>− {fmt(irService)}</span></div>}
+                        <div className="flex justify-between font-semibold pt-1 border-t border-volt-200"><span>Net</span><span className={margeColor(devis.total_service > 0 ? Math.round(netService / devis.total_service * 100) : 0)}>{fmt(netService)}</span></div>
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-100">
+                      <p className="text-xs font-semibold text-emerald-700 mb-1">📦 Matériaux</p>
+                      <div className="space-y-0.5 text-xs text-ink-600">
+                        <div className="flex justify-between"><span>CA</span><span className="font-semibold">{fmt(devis.total_materiau)}</span></div>
+                        <div className="flex justify-between text-red-500"><span>Achat</span><span>− {fmt(coutAchatTotal)}</span></div>
+                        <div className="flex justify-between text-red-500"><span>Cotisations ({tauxCotisMateriau}%)</span><span>− {fmt(cotisationMateriau)}</span></div>
+                        {irMateriau > 0 && <div className="flex justify-between text-red-500"><span>IR ({tauxIrMateriau}%)</span><span>− {fmt(irMateriau)}</span></div>}
+                        <div className="flex justify-between font-semibold pt-1 border-t border-emerald-200"><span>Net</span><span className={margeColor(devis.total_materiau > 0 ? Math.round(netMateriau / devis.total_materiau * 100) : 0)}>{fmt(netMateriau)}</span></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold text-ink-400 uppercase tracking-wide mb-2">Détail par ligne</p>
+                    <div className="space-y-1">
+                      {lignesRentab.map((l: any, i: number) => (
+                        <div key={i} className="flex items-center gap-2 p-2 rounded-lg bg-ink-50 text-xs">
+                          <span className={cn("badge shrink-0", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
+                            {l.type_branche === "service" ? "S" : "M"}
+                          </span>
+                          <span className="flex-1 min-w-0 truncate text-ink-800">{l.nom}</span>
+                          {l.type_branche === "materiau" ? (
+                            l.sansCoutAchat ? (
+                              <span className="text-amber-600 flex items-center gap-1 shrink-0"><AlertTriangle size={11} /> Coût d'achat inconnu</span>
+                            ) : (
+                              <>
+                                <span className="text-ink-400 shrink-0">Vente {fmt(l.venteLigne)}</span>
+                                <span className="text-red-500 shrink-0">Achat {fmt(l.coutAchat)}</span>
+                                <span className={cn("font-semibold shrink-0", margeColor(l.venteLigne > 0 ? (l.margeLigne / l.venteLigne * 100) : 0))}>{fmt(l.margeLigne)}</span>
+                              </>
+                            )
+                          ) : (
+                            <span className="text-ink-400 shrink-0">{fmt(l.venteLigne)}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {hasLigneSansCoutAchat && (
+                    <p className="text-xs text-amber-600 flex items-center gap-1.5">
+                      <AlertTriangle size={12} className="shrink-0" /> Certaines lignes matériau n'ont pas de prix d'achat renseigné dans le catalogue (ligne libre, kit, ou fiche non complétée) — la marge de ce devis est donc probablement surestimée.
+                    </p>
+                  )}
+                  <p className="text-xs text-ink-400">
+                    Cotisations et coût d'achat calculés sur les totaux du devis, cotisations URSSAF par branche du profil, prix d'achat catalogue actuel.
+                  </p>
+                </div>
+              )}
             </div>
 
             {devis.signature_data && (
