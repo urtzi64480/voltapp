@@ -283,13 +283,43 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   // exactement comme le fait le CRM.
   const SELECT_DEVIS = "*, client:clients(*), lignes:devis_lignes(*)";
 
+  // Coût d'achat par prestation vendue dans le devis (clé = prestation_id de la ligne).
+  // Cas simple : prestation "matériau" classique → son prix_achat directement.
+  // Cas kit : la prestation "kit" elle-même n'a PAS de prix_achat en base (seuls ses
+  // kit_composants en ont un) — il faut donc déplier kit_composants et sommer
+  // quantite_composant × prix_achat_composant pour obtenir le coût d'achat d'1 kit.
   async function loadPrixAchatMap(lignesArr: any[]) {
     const prestationIds = Array.from(new Set((lignesArr ?? []).map((l: any) => l.prestation_id).filter(Boolean)));
     if (prestationIds.length === 0) { setPrixAchatMap({}); return; }
-    const { data, error } = await supabase.from("prestations").select("id,prix_achat").in("id", prestationIds);
-    if (error) { console.error("Erreur récupération prix_achat prestations :", error); setPrixAchatMap({}); return; }
+
+    const { data: prestInfo, error: errPrest } = await supabase
+      .from("prestations").select("id,prix_achat,est_kit").in("id", prestationIds);
+    if (errPrest) { console.error("Erreur récupération prestations (prix_achat) :", errPrest); setPrixAchatMap({}); return; }
+
     const map: Record<string, number> = {};
-    (data ?? []).forEach((p: any) => { map[p.id] = p.prix_achat ?? 0; });
+    (prestInfo ?? []).forEach((p: any) => { if (!p.est_kit) map[p.id] = p.prix_achat ?? 0; });
+
+    const kitIds = (prestInfo ?? []).filter((p: any) => p.est_kit).map((p: any) => p.id);
+    if (kitIds.length > 0) {
+      const { data: composants, error: errComp } = await supabase
+        .from("kit_composants").select("kit_id,composant_id,quantite").in("kit_id", kitIds);
+      if (errComp) console.error("Erreur récupération kit_composants (rentabilité) :", errComp);
+
+      const composantIds = Array.from(new Set((composants ?? []).map((c: any) => c.composant_id).filter(Boolean)));
+      const prixComposantMap: Record<string, number> = {};
+      if (composantIds.length > 0) {
+        const { data: composantPrest, error: errCompPrest } = await supabase
+          .from("prestations").select("id,prix_achat").in("id", composantIds);
+        if (errCompPrest) console.error("Erreur récupération prix_achat composants de kit :", errCompPrest);
+        (composantPrest ?? []).forEach((c: any) => { prixComposantMap[c.id] = c.prix_achat ?? 0; });
+      }
+
+      (composants ?? []).forEach((c: any) => {
+        const prixAchatComposant = prixComposantMap[c.composant_id] ?? 0;
+        map[c.kit_id] = (map[c.kit_id] ?? 0) + (c.quantite ?? 0) * prixAchatComposant;
+      });
+    }
+
     setPrixAchatMap(map);
   }
 
@@ -658,8 +688,8 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     const prixAchatUnitaire: number | null = l.prestation_id ? (prixAchatMap[l.prestation_id] ?? null) : null;
     const coutAchat = prixAchatUnitaire && prixAchatUnitaire > 0 ? prixAchatUnitaire * l.quantite : 0;
     const venteLigne = l.prix_unitaire * l.quantite;
-    const margeLigne = l.type_branche === "materiau" ? venteLigne - coutAchat : null;
-    const sansCoutAchat = l.type_branche === "materiau" && (!prixAchatUnitaire || prixAchatUnitaire <= 0);
+    const margeLigne = coutAchat > 0 ? venteLigne - coutAchat : null;
+    const sansCoutAchat = l.type_branche === "materiau" && coutAchat === 0;
     return { ...l, coutAchat, venteLigne, margeLigne, sansCoutAchat };
   });
   const coutAchatTotal = lignesRentab.reduce((a: number, l: any) => a + l.coutAchat, 0);
@@ -833,16 +863,14 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                             {l.type_branche === "service" ? "S" : "M"}
                           </span>
                           <span className="flex-1 min-w-0 truncate text-ink-800">{l.nom}</span>
-                          {l.type_branche === "materiau" ? (
-                            l.sansCoutAchat ? (
-                              <span className="text-amber-600 flex items-center gap-1 shrink-0"><AlertTriangle size={11} /> Coût d'achat inconnu</span>
-                            ) : (
-                              <>
-                                <span className="text-ink-400 shrink-0">Vente {fmt(l.venteLigne)}</span>
-                                <span className="text-red-500 shrink-0">Achat {fmt(l.coutAchat)}</span>
-                                <span className={cn("font-semibold shrink-0", margeColor(l.venteLigne > 0 ? (l.margeLigne / l.venteLigne * 100) : 0))}>{fmt(l.margeLigne)}</span>
-                              </>
-                            )
+                          {l.coutAchat > 0 ? (
+                            <>
+                              <span className="text-ink-400 shrink-0">Vente {fmt(l.venteLigne)}</span>
+                              <span className="text-red-500 shrink-0">Achat {fmt(l.coutAchat)}</span>
+                              <span className={cn("font-semibold shrink-0", margeColor(l.venteLigne > 0 ? (l.margeLigne / l.venteLigne * 100) : 0))}>{fmt(l.margeLigne)}</span>
+                            </>
+                          ) : l.sansCoutAchat ? (
+                            <span className="text-amber-600 flex items-center gap-1 shrink-0"><AlertTriangle size={11} /> Coût d'achat inconnu</span>
                           ) : (
                             <span className="text-ink-400 shrink-0">{fmt(l.venteLigne)}</span>
                           )}
