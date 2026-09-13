@@ -151,7 +151,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   }, [path]);
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-dvh overflow-hidden">
       {/* ── Sidebar desktop ── */}
       <aside className="hidden md:flex flex-col w-56 bg-ink-900 shrink-0">
         <div className="flex items-center gap-3 px-4 py-4 border-b border-ink-700">
