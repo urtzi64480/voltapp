@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, Users, FileText, BookOpen,
-  TrendingUp, Settings, Zap, Menu, X, Receipt, CalendarDays, AlertTriangle, ClipboardList, Inbox, CalendarCheck, PiggyBank,
+  TrendingUp, Settings, Zap, Menu, X, Receipt, CalendarDays, AlertTriangle, ClipboardList, Inbox, CalendarCheck,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
@@ -21,7 +21,6 @@ const NAV = [
   { href: "/catalogue",  label: "Catalogue",   icon: BookOpen },
   { href: "/tableau",    label: "Tableaux",    icon: Zap },
   { href: "/crm",        label: "CRM",         icon: TrendingUp },
-  { href: "/rentabilite-devis", label: "Rentabilité", icon: PiggyBank },
   { href: "/parametres", label: "Paramètres",  icon: Settings },
 ];
 
