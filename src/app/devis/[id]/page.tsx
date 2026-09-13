@@ -263,6 +263,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const [viewSigData, setViewSigData] = useState<string | null>(null);
   const [viewSigDate, setViewSigDate] = useState<string | null>(null);
   const [showRentabilite, setShowRentabilite] = useState(false);
+  const [prixAchatMap, setPrixAchatMap] = useState<Record<string, number>>({});
   const viewCanvasRef = useRef<HTMLCanvasElement>(null);
   const viewFileInputRef = useRef<HTMLInputElement>(null);
   const viewDrawing = useRef(false);
@@ -274,15 +275,28 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const last = useRef({ x: 0, y: 0 });
   const sigCtx = useRef<CanvasRenderingContext2D | null>(null);
 
-  // Requête de chargement du devis : on embarque le prix_achat catalogue actuel de chaque
-  // ligne via sa prestation_id (alias "prestation"), pour pouvoir calculer la rentabilité
-  // sans requête séparée. Les lignes libres ou dont la prestation a été supprimée n'ont
-  // pas de prix_achat exploitable — géré côté calcul (sansCoutAchat).
-  const SELECT_DEVIS = "*, client:clients(*), lignes:devis_lignes(*, prestation:prestation_id(prix_achat))";
+  // Requête de chargement du devis : lignes brutes uniquement, SANS embed imbriqué vers
+  // prestations. Un embed du type prestation:prestation_id(prix_achat) dépend d'une FK
+  // explicitement déclarée en base entre devis_lignes.prestation_id et prestations.id ;
+  // si elle n'existe pas, la requête échoue et la page reste bloquée sur "Chargement…".
+  // On récupère donc le prix d'achat séparément via loadPrixAchatMap() + jointure en JS,
+  // exactement comme le fait le CRM.
+  const SELECT_DEVIS = "*, client:clients(*), lignes:devis_lignes(*)";
+
+  async function loadPrixAchatMap(lignesArr: any[]) {
+    const prestationIds = Array.from(new Set((lignesArr ?? []).map((l: any) => l.prestation_id).filter(Boolean)));
+    if (prestationIds.length === 0) { setPrixAchatMap({}); return; }
+    const { data, error } = await supabase.from("prestations").select("id,prix_achat").in("id", prestationIds);
+    if (error) { console.error("Erreur récupération prix_achat prestations :", error); setPrixAchatMap({}); return; }
+    const map: Record<string, number> = {};
+    (data ?? []).forEach((p: any) => { map[p.id] = p.prix_achat ?? 0; });
+    setPrixAchatMap(map);
+  }
 
   useEffect(() => {
     supabase.from("devis").select(SELECT_DEVIS)
-      .eq("id", id).single().then(({ data }) => {
+      .eq("id", id).single().then(({ data, error }) => {
+        if (error) console.error("Erreur récupération devis :", error);
         if (!data) return;
         const d = data as any;
         setDevis(d);
@@ -290,6 +304,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         setApporteurId(d.apporteur_id ?? "");
         setObjet(d.objet ?? "");
         setLignes(d.lignes ?? []);
+        loadPrixAchatMap(d.lignes ?? []);
         setRemiseFidelitePct(d.remise_fidelite_pct ?? 0);
         if (d.remise_valeur > 0 && d.remise_type) {
           try {
@@ -531,8 +546,10 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         kit_ratio_service: (l as any).kit_ratio_service ?? null,
       })));
     }
-    const { data } = await supabase.from("devis").select(SELECT_DEVIS).eq("id", id).single();
+    const { data, error: errRefetch } = await supabase.from("devis").select(SELECT_DEVIS).eq("id", id).single();
+    if (errRefetch) console.error("Erreur récupération devis après sauvegarde :", errRefetch);
     setDevis(data as any);
+    loadPrixAchatMap((data as any)?.lignes ?? []);
     setMode("view");
     setSaving(false);
   }
@@ -629,16 +646,16 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   // ── Rentabilité du devis ──
   // Cotisations URSSAF par branche issues du profil (mêmes taux et mêmes clés que dans le CRM).
   // Coût d'achat calculé ligne par ligne à partir du prix_achat catalogue actuel de chaque
-  // prestation liée (récupéré via l'embed prestation:prestation_id). Les lignes libres ou
-  // dont la prestation n'a pas de prix d'achat renseigné ne contribuent pas au coût d'achat
-  // et sont signalées individuellement.
+  // prestation liée (récupéré séparément via prixAchatMap, cf. loadPrixAchatMap). Les lignes
+  // libres ou dont la prestation n'a pas de prix d'achat renseigné ne contribuent pas au
+  // coût d'achat et sont signalées individuellement.
   const tauxCotisService = (profil as any)?.taux_cotisations_service ?? 21.2;
   const tauxCotisMateriau = (profil as any)?.taux_cotisations_materiau ?? 12.3;
   const tauxIrService = (profil as any)?.taux_ir_service ?? 0;
   const tauxIrMateriau = (profil as any)?.taux_ir_materiau ?? 0;
 
   const lignesRentab = viewLignes.map((l: any) => {
-    const prixAchatUnitaire: number | null = l.prestation?.prix_achat ?? null;
+    const prixAchatUnitaire: number | null = l.prestation_id ? (prixAchatMap[l.prestation_id] ?? null) : null;
     const coutAchat = prixAchatUnitaire && prixAchatUnitaire > 0 ? prixAchatUnitaire * l.quantite : 0;
     const venteLigne = l.prix_unitaire * l.quantite;
     const margeLigne = l.type_branche === "materiau" ? venteLigne - coutAchat : null;
