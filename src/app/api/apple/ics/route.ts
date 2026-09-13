@@ -3,6 +3,21 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { parseICS } from "@/lib/ics";
 
+// Les événements créés par VoltApp dans iCloud (interventions ET demandes de
+// rendez-vous) portent un UID au format "voltapp-{timestamp}-{random}@voltapp"
+// (voir src/lib/caldav.ts, fonction createCalDAVEvent). On les exclut de la
+// relecture du calendrier Apple pour éviter qu'ils apparaissent en double :
+// une fois via la DB VoltApp (badge "V"), une fois via ce fetch ICS (badge 🍎).
+const VOLTAPP_UID_PATTERN = /(^voltapp-|@voltapp$)/i;
+
+function isVoltAppEvent(ev: unknown): boolean {
+  const record = ev as Record<string, unknown>;
+  const candidates = [record?.id, record?.uid, (record as any)?.raw?.uid];
+  return candidates.some(
+    (val) => typeof val === "string" && VOLTAPP_UID_PATTERN.test(val)
+  );
+}
+
 export async function GET(req: NextRequest) {
   const cookieStore = cookies();
   const supabase = createServerClient(
@@ -47,7 +62,8 @@ export async function GET(req: NextRequest) {
       if (!res.ok) continue;
       const text = await res.text();
       const parsed = parseICS(text, timeMin, timeMax, cal.url);
-      allEvents.push(...parsed);
+      const parsedSansDoublonsVoltApp = parsed.filter(ev => !isVoltAppEvent(ev));
+      allEvents.push(...parsedSansDoublonsVoltApp);
     } catch { continue; }
   }
 
