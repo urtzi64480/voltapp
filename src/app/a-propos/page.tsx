@@ -1,8 +1,8 @@
 // src/app/a-propos/page.tsx
 import type { Metadata } from "next";
 import { supabase } from "@/lib/supabase";
-import GalleryLightbox from "@/components/GalleryLightbox";
-import { ChevronLeft, FileText, CalendarDays, Zap } from "lucide-react";
+import ActionsAndGallery from "@/components/ActionsAndGallery";
+import { ChevronLeft } from "lucide-react";
 
 // Empêche Next.js de figer cette page au build : sans ça, les photos
 // ajoutées/supprimées côté CRM après le déploiement ne remontent jamais
@@ -47,14 +47,14 @@ export default async function AProposPage() {
 
   return (
     <div className="min-h-screen bg-ink-50">
-      {/* Header sombre, cohérent avec /demande */}
+      {/* Header sombre — /a-propos est le point d'entrée, donc lien "en avant" vers la demande */}
       <div className="bg-ink-900 px-4 py-4">
         <div className="max-w-4xl mx-auto">
           <a
             href={`/demande/${USER_ID}`}
             className="inline-flex items-center gap-1.5 text-ink-300 text-sm font-medium hover:text-white transition-colors"
           >
-            <ChevronLeft size={16} /> Retour à la demande de devis / RDV / urgence
+            Faire une demande de devis / RDV / urgence <ChevronLeft size={16} className="rotate-180" />
           </a>
         </div>
       </div>
@@ -97,42 +97,10 @@ export default async function AProposPage() {
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-3 mt-6">
-              <a
-                href={`/demande/${USER_ID}`}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-volt-500 text-ink-900 font-semibold text-sm hover:bg-volt-400 transition-colors"
-              >
-                <FileText size={16} /> Devis gratuit
-              </a>
-              <a
-                href={`/demande/${USER_ID}`}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-ink-200 text-ink-700 font-semibold text-sm hover:border-volt-500 transition-colors"
-              >
-                <CalendarDays size={16} /> Prendre RDV
-              </a>
-              <a
-                href="tel:+33769995222"
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-red-200 text-red-600 font-semibold text-sm hover:border-red-400 transition-colors"
-              >
-                <Zap size={16} /> Urgence
-              </a>
-            </div>
+            <ActionsAndGallery userId={USER_ID} photos={photos} />
           </div>
         </div>
       </div>
-
-      {/* Réalisations */}
-      {photos.length > 0 && (
-        <div className="max-w-4xl mx-auto px-4 pb-16">
-          <h2 className="font-display text-2xl text-ink-900 mb-1">
-            Mes réalisations
-          </h2>
-          <p className="text-ink-500 text-sm mb-6">
-            Un aperçu de chantiers récents.
-          </p>
-          <GalleryLightbox photos={photos} />
-        </div>
-      )}
     </div>
   );
 }
