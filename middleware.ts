@@ -2,18 +2,24 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+// UUID Elektron — même exception que demande/page.tsx (hardcodé volontairement).
+const USER_ID = "d506c94e-40c7-4bcd-a48c-97e86f4ea7c0";
+
 // Ancienne URL Vercel affichée sur les cartes de visite imprimées — à rediriger en permanence.
 const OLD_VERCEL_HOST = "voltapp-ten.vercel.app";
 const NEW_DOMAIN = "elektron-electricite.fr";
 
-// UUID Elektron — même exception que demande/page.tsx (hardcodé volontairement).
-const USER_ID = "d506c94e-40c7-4bcd-a48c-97e86f4ea7c0";
-
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const hostname = request.headers.get("host") || "";
 
-  // 1. Ancienne URL Vercel → nouveau domaine, chemin et paramètres conservés (301)
+  // ── 1. Racine du site = page publique de demande client. Priorité absolue, ──
+  //    avant tout autre check (auth, ancien domaine, etc.)
+  if (pathname === "/") {
+    return NextResponse.redirect(new URL(`/demande/${USER_ID}`, request.url));
+  }
+
+  // ── 2. Ancienne URL Vercel → nouveau domaine, chemin et paramètres conservés (301) ──
+  const hostname = request.headers.get("host") || "";
   if (hostname === OLD_VERCEL_HOST) {
     const url = new URL(request.url);
     url.protocol = "https:";
@@ -22,17 +28,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url, 301);
   }
 
-  // 2. Racine du site = page publique de demande client (urgence / devis / RDV), pas le login
-  if (pathname === "/") {
-    return NextResponse.redirect(new URL(`/demande/${USER_ID}`, request.url));
-  }
-
-  // Routes publiques — pas d'auth requise
-  // Correction : startsWith au lieu de === pour matcher /demande/[userId], pas seulement /demande exact
+  // ── 3. Routes publiques — pas d'auth requise ──
   if (pathname.startsWith("/login") || pathname.startsWith("/demande")) {
     return NextResponse.next();
   }
 
+  // ── 4. Tout le reste nécessite une session ──
   const response = NextResponse.next();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
