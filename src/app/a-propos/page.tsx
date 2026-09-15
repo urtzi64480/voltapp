@@ -18,6 +18,7 @@ const USER_ID = "d506c94e-40c7-4bcd-a48c-97e86f4ea7c0";
 interface Realisation {
   id: string;
   photo_url: string;
+  chantier: string | null;
 }
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -38,7 +39,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function AProposPage() {
   const { data: realisations } = await supabase
     .from("realisations")
-    .select("id, photo_url")
+    .select("id, photo_url, chantier")
     .eq("user_id", USER_ID)
     .order("position", { ascending: true })
     .order("created_at", { ascending: false });
