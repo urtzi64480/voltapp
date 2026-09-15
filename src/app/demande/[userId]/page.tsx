@@ -2,7 +2,7 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { ChevronRight, ChevronLeft, CheckCircle, Upload, X, Loader2, FileText, CalendarDays, Phone, UserPlus, Zap } from "lucide-react";
+import { ChevronRight, ChevronLeft, CheckCircle, Upload, X, Loader2, FileText, CalendarDays, Phone, UserPlus, Zap, Info } from "lucide-react";
 
 const TYPES_TRAVAUX = [
   "Dépannage électrique",
@@ -11,7 +11,6 @@ const TYPES_TRAVAUX = [
   "Prises / Interrupteurs",
   "Éclairage",
   "IRVE (borne de recharge)",
-  "Climatisation / Chauffage",
   "Autre",
 ];
 
@@ -56,6 +55,9 @@ const EMPTY_RDV_FORM: RdvFormData = { nom: "", telephone: "", email: "", adresse
 
 // URL de la carte de contact (vCard) — fichier statique servi depuis public/carte-nfc/
 const VCARD_URL = "/carte-nfc/index.html";
+
+// Page de présentation de l'entreprise (photo + description) — à créer ultérieurement
+const PRESENTATION_URL = "/a-propos";
 
 // Numéro d'urgence — affiché en clair et cliquable (tel:)
 const URGENCE_TEL_AFFICHE = "07 69 99 52 22";
@@ -424,6 +426,13 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
             </div>
             <ChevronRight size={20} className="text-ink-300 shrink-0" />
           </button>
+
+          <a
+            href={PRESENTATION_URL}
+            className="flex items-center justify-center gap-1.5 pt-2 text-ink-500 text-sm font-medium hover:text-ink-900 transition-colors">
+            <Info size={15} />
+            En savoir plus sur {nomEntreprise}
+          </a>
         </div>
       )}
 
