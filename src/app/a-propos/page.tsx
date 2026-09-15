@@ -4,6 +4,11 @@ import { supabase } from "@/lib/supabase";
 import GalleryLightbox from "@/components/GalleryLightbox";
 import { ChevronLeft, FileText, CalendarDays, Zap } from "lucide-react";
 
+// Empêche Next.js de figer cette page au build : sans ça, les photos
+// ajoutées/supprimées côté CRM après le déploiement ne remontent jamais
+// (page statique servie depuis le cache généré au build).
+export const dynamic = "force-dynamic";
+
 // Page statique dédiée à Elektron — plus de partage multi-tenant sur cette route,
 // UUID hardcodé volontairement (même exception que demande/page.tsx LeadsPage).
 const USER_ID = "d506c94e-40c7-4bcd-a48c-97e86f4ea7c0";
