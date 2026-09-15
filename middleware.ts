@@ -2,12 +2,34 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+// Ancienne URL Vercel affichée sur les cartes de visite imprimées — à rediriger en permanence.
+const OLD_VERCEL_HOST = "voltapp-ten.vercel.app";
+const NEW_DOMAIN = "elektron-electricite.fr";
+
+// UUID Elektron — même exception que demande/page.tsx (hardcodé volontairement).
+const USER_ID = "d506c94e-40c7-4bcd-a48c-97e86f4ea7c0";
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const hostname = request.headers.get("host") || "";
 
-  // Routes publiques — pas d'auth
-  // /demande (exact) = formulaire public client
-  if (pathname.startsWith("/login") || pathname === "/demande") {
+  // 1. Ancienne URL Vercel → nouveau domaine, chemin et paramètres conservés (301)
+  if (hostname === OLD_VERCEL_HOST) {
+    const url = new URL(request.url);
+    url.protocol = "https:";
+    url.hostname = NEW_DOMAIN;
+    url.port = "";
+    return NextResponse.redirect(url, 301);
+  }
+
+  // 2. Racine du site = page publique de demande client (urgence / devis / RDV), pas le login
+  if (pathname === "/") {
+    return NextResponse.redirect(new URL(`/demande/${USER_ID}`, request.url));
+  }
+
+  // Routes publiques — pas d'auth requise
+  // Correction : startsWith au lieu de === pour matcher /demande/[userId], pas seulement /demande exact
+  if (pathname.startsWith("/login") || pathname.startsWith("/demande")) {
     return NextResponse.next();
   }
 
@@ -33,10 +55,6 @@ export async function middleware(request: NextRequest) {
 
   if (!user) {
     return NextResponse.redirect(new URL("/login", request.url));
-  }
-
-  if (pathname === "/") {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
   return response;
