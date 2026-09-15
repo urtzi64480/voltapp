@@ -20,6 +20,12 @@ const nextConfig = {
           },
         ],
       },
+      {
+        source: "/manifest.json",
+        headers: [
+          { key: "Cache-Control", value: "no-store, must-revalidate" },
+        ],
+      },
     ];
   },
 };
