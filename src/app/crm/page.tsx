@@ -20,7 +20,7 @@ interface DevisRentabilite {
   id: string; numero: string; date_emission: string; client_nom: string;
   total_materiau: number; cout_achat: number; sans_devis?: boolean;
 }
-interface RealisationPhoto { id: string; photo_url: string; }
+interface RealisationPhoto { id: string; photo_url: string; chantier: string | null; }
 
 function BarMois({ mois, service, materiau, serviceN1, materiauN1, maxMois, label }: {
   mois: number; service: number; materiau: number;
@@ -86,6 +86,7 @@ export default function CRMPage() {
   // ── Réalisations (galerie /a-propos) ──
   const [realisationsPhotos, setRealisationsPhotos] = useState<RealisationPhoto[]>([]);
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  const [chantierInput, setChantierInput] = useState("");
   const fileRealisationRef = useRef<HTMLInputElement>(null);
 
   const MOIS_LONG = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
@@ -293,7 +294,7 @@ export default function CRMPage() {
     if (!userId) return;
     const { data, error } = await supabase
       .from("realisations")
-      .select("id, photo_url")
+      .select("id, photo_url, chantier")
       .eq("user_id", userId)
       .order("position", { ascending: true })
       .order("created_at", { ascending: false });
@@ -303,6 +304,11 @@ export default function CRMPage() {
 
   async function handleUploadRealisations(files: FileList | null) {
     if (!files || files.length === 0 || !userId) return;
+    if (!chantierInput.trim()) {
+      alert("Indique d'abord le nom du chantier avant d'ajouter des photos.");
+      if (fileRealisationRef.current) fileRealisationRef.current.value = "";
+      return;
+    }
     setUploadingPhotos(true);
     try {
       for (const file of Array.from(files)) {
@@ -316,6 +322,7 @@ export default function CRMPage() {
         const { error: insErr } = await supabase.from("realisations").insert({
           user_id: userId,
           photo_url: pub.publicUrl,
+          chantier: chantierInput.trim(),
           position: realisationsPhotos.length,
         });
         if (insErr) throw insErr;
@@ -488,6 +495,19 @@ export default function CRMPage() {
                   <ImagePlus size={18} className="text-volt-600" />
                   <h2 className="font-semibold text-ink-800">Réalisations</h2>
                 </div>
+              </div>
+
+              <div className="flex items-end gap-3 flex-wrap mb-5">
+                <div className="flex-1 min-w-[200px]">
+                  <label className="label">Nom du chantier</label>
+                  <input
+                    type="text"
+                    value={chantierInput}
+                    onChange={(e) => setChantierInput(e.target.value)}
+                    placeholder="Ex : Rénovation tableau — Bayonne"
+                    className="input w-full"
+                  />
+                </div>
                 <input
                   ref={fileRealisationRef}
                   type="file"
@@ -498,37 +518,53 @@ export default function CRMPage() {
                 />
                 <button
                   onClick={() => fileRealisationRef.current?.click()}
-                  disabled={uploadingPhotos || !userId}
+                  disabled={uploadingPhotos || !userId || !chantierInput.trim()}
                   className="btn-volt flex items-center gap-2 disabled:opacity-50">
                   {uploadingPhotos ? <Loader2 size={15} className="animate-spin" /> : <ImagePlus size={15} />}
                   {uploadingPhotos ? "Envoi…" : "Ajouter des photos"}
                 </button>
               </div>
+              {!chantierInput.trim() && (
+                <p className="text-xs text-amber-600 -mt-3 mb-4">Renseigne le nom du chantier avant d'ajouter des photos.</p>
+              )}
 
               {realisationsPhotos.length === 0 ? (
                 <p className="text-ink-400 text-sm text-center py-6">
-                  Aucune photo pour l'instant. Les photos ajoutées ici apparaissent automatiquement sur la page « À propos ».
+                  Aucune photo pour l'instant. Les photos ajoutées ici apparaissent automatiquement, groupées par chantier, sur la page « À propos ».
                 </p>
               ) : (
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                  {realisationsPhotos.map((p) => (
-                    <div key={p.id} className="relative group aspect-square">
-                      <img
-                        src={p.photo_url}
-                        alt="Réalisation"
-                        className="w-full h-full object-cover rounded-xl border border-ink-200"
-                      />
-                      <button
-                        onClick={() => handleDeleteRealisation(p.id, p.photo_url)}
-                        className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-red-600 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                        aria-label="Supprimer">
-                        <Trash2 size={13} />
-                      </button>
+                <div className="space-y-5">
+                  {Object.entries(
+                    realisationsPhotos.reduce((acc: Record<string, RealisationPhoto[]>, p) => {
+                      const key = (p.chantier ?? "").trim() || "Sans chantier";
+                      (acc[key] ??= []).push(p);
+                      return acc;
+                    }, {})
+                  ).map(([nom, photosChantier]) => (
+                    <div key={nom}>
+                      <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">{nom}</p>
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                        {photosChantier.map((p) => (
+                          <div key={p.id} className="relative group aspect-square">
+                            <img
+                              src={p.photo_url}
+                              alt="Réalisation"
+                              className="w-full h-full object-cover rounded-xl border border-ink-200"
+                            />
+                            <button
+                              onClick={() => handleDeleteRealisation(p.id, p.photo_url)}
+                              className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-red-600 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                              aria-label="Supprimer">
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>
               )}
-              <p className="text-xs text-ink-400 mt-3">Visibles publiquement sur la page « À propos » — n'ajoutez que des photos que vous êtes à l'aise de partager avec vos clients.</p>
+              <p className="text-xs text-ink-400 mt-4">Visibles publiquement sur la page « À propos », groupées par chantier — n'ajoutez que des photos que vous êtes à l'aise de partager avec vos clients.</p>
             </div>
 
             {/* Export comptable */}
