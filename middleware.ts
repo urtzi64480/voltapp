@@ -7,7 +7,7 @@ const USER_ID = "d506c94e-40c7-4bcd-a48c-97e86f4ea7c0";
 
 // Ancienne URL Vercel affichée sur les cartes de visite imprimées — à rediriger en permanence.
 const OLD_VERCEL_HOST = "voltapp-ten.vercel.app";
-const NEW_DOMAIN = "www.elektron-electricite.fr";
+const NEW_DOMAIN = "elektron-electricite.fr";
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
