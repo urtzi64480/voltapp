@@ -2,7 +2,7 @@
   "name": "VoltApp",
   "short_name": "VoltApp",
   "description": "Gestion devis et factures pour électriciens",
-  "start_url": "/login",
+  "start_url": "www.voltapp-ten.vercel.app/login",
   "display": "standalone",
   "background_color": "#1a1a2e",
   "theme_color": "#1a1a2e",
