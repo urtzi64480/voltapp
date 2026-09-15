@@ -9,6 +9,9 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
     title: "VoltApp",
   },
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export const viewport: Viewport = {
@@ -24,7 +27,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
         <link rel="manifest" href="/manifest.json" />
-        <link rel="icon" href="/favicon.ico" />
       </head>
       <body className="bg-ink-50 text-ink-900 antialiased">
         {children}
