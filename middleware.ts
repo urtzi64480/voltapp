@@ -11,21 +11,23 @@ const NEW_DOMAIN = "elektron-electricite.fr";
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-
-  // ── 1. Racine du site = page publique de demande client. Priorité absolue, ──
-  //    avant tout autre check (auth, ancien domaine, etc.)
-  if (pathname === "/") {
-    return NextResponse.redirect(new URL(`/demande/${USER_ID}`, request.url));
-  }
-
-  // ── 2. Ancienne URL Vercel → nouveau domaine, chemin et paramètres conservés (301) ──
   const hostname = request.headers.get("host") || "";
+
+  // ── 1. Ancien host Vercel → nouveau domaine, chemin et paramètres conservés (301). ──
+  //    DOIT être vérifié avant le routage de la racine "/", sinon une visite sur
+  //    l'ancien host atterrit sur /demande en gardant l'ancien hostname, sans jamais
+  //    être redirigée vers le nouveau domaine.
   if (hostname === OLD_VERCEL_HOST) {
     const url = new URL(request.url);
     url.protocol = "https:";
     url.hostname = NEW_DOMAIN;
     url.port = "";
     return NextResponse.redirect(url, 301);
+  }
+
+  // ── 2. Racine du site (sur le nouveau domaine) = page publique de demande client. ──
+  if (pathname === "/") {
+    return NextResponse.redirect(new URL(`/demande/${USER_ID}`, request.url));
   }
 
   // ── 3. Routes publiques — pas d'auth requise ──
