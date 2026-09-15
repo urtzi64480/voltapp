@@ -29,17 +29,17 @@ export async function middleware(request: NextRequest) {
   }
 
   // ── 3. Routes publiques — pas d'auth requise ──
-  //    /a-propos et /api/public/* doivent être ici : ce sont des visiteurs anonymes
-  //    (clients qui scannent le QR code, remplissent le formulaire de RDV) qui y
-  //    accèdent. Sans cette liste, le middleware les redirige vers /login — la page
-  //    à propos semble "ne pas marcher" et l'API de disponibilités renvoie du HTML
-  //    de connexion au lieu du JSON attendu, ce que le front interprète comme
-  //    "réservation en ligne indisponible".
+  //    /a-propos et /api/public/* : visiteurs anonymes (clients qui scannent le
+  //    QR code, formulaire de RDV). /images : assets statiques référencés par ces
+  //    mêmes pages publiques (photo de présentation, vignette). Sans ça, un visiteur
+  //    non connecté est redirigé vers /login — ce qui passait inaperçu depuis un
+  //    navigateur où une session admin était déjà active.
   if (
     pathname.startsWith("/login") ||
     pathname.startsWith("/demande") ||
     pathname.startsWith("/a-propos") ||
-    pathname.startsWith("/api/public")
+    pathname.startsWith("/api/public") ||
+    pathname.startsWith("/images")
   ) {
     return NextResponse.next();
   }
