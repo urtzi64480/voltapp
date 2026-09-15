@@ -3,25 +3,26 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, Users, FileText, BookOpen,
-  TrendingUp, Settings, Zap, Menu, X, Receipt, CalendarDays, AlertTriangle, ClipboardList, Inbox, CalendarCheck,
+  TrendingUp, Settings, Zap, Menu, X, Receipt, CalendarDays, AlertTriangle, ClipboardList, Inbox, CalendarCheck, Camera,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
 
 const NAV = [
-  { href: "/dashboard",  label: "Dashboard",  icon: LayoutDashboard },
-  { href: "/clients",    label: "Clients",     icon: Users },
-  { href: "/leads",      label: "Leads web",   icon: Inbox },
-  { href: "/rdv",        label: "RDV",         icon: CalendarCheck },
-  { href: "/demandes",   label: "Demandes",    icon: ClipboardList },
-  { href: "/devis",      label: "Devis",       icon: FileText },
-  { href: "/planning",   label: "Planning",    icon: CalendarDays },
-  { href: "/factures",   label: "Factures",    icon: Receipt },
-  { href: "/catalogue",  label: "Catalogue",   icon: BookOpen },
-  { href: "/tableau",    label: "Tableaux",    icon: Zap },
-  { href: "/crm",        label: "CRM",         icon: TrendingUp },
-  { href: "/parametres", label: "Paramètres",  icon: Settings },
+  { href: "/dashboard",     label: "Dashboard",     icon: LayoutDashboard },
+  { href: "/clients",       label: "Clients",       icon: Users },
+  { href: "/leads",         label: "Leads web",     icon: Inbox },
+  { href: "/rdv",           label: "RDV",           icon: CalendarCheck },
+  { href: "/demandes",      label: "Demandes",      icon: ClipboardList },
+  { href: "/devis",         label: "Devis",         icon: FileText },
+  { href: "/planning",      label: "Planning",      icon: CalendarDays },
+  { href: "/factures",      label: "Factures",      icon: Receipt },
+  { href: "/catalogue",     label: "Catalogue",     icon: BookOpen },
+  { href: "/tableau",       label: "Tableaux",      icon: Zap },
+  { href: "/realisations",  label: "Réalisations",  icon: Camera },
+  { href: "/crm",           label: "CRM",           icon: TrendingUp },
+  { href: "/parametres",    label: "Paramètres",    icon: Settings },
 ];
 
 const BOTTOM_NAV = [
