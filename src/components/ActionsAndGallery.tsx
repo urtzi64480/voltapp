@@ -2,11 +2,12 @@
 "use client";
 import { useState } from "react";
 import { FileText, CalendarDays, Zap, Images, ChevronDown, ChevronUp } from "lucide-react";
-import GalleryLightbox from "@/components/GalleryLightbox";
+import ChantierGallery from "@/components/ChantierGallery";
 
 interface Photo {
   id: string;
   photo_url: string;
+  chantier: string | null;
 }
 
 export default function ActionsAndGallery({
@@ -54,8 +55,8 @@ export default function ActionsAndGallery({
       {showGallery && photos.length > 0 && (
         <div className="mt-8 pt-8 border-t border-ink-100">
           <h2 className="font-display text-2xl text-ink-900 mb-1">Mes réalisations</h2>
-          <p className="text-ink-500 text-sm mb-6">Un aperçu de chantiers récents.</p>
-          <GalleryLightbox photos={photos} />
+          <p className="text-ink-500 text-sm mb-6">Par chantier — cliquez pour voir les photos.</p>
+          <ChantierGallery photos={photos} />
         </div>
       )}
     </>
