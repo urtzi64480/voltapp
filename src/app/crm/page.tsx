@@ -1,10 +1,10 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, PLAFOND_SERVICE, PLAFOND_MATERIAU, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { TrendingUp, FileText, Receipt, CheckCircle, Clock, AlertTriangle, BarChart3, PieChart, Euro, Users, Download, Landmark, ShoppingBag, ImagePlus, Trash2, Loader2 } from "lucide-react";
+import { TrendingUp, FileText, Receipt, CheckCircle, Clock, AlertTriangle, BarChart3, PieChart, Euro, Users, Download, Landmark, ShoppingBag } from "lucide-react";
 import VisitesStats from "@/components/VisitesStats";
 
 // Seuils de franchise en base de TVA 2026 (distincts des plafonds de CA du régime micro)
@@ -20,7 +20,6 @@ interface DevisRentabilite {
   id: string; numero: string; date_emission: string; client_nom: string;
   total_materiau: number; cout_achat: number; sans_devis?: boolean;
 }
-interface RealisationPhoto { id: string; photo_url: string; chantier: string | null; }
 
 function BarMois({ mois, service, materiau, serviceN1, materiauN1, maxMois, label }: {
   mois: number; service: number; materiau: number;
@@ -82,12 +81,6 @@ export default function CRMPage() {
   const [commissionsApporteurs, setCommissionsApporteurs] = useState<CommissionApporteur[]>([]);
   const [totalCommissions, setTotalCommissions] = useState(0);
   const [devisRentabilite, setDevisRentabilite] = useState<DevisRentabilite[]>([]);
-
-  // ── Réalisations (galerie /a-propos) ──
-  const [realisationsPhotos, setRealisationsPhotos] = useState<RealisationPhoto[]>([]);
-  const [uploadingPhotos, setUploadingPhotos] = useState(false);
-  const [chantierInput, setChantierInput] = useState("");
-  const fileRealisationRef = useRef<HTMLInputElement>(null);
 
   const MOIS_LONG = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
   const MOIS = ["J","F","M","A","M","J","J","A","S","O","N","D"];
@@ -284,87 +277,6 @@ export default function CRMPage() {
     load();
   }, [annee, moisCommission]);
 
-  // ── Charge la galerie de réalisations dès que l'utilisateur est connu ──
-  useEffect(() => {
-    if (!userId) return;
-    loadRealisations();
-  }, [userId]);
-
-  async function loadRealisations() {
-    if (!userId) return;
-    const { data, error } = await supabase
-      .from("realisations")
-      .select("id, photo_url, chantier")
-      .eq("user_id", userId)
-      .order("position", { ascending: true })
-      .order("created_at", { ascending: false });
-    if (error) { console.error("Erreur chargement réalisations :", error); return; }
-    setRealisationsPhotos(data ?? []);
-  }
-
-  async function handleUploadRealisations(files: FileList | null) {
-    if (!files || files.length === 0 || !userId) return;
-    if (!chantierInput.trim()) {
-      alert("Indique d'abord le nom du chantier avant d'ajouter des photos.");
-      if (fileRealisationRef.current) fileRealisationRef.current.value = "";
-      return;
-    }
-    setUploadingPhotos(true);
-    try {
-      for (const file of Array.from(files)) {
-        const ext = file.name.split(".").pop();
-        const path = `${userId}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-        const { error: upErr } = await supabase.storage
-          .from("realisations-photos")
-          .upload(path, file, { upsert: false });
-        if (upErr) throw upErr;
-        const { data: pub } = supabase.storage.from("realisations-photos").getPublicUrl(path);
-        const { error: insErr } = await supabase.from("realisations").insert({
-          user_id: userId,
-          photo_url: pub.publicUrl,
-          chantier: chantierInput.trim(),
-          position: realisationsPhotos.length,
-        });
-        if (insErr) throw insErr;
-      }
-      await loadRealisations();
-    } catch (e) {
-      console.error("Erreur upload réalisation :", e);
-      alert("Une erreur est survenue pendant l'upload d'une photo.");
-    } finally {
-      setUploadingPhotos(false);
-      if (fileRealisationRef.current) fileRealisationRef.current.value = "";
-    }
-  }
-
-  async function handleDeleteRealisation(id: string, photoUrl: string) {
-    if (!confirm("Supprimer cette photo de la galerie ?")) return;
-    try {
-      const marker = "/realisations-photos/";
-      const idx = photoUrl.indexOf(marker);
-      if (idx !== -1) {
-        const path = photoUrl.slice(idx + marker.length);
-        await supabase.storage.from("realisations-photos").remove([path]);
-      }
-      // .select() est indispensable ici : sans lui, une suppression bloquée par
-      // la RLS (ex. session expirée, user_id qui ne correspond plus) renvoie
-      // error: null avec 0 ligne supprimée — succès silencieux trompeur.
-      const { data: deleted, error } = await supabase
-        .from("realisations")
-        .delete()
-        .eq("id", id)
-        .select();
-      if (error) throw error;
-      if (!deleted || deleted.length === 0) {
-        throw new Error("Aucune ligne supprimée (probable blocage RLS) — la photo est peut-être toujours visible sur /a-propos.");
-      }
-      setRealisationsPhotos(prev => prev.filter(p => p.id !== id));
-    } catch (e) {
-      console.error("Erreur suppression réalisation :", e);
-      alert("Une erreur est survenue pendant la suppression.");
-    }
-  }
-
   // ── Export comptable CSV ──
   async function exportComptable() {
     const moisStr = String(moisExport).padStart(2, "0");
@@ -487,85 +399,6 @@ export default function CRMPage() {
 
             {/* Visiteurs de la page demande */}
             {userId && <VisitesStats userId={userId} />}
-
-            {/* Réalisations — galerie affichée sur /a-propos */}
-            <div className="card card-inner">
-              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-                <div className="flex items-center gap-2">
-                  <ImagePlus size={18} className="text-volt-600" />
-                  <h2 className="font-semibold text-ink-800">Réalisations</h2>
-                </div>
-              </div>
-
-              <div className="flex items-end gap-3 flex-wrap mb-5">
-                <div className="flex-1 min-w-[200px]">
-                  <label className="label">Nom du chantier</label>
-                  <input
-                    type="text"
-                    value={chantierInput}
-                    onChange={(e) => setChantierInput(e.target.value)}
-                    placeholder="Ex : Rénovation tableau — Bayonne"
-                    className="input w-full"
-                  />
-                </div>
-                <input
-                  ref={fileRealisationRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => handleUploadRealisations(e.target.files)}
-                />
-                <button
-                  onClick={() => fileRealisationRef.current?.click()}
-                  disabled={uploadingPhotos || !userId || !chantierInput.trim()}
-                  className="btn-volt flex items-center gap-2 disabled:opacity-50">
-                  {uploadingPhotos ? <Loader2 size={15} className="animate-spin" /> : <ImagePlus size={15} />}
-                  {uploadingPhotos ? "Envoi…" : "Ajouter des photos"}
-                </button>
-              </div>
-              {!chantierInput.trim() && (
-                <p className="text-xs text-amber-600 -mt-3 mb-4">Renseigne le nom du chantier avant d'ajouter des photos.</p>
-              )}
-
-              {realisationsPhotos.length === 0 ? (
-                <p className="text-ink-400 text-sm text-center py-6">
-                  Aucune photo pour l'instant. Les photos ajoutées ici apparaissent automatiquement, groupées par chantier, sur la page « À propos ».
-                </p>
-              ) : (
-                <div className="space-y-5">
-                  {Object.entries(
-                    realisationsPhotos.reduce((acc: Record<string, RealisationPhoto[]>, p) => {
-                      const key = (p.chantier ?? "").trim() || "Sans chantier";
-                      (acc[key] ??= []).push(p);
-                      return acc;
-                    }, {})
-                  ).map(([nom, photosChantier]) => (
-                    <div key={nom}>
-                      <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">{nom}</p>
-                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                        {photosChantier.map((p) => (
-                          <div key={p.id} className="relative group aspect-square">
-                            <img
-                              src={p.photo_url}
-                              alt="Réalisation"
-                              className="w-full h-full object-cover rounded-xl border border-ink-200"
-                            />
-                            <button
-                              onClick={() => handleDeleteRealisation(p.id, p.photo_url)}
-                              className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-red-600 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                              aria-label="Supprimer">
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <p className="text-xs text-ink-400 mt-4">Visibles publiquement sur la page « À propos », groupées par chantier — n'ajoutez que des photos que vous êtes à l'aise de partager avec vos clients.</p>
-            </div>
 
             {/* Export comptable */}
             <div className="card card-inner">
