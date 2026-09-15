@@ -57,9 +57,6 @@ const EMPTY_RDV_FORM: RdvFormData = { nom: "", telephone: "", email: "", adresse
 // URL de la carte de contact (vCard) — fichier statique servi depuis public/carte-nfc/
 const VCARD_URL = "/carte-nfc/index.html";
 
-// Page de présentation de l'entreprise (photo + description) — à créer ultérieurement
-const PRESENTATION_URL = "/a-propos";
-
 // Numéro d'urgence — affiché en clair et cliquable (tel:)
 const URGENCE_TEL_AFFICHE = "07 69 99 52 22";
 const URGENCE_TEL_LIEN = "tel:+33769995222";
@@ -428,9 +425,9 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
             <ChevronRight size={20} className="text-ink-300 shrink-0" />
           </button>
 
-          <a
-            href={PRESENTATION_URL}
-            className="w-full bg-white rounded-2xl border border-ink-200 p-5 flex items-center gap-4 text-left hover:border-volt-500 hover:shadow-sm transition-all">
+          <div
+            aria-disabled="true"
+            className="w-full bg-white rounded-2xl border border-ink-200 p-5 flex items-center gap-4 text-left opacity-60 cursor-not-allowed">
             <div className="w-12 h-12 rounded-xl bg-ink-100 flex items-center justify-center shrink-0 overflow-hidden">
               {logoUrl ? (
                 <img src={logoUrl} alt={nomEntreprise} className="w-full h-full object-contain p-1.5" />
@@ -440,10 +437,9 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
             </div>
             <div className="flex-1">
               <p className="font-display text-lg text-ink-900">En savoir plus</p>
-              <p className="text-ink-500 text-sm mt-0.5">Découvrez {nomEntreprise} en quelques mots.</p>
+              <p className="text-ink-400 text-sm mt-0.5">Bientôt disponible</p>
             </div>
-            <ChevronRight size={20} className="text-ink-300 shrink-0" />
-          </a>
+          </div>
         </div>
       )}
 
