@@ -11,6 +11,7 @@ const TYPES_TRAVAUX = [
   "Prises / Interrupteurs",
   "Éclairage",
   "IRVE (borne de recharge)",
+  "Climatisation / Chauffage",
   "Autre",
 ];
 
@@ -429,9 +430,19 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
 
           <a
             href={PRESENTATION_URL}
-            className="flex items-center justify-center gap-1.5 pt-2 text-ink-500 text-sm font-medium hover:text-ink-900 transition-colors">
-            <Info size={15} />
-            En savoir plus sur {nomEntreprise}
+            className="w-full bg-white rounded-2xl border border-ink-200 p-5 flex items-center gap-4 text-left hover:border-volt-500 hover:shadow-sm transition-all">
+            <div className="w-12 h-12 rounded-xl bg-ink-100 flex items-center justify-center shrink-0 overflow-hidden">
+              {logoUrl ? (
+                <img src={logoUrl} alt={nomEntreprise} className="w-full h-full object-contain p-1.5" />
+              ) : (
+                <Info size={22} className="text-ink-500" />
+              )}
+            </div>
+            <div className="flex-1">
+              <p className="font-display text-lg text-ink-900">En savoir plus</p>
+              <p className="text-ink-500 text-sm mt-0.5">Découvrez {nomEntreprise} en quelques mots.</p>
+            </div>
+            <ChevronRight size={20} className="text-ink-300 shrink-0" />
           </a>
         </div>
       )}
