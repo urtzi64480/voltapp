@@ -13,15 +13,13 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hostname = request.headers.get("host") || "";
 
-  // ── 1. Ancien host Vercel → nouveau domaine, chemin et paramètres conservés (301). ──
+  // ── 1. Ancien host Vercel (cartes de visite) → toujours /login sur le nouveau domaine. ──
   //    DOIT être vérifié avant le routage de la racine "/", sinon une visite sur
   //    l'ancien host atterrit sur /demande en gardant l'ancien hostname, sans jamais
-  //    être redirigée vers le nouveau domaine.
+  //    être redirigée. Ici le chemin n'est volontairement PAS préservé : quel que soit
+  //    ce qui est tapé sur l'ancien host, on renvoie vers l'espace de connexion.
   if (hostname === OLD_VERCEL_HOST) {
-    const url = new URL(request.url);
-    url.protocol = "https:";
-    url.hostname = NEW_DOMAIN;
-    url.port = "";
+    const url = new URL(`/login`, `https://${NEW_DOMAIN}`);
     return NextResponse.redirect(url, 301);
   }
 
