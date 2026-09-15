@@ -339,8 +339,18 @@ export default function CRMPage() {
         const path = photoUrl.slice(idx + marker.length);
         await supabase.storage.from("realisations-photos").remove([path]);
       }
-      const { error } = await supabase.from("realisations").delete().eq("id", id);
+      // .select() est indispensable ici : sans lui, une suppression bloquée par
+      // la RLS (ex. session expirée, user_id qui ne correspond plus) renvoie
+      // error: null avec 0 ligne supprimée — succès silencieux trompeur.
+      const { data: deleted, error } = await supabase
+        .from("realisations")
+        .delete()
+        .eq("id", id)
+        .select();
       if (error) throw error;
+      if (!deleted || deleted.length === 0) {
+        throw new Error("Aucune ligne supprimée (probable blocage RLS) — la photo est peut-être toujours visible sur /a-propos.");
+      }
       setRealisationsPhotos(prev => prev.filter(p => p.id !== id));
     } catch (e) {
       console.error("Erreur suppression réalisation :", e);
