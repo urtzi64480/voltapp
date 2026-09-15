@@ -1,4 +1,10 @@
 {
-  "buildCommand": "next build",
-  "framework": "nextjs"
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "voltapp-ten.vercel.app" }],
+      "destination": "https://elektron-electricite.fr/:path*",
+      "permanent": true
+    }
+  ]
 }
