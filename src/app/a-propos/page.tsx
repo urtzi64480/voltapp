@@ -8,6 +8,8 @@ import { ChevronLeft, FileText, CalendarDays, Zap } from "lucide-react";
 // ajoutées/supprimées côté CRM après le déploiement ne remontent jamais
 // (page statique servie depuis le cache généré au build).
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+export const revalidate = 0;
 
 // Page statique dédiée à Elektron — plus de partage multi-tenant sur cette route,
 // UUID hardcodé volontairement (même exception que demande/page.tsx LeadsPage).
