@@ -429,7 +429,7 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
             href="/a-propos"
             className="w-full bg-white rounded-2xl border border-ink-200 p-5 flex items-center gap-4 text-left hover:border-volt-500 hover:shadow-sm transition-all">
             <div className="w-12 h-12 rounded-xl bg-ink-100 flex items-center justify-center shrink-0 overflow-hidden">
-              <img src="/images/ben-elektron-bw.jpg" alt="Benoît" className="w-full h-full object-cover" />
+              <img src="/images/ben-elektron-square.jpg" alt="Benoît" className="w-full h-full object-cover" />
             </div>
             <div className="flex-1">
               <p className="font-display text-lg text-ink-900">En savoir plus</p>
