@@ -1,8 +1,30 @@
 "use client";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { CalendarCheck, Phone, Mail, MapPin, Clock, MessageSquare, Trash2 } from "lucide-react";
+import { CalendarCheck, Phone, Mail, MapPin, Clock, MessageSquare, Trash2, X } from "lucide-react";
 import Shell from "@/components/layout/Shell";
+
+function PhotoModal({ urls, onClose }: { urls: string[]; onClose: () => void }) {
+  const [idx, setIdx] = useState(0);
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="relative max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute -top-10 right-0 text-white/70 hover:text-white">
+          <X size={24} />
+        </button>
+        <img src={urls[idx]} alt="" className="w-full rounded-xl object-contain max-h-[70vh]" />
+        {urls.length > 1 && (
+          <div className="flex justify-center gap-2 mt-3">
+            {urls.map((_, i) => (
+              <button key={i} onClick={() => setIdx(i)}
+                className={`w-2 h-2 rounded-full transition-colors ${i === idx ? "bg-volt-500" : "bg-white/40"}`} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 interface Rdv {
   id: string;
@@ -116,7 +138,9 @@ export default function RdvPage() {
     return `mailto:${rdv.email ?? ""}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(msg)}`;
   };
 
-  const RdvCard = ({ rdv }: { rdv: Rdv }) => (
+  const RdvCard = ({ rdv }: { rdv: Rdv }) => {
+    const [photoModal, setPhotoModal] = useState(false);
+    return (
     <div className="bg-white rounded-2xl border border-ink-100 p-4 space-y-3 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -164,14 +188,15 @@ export default function RdvPage() {
       {rdv.photos && rdv.photos.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {rdv.photos.map((url, i) => (
-            <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="block shrink-0">
+            <button key={i} onClick={() => setPhotoModal(true)} className="block shrink-0">
               <img
                 src={url}
                 alt=""
                 className="w-16 h-16 object-cover rounded-lg border border-ink-200 hover:opacity-80 transition-opacity"
               />
-            </a>
+            </button>
           ))}
+          {photoModal && <PhotoModal urls={rdv.photos} onClose={() => setPhotoModal(false)} />}
         </div>
       )}
 
@@ -189,7 +214,8 @@ export default function RdvPage() {
         </a>
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <Shell>
