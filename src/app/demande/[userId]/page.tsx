@@ -27,6 +27,7 @@ interface FormData {
   type_travaux: string[];
   description: string;
   disponibilites: string;
+  honeypot: string;
 }
 
 interface Profil {
@@ -51,9 +52,10 @@ interface RdvFormData {
   email: string;
   adresse: string;
   description: string;
+  honeypot: string;
 }
 
-const EMPTY_RDV_FORM: RdvFormData = { nom: "", telephone: "", email: "", adresse: "", description: "" };
+const EMPTY_RDV_FORM: RdvFormData = { nom: "", telephone: "", email: "", adresse: "", description: "", honeypot: "" };
 
 // URL de la carte de contact (vCard) — fichier statique servi depuis public/carte-nfc/
 const VCARD_URL = "/carte-nfc/index.html";
@@ -80,6 +82,10 @@ function detectDeviceType(ua: string): "mobile" | "tablette" | "desktop" {
 function DemandePageContent({ userId }: { userId: string }) {
   const searchParams = useSearchParams();
 
+  // Horodatage du chargement de la page — sert à détecter les soumissions trop
+  // rapides (probable bot) côté serveur, pour les formulaires devis et RDV.
+  const pageLoadedAt = useRef(Date.now());
+
   const [profil, setProfil] = useState<Profil | null>(null);
   const [profilLoading, setProfilLoading] = useState(true);
 
@@ -98,6 +104,7 @@ function DemandePageContent({ userId }: { userId: string }) {
     type_travaux: [],
     description: "",
     disponibilites: "",
+    honeypot: "",
   });
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
@@ -113,6 +120,9 @@ function DemandePageContent({ userId }: { userId: string }) {
   const [dispoDays, setDispoDays] = useState<DispoDay[]>([]);
   const [rdvSlot, setRdvSlot] = useState<RdvSlot | null>(null);
   const [rdvForm, setRdvForm] = useState<RdvFormData>(EMPTY_RDV_FORM);
+  const [rdvPhotos, setRdvPhotos] = useState<File[]>([]);
+  const [rdvPhotoPreviews, setRdvPhotoPreviews] = useState<string[]>([]);
+  const rdvFileRef = useRef<HTMLInputElement>(null);
   const [rdvSubmitting, setRdvSubmitting] = useState(false);
   const [rdvSuccess, setRdvSuccess] = useState(false);
   const [rdvError, setRdvError] = useState<string | null>(null);
@@ -196,6 +206,21 @@ function DemandePageContent({ userId }: { userId: string }) {
     setPhotoPreviews(photoPreviews.filter((_, j) => j !== i));
   };
 
+  // ── Photos RDV — même logique que les photos devis, état séparé ──
+  const addRdvPhotos = (files: FileList | null) => {
+    if (!files) return;
+    const arr = Array.from(files).slice(0, 5 - rdvPhotos.length);
+    const newPhotos = [...rdvPhotos, ...arr];
+    const newPreviews = newPhotos.map((f) => URL.createObjectURL(f));
+    setRdvPhotos(newPhotos);
+    setRdvPhotoPreviews(newPreviews);
+  };
+
+  const removeRdvPhoto = (i: number) => {
+    setRdvPhotos(rdvPhotos.filter((_, j) => j !== i));
+    setRdvPhotoPreviews(rdvPhotoPreviews.filter((_, j) => j !== i));
+  };
+
   const canNext1 = form.nom.trim() && form.telephone.trim();
   const canNext2 = form.adresse_chantier.trim() && form.type_travaux.length > 0;
 
@@ -207,6 +232,8 @@ function DemandePageContent({ userId }: { userId: string }) {
     setRdvError(null);
     setDispoLoaded(false);
     setDispoDays([]);
+    setRdvPhotos([]);
+    setRdvPhotoPreviews([]);
   };
 
   const submit = async () => {
@@ -225,19 +252,28 @@ function DemandePageContent({ userId }: { userId: string }) {
         photoUrls.push(data.publicUrl);
       }
 
-      const { error: insErr } = await supabase.from("demandes_client").insert({
-        user_id: userId,
-        statut: "nouveau",
-        nom: form.nom.trim(),
-        telephone: form.telephone.trim(),
-        email: form.email.trim() || null,
-        adresse_chantier: form.adresse_chantier.trim(),
-        type_travaux: form.type_travaux,
-        description: form.description.trim() || null,
-        photos: photoUrls,
-        disponibilites: form.disponibilites.trim() || null,
+      const res = await fetch("/api/public/demande", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          nom: form.nom.trim(),
+          telephone: form.telephone.trim(),
+          email: form.email.trim() || undefined,
+          adresse_chantier: form.adresse_chantier.trim(),
+          type_travaux: form.type_travaux,
+          description: form.description.trim() || undefined,
+          photos: photoUrls,
+          disponibilites: form.disponibilites.trim() || undefined,
+          honeypot: form.honeypot,
+          loadedAt: pageLoadedAt.current,
+        }),
       });
-      if (insErr) throw insErr;
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Une erreur est survenue. Veuillez réessayer ou nous appeler directement.");
+        return;
+      }
       setSuccess(true);
     } catch (e: any) {
       setError("Une erreur est survenue. Veuillez réessayer ou nous appeler directement.");
@@ -257,6 +293,18 @@ function DemandePageContent({ userId }: { userId: string }) {
     setRdvSubmitting(true);
     setRdvError(null);
     try {
+      const photoUrls: string[] = [];
+      for (const file of rdvPhotos) {
+        const ext = file.name.split(".").pop();
+        const path = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from("demande-photos")
+          .upload(path, file, { upsert: false });
+        if (upErr) throw upErr;
+        const { data } = supabase.storage.from("demande-photos").getPublicUrl(path);
+        photoUrls.push(data.publicUrl);
+      }
+
       const res = await fetch("/api/public/rdv", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -269,6 +317,9 @@ function DemandePageContent({ userId }: { userId: string }) {
           email: rdvForm.email.trim() || undefined,
           adresse: rdvForm.adresse.trim() || undefined,
           description: rdvForm.description.trim() || undefined,
+          photos: photoUrls,
+          honeypot: rdvForm.honeypot,
+          loadedAt: pageLoadedAt.current,
         }),
       });
       const data = await res.json();
@@ -290,6 +341,7 @@ function DemandePageContent({ userId }: { userId: string }) {
       setRdvSuccess(true);
     } catch (e) {
       setRdvError("Une erreur est survenue. Veuillez réessayer ou nous appeler directement.");
+      console.error(e);
     } finally {
       setRdvSubmitting(false);
     }
@@ -556,6 +608,19 @@ function DemandePageContent({ userId }: { userId: string }) {
                 </p>
               </div>
               <div className="bg-white rounded-2xl border border-ink-200 p-4 space-y-4">
+                {/* Honeypot — champ invisible pour un humain, souvent rempli par les bots */}
+                <div className="sr-only" aria-hidden="true">
+                  <label htmlFor="site_web_rdv">Ne pas remplir ce champ</label>
+                  <input
+                    id="site_web_rdv"
+                    type="text"
+                    name="site_web"
+                    tabIndex={-1}
+                    autoComplete="off"
+                    value={rdvForm.honeypot}
+                    onChange={(e) => setRdv("honeypot", e.target.value)}
+                  />
+                </div>
                 <div>
                   <label className="block text-xs font-semibold text-ink-600 mb-1.5">Nom complet *</label>
                   <input
@@ -605,6 +670,40 @@ function DemandePageContent({ userId }: { userId: string }) {
                     rows={3}
                     className="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-volt-500 focus:ring-2 focus:ring-volt-500/20 resize-none"
                   />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-ink-600 mb-1.5">
+                    Photos <span className="text-ink-300 font-normal">(optionnel, max 5)</span>
+                  </label>
+                  <input
+                    ref={rdvFileRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => addRdvPhotos(e.target.files)}
+                  />
+                  {rdvPhotos.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {rdvPhotoPreviews.map((src, i) => (
+                        <div key={i} className="relative">
+                          <img src={src} alt="" className="w-16 h-16 object-cover rounded-lg border border-ink-200" />
+                          <button
+                            onClick={() => removeRdvPhoto(i)}
+                            className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center">
+                            <X size={10} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {rdvPhotos.length < 5 && (
+                    <button
+                      onClick={() => rdvFileRef.current?.click()}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed border-ink-200 text-ink-400 text-sm hover:border-volt-500 hover:text-volt-600 transition-colors w-full justify-center">
+                      <Upload size={16} /> Ajouter des photos
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -663,6 +762,19 @@ function DemandePageContent({ userId }: { userId: string }) {
                   <p className="text-ink-500 text-sm mt-1">Pour vous recontacter rapidement.</p>
                 </div>
                 <div className="bg-white rounded-2xl border border-ink-200 p-4 space-y-4">
+                  {/* Honeypot — champ invisible pour un humain, souvent rempli par les bots */}
+                  <div className="sr-only" aria-hidden="true">
+                    <label htmlFor="site_web_devis">Ne pas remplir ce champ</label>
+                    <input
+                      id="site_web_devis"
+                      type="text"
+                      name="site_web"
+                      tabIndex={-1}
+                      autoComplete="off"
+                      value={form.honeypot}
+                      onChange={(e) => set("honeypot", e.target.value)}
+                    />
+                  </div>
                   <div>
                     <label className="block text-xs font-semibold text-ink-600 mb-1.5">Nom complet *</label>
                     <input
