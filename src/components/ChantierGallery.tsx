@@ -8,6 +8,7 @@ interface Photo {
   id: string;
   photo_url: string;
   chantier: string | null;
+  description: string | null;
 }
 
 export default function ChantierGallery({ photos }: { photos: Photo[] }) {
