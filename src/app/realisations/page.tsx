@@ -9,6 +9,7 @@ interface RealisationPhoto {
   id: string;
   photo_url: string;
   chantier: string | null;
+  description: string | null;
 }
 
 export default function RealisationsPage() {
@@ -17,6 +18,10 @@ export default function RealisationsPage() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [chantierInput, setChantierInput] = useState("");
+  // état local des descriptions en cours d'édition, indexé par id de photo —
+  // évite de re-fetch/re-render toute la liste à chaque frappe
+  const [descriptions, setDescriptions] = useState<Record<string, string>>({});
+  const [savingId, setSavingId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -37,12 +42,16 @@ export default function RealisationsPage() {
     setLoading(true);
     const { data, error } = await supabase
       .from("realisations")
-      .select("id, photo_url, chantier")
+      .select("id, photo_url, chantier, description")
       .eq("user_id", userId)
       .order("position", { ascending: true })
       .order("created_at", { ascending: false });
     if (error) console.error("Erreur chargement réalisations :", error);
-    setPhotos(data ?? []);
+    const list = data ?? [];
+    setPhotos(list);
+    setDescriptions(
+      Object.fromEntries(list.map((p) => [p.id, p.description ?? ""]))
+    );
     setLoading(false);
   }
 
@@ -102,10 +111,44 @@ export default function RealisationsPage() {
       if (!deleted || deleted.length === 0) {
         throw new Error("Aucune ligne supprimée (probable blocage RLS) — la photo est peut-être toujours visible sur /a-propos.");
       }
+      // la description est une colonne de la même ligne "realisations" :
+      // elle disparaît automatiquement avec la suppression ci-dessus
       setPhotos((prev) => prev.filter((p) => p.id !== id));
+      setDescriptions((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
     } catch (e) {
       console.error("Erreur suppression réalisation :", e);
       alert("Une erreur est survenue pendant la suppression.");
+    }
+  }
+
+  function handleDescriptionChange(id: string, value: string) {
+    setDescriptions((prev) => ({ ...prev, [id]: value }));
+  }
+
+  async function handleDescriptionBlur(id: string) {
+    const original = photos.find((p) => p.id === id)?.description ?? "";
+    const value = (descriptions[id] ?? "").trim();
+    if (value === (original ?? "").trim()) return; // rien à sauvegarder
+
+    setSavingId(id);
+    try {
+      const { error } = await supabase
+        .from("realisations")
+        .update({ description: value || null })
+        .eq("id", id);
+      if (error) throw error;
+      setPhotos((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, description: value || null } : p))
+      );
+    } catch (e) {
+      console.error("Erreur sauvegarde description :", e);
+      alert("La description n'a pas pu être enregistrée.");
+    } finally {
+      setSavingId(null);
     }
   }
 
@@ -173,20 +216,33 @@ export default function RealisationsPage() {
             {Object.entries(grouped).map(([nom, photosChantier]) => (
               <div key={nom} className="card card-inner">
                 <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-3">{nom}</p>
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                   {photosChantier.map((p) => (
-                    <div key={p.id} className="relative group aspect-square">
-                      <img
-                        src={p.photo_url}
-                        alt="Réalisation"
-                        className="w-full h-full object-cover rounded-xl border border-ink-200"
+                    <div key={p.id} className="relative group">
+                      <div className="relative aspect-square">
+                        <img
+                          src={p.photo_url}
+                          alt="Réalisation"
+                          className="w-full h-full object-cover rounded-xl border border-ink-200"
+                        />
+                        <button
+                          onClick={() => handleDelete(p.id, p.photo_url)}
+                          className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-red-600 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                          aria-label="Supprimer">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                      <textarea
+                        value={descriptions[p.id] ?? ""}
+                        onChange={(e) => handleDescriptionChange(p.id, e.target.value)}
+                        onBlur={() => handleDescriptionBlur(p.id)}
+                        placeholder="Petite description (visible sur la page publique)…"
+                        rows={2}
+                        className="input w-full mt-1.5 text-xs resize-none"
                       />
-                      <button
-                        onClick={() => handleDelete(p.id, p.photo_url)}
-                        className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-red-600 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                        aria-label="Supprimer">
-                        <Trash2 size={13} />
-                      </button>
+                      {savingId === p.id && (
+                        <p className="text-[10px] text-ink-400 mt-0.5">Enregistrement…</p>
+                      )}
                     </div>
                   ))}
                 </div>
