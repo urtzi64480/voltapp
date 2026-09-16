@@ -28,10 +28,10 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
   if (!body) return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
 
-  const { userId, date, periode, nom, telephone, email, adresse, description, honeypot, loadedAt } = body as {
+  const { userId, date, periode, nom, telephone, email, adresse, description, photos, honeypot, loadedAt } = body as {
     userId?: string; date?: string; periode?: "matin" | "aprem";
     nom?: string; telephone?: string; email?: string; adresse?: string; description?: string;
-    honeypot?: string; loadedAt?: number;
+    photos?: string[]; honeypot?: string; loadedAt?: number;
   };
 
   if (!userId || !date || !periode || !nom?.trim() || !telephone?.trim()) {
@@ -131,6 +131,7 @@ export async function POST(req: NextRequest) {
       email?.trim() ? `Email: ${email.trim()}` : null,
       adresse?.trim() ? `Adresse: ${adresse.trim()}` : null,
       description?.trim() ? `Notes: ${description.trim()}` : null,
+      photos?.length ? `Photos jointes : ${photos.length}` : null,
     ].filter(Boolean).join("\n");
 
     caldavUrl = await createCalDAVEvent({
@@ -158,6 +159,7 @@ export async function POST(req: NextRequest) {
     email: email?.trim() || null,
     adresse: adresse?.trim() || null,
     description: description?.trim() || null,
+    photos: photos ?? [],
     statut: "confirme",
     caldav_url: caldavUrl,
   });
