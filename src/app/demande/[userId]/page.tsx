@@ -1,6 +1,7 @@
 // src/app/demande/[userId]/page.tsx
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { ChevronRight, ChevronLeft, CheckCircle, Upload, X, Loader2, FileText, CalendarDays, Phone, UserPlus, Zap } from "lucide-react";
 
@@ -76,13 +77,18 @@ function detectDeviceType(ua: string): "mobile" | "tablette" | "desktop" {
   return "desktop";
 }
 
-export default function DemandePage({ params }: { params: { userId: string } }) {
-  const userId = params.userId;
+function DemandePageContent({ userId }: { userId: string }) {
+  const searchParams = useSearchParams();
 
   const [profil, setProfil] = useState<Profil | null>(null);
   const [profilLoading, setProfilLoading] = useState(true);
 
-  const [mode, setMode] = useState<Mode>(null);
+  // Mode initial déduit du paramètre ?mode= (deep-link depuis /a-propos par ex.)
+  // — sans ça les liens externes retombaient toujours sur l'écran de choix.
+  const [mode, setMode] = useState<Mode>(() => {
+    const m = searchParams.get("mode");
+    return m === "devis" || m === "rdv" || m === "urgence" ? (m as Mode) : null;
+  });
 
   // ── Devis ──
   const [step, setStep] = useState<Step>(1);
@@ -386,6 +392,19 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
       {/* ÉCRAN DE CHOIX */}
       {mode === null && (
         <div className="px-4 py-8 max-w-lg mx-auto space-y-4">
+          <a
+            href="/a-propos"
+            className="w-full bg-white rounded-2xl border border-ink-200 p-5 flex items-center gap-4 text-left hover:border-volt-500 hover:shadow-sm transition-all">
+            <div className="w-12 h-12 rounded-xl bg-ink-100 flex items-center justify-center shrink-0 overflow-hidden">
+              <img src="/images/ben-elektron-square.jpg" alt="Benoît" className="w-full h-full object-cover" />
+            </div>
+            <div className="flex-1">
+              <p className="font-display text-lg text-ink-900">En savoir plus</p>
+              <p className="text-ink-500 text-sm mt-0.5">Qui je suis, mes réalisations.</p>
+            </div>
+            <ChevronRight size={20} className="text-ink-300 shrink-0" />
+          </a>
+
           <button
             onClick={() => setMode("urgence")}
             className="w-full bg-white rounded-2xl border-2 border-red-200 p-5 flex items-center gap-4 text-left hover:border-red-400 hover:shadow-sm transition-all">
@@ -424,19 +443,6 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
             </div>
             <ChevronRight size={20} className="text-ink-300 shrink-0" />
           </button>
-
-          <a
-            href="/a-propos"
-            className="w-full bg-white rounded-2xl border border-ink-200 p-5 flex items-center gap-4 text-left hover:border-volt-500 hover:shadow-sm transition-all">
-            <div className="w-12 h-12 rounded-xl bg-ink-100 flex items-center justify-center shrink-0 overflow-hidden">
-              <img src="/images/ben-elektron-square.jpg" alt="Benoît" className="w-full h-full object-cover" />
-            </div>
-            <div className="flex-1">
-              <p className="font-display text-lg text-ink-900">En savoir plus</p>
-              <p className="text-ink-500 text-sm mt-0.5">Qui je suis, mes réalisations.</p>
-            </div>
-            <ChevronRight size={20} className="text-ink-300 shrink-0" />
-          </a>
         </div>
       )}
 
@@ -838,5 +844,19 @@ export default function DemandePage({ params }: { params: { userId: string } }) 
         </>
       )}
     </div>
+  );
+}
+
+export default function DemandePage({ params }: { params: { userId: string } }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-ink-50 flex items-center justify-center">
+          <Loader2 size={32} className="animate-spin text-ink-400" />
+        </div>
+      }
+    >
+      <DemandePageContent userId={params.userId} />
+    </Suspense>
   );
 }
