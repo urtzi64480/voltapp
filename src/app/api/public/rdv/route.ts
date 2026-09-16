@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { parseICS, ICSEvent } from "@/lib/ics";
 import { discoverCalendarUrl, createCalDAVEvent } from "@/lib/caldav";
+import { isRateLimited, recordAttempt, getClientIp, isTooFast } from "@/lib/rate-limit";
 
 const MATIN_START = 8, MATIN_END = 12;
 const APREM_START = 13, APREM_END = 17;
@@ -27,9 +28,10 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
   if (!body) return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
 
-  const { userId, date, periode, nom, telephone, email, adresse, description } = body as {
+  const { userId, date, periode, nom, telephone, email, adresse, description, honeypot, loadedAt } = body as {
     userId?: string; date?: string; periode?: "matin" | "aprem";
     nom?: string; telephone?: string; email?: string; adresse?: string; description?: string;
+    honeypot?: string; loadedAt?: number;
   };
 
   if (!userId || !date || !periode || !nom?.trim() || !telephone?.trim()) {
@@ -52,6 +54,28 @@ export async function POST(req: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
+
+  // ── Protection anti-flood — avant tout traitement coûteux (fetch ICS, écriture CalDAV) ──
+  // Piège à bots : si le champ caché est rempli, on fait semblant que tout s'est bien passé
+  // sans rien enregistrer, pour ne pas indiquer au bot qu'il a été détecté.
+  if (honeypot && honeypot.trim() !== "") {
+    console.warn("RDV bloqué (honeypot) :", getClientIp(req));
+    return NextResponse.json({ success: true });
+  }
+  // Soumission anormalement rapide après le chargement de la page : probable bot.
+  if (isTooFast(loadedAt)) {
+    console.warn("RDV bloqué (délai trop court) :", getClientIp(req));
+    return NextResponse.json({ success: true });
+  }
+  const ip = getClientIp(req);
+  const limited = await isRateLimited(supabase, ip, "rdv");
+  if (limited) {
+    return NextResponse.json(
+      { error: "Trop de demandes de rendez-vous récemment. Merci de réessayer dans quelques minutes ou de nous appeler directement." },
+      { status: 429 }
+    );
+  }
+  // ── fin protection anti-flood ──
 
   const { data: token } = await supabase
     .from("apple_ics").select("calendars, ics_urls, apple_id, app_password").eq("user_id", userId).single();
@@ -94,6 +118,7 @@ export async function POST(req: NextRequest) {
     return evStart < blockEnd.getTime() && evEnd > blockStart.getTime();
   });
   if (conflit) {
+    // Créneau pris entre-temps : ce n'est pas un abus, ne pas consommer le quota.
     return NextResponse.json({ error: "Ce créneau vient d'être réservé. Merci d'en choisir un autre." }, { status: 409 });
   }
 
@@ -119,6 +144,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (e: any) {
     console.error("Erreur CalDAV:", e);
+    // Échec technique : ne pas consommer le quota, pour permettre une nouvelle tentative.
     return NextResponse.json({ error: "Impossible d'écrire dans le calendrier. Contactez-nous par téléphone." }, { status: 500 });
   }
 
@@ -136,6 +162,9 @@ export async function POST(req: NextRequest) {
     caldav_url: caldavUrl,
   });
   if (insErr) console.error("Erreur insertion rdv:", insErr);
+
+  // Le RDV a réellement été écrit dans le calendrier à ce stade : on consomme le quota.
+  await recordAttempt(supabase, ip, "rdv");
 
   return NextResponse.json({ success: true });
 }
