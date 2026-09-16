@@ -50,7 +50,7 @@ export default async function AProposPage() {
     <div className="min-h-screen bg-ink-50">
       {/* Header sombre — /a-propos est le point d'entrée, donc lien "en avant" vers la demande */}
       <div className="bg-ink-900 px-4 py-4">
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-5xl mx-auto">
           <a
             href={`/demande/${USER_ID}`}
             className="inline-flex items-center gap-1.5 text-ink-300 text-sm font-medium hover:text-white transition-colors"
@@ -61,43 +61,49 @@ export default async function AProposPage() {
       </div>
 
       {/* Hero */}
-      <div className="max-w-4xl mx-auto px-4 pt-10 pb-14">
-        <div className="grid md:grid-cols-[minmax(0,320px)_1fr] gap-10 items-start">
-          {/* Photo N&B avec cadre décalé volt-500, léger effet "carte" */}
-          <div className="relative mx-auto md:mx-0 w-full max-w-[320px]">
-            <div className="absolute -top-3 -left-3 w-full h-full rounded-2xl bg-volt-500" />
-            <img
-              src="/images/ben-elektron-bw.jpg"
-              alt="Benoît, électricien Elektron"
-              className="relative w-full rounded-2xl object-cover shadow-sm border border-ink-200"
-            />
-          </div>
-
-          {/* Texte de présentation */}
-          <div>
-            <p className="text-volt-600 text-xs font-semibold uppercase tracking-wider mb-2">
-              Elektron · Électricien
-            </p>
-            <h1 className="font-display text-3xl sm:text-4xl text-ink-900 leading-tight mb-4">
-              Benoît, votre futur électricien
-            </h1>
-            <div className="text-ink-600 text-sm leading-relaxed space-y-3">
-              <p>
-                Fort de plusieurs années d'expérience dans la réalisation de
-                projets techniques, et de plusieurs années dans le commerce, je
-                réunis avec mon activité d'électricien les meilleurs côtés de
-                ces deux branches : une réalisation technique de qualité, et un
-                projet 100&nbsp;% orienté vers mes clients.
-              </p>
-              <p>
-                Vos demandes seront ma seule préoccupation. N'hésitez pas à
-                utiliser les pages de demande de devis (gratuit, évidemment) ou
-                de prise de rendez-vous pour que je me déplace — toujours
-                gratuitement — chez vous pour discuter de votre projet. Je suis
-                également joignable pour toute urgence électrique.
-              </p>
+      <div className="max-w-5xl mx-auto px-4 pt-10 pb-14">
+        <div className="grid md:grid-cols-[1fr_auto] gap-10 md:gap-14 items-start">
+          {/* Colonne gauche : photo + texte de présentation */}
+          <div className="grid sm:grid-cols-[minmax(0,280px)_1fr] gap-8 items-start">
+            {/* Photo N&B avec cadre décalé volt-500, léger effet "carte" */}
+            <div className="relative mx-auto sm:mx-0 w-full max-w-[280px]">
+              <div className="absolute -top-3 -left-3 w-full h-full rounded-2xl bg-volt-500" />
+              <img
+                src="/images/ben-elektron-bw.jpg"
+                alt="Benoît, électricien Elektron"
+                className="relative w-full rounded-2xl object-cover shadow-sm border border-ink-200"
+              />
             </div>
 
+            {/* Texte de présentation */}
+            <div>
+              <p className="text-volt-600 text-xs font-semibold uppercase tracking-wider mb-2">
+                Elektron · Électricien
+              </p>
+              <h1 className="font-display text-3xl sm:text-4xl text-ink-900 leading-tight mb-4">
+                Benoît, votre futur électricien
+              </h1>
+              <div className="text-ink-600 text-sm leading-relaxed space-y-3">
+                <p>
+                  Fort de plusieurs années d'expérience dans la réalisation de
+                  projets techniques, et de plusieurs années dans le commerce, je
+                  réunis avec mon activité d'électricien les meilleurs côtés de
+                  ces deux branches : une réalisation technique de qualité, et un
+                  projet 100&nbsp;% orienté vers mes clients.
+                </p>
+                <p>
+                  Vos demandes seront ma seule préoccupation. N'hésitez pas à
+                  utiliser les pages de demande de devis (gratuit, évidemment) ou
+                  de prise de rendez-vous pour que je me déplace — toujours
+                  gratuitement — chez vous pour discuter de votre projet. Je suis
+                  également joignable pour toute urgence électrique.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Colonne droite : actions, alignées à droite de la page */}
+          <div className="w-full md:w-56 shrink-0 md:sticky md:top-8">
             <ActionsAndGallery userId={USER_ID} photos={photos} />
           </div>
         </div>
