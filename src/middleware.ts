@@ -39,7 +39,10 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/demande") ||
     pathname.startsWith("/a-propos") ||
     pathname.startsWith("/api/public") ||
-    pathname.startsWith("/images")
+    pathname.startsWith("/images") ||
+    pathname.startsWith("/carte-nfc") ||
+    pathname === "/icon-192.png" ||
+    pathname === "/icon-512.png"
   ) {
     return NextResponse.next();
   }
