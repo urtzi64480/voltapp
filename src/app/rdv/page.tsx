@@ -13,6 +13,7 @@ interface Rdv {
   email: string | null;
   adresse: string | null;
   description: string | null;
+  photos: string[] | null;
   statut: string;
   consulte: boolean;
   confirme: boolean;
@@ -69,6 +70,22 @@ export default function RdvPage() {
     supabase.from("rdv").update({ confirme: true }).eq("id", id);
   };
 
+  // Extrait le chemin du fichier à partir de l'URL publique Supabase Storage
+  // (format: .../storage/v1/object/public/demande-photos/<path>)
+  const deletePhotosFromStorage = async (photos: string[] | null) => {
+    if (!photos || photos.length === 0) return;
+    const marker = "/demande-photos/";
+    const paths = photos
+      .map((url) => {
+        const idx = url.indexOf(marker);
+        return idx >= 0 ? url.slice(idx + marker.length) : null;
+      })
+      .filter((p): p is string => !!p);
+    if (paths.length === 0) return;
+    const { error } = await supabase.storage.from("demande-photos").remove(paths);
+    if (error) console.error("Erreur suppression photos storage:", error);
+  };
+
   const handleDelete = async (rdv: Rdv) => {
     if (!confirm("Supprimer ce rendez-vous ? Il sera aussi retiré de votre calendrier Apple.")) return;
     if (rdv.caldav_url) {
@@ -83,6 +100,7 @@ export default function RdvPage() {
         // On continue quand même la suppression côté VoltApp
       }
     }
+    await deletePhotosFromStorage(rdv.photos);
     await supabase.from("rdv").delete().eq("id", rdv.id);
     setRdvs(list => list.filter(r => r.id !== rdv.id));
   };
@@ -141,6 +159,20 @@ export default function RdvPage() {
 
       {rdv.description && (
         <div className="bg-ink-50 rounded-xl p-3 text-sm text-ink-700 leading-relaxed">{rdv.description}</div>
+      )}
+
+      {rdv.photos && rdv.photos.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {rdv.photos.map((url, i) => (
+            <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="block shrink-0">
+              <img
+                src={url}
+                alt=""
+                className="w-16 h-16 object-cover rounded-lg border border-ink-200 hover:opacity-80 transition-opacity"
+              />
+            </a>
+          ))}
+        </div>
       )}
 
       <div className="flex gap-2 pt-1">
