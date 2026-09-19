@@ -4,7 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, PLAFOND_SERVICE, PLAFOND_MATERIAU, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { TrendingUp, FileText, Receipt, CheckCircle, Clock, AlertTriangle, BarChart3, PieChart, Euro, Users, Download, Landmark, ShoppingBag } from "lucide-react";
+import { TrendingUp, FileText, Receipt, CheckCircle, Clock, AlertTriangle, BarChart3, PieChart, Euro, Users, Download, Landmark, ShoppingBag, ChevronDown } from "lucide-react";
 import VisitesStats from "@/components/VisitesStats";
 
 // Seuils de franchise en base de TVA 2026 (distincts des plafonds de CA du régime micro)
@@ -19,6 +19,37 @@ interface CommissionApporteur {
 interface DevisRentabilite {
   id: string; numero: string; date_emission: string; client_nom: string;
   total_materiau: number; cout_achat: number; sans_devis?: boolean;
+}
+
+// ── Section déployable réutilisable ──────────────────────────────────────
+function Section({
+  title, icon, subtitle, defaultOpen = false, children,
+}: {
+  title: string; icon: React.ReactNode; subtitle?: string; defaultOpen?: boolean; children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="card card-inner">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between gap-3 text-left"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          {icon}
+          <div className="min-w-0">
+            <h2 className="font-semibold text-ink-800">{title}</h2>
+            {subtitle && <p className="text-xs text-ink-400 truncate">{subtitle}</p>}
+          </div>
+        </div>
+        <ChevronDown
+          size={18}
+          className={cn("text-ink-400 shrink-0 transition-transform duration-200", open && "rotate-180")}
+        />
+      </button>
+      {open && <div className="mt-4">{children}</div>}
+    </div>
+  );
 }
 
 function BarMois({ mois, service, materiau, serviceN1, materiauN1, maxMois, label }: {
@@ -397,36 +428,10 @@ export default function CRMPage() {
         {loading ? <div className="text-center py-16 text-ink-400">Chargement…</div> : (
           <div className="space-y-5">
 
-            {/* Visiteurs de la page demande */}
+            {/* Visiteurs de la page demande — toujours visible */}
             {userId && <VisitesStats userId={userId} />}
 
-            {/* Export comptable */}
-            <div className="card card-inner">
-              <div className="flex items-center gap-2 mb-4">
-                <Download size={18} className="text-volt-600" />
-                <h2 className="font-semibold text-ink-800">Export comptable</h2>
-              </div>
-              <div className="flex items-end gap-3 flex-wrap">
-                <div>
-                  <label className="label">Mois</label>
-                  <select className="input !w-auto" value={moisExport} onChange={e => setMoisExport(parseInt(e.target.value))}>
-                    {MOIS_LONG.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="label">Année</label>
-                  <select className="input !w-auto" value={anneeExport} onChange={e => setAnneeExport(parseInt(e.target.value))}>
-                    {[2024,2025,2026,2027,2028].map(a => <option key={a}>{a}</option>)}
-                  </select>
-                </div>
-                <button onClick={exportComptable} className="btn-volt flex items-center gap-2">
-                  <Download size={15} /> Exporter CSV
-                </button>
-              </div>
-              <p className="text-xs text-ink-400 mt-3">Toutes les factures payées du mois sélectionné · Format compatible déclaration AE (CA service / CA matériaux séparés) · Encodage UTF-8 BOM</p>
-            </div>
-
-            {/* KPIs */}
+            {/* KPIs — toujours visibles, vue d'ensemble */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="card card-inner col-span-2 md:col-span-1">
                 <p className="text-xs text-ink-400 mb-1">CA total {annee}</p>
@@ -458,12 +463,30 @@ export default function CRMPage() {
               </div>
             </div>
 
-            {/* Rentabilité */}
-            <div className="card card-inner">
-              <div className="flex items-center gap-2 mb-5">
-                <Euro size={18} className="text-volt-600" />
-                <h2 className="font-semibold text-ink-800">Rentabilité estimée {annee}</h2>
+            {/* Export comptable */}
+            <Section title="Export comptable" icon={<Download size={18} className="text-volt-600" />} defaultOpen={false}>
+              <div className="flex items-end gap-3 flex-wrap">
+                <div>
+                  <label className="label">Mois</label>
+                  <select className="input !w-auto" value={moisExport} onChange={e => setMoisExport(parseInt(e.target.value))}>
+                    {MOIS_LONG.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Année</label>
+                  <select className="input !w-auto" value={anneeExport} onChange={e => setAnneeExport(parseInt(e.target.value))}>
+                    {[2024,2025,2026,2027,2028].map(a => <option key={a}>{a}</option>)}
+                  </select>
+                </div>
+                <button onClick={exportComptable} className="btn-volt flex items-center gap-2">
+                  <Download size={15} /> Exporter CSV
+                </button>
               </div>
+              <p className="text-xs text-ink-400 mt-3">Toutes les factures payées du mois sélectionné · Format compatible déclaration AE (CA service / CA matériaux séparés) · Encodage UTF-8 BOM</p>
+            </Section>
+
+            {/* Rentabilité */}
+            <Section title="Rentabilité estimée" subtitle={`${annee}`} icon={<Euro size={18} className="text-volt-600" />} defaultOpen={true}>
               {caTotal === 0 ? (
                 <p className="text-ink-400 text-sm text-center py-6">Aucun CA payé sur cette période</p>
               ) : (
@@ -541,14 +564,15 @@ export default function CRMPage() {
                   </div>
                 </div>
               )}
-            </div>
+            </Section>
 
             {/* Rentabilité nette achat-revente par devis */}
-            <div className="card card-inner">
-              <div className="flex items-center gap-2 mb-4">
-                <ShoppingBag size={18} className="text-volt-600" />
-                <h2 className="font-semibold text-ink-800">Rentabilité matériel — factures payées {annee}</h2>
-              </div>
+            <Section
+              title="Rentabilité matériel — factures payées"
+              subtitle={`${annee}`}
+              icon={<ShoppingBag size={18} className="text-volt-600" />}
+              defaultOpen={false}
+            >
               <p className="text-xs text-ink-400 mb-4">
                 Frais d'achat matériel réellement engagés vs argent réellement encaissé, après cotisations sociales de la branche achat-revente ({tauxFiscaux.cotis_materiau}%).
                 Coût d'achat basé sur le prix catalogue actuel des lignes du devis d'origine — peut différer légèrement du coût réel si vos tarifs fournisseurs ont changé depuis.
@@ -591,15 +615,15 @@ export default function CRMPage() {
                   </div>
                 </>
               )}
-            </div>
+            </Section>
 
             {/* Commissions apporteurs */}
-            <div className="card card-inner">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <Users size={18} className="text-volt-600" />
-                  <h2 className="font-semibold text-ink-800">Commissions apporteurs</h2>
-                </div>
+            <Section
+              title="Commissions apporteurs"
+              icon={<Users size={18} className="text-volt-600" />}
+              defaultOpen={false}
+            >
+              <div className="flex items-center justify-end mb-4">
                 <select className="input !w-auto text-sm" value={moisCommission} onChange={e => setMoisCommission(parseInt(e.target.value))}>
                   {MOIS_LONG.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
                 </select>
@@ -640,14 +664,15 @@ export default function CRMPage() {
                   </div>
                 </div>
               )}
-            </div>
+            </Section>
 
             {/* Cotisations URSSAF dues par mois */}
-            <div className="card card-inner">
-              <div className="flex items-center gap-2 mb-4">
-                <Landmark size={17} className="text-volt-600" />
-                <h2 className="font-semibold text-ink-800">Cotisations URSSAF dues par mois {annee}</h2>
-              </div>
+            <Section
+              title="Cotisations URSSAF dues par mois"
+              subtitle={`${annee}`}
+              icon={<Landmark size={17} className="text-volt-600" />}
+              defaultOpen={false}
+            >
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -682,17 +707,15 @@ export default function CRMPage() {
                 </table>
               </div>
               <p className="text-xs text-ink-400 mt-3">Calcul basé sur le CA encaissé (factures payées) du mois × taux de cotisation par branche · à titre indicatif, la déclaration URSSAF réelle peut suivre un rythme mensuel ou trimestriel selon votre option</p>
-            </div>
+            </Section>
 
             {/* Graphique CA mensuel */}
-            <div className="card card-inner">
-              <div className="flex items-center justify-between mb-5">
-                <div className="flex items-center gap-2">
-                  <BarChart3 size={18} className="text-volt-600" />
-                  <h2 className="font-semibold text-ink-800">CA mensuel {annee}</h2>
-                </div>
-                {caTotalN1 > 0 && <span className="text-xs text-ink-400">vs {annee - 1}</span>}
-              </div>
+            <Section
+              title="CA mensuel"
+              subtitle={caTotalN1 > 0 ? `${annee} vs ${annee - 1}` : `${annee}`}
+              icon={<BarChart3 size={18} className="text-volt-600" />}
+              defaultOpen={true}
+            >
               <div className="flex items-end gap-1 md:gap-2" style={{ height: "120px" }}>
                 {caMensuel.map((m, i) => {
                   const n1 = caMensuelN1[i] ?? { mois: m.mois, service: 0, materiau: 0 };
@@ -705,96 +728,104 @@ export default function CRMPage() {
                 <span className="flex items-center gap-1.5 text-xs text-ink-500"><span className="w-3 h-3 rounded-sm bg-ink-300" />Service {annee - 1}</span>
                 <span className="flex items-center gap-1.5 text-xs text-ink-500"><span className="w-3 h-3 rounded-sm bg-ink-200" />Matériaux {annee - 1}</span>
               </div>
-            </div>
+            </Section>
 
             {/* Plafonds + Franchise TVA + CA par type */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <div className="card card-inner">
-                <div className="flex items-center gap-2 mb-4">
-                  <TrendingUp size={17} className="text-volt-600" />
-                  <h2 className="font-semibold text-ink-800">Plafonds AE {annee}</h2>
-                </div>
-                <div className="space-y-4">
-                  <div>
-                    <div className="flex justify-between text-sm mb-1.5">
-                      <span className="text-ink-600">Service <span className="text-ink-400 text-xs">/ {fmt(PLAFOND_SERVICE)}</span></span>
-                      <span className="font-semibold text-volt-600">{fmt(caAnnuel.service)} ({pctService} %)</span>
-                    </div>
-                    <div className="h-3 bg-ink-100 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full transition-all ${pctService > 80 ? "bg-red-500" : "bg-volt-500"}`} style={{ width: `${pctService}%` }} />
-                    </div>
-                    {pctService > 80 && <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertTriangle size={11} /> Proche du plafond service</p>}
+            <Section
+              title="Plafonds AE, franchise TVA & répartition du CA"
+              subtitle={`${annee}`}
+              icon={<TrendingUp size={17} className="text-volt-600" />}
+              defaultOpen={false}
+            >
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="card card-inner">
+                  <div className="flex items-center gap-2 mb-4">
+                    <TrendingUp size={17} className="text-volt-600" />
+                    <h3 className="font-semibold text-ink-800">Plafonds AE {annee}</h3>
                   </div>
-                  <div>
-                    <div className="flex justify-between text-sm mb-1.5">
-                      <span className="text-ink-600">Achat/revente <span className="text-ink-400 text-xs">/ {fmt(PLAFOND_MATERIAU)}</span></span>
-                      <span className="font-semibold text-emerald-600">{fmt(caAnnuel.materiau)} ({pctMateriau} %)</span>
+                  <div className="space-y-4">
+                    <div>
+                      <div className="flex justify-between text-sm mb-1.5">
+                        <span className="text-ink-600">Service <span className="text-ink-400 text-xs">/ {fmt(PLAFOND_SERVICE)}</span></span>
+                        <span className="font-semibold text-volt-600">{fmt(caAnnuel.service)} ({pctService} %)</span>
+                      </div>
+                      <div className="h-3 bg-ink-100 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${pctService > 80 ? "bg-red-500" : "bg-volt-500"}`} style={{ width: `${pctService}%` }} />
+                      </div>
+                      {pctService > 80 && <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertTriangle size={11} /> Proche du plafond service</p>}
                     </div>
-                    <div className="h-3 bg-ink-100 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full transition-all ${pctMateriau > 80 ? "bg-red-500" : "bg-emerald-500"}`} style={{ width: `${pctMateriau}%` }} />
+                    <div>
+                      <div className="flex justify-between text-sm mb-1.5">
+                        <span className="text-ink-600">Achat/revente <span className="text-ink-400 text-xs">/ {fmt(PLAFOND_MATERIAU)}</span></span>
+                        <span className="font-semibold text-emerald-600">{fmt(caAnnuel.materiau)} ({pctMateriau} %)</span>
+                      </div>
+                      <div className="h-3 bg-ink-100 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${pctMateriau > 80 ? "bg-red-500" : "bg-emerald-500"}`} style={{ width: `${pctMateriau}%` }} />
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="card card-inner">
-                <div className="flex items-center gap-2 mb-4">
-                  <Landmark size={17} className="text-volt-600" />
-                  <h2 className="font-semibold text-ink-800">Franchise TVA {annee}</h2>
-                </div>
-                <div className="space-y-4">
-                  <div>
-                    <div className="flex justify-between text-sm mb-1.5">
-                      <span className="text-ink-600">Service <span className="text-ink-400 text-xs">/ {fmt(FRANCHISE_TVA_SERVICE)}</span></span>
-                      <span className="font-semibold text-volt-600">{fmt(caAnnuel.service)} ({pctFranchiseService} %)</span>
-                    </div>
-                    <div className="h-3 bg-ink-100 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full transition-all ${pctFranchiseService >= 100 ? "bg-red-500" : pctFranchiseService > 80 ? "bg-amber-500" : "bg-volt-500"}`} style={{ width: `${pctFranchiseService}%` }} />
-                    </div>
-                    {franchiseServiceDepassee && <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertTriangle size={11} /> Franchise TVA dépassée — TVA applicable sur la branche service</p>}
+                <div className="card card-inner">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Landmark size={17} className="text-volt-600" />
+                    <h3 className="font-semibold text-ink-800">Franchise TVA {annee}</h3>
                   </div>
-                  <div>
-                    <div className="flex justify-between text-sm mb-1.5">
-                      <span className="text-ink-600">Achat/revente <span className="text-ink-400 text-xs">/ {fmt(FRANCHISE_TVA_MATERIAU)}</span></span>
-                      <span className="font-semibold text-emerald-600">{fmt(caAnnuel.materiau)} ({pctFranchiseMateriau} %)</span>
+                  <div className="space-y-4">
+                    <div>
+                      <div className="flex justify-between text-sm mb-1.5">
+                        <span className="text-ink-600">Service <span className="text-ink-400 text-xs">/ {fmt(FRANCHISE_TVA_SERVICE)}</span></span>
+                        <span className="font-semibold text-volt-600">{fmt(caAnnuel.service)} ({pctFranchiseService} %)</span>
+                      </div>
+                      <div className="h-3 bg-ink-100 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${pctFranchiseService >= 100 ? "bg-red-500" : pctFranchiseService > 80 ? "bg-amber-500" : "bg-volt-500"}`} style={{ width: `${pctFranchiseService}%` }} />
+                      </div>
+                      {franchiseServiceDepassee && <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertTriangle size={11} /> Franchise TVA dépassée — TVA applicable sur la branche service</p>}
                     </div>
-                    <div className="h-3 bg-ink-100 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full transition-all ${pctFranchiseMateriau >= 100 ? "bg-red-500" : pctFranchiseMateriau > 80 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pctFranchiseMateriau}%` }} />
+                    <div>
+                      <div className="flex justify-between text-sm mb-1.5">
+                        <span className="text-ink-600">Achat/revente <span className="text-ink-400 text-xs">/ {fmt(FRANCHISE_TVA_MATERIAU)}</span></span>
+                        <span className="font-semibold text-emerald-600">{fmt(caAnnuel.materiau)} ({pctFranchiseMateriau} %)</span>
+                      </div>
+                      <div className="h-3 bg-ink-100 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${pctFranchiseMateriau >= 100 ? "bg-red-500" : pctFranchiseMateriau > 80 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pctFranchiseMateriau}%` }} />
+                      </div>
+                      {franchiseMateriauDepassee && <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertTriangle size={11} /> Franchise TVA dépassée — TVA applicable sur la branche achat-revente</p>}
                     </div>
-                    {franchiseMateriauDepassee && <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertTriangle size={11} /> Franchise TVA dépassée — TVA applicable sur la branche achat-revente</p>}
+                    <p className="text-xs text-ink-400 pt-1 border-t border-ink-100">Seuils distincts du plafond micro : dépasser la franchise TVA vous rend redevable de la TVA, sans vous faire sortir du régime auto-entrepreneur.</p>
                   </div>
-                  <p className="text-xs text-ink-400 pt-1 border-t border-ink-100">Seuils distincts du plafond micro : dépasser la franchise TVA vous rend redevable de la TVA, sans vous faire sortir du régime auto-entrepreneur.</p>
                 </div>
-              </div>
 
-              <div className="card card-inner md:col-span-2">
-                <div className="flex items-center gap-2 mb-4">
-                  <PieChart size={17} className="text-volt-600" />
-                  <h2 className="font-semibold text-ink-800">CA par branche</h2>
-                </div>
-                {catStats.length === 0 ? (
-                  <p className="text-ink-400 text-sm text-center py-6">Aucune facture payée sur cette période</p>
-                ) : catStats.map(c => (
-                  <div key={c.type_branche} className="mb-3">
-                    <div className="flex justify-between text-sm mb-1.5">
-                      <span className="font-medium text-ink-800">{c.categorie}</span>
-                      <span className="font-semibold text-ink-900">{fmt(c.total)} <span className="text-ink-400 text-xs">({c.nb} lignes)</span></span>
-                    </div>
-                    <div className="h-2 bg-ink-100 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full ${c.type_branche === "service" ? "bg-volt-500" : "bg-emerald-500"}`}
-                        style={{ width: `${Math.round(c.total / caTotal * 100)}%` }} />
-                    </div>
+                <div className="card card-inner md:col-span-2">
+                  <div className="flex items-center gap-2 mb-4">
+                    <PieChart size={17} className="text-volt-600" />
+                    <h3 className="font-semibold text-ink-800">CA par branche</h3>
                   </div>
-                ))}
+                  {catStats.length === 0 ? (
+                    <p className="text-ink-400 text-sm text-center py-6">Aucune facture payée sur cette période</p>
+                  ) : catStats.map(c => (
+                    <div key={c.type_branche} className="mb-3">
+                      <div className="flex justify-between text-sm mb-1.5">
+                        <span className="font-medium text-ink-800">{c.categorie}</span>
+                        <span className="font-semibold text-ink-900">{fmt(c.total)} <span className="text-ink-400 text-xs">({c.nb} lignes)</span></span>
+                      </div>
+                      <div className="h-2 bg-ink-100 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full ${c.type_branche === "service" ? "bg-volt-500" : "bg-emerald-500"}`}
+                          style={{ width: `${Math.round(c.total / caTotal * 100)}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            </Section>
 
             {/* Suivi devis */}
-            <div className="card card-inner">
-              <div className="flex items-center gap-2 mb-4">
-                <FileText size={17} className="text-volt-600" />
-                <h2 className="font-semibold text-ink-800">Suivi des devis {annee}</h2>
-              </div>
+            <Section
+              title="Suivi des devis"
+              subtitle={`${annee}`}
+              icon={<FileText size={17} className="text-volt-600" />}
+              defaultOpen={false}
+            >
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
                 {[
                   { label: "Total", val: devisStats.total, color: "text-ink-900" },
@@ -829,14 +860,15 @@ export default function CRMPage() {
                   </div>
                 </div>
               )}
-            </div>
+            </Section>
 
             {/* Suivi paiements */}
-            <div className="card card-inner">
-              <div className="flex items-center gap-2 mb-4">
-                <Receipt size={17} className="text-volt-600" />
-                <h2 className="font-semibold text-ink-800">Suivi des paiements {annee}</h2>
-              </div>
+            <Section
+              title="Suivi des paiements"
+              subtitle={`${annee}`}
+              icon={<Receipt size={17} className="text-volt-600" />}
+              defaultOpen={false}
+            >
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
                   <div className="flex items-center gap-2 mb-2"><CheckCircle size={16} className="text-emerald-600" /><span className="text-xs font-semibold text-emerald-600 uppercase">Payées</span></div>
@@ -869,12 +901,16 @@ export default function CRMPage() {
                   </div>
                 </div>
               )}
-            </div>
+            </Section>
 
             {/* Top clients */}
             {topClients.length > 0 && (
-              <div className="card card-inner">
-                <h2 className="font-semibold text-ink-800 mb-4">Top clients {annee}</h2>
+              <Section
+                title="Top clients"
+                subtitle={`${annee}`}
+                icon={<Users size={17} className="text-volt-600" />}
+                defaultOpen={false}
+              >
                 <div className="space-y-2">
                   {topClients.map((c, i) => (
                     <div key={i} className="flex items-center gap-3">
@@ -885,7 +921,7 @@ export default function CRMPage() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </Section>
             )}
 
           </div>
