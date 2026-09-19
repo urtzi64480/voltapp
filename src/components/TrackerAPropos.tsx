@@ -33,19 +33,22 @@ function detectOS(ua: string): string {
 
 /**
  * Tracking de visite pour /a-propos, rendu depuis le Server Component de la
- * page (qui ne peut pas lui-même accéder à navigator/sessionStorage).
+ * page (qui ne peut pas lui-même accéder à navigator/localStorage).
  *
- * Même logique de déduplication que /demande/[userId] : une clé sessionStorage
- * par (utilisateur, écran) empêche un F5 ou un retour sur la page de recompter
- * une visite déjà enregistrée dans la même session ; une nouvelle session
- * (nouvel onglet, ou onglet fermé puis rouvert) est légitimement recomptée.
+ * Même clé et même fenêtre de 30 minutes que /demande/[userId] (voir ce
+ * fichier) : demande + a-propos visités à quelques minutes d'écart comptent
+ * pour UNE seule visite au total, quel que soit l'onglet ou un F5/retour.
  */
 export default function TrackerAPropos({ userId }: { userId: string }) {
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const sessionKey = `voltapp_visite_${userId}_a-propos`;
-    if (sessionStorage.getItem(sessionKey)) return;
-    sessionStorage.setItem(sessionKey, "1");
+
+    const FENETRE_SESSION_MS = 30 * 60 * 1000; // 30 minutes
+    const storageKey = `voltapp_derniere_visite_${userId}`;
+    const derniere = localStorage.getItem(storageKey);
+    const maintenant = Date.now();
+    if (derniere && maintenant - Number(derniere) < FENETRE_SESSION_MS) return;
+    localStorage.setItem(storageKey, String(maintenant));
 
     const ua = navigator.userAgent;
     fetch("/api/public/track", {
