@@ -428,40 +428,46 @@ export default function CRMPage() {
         {loading ? <div className="text-center py-16 text-ink-400">Chargement…</div> : (
           <div className="space-y-5">
 
-            {/* Visiteurs de la page demande — toujours visible */}
-            {userId && <VisitesStats userId={userId} />}
+            {/* Visiteurs de la page demande */}
+            {userId && (
+              <Section title="Visiteurs de la page demande" icon={<Users size={18} className="text-volt-600" />} defaultOpen={false}>
+                <VisitesStats userId={userId} />
+              </Section>
+            )}
 
-            {/* KPIs — toujours visibles, vue d'ensemble */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="card card-inner col-span-2 md:col-span-1">
-                <p className="text-xs text-ink-400 mb-1">CA total {annee}</p>
-                <p className="text-3xl font-bold text-ink-900">{fmt(caTotal)}</p>
-                <div className="mt-2 space-y-0.5">
-                  <p className="text-xs text-volt-600">Service : {fmt(caAnnuel.service)}</p>
-                  <p className="text-xs text-emerald-600">Matériaux : {fmt(caAnnuel.materiau)}</p>
-                  {caTotalN1 > 0 && (
-                    <p className="text-xs text-ink-400 mt-1">N-1 : {fmt(caTotalN1)}
-                      {evol !== null && <span className={cn("ml-1 font-semibold", evol >= 0 ? "text-emerald-600" : "text-red-500")}>{evol >= 0 ? "+" : ""}{evol}%</span>}
-                    </p>
-                  )}
+            {/* KPIs */}
+            <Section title="Vue d'ensemble" subtitle={`${annee}`} icon={<BarChart3 size={18} className="text-volt-600" />} defaultOpen={true}>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="bg-ink-50 rounded-xl p-4 col-span-2 md:col-span-1">
+                  <p className="text-xs text-ink-400 mb-1">CA total {annee}</p>
+                  <p className="text-3xl font-bold text-ink-900">{fmt(caTotal)}</p>
+                  <div className="mt-2 space-y-0.5">
+                    <p className="text-xs text-volt-600">Service : {fmt(caAnnuel.service)}</p>
+                    <p className="text-xs text-emerald-600">Matériaux : {fmt(caAnnuel.materiau)}</p>
+                    {caTotalN1 > 0 && (
+                      <p className="text-xs text-ink-400 mt-1">N-1 : {fmt(caTotalN1)}
+                        {evol !== null && <span className={cn("ml-1 font-semibold", evol >= 0 ? "text-emerald-600" : "text-red-500")}>{evol >= 0 ? "+" : ""}{evol}%</span>}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="bg-ink-50 rounded-xl p-4">
+                  <p className="text-xs text-ink-400 mb-1">Taux conversion devis</p>
+                  <p className="text-3xl font-bold text-ink-900">{txConversion} %</p>
+                  <p className="text-xs text-ink-400 mt-1">{devisStats.signe} signé{devisStats.signe > 1 ? "s" : ""} / {devisDecides} envoyé{devisDecides > 1 ? "s" : ""}</p>
+                </div>
+                <div className="bg-ink-50 rounded-xl p-4">
+                  <p className="text-xs text-ink-400 mb-1">Factures payées</p>
+                  <p className="text-3xl font-bold text-emerald-600">{fmt(paiementStats.montantPayee)}</p>
+                  <p className="text-xs text-ink-400 mt-1">{paiementStats.nbPayees} facture{paiementStats.nbPayees > 1 ? "s" : ""}</p>
+                </div>
+                <div className="bg-ink-50 rounded-xl p-4">
+                  <p className="text-xs text-ink-400 mb-1">Impayés</p>
+                  <p className="text-3xl font-bold text-red-600">{fmt(paiementStats.montantImpayee + paiementStats.montantRelance)}</p>
+                  <p className="text-xs text-ink-400 mt-1">{paiementStats.nbImpayees + paiementStats.nbRelance} facture{(paiementStats.nbImpayees + paiementStats.nbRelance) > 1 ? "s" : ""}</p>
                 </div>
               </div>
-              <div className="card card-inner">
-                <p className="text-xs text-ink-400 mb-1">Taux conversion devis</p>
-                <p className="text-3xl font-bold text-ink-900">{txConversion} %</p>
-                <p className="text-xs text-ink-400 mt-1">{devisStats.signe} signé{devisStats.signe > 1 ? "s" : ""} / {devisDecides} envoyé{devisDecides > 1 ? "s" : ""}</p>
-              </div>
-              <div className="card card-inner">
-                <p className="text-xs text-ink-400 mb-1">Factures payées</p>
-                <p className="text-3xl font-bold text-emerald-600">{fmt(paiementStats.montantPayee)}</p>
-                <p className="text-xs text-ink-400 mt-1">{paiementStats.nbPayees} facture{paiementStats.nbPayees > 1 ? "s" : ""}</p>
-              </div>
-              <div className="card card-inner">
-                <p className="text-xs text-ink-400 mb-1">Impayés</p>
-                <p className="text-3xl font-bold text-red-600">{fmt(paiementStats.montantImpayee + paiementStats.montantRelance)}</p>
-                <p className="text-xs text-ink-400 mt-1">{paiementStats.nbImpayees + paiementStats.nbRelance} facture{(paiementStats.nbImpayees + paiementStats.nbRelance) > 1 ? "s" : ""}</p>
-              </div>
-            </div>
+            </Section>
 
             {/* Export comptable */}
             <Section title="Export comptable" icon={<Download size={18} className="text-volt-600" />} defaultOpen={false}>
