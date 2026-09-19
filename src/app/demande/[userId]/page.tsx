@@ -147,23 +147,26 @@ function DemandePageContent({ userId }: { userId: string }) {
   const [rdvSuccess, setRdvSuccess] = useState(false);
   const [rdvError, setRdvError] = useState<string | null>(null);
 
-  // ── Tracking visite (une seule fois par session, pas par écran) ──
+  // ── Tracking visite (une seule fois par fenêtre de 30 min, tous onglets confondus) ──
   // Passe par /api/public/track (plutôt qu'un insert direct Supabase) pour que le
   // serveur puisse ajouter la géolocalisation via les headers Vercel, indisponible côté client.
   //
-  // Déduplication via sessionStorage (propre à l'onglet, effacée à sa fermeture) :
-  // une clé PAR SESSION (pas par écran) — un F5, ou naviguer entre devis/rdv/urgence
-  // dans la même visite, ne compte qu'une seule fois. Seul le mode capturé au tout
-  // premier chargement (via ?mode= en deep-link, ou null pour l'écran d'accueil) est
-  // enregistré ; les changements d'écran suivants ne créent plus de nouvelle ligne.
+  // localStorage (pas sessionStorage) + horodatage : contrairement à sessionStorage,
+  // ça tient face au bouton "Retour" du navigateur, un nouvel onglet, ou un F5 — et
+  // c'est la MÊME clé que /a-propos (voir TrackerAPropos.tsx), donc visiter demande
+  // puis a-propos à quelques minutes d'écart ne compte qu'une seule visite au total.
   const visitLoggedRef = useRef(false);
   useEffect(() => {
     if (visitLoggedRef.current) return;
     visitLoggedRef.current = true;
     if (typeof window === "undefined") return;
-    const sessionKey = `voltapp_visite_${userId}`;
-    if (sessionStorage.getItem(sessionKey)) return;
-    sessionStorage.setItem(sessionKey, "1");
+
+    const FENETRE_SESSION_MS = 30 * 60 * 1000; // 30 minutes
+    const storageKey = `voltapp_derniere_visite_${userId}`;
+    const derniere = localStorage.getItem(storageKey);
+    const maintenant = Date.now();
+    if (derniere && maintenant - Number(derniere) < FENETRE_SESSION_MS) return;
+    localStorage.setItem(storageKey, String(maintenant));
 
     const ua = navigator.userAgent;
     fetch("/api/public/track", {
