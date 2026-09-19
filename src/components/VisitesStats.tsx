@@ -46,14 +46,12 @@ function referrerLabel(referrer: string | null): string {
   }
 }
 
-// Traduit le couple (page, mode) capturé en tracking vers un libellé lisible côté CRM.
-function pageLabel(page: string | null, mode: string | null): string {
-  if (page && page.includes("/a-propos")) return "Page « En savoir plus »";
-  if (mode === "devis") return "Demande de devis";
-  if (mode === "rdv") return "Prise de rendez-vous";
-  if (mode === "urgence") return "Urgence électrique";
-  if (page && page.includes("/demande/")) return "Écran d'accueil (choix)";
-  return "Inconnu";
+// Traduit le libellé d'un écran de la page /demande (mode SPA) en texte lisible.
+function ecranLabel(screenKey: string): string {
+  if (screenKey === "devis") return "Demande de devis";
+  if (screenKey === "rdv") return "Prise de rendez-vous";
+  if (screenKey === "urgence") return "Urgence électrique";
+  return "Écran d'accueil (choix)";
 }
 
 function topEntries(counts: Record<string, number>, max = 5) {
@@ -133,14 +131,23 @@ export default function VisitesStats({ userId }: { userId: string }) {
   }, {});
   const topLocations = topEntries(locationCounts);
 
-  // Pages/modes consultés — vide pour les visites antérieures à l'ajout du tracking
-  // (colonnes page/mode nulles), donc affiché uniquement si au moins une visite en a.
-  const pageCounts = visites.reduce<Record<string, number>>((acc, v) => {
-    if (!v.page) return acc;
-    const label = pageLabel(v.page, v.mode);
-    acc[label] = (acc[label] ?? 0) + 1;
-    return acc;
-  }, {});
+  // Pages/écrans consultés : /a-propos vient des visites (1 ligne/session sur cette
+  // page dédiée) ; les écrans de la SPA /demande (accueil/devis/rdv/urgence) viennent
+  // du journal demande_clics (type_clic préfixé "ecran_") — détail complet, jamais
+  // compté dans le total de visites affiché plus haut.
+  const pageCounts: Record<string, number> = {};
+  for (const v of visites) {
+    if (v.page && v.page.includes("/a-propos")) {
+      const label = "Page « En savoir plus »";
+      pageCounts[label] = (pageCounts[label] ?? 0) + 1;
+    }
+  }
+  for (const c of clics) {
+    if (c.type_clic.startsWith("ecran_")) {
+      const label = ecranLabel(c.type_clic.replace("ecran_", ""));
+      pageCounts[label] = (pageCounts[label] ?? 0) + 1;
+    }
+  }
   const topPages = topEntries(pageCounts);
 
   const totalAjoutsContact = clics.filter((c) => c.type_clic === "ajout_contact").length;
