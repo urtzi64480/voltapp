@@ -2,17 +2,32 @@
 "use client";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { Loader2, Smartphone, Monitor, Tablet, Globe, MapPin, UserPlus } from "lucide-react";
+import { Loader2, Smartphone, Monitor, Globe, Link2, AppWindow, Cpu, MapPin, UserPlus } from "lucide-react";
 
 interface Visite {
   created_at: string;
   referrer: string | null;
   device_type: string | null;
+  navigateur: string | null;
+  os: string | null;
+  pays: string | null;
+  ville: string | null;
 }
 
 interface Clic {
   created_at: string;
   type_clic: string;
+}
+
+// Codes pays ISO (headers Vercel) vers libellé lisible — complété au besoin.
+const PAYS_LABELS: Record<string, string> = {
+  FR: "France", ES: "Espagne", PT: "Portugal", DE: "Allemagne", IT: "Italie",
+  GB: "Royaume-Uni", BE: "Belgique", CH: "Suisse", NL: "Pays-Bas", US: "États-Unis",
+  CA: "Canada", LU: "Luxembourg", MC: "Monaco", AD: "Andorre",
+};
+function paysLabel(code: string | null): string {
+  if (!code) return "Inconnu";
+  return PAYS_LABELS[code.toUpperCase()] ?? code.toUpperCase();
 }
 
 function referrerLabel(referrer: string | null): string {
@@ -29,6 +44,10 @@ function referrerLabel(referrer: string | null): string {
   }
 }
 
+function topEntries(counts: Record<string, number>, max = 5) {
+  return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, max);
+}
+
 // userId = l'id de l'électricien connecté (auth.uid()), pour ne voir que ses propres visites.
 export default function VisitesStats({ userId }: { userId: string }) {
   const [visites, setVisites] = useState<Visite[]>([]);
@@ -41,7 +60,7 @@ export default function VisitesStats({ userId }: { userId: string }) {
       const [visitesRes, clicsRes] = await Promise.all([
         supabase
           .from("demande_visites")
-          .select("created_at, referrer, device_type")
+          .select("created_at, referrer, device_type, navigateur, os, pays, ville")
           .eq("user_id", userId)
           .order("created_at", { ascending: false })
           .limit(500),
@@ -68,23 +87,39 @@ export default function VisitesStats({ userId }: { userId: string }) {
   }
 
   const total = visites.length;
+  const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
 
-  const deviceCounts = visites.reduce<Record<string, number>>((acc, v) => {
-    const d = v.device_type ?? "desktop";
-    acc[d] = (acc[d] ?? 0) + 1;
-    return acc;
-  }, {});
+  // Mobile / desktop uniquement — toute valeur historique "tablette" est regroupée avec mobile.
+  const nbDesktop = visites.filter((v) => v.device_type === "desktop").length;
+  const nbMobile = total - nbDesktop;
 
   const referrerCounts = visites.reduce<Record<string, number>>((acc, v) => {
     const r = referrerLabel(v.referrer);
     acc[r] = (acc[r] ?? 0) + 1;
     return acc;
   }, {});
-  const topReferrers = Object.entries(referrerCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5);
+  const topReferrers = topEntries(referrerCounts);
 
-  const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
+  const browserCounts = visites.reduce<Record<string, number>>((acc, v) => {
+    const b = v.navigateur ?? "Inconnu";
+    acc[b] = (acc[b] ?? 0) + 1;
+    return acc;
+  }, {});
+  const topBrowsers = topEntries(browserCounts);
+
+  const osCounts = visites.reduce<Record<string, number>>((acc, v) => {
+    const o = v.os ?? "Inconnu";
+    acc[o] = (acc[o] ?? 0) + 1;
+    return acc;
+  }, {});
+  const topOS = topEntries(osCounts);
+
+  const locationCounts = visites.reduce<Record<string, number>>((acc, v) => {
+    const label = v.ville ? `${v.ville} · ${paysLabel(v.pays)}` : paysLabel(v.pays);
+    acc[label] = (acc[label] ?? 0) + 1;
+    return acc;
+  }, {});
+  const topLocations = topEntries(locationCounts);
 
   const totalAjoutsContact = clics.filter((c) => c.type_clic === "ajout_contact").length;
   const tauxConversionContact = total ? Math.round((totalAjoutsContact / total) * 100) : 0;
@@ -101,21 +136,16 @@ export default function VisitesStats({ userId }: { userId: string }) {
         </p>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <div className="bg-ink-50 rounded-xl p-3 text-center">
           <Smartphone size={18} className="mx-auto mb-1 text-ink-500" />
-          <p className="text-lg font-bold text-ink-900">{pct(deviceCounts["mobile"] ?? 0)}%</p>
+          <p className="text-lg font-bold text-ink-900">{pct(nbMobile)}%</p>
           <p className="text-ink-400 text-xs">Mobile</p>
         </div>
         <div className="bg-ink-50 rounded-xl p-3 text-center">
           <Monitor size={18} className="mx-auto mb-1 text-ink-500" />
-          <p className="text-lg font-bold text-ink-900">{pct(deviceCounts["desktop"] ?? 0)}%</p>
-          <p className="text-ink-400 text-xs">Desktop</p>
-        </div>
-        <div className="bg-ink-50 rounded-xl p-3 text-center">
-          <Tablet size={18} className="mx-auto mb-1 text-ink-500" />
-          <p className="text-lg font-bold text-ink-900">{pct(deviceCounts["tablette"] ?? 0)}%</p>
-          <p className="text-ink-400 text-xs">Tablette</p>
+          <p className="text-lg font-bold text-ink-900">{pct(nbDesktop)}%</p>
+          <p className="text-ink-400 text-xs">PC</p>
         </div>
       </div>
 
@@ -133,22 +163,65 @@ export default function VisitesStats({ userId }: { userId: string }) {
         </div>
       </div>
 
-      <div>
-        <p className="text-xs font-semibold text-ink-600 mb-2 flex items-center gap-1.5">
-          <MapPin size={14} /> Sources principales
-        </p>
-        <div className="space-y-1.5">
-          {topReferrers.map(([label, count]) => (
-            <div key={label} className="flex items-center justify-between text-sm">
-              <span className="text-ink-700">{label}</span>
-              <span className="text-ink-400">
-                {count} ({pct(count)}%)
-              </span>
-            </div>
-          ))}
-          {topReferrers.length === 0 && (
-            <p className="text-ink-300 text-sm">Aucune donnée pour le moment.</p>
-          )}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div>
+          <p className="text-xs font-semibold text-ink-600 mb-2 flex items-center gap-1.5">
+            <Link2 size={14} /> Sources principales
+          </p>
+          <div className="space-y-1.5">
+            {topReferrers.map(([label, count]) => (
+              <div key={label} className="flex items-center justify-between text-sm">
+                <span className="text-ink-700 truncate">{label}</span>
+                <span className="text-ink-400 shrink-0 ml-2">{count} ({pct(count)}%)</span>
+              </div>
+            ))}
+            {topReferrers.length === 0 && <p className="text-ink-300 text-sm">Aucune donnée pour le moment.</p>}
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold text-ink-600 mb-2 flex items-center gap-1.5">
+            <MapPin size={14} /> Localisation
+          </p>
+          <div className="space-y-1.5">
+            {topLocations.map(([label, count]) => (
+              <div key={label} className="flex items-center justify-between text-sm">
+                <span className="text-ink-700 truncate">{label}</span>
+                <span className="text-ink-400 shrink-0 ml-2">{count} ({pct(count)}%)</span>
+              </div>
+            ))}
+            {topLocations.length === 0 && <p className="text-ink-300 text-sm">Aucune donnée pour le moment.</p>}
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold text-ink-600 mb-2 flex items-center gap-1.5">
+            <AppWindow size={14} /> Navigateurs
+          </p>
+          <div className="space-y-1.5">
+            {topBrowsers.map(([label, count]) => (
+              <div key={label} className="flex items-center justify-between text-sm">
+                <span className="text-ink-700 truncate">{label}</span>
+                <span className="text-ink-400 shrink-0 ml-2">{count} ({pct(count)}%)</span>
+              </div>
+            ))}
+            {topBrowsers.length === 0 && <p className="text-ink-300 text-sm">Aucune donnée pour le moment.</p>}
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold text-ink-600 mb-2 flex items-center gap-1.5">
+            <Cpu size={14} /> Système
+          </p>
+          <div className="space-y-1.5">
+            {topOS.map(([label, count]) => (
+              <div key={label} className="flex items-center justify-between text-sm">
+                <span className="text-ink-700 truncate">{label}</span>
+                <span className="text-ink-400 shrink-0 ml-2">{count} ({pct(count)}%)</span>
+              </div>
+            ))}
+            {topOS.length === 0 && <p className="text-ink-300 text-sm">Aucune donnée pour le moment.</p>}
+          </div>
         </div>
       </div>
     </div>
