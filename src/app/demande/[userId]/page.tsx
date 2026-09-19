@@ -147,13 +147,22 @@ function DemandePageContent({ userId }: { userId: string }) {
   const [rdvSuccess, setRdvSuccess] = useState(false);
   const [rdvError, setRdvError] = useState<string | null>(null);
 
-  // ── Tracking visite (une seule fois par montage) ──
+  // ── Tracking visite (une fois par écran distinct et par session) ──
   // Passe par /api/public/track (plutôt qu'un insert direct Supabase) pour que le
   // serveur puisse ajouter la géolocalisation via les headers Vercel, indisponible côté client.
-  const visitLoggedRef = useRef(false);
+  //
+  // Déduplication via sessionStorage (propre à l'onglet, effacée à sa fermeture) :
+  // un même écran (accueil / devis / rdv / urgence) n'est compté qu'une seule fois
+  // par session, pour qu'un simple F5 ou un aller-retour entre écrans ne gonfle pas
+  // les statistiques. Changer d'écran déclenche en revanche une nouvelle entrée,
+  // puisque c'est une consultation distincte.
   useEffect(() => {
-    if (visitLoggedRef.current) return;
-    visitLoggedRef.current = true;
+    if (typeof window === "undefined") return;
+    const screenKey = mode ?? "accueil";
+    const sessionKey = `voltapp_visite_${userId}_${screenKey}`;
+    if (sessionStorage.getItem(sessionKey)) return;
+    sessionStorage.setItem(sessionKey, "1");
+
     const ua = navigator.userAgent;
     fetch("/api/public/track", {
       method: "POST",
@@ -171,8 +180,7 @@ function DemandePageContent({ userId }: { userId: string }) {
         mode,
       }),
     }).catch((err) => console.error("Erreur tracking visite :", err));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  }, [mode, userId]);
 
   // ── Tracking clic "Ajouter à mes contacts" ──
   // Non-bloquant : la requête part en tâche de fond, le lien vCard s'ouvre normalement
