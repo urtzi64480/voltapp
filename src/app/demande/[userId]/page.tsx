@@ -147,19 +147,21 @@ function DemandePageContent({ userId }: { userId: string }) {
   const [rdvSuccess, setRdvSuccess] = useState(false);
   const [rdvError, setRdvError] = useState<string | null>(null);
 
-  // ── Tracking visite (une fois par écran distinct et par session) ──
+  // ── Tracking visite (une seule fois par session, pas par écran) ──
   // Passe par /api/public/track (plutôt qu'un insert direct Supabase) pour que le
   // serveur puisse ajouter la géolocalisation via les headers Vercel, indisponible côté client.
   //
   // Déduplication via sessionStorage (propre à l'onglet, effacée à sa fermeture) :
-  // un même écran (accueil / devis / rdv / urgence) n'est compté qu'une seule fois
-  // par session, pour qu'un simple F5 ou un aller-retour entre écrans ne gonfle pas
-  // les statistiques. Changer d'écran déclenche en revanche une nouvelle entrée,
-  // puisque c'est une consultation distincte.
+  // une clé PAR SESSION (pas par écran) — un F5, ou naviguer entre devis/rdv/urgence
+  // dans la même visite, ne compte qu'une seule fois. Seul le mode capturé au tout
+  // premier chargement (via ?mode= en deep-link, ou null pour l'écran d'accueil) est
+  // enregistré ; les changements d'écran suivants ne créent plus de nouvelle ligne.
+  const visitLoggedRef = useRef(false);
   useEffect(() => {
+    if (visitLoggedRef.current) return;
+    visitLoggedRef.current = true;
     if (typeof window === "undefined") return;
-    const screenKey = mode ?? "accueil";
-    const sessionKey = `voltapp_visite_${userId}_${screenKey}`;
+    const sessionKey = `voltapp_visite_${userId}`;
     if (sessionStorage.getItem(sessionKey)) return;
     sessionStorage.setItem(sessionKey, "1");
 
@@ -180,7 +182,8 @@ function DemandePageContent({ userId }: { userId: string }) {
         mode,
       }),
     }).catch((err) => console.error("Erreur tracking visite :", err));
-  }, [mode, userId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   // ── Tracking clic "Ajouter à mes contacts" ──
   // Non-bloquant : la requête part en tâche de fond, le lien vCard s'ouvre normalement
