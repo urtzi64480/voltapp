@@ -11,6 +11,7 @@ export async function POST(req: NextRequest) {
   const {
     table, user_id, type_clic,
     referrer, user_agent, device_type, navigateur, os, langue,
+    page, mode,
   } = body as {
     table?: TrackTable;
     user_id?: string;
@@ -21,6 +22,8 @@ export async function POST(req: NextRequest) {
     navigateur?: string;
     os?: string;
     langue?: string;
+    page?: string;
+    mode?: string | null;
   };
 
   if (!table || (table !== "demande_visites" && table !== "demande_clics") || !user_id) {
@@ -52,6 +55,11 @@ export async function POST(req: NextRequest) {
     region,
     ville,
   };
+
+  if (table === "demande_visites") {
+    row.page = page || null;
+    row.mode = mode || null;
+  }
 
   if (table === "demande_clics") {
     row.type_clic = type_clic || "ajout_contact";
