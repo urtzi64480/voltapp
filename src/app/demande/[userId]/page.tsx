@@ -71,12 +71,33 @@ function fmtDateLabel(dateKey: string) {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-// Déduit le type d'appareil à partir du user-agent (simple, pas de dépendance externe)
-function detectDeviceType(ua: string): "mobile" | "tablette" | "desktop" {
+// Déduit le type d'appareil à partir du user-agent — seulement mobile ou desktop
+// (les tablettes sont regroupées avec mobile, usage tactile similaire).
+function detectDeviceType(ua: string): "mobile" | "desktop" {
   const s = ua.toLowerCase();
-  if (/ipad|tablet|nexus 7|nexus 9|nexus 10|kfapwi/.test(s)) return "tablette";
-  if (/mobi|android|iphone|ipod/.test(s)) return "mobile";
+  if (/mobi|android|iphone|ipad|ipod|tablet|nexus 7|nexus 9|nexus 10|kfapwi/.test(s)) return "mobile";
   return "desktop";
+}
+
+// Détection simple du navigateur à partir du user-agent (sans dépendance externe).
+// L'ordre des tests compte : Edge et Opera embarquent "Chrome" dans leur UA.
+function detectBrowser(ua: string): string {
+  if (/edg\//i.test(ua)) return "Edge";
+  if (/opr\/|opera/i.test(ua)) return "Opera";
+  if (/chrome|crios/i.test(ua)) return "Chrome";
+  if (/firefox|fxios/i.test(ua)) return "Firefox";
+  if (/safari/i.test(ua)) return "Safari";
+  return "Autre";
+}
+
+// Détection simple du système d'exploitation à partir du user-agent.
+function detectOS(ua: string): string {
+  if (/windows/i.test(ua)) return "Windows";
+  if (/iphone|ipad|ipod/i.test(ua)) return "iOS";
+  if (/android/i.test(ua)) return "Android";
+  if (/mac os/i.test(ua)) return "macOS";
+  if (/linux/i.test(ua)) return "Linux";
+  return "Autre";
 }
 
 function DemandePageContent({ userId }: { userId: string }) {
@@ -128,41 +149,49 @@ function DemandePageContent({ userId }: { userId: string }) {
   const [rdvError, setRdvError] = useState<string | null>(null);
 
   // ── Tracking visite (une seule fois par montage) ──
+  // Passe par /api/public/track (plutôt qu'un insert direct Supabase) pour que le
+  // serveur puisse ajouter la géolocalisation via les headers Vercel, indisponible côté client.
   const visitLoggedRef = useRef(false);
   useEffect(() => {
     if (visitLoggedRef.current) return;
     visitLoggedRef.current = true;
     const ua = navigator.userAgent;
-    supabase
-      .from("demande_visites")
-      .insert({
+    fetch("/api/public/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "demande_visites",
         user_id: userId,
         referrer: document.referrer || null,
         user_agent: ua,
         device_type: detectDeviceType(ua),
-      })
-      .then(({ error }) => {
-        if (error) console.error("Erreur tracking visite :", error);
-      });
+        navigateur: detectBrowser(ua),
+        os: detectOS(ua),
+        langue: navigator.language || null,
+      }),
+    }).catch((err) => console.error("Erreur tracking visite :", err));
   }, [userId]);
 
   // ── Tracking clic "Ajouter à mes contacts" ──
-  // Non-bloquant : l'insert part en tâche de fond, le lien vCard s'ouvre normalement
-  // dans son nouvel onglet sans attendre la réponse Supabase.
+  // Non-bloquant : la requête part en tâche de fond, le lien vCard s'ouvre normalement
+  // dans son nouvel onglet sans attendre la réponse serveur.
   const handleAjoutContact = () => {
     const ua = navigator.userAgent;
-    supabase
-      .from("demande_clics")
-      .insert({
-        user_id: userId,
+    fetch("/api/public/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "demande_clics",
         type_clic: "ajout_contact",
+        user_id: userId,
         referrer: document.referrer || null,
         user_agent: ua,
         device_type: detectDeviceType(ua),
-      })
-      .then(({ error }) => {
-        if (error) console.error("Erreur tracking clic ajout contact :", error);
-      });
+        navigateur: detectBrowser(ua),
+        os: detectOS(ua),
+        langue: navigator.language || null,
+      }),
+    }).catch((err) => console.error("Erreur tracking clic ajout contact :", err));
   };
 
   useEffect(() => {
