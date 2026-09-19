@@ -146,6 +146,25 @@ function DemandePageContent({ userId }: { userId: string }) {
       });
   }, [userId]);
 
+  // ── Tracking clic "Ajouter à mes contacts" ──
+  // Non-bloquant : l'insert part en tâche de fond, le lien vCard s'ouvre normalement
+  // dans son nouvel onglet sans attendre la réponse Supabase.
+  const handleAjoutContact = () => {
+    const ua = navigator.userAgent;
+    supabase
+      .from("demande_clics")
+      .insert({
+        user_id: userId,
+        type_clic: "ajout_contact",
+        referrer: document.referrer || null,
+        user_agent: ua,
+        device_type: detectDeviceType(ua),
+      })
+      .then(({ error }) => {
+        if (error) console.error("Erreur tracking clic ajout contact :", error);
+      });
+  };
+
   useEffect(() => {
     async function loadProfil() {
       const { data } = await supabase
@@ -434,6 +453,7 @@ function DemandePageContent({ userId }: { userId: string }) {
           href={VCARD_URL}
           target="_blank"
           rel="noopener noreferrer"
+          onClick={handleAjoutContact}
           className="shrink-0 inline-flex items-center justify-center gap-1.5 w-full sm:w-auto px-4 py-2.5 sm:py-2 rounded-lg bg-volt-500 text-ink-900 font-semibold text-sm sm:text-xs hover:bg-volt-400 transition-colors sm:ml-auto">
           <UserPlus size={16} className="sm:hidden" />
           <UserPlus size={14} className="hidden sm:block" />
