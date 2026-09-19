@@ -2,6 +2,7 @@
 import type { Metadata } from "next";
 import { supabase } from "@/lib/supabase";
 import ActionsAndGallery from "@/components/ActionsAndGallery";
+import TrackerAPropos from "@/components/TrackerAPropos";
 import { ChevronLeft } from "lucide-react";
 
 // Empêche Next.js de figer cette page au build : sans ça, les photos
@@ -49,6 +50,8 @@ export default async function AProposPage() {
 
   return (
     <div className="min-h-screen bg-ink-50">
+      <TrackerAPropos userId={USER_ID} />
+
       {/* Header sombre — /a-propos est le point d'entrée, donc lien "en avant" vers la demande */}
       <div className="bg-ink-900 px-4 py-4">
         <div className="max-w-5xl mx-auto">
