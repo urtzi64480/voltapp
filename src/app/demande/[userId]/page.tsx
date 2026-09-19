@@ -1,4 +1,3 @@
-// src/app/demande/[userId]/page.tsx
 "use client";
 import { useState, useRef, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
@@ -168,8 +167,11 @@ function DemandePageContent({ userId }: { userId: string }) {
         navigateur: detectBrowser(ua),
         os: detectOS(ua),
         langue: navigator.language || null,
+        page: window.location.pathname,
+        mode,
       }),
     }).catch((err) => console.error("Erreur tracking visite :", err));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
   // ── Tracking clic "Ajouter à mes contacts" ──
