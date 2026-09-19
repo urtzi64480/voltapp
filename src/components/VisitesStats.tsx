@@ -2,7 +2,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { Loader2, Smartphone, Monitor, Globe, Link2, AppWindow, Cpu, MapPin, UserPlus } from "lucide-react";
+import { Loader2, Smartphone, Monitor, Globe, Link2, AppWindow, Cpu, MapPin, UserPlus, FileSearch } from "lucide-react";
 
 interface Visite {
   created_at: string;
@@ -12,6 +12,8 @@ interface Visite {
   os: string | null;
   pays: string | null;
   ville: string | null;
+  page: string | null;
+  mode: string | null;
 }
 
 interface Clic {
@@ -44,6 +46,16 @@ function referrerLabel(referrer: string | null): string {
   }
 }
 
+// Traduit le couple (page, mode) capturé en tracking vers un libellé lisible côté CRM.
+function pageLabel(page: string | null, mode: string | null): string {
+  if (page && page.includes("/a-propos")) return "Page « En savoir plus »";
+  if (mode === "devis") return "Demande de devis";
+  if (mode === "rdv") return "Prise de rendez-vous";
+  if (mode === "urgence") return "Urgence électrique";
+  if (page && page.includes("/demande/")) return "Écran d'accueil (choix)";
+  return "Inconnu";
+}
+
 function topEntries(counts: Record<string, number>, max = 5) {
   return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, max);
 }
@@ -60,7 +72,7 @@ export default function VisitesStats({ userId }: { userId: string }) {
       const [visitesRes, clicsRes] = await Promise.all([
         supabase
           .from("demande_visites")
-          .select("created_at, referrer, device_type, navigateur, os, pays, ville")
+          .select("created_at, referrer, device_type, navigateur, os, pays, ville, page, mode")
           .eq("user_id", userId)
           .order("created_at", { ascending: false })
           .limit(500),
@@ -121,6 +133,16 @@ export default function VisitesStats({ userId }: { userId: string }) {
   }, {});
   const topLocations = topEntries(locationCounts);
 
+  // Pages/modes consultés — vide pour les visites antérieures à l'ajout du tracking
+  // (colonnes page/mode nulles), donc affiché uniquement si au moins une visite en a.
+  const pageCounts = visites.reduce<Record<string, number>>((acc, v) => {
+    if (!v.page) return acc;
+    const label = pageLabel(v.page, v.mode);
+    acc[label] = (acc[label] ?? 0) + 1;
+    return acc;
+  }, {});
+  const topPages = topEntries(pageCounts);
+
   const totalAjoutsContact = clics.filter((c) => c.type_clic === "ajout_contact").length;
   const tauxConversionContact = total ? Math.round((totalAjoutsContact / total) * 100) : 0;
 
@@ -162,6 +184,22 @@ export default function VisitesStats({ userId }: { userId: string }) {
           </p>
         </div>
       </div>
+
+      {topPages.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-ink-600 mb-2 flex items-center gap-1.5">
+            <FileSearch size={14} /> Pages / actions demandées
+          </p>
+          <div className="space-y-1.5">
+            {topPages.map(([label, count]) => (
+              <div key={label} className="flex items-center justify-between text-sm">
+                <span className="text-ink-700 truncate">{label}</span>
+                <span className="text-ink-400 shrink-0 ml-2">{count} ({pct(count)}%)</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         <div>
