@@ -185,6 +185,30 @@ function DemandePageContent({ userId }: { userId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
+  // ── Journal des écrans consultés (détail complet, sans gonfler le total de visites) ──
+  // Contrairement à la visite ci-dessus (1 ligne par session, table demande_visites),
+  // chaque écran distinct consulté est journalisé ici via demande_clics — même table
+  // et logique que le clic "Ajouter à mes contacts", avec un type_clic préfixé
+  // "ecran_". Ces lignes ne sont jamais comptées dans le total de visites du CRM,
+  // seulement affichées dans le détail "Pages / actions demandées".
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const screenKey = mode ?? "accueil";
+    const sessionKey = `voltapp_ecran_${userId}_${screenKey}`;
+    if (sessionStorage.getItem(sessionKey)) return;
+    sessionStorage.setItem(sessionKey, "1");
+
+    fetch("/api/public/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "demande_clics",
+        user_id: userId,
+        type_clic: `ecran_${screenKey}`,
+      }),
+    }).catch((err) => console.error("Erreur tracking écran :", err));
+  }, [mode, userId]);
+
   // ── Tracking clic "Ajouter à mes contacts" ──
   // Non-bloquant : la requête part en tâche de fond, le lien vCard s'ouvre normalement
   // dans son nouvel onglet sans attendre la réponse serveur.
