@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
+  Ouverture, OuvertureType, nouvelleOuverture, positionSurSegment,
   NIVEAU_TYPES, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, ajusterLongueurContour,
   distanceAuSegment, positionnerADistanceDuSegment,
   CircuitManuel, FamilleCircuitManuel, FAMILLES_CIRCUIT_MANUEL, familleCircuitManuelAppareillage,
@@ -34,6 +35,9 @@ const MAX_ZOOM = 4;
 // sont en concurrence — l'alignement gagne toujours sur le simple arrondi de grille.
 const SNAP_GRID_M = 0.1;
 const ALIGN_THRESHOLD_PX = 8;
+// Distance de détection (px écran) pour "clique près d'un mur" lors du placement
+// d'une porte/fenêtre — plus généreux que l'accroche fine, un mur est fin à l'écran.
+const SEUIL_MUR_PX = 18;
 
 function arrondiGrille(v: number, pas: number = SNAP_GRID_M): number {
   return Math.round(v / pas) * pas;
@@ -49,6 +53,24 @@ function pointsReferenceNiveau(niveau: Niveau | null, excludePieceId?: number, e
     });
   });
   return pts;
+}
+
+// Trouve, sur tout le niveau, le mur (segment de contour d'une pièce) le plus proche
+// d'un point cliqué — pour placer une porte/fenêtre dessus. `seuilM` en mètres, sinon null.
+type MeilleurMur = { piece: Piece; segIndex: number; t: number; d: number };
+function trouverMurLePlusProche(pieces: Piece[], pointMonde: Point, seuilM: number): { piece: Piece; segIndex: number; t: number } | null {
+  let meilleur: MeilleurMur | null = null;
+  pieces.forEach(piece => {
+    piece.contour.forEach((a, i) => {
+      const b = piece.contour[(i + 1) % piece.contour.length];
+      const d = distanceAuSegment(pointMonde, a, b);
+      if (!meilleur || d < meilleur.d) meilleur = { piece, segIndex: i, t: positionSurSegment(pointMonde, a, b), d };
+    });
+  });
+  if (!meilleur) return null;
+  const m: MeilleurMur = meilleur;
+  if (m.d > seuilM) return null;
+  return { piece: m.piece, segIndex: m.segIndex, t: m.t };
 }
 
 interface ResultatSnap { point: Point; guideX?: number; guideY?: number; }
@@ -230,6 +252,7 @@ type DragMode =
   | { kind: "vertex"; pieceId: number; vertexIndex: number }
   | { kind: "piece"; pieceId: number; startX: number; startY: number; startContour: Point[] }
   | { kind: "appareillage"; pieceId: number; appareillageId: number }
+  | { kind: "ouverture"; pieceId: number; ouvertureId: number }
   | { kind: "tableau" }
   | { kind: "liaison"; cle: string; waypointId: number };
 
@@ -394,6 +417,22 @@ function CommandeLinkForm({ niveau, item, onValidate, onCancel }: {
 
 // ─── PALETTE ────────────────────────────────────────────────────────────────────
 
+// Icône simple porte/fenêtre — pas de symbole normalisé dédié, juste de quoi
+// distinguer les deux boutons et l'ouverture posée sur le plan.
+function OuvertureIcon({ type, size = 16, color = "currentColor" }: { type: OuvertureType; size?: number; color?: string }) {
+  return type === "porte" ? (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+      <path d="M3 14V2l9 2v10" stroke={color} strokeWidth={1.4} strokeLinejoin="round" />
+      <path d="M3 14 A9 9 0 0 0 12 5" stroke={color} strokeWidth={1} strokeDasharray="1.5,1.3" />
+    </svg>
+  ) : (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+      <rect x={2} y={4} width={12} height={8} stroke={color} strokeWidth={1.4} />
+      <path d="M8 4v8M2 8h12" stroke={color} strokeWidth={1.2} />
+    </svg>
+  );
+}
+
 function PaletteBoutons({ placementType, onSelect }: { placementType: AppareillageType | null; onSelect: (t: AppareillageType | null) => void }) {
   const categories = Array.from(new Set(PALETTE.map(p => p.categorie)));
   return (
@@ -554,6 +593,8 @@ export default function PlanPage() {
   // sans jamais les resynchroniser pendant la frappe (ce qui bloquait l'effacement).
   const [dragEndTick, setDragEndTick] = useState(0);
   const [selectedTableau, setSelectedTableau] = useState(false);
+  const [placingOuverture, setPlacingOuverture] = useState<OuvertureType | null>(null);
+  const [selectedOuvertureId, setSelectedOuvertureId] = useState<number | null>(null);
   const [circuitsManuelsOpen, setCircuitsManuelsOpen] = useState(false);
   const [selectedWaypoint, setSelectedWaypoint] = useState<{ cle: string; waypointId: number } | null>(null);
   const [placementError, setPlacementError] = useState<string | null>(null);
@@ -678,6 +719,24 @@ export default function PlanPage() {
         const { point: m, guideX, guideY } = snapAvecAlignement(raw, candidats, seuilM);
         setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
         updateNiveauActif(n => ({ ...n, tableauPos: m }));
+      } else if (dragMode.kind === "ouverture") {
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const raw = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        const niveauCourant = niveaux.find(n => n.id === niveauActifId) ?? null;
+        const piece = niveauCourant?.pieces.find(p => p.id === dragMode.pieceId);
+        const ouverture = piece?.ouvertures?.find(o => o.id === dragMode.ouvertureId);
+        if (!piece || !ouverture) return;
+        // Contrainte au mur porteur : seule la position le long de CE segment change,
+        // impossible de faire "sauter" une porte/fenêtre sur un autre mur en la glissant.
+        const a = piece.contour[ouverture.segIndex], b = piece.contour[(ouverture.segIndex + 1) % piece.contour.length];
+        const t = positionSurSegment(raw, a, b);
+        updateNiveauActif(n => ({
+          ...n,
+          pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : {
+            ...p, ouvertures: (p.ouvertures ?? []).map(o => o.id === dragMode.ouvertureId ? { ...o, position: t } : o),
+          }),
+        }));
       } else if (dragMode.kind === "liaison") {
         const rect = svgRef.current?.getBoundingClientRect();
         if (!rect) return;
@@ -697,10 +756,11 @@ export default function PlanPage() {
       }
     };
     const onUp = () => {
-      // "pan" (clic dans le vide / déplacement de la vue) et "liaison" (coude, déjà
-      // exclu) ne changent jamais la composition électrique du plan — les exclure d'ici
-      // évite de réinitialiser les circuits générés à chaque simple clic hors pièce.
-      if (dragMode.kind !== "liaison" && dragMode.kind !== "pan") invalidateResultat();
+      // "pan" (clic dans le vide / déplacement de la vue), "liaison" (coude) et
+      // "ouverture" (porte/fenêtre, sans impact électrique) ne changent jamais la
+      // composition électrique du plan — les exclure évite de réinitialiser les
+      // circuits générés à chaque simple clic ou déplacement d'ouverture.
+      if (dragMode.kind !== "liaison" && dragMode.kind !== "pan" && dragMode.kind !== "ouverture") invalidateResultat();
       setDragEndTick(t => t + 1);
       setDragMode({ kind: "none" });
       setSnapGuide(null);
@@ -759,16 +819,20 @@ export default function PlanPage() {
   };
 
   const entrerModeDessiner = () => {
-    setMode("dessiner"); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false);
-    setPlacementType(null); setPlacingTableau(false);
+    setMode("dessiner"); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null);
+    setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null);
   };
   const armerPlacement = (t: AppareillageType | null) => {
-    setPlacementType(t); setMode("select"); setPlacingTableau(false); setDrawingPoints([]);
-    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false);
+    setPlacementType(t); setMode("select"); setPlacingTableau(false); setPlacingOuverture(null); setDrawingPoints([]);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null);
   };
   const armerPlacementTableau = () => {
-    setPlacingTableau(true); setMode("select"); setPlacementType(null); setDrawingPoints([]);
-    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false);
+    setPlacingTableau(true); setMode("select"); setPlacementType(null); setPlacingOuverture(null); setDrawingPoints([]);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null);
+  };
+  const armerPlacementOuverture = (t: OuvertureType | null) => {
+    setPlacingOuverture(t); setMode("select"); setPlacementType(null); setPlacingTableau(false); setDrawingPoints([]);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null);
   };
 
   const removerAppareillage = (appareillageId: number) => {
@@ -786,6 +850,26 @@ export default function PlanPage() {
     setSelectedAppareillageId(null);
     invalidateResultat();
   };
+
+  // ─── OUVERTURES (portes/fenêtres) ──────────────────────────────────────────────
+  // Aucun impact électrique — ne déclenchent jamais invalidateResultat().
+
+  const supprimerOuverture = (ouvertureId: number) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({ ...p, ouvertures: (p.ouvertures ?? []).filter(o => o.id !== ouvertureId) })),
+    }));
+    setSelectedOuvertureId(null);
+  };
+  const modifierOuverture = (ouvertureId: number, patch: Partial<Pick<Ouverture, "largeur" | "hauteur" | "allege">>) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({
+        ...p, ouvertures: (p.ouvertures ?? []).map(o => o.id === ouvertureId ? { ...o, ...patch } : o),
+      })),
+    }));
+  };
+
 
   const renommerAppareillage = (appareillageId: number, nom: string) => {
     updateNiveauActif(n => ({
@@ -983,9 +1067,26 @@ export default function PlanPage() {
       return;
     }
 
+    if (placingOuverture) {
+      const seuilM = SEUIL_MUR_PX / (PX_PER_M * zoom);
+      const mur = niveauActif ? trouverMurLePlusProche(niveauActif.pieces, m, seuilM) : null;
+      if (!mur) {
+        setPlacementError("Clique tout près d'un mur pour y placer une porte ou une fenêtre.");
+        setTimeout(() => setPlacementError(null), 2000);
+        return;
+      }
+      const nouvelle = nouvelleOuverture(placingOuverture, mur.segIndex, mur.t);
+      updateNiveauActif(n => ({
+        ...n,
+        pieces: n.pieces.map(p => p.id === mur.piece.id ? { ...p, ouvertures: [...(p.ouvertures ?? []), nouvelle] } : p),
+      }));
+      return;
+    }
+
     setSelectedPieceId(null);
     setSelectedAppareillageId(null);
     setSelectedTableau(false);
+    setSelectedOuvertureId(null);
     setSelectedWaypoint(null);
     setDragMode({ kind: "pan", startX: e.clientX, startY: e.clientY, startPan: pan });
   };
@@ -998,7 +1099,7 @@ export default function PlanPage() {
   };
 
   const onPieceDown = (piece: Piece, e: React.PointerEvent) => {
-    if (mode === "dessiner" || placementType || placingTableau) return;
+    if (mode === "dessiner" || placementType || placingTableau || placingOuverture) return;
     e.stopPropagation();
     if (selectedPieceId === piece.id) {
       setDragMode({ kind: "piece", pieceId: piece.id, startX: e.clientX, startY: e.clientY, startContour: piece.contour });
@@ -1006,6 +1107,7 @@ export default function PlanPage() {
       setSelectedPieceId(piece.id);
       setSelectedAppareillageId(null);
       setSelectedTableau(false);
+      setSelectedOuvertureId(null);
       setSelectedWaypoint(null);
     }
   };
@@ -1016,7 +1118,7 @@ export default function PlanPage() {
   };
 
   const onAppareillagePointerDown = (piece: Piece, a: AppareillagePlace, e: React.PointerEvent) => {
-    if (mode !== "select" || placementType || placingTableau) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture) return;
     e.stopPropagation();
     // Sélectionne ET arme le déplacement dès le premier appui (comme un vrai
     // glisser-déposer) : un simple clic sans bouger équivaut juste à une sélection,
@@ -1024,18 +1126,31 @@ export default function PlanPage() {
     setSelectedAppareillageId(a.id);
     setSelectedTableau(false);
     setSelectedPieceId(null);
+    setSelectedOuvertureId(null);
     setSelectedWaypoint(null);
     setDragMode({ kind: "appareillage", pieceId: piece.id, appareillageId: a.id });
   };
 
   const onTableauPointerDown = (e: React.PointerEvent) => {
-    if (mode !== "select" || placementType || placingTableau) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture) return;
     e.stopPropagation();
     setSelectedTableau(true);
     setSelectedPieceId(null);
     setSelectedAppareillageId(null);
+    setSelectedOuvertureId(null);
     setSelectedWaypoint(null);
     setDragMode({ kind: "tableau" });
+  };
+
+  const onOuverturePointerDown = (piece: Piece, o: Ouverture, e: React.PointerEvent) => {
+    if (mode !== "select" || placementType || placingTableau || placingOuverture) return;
+    e.stopPropagation();
+    setSelectedOuvertureId(o.id);
+    setSelectedPieceId(null);
+    setSelectedAppareillageId(null);
+    setSelectedTableau(false);
+    setSelectedWaypoint(null);
+    setDragMode({ kind: "ouverture", pieceId: piece.id, ouvertureId: o.id });
   };
 
   const handleSave = useCallback(async () => {
@@ -1170,7 +1285,7 @@ export default function PlanPage() {
 
         <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 bg-ink-50 overflow-x-auto shrink-0">
           {[...niveaux].sort((a, b) => a.ordre - b.ordre).map(n => (
-            <button key={n.id} onClick={() => { setNiveauActifId(n.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); }}
+            <button key={n.id} onClick={() => { setNiveauActifId(n.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); }}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
                 n.id === niveauActifId ? "bg-ink-900 text-volt-400" : "bg-white border border-ink-200 text-ink-500 hover:border-ink-400"
               }`}>
@@ -1191,8 +1306,8 @@ export default function PlanPage() {
 
         {!vue3D && (
         <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 shrink-0 flex-wrap">
-          <button onClick={() => { setMode("select"); setDrawingPoints([]); setPlacementType(null); setPlacingTableau(false); }}
-            className={`btn-ghost !text-xs ${mode === "select" && !placementType && !placingTableau ? "!bg-ink-900 !text-volt-400" : ""}`}>
+          <button onClick={() => { setMode("select"); setDrawingPoints([]); setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); }}
+            className={`btn-ghost !text-xs ${mode === "select" && !placementType && !placingTableau && !placingOuverture ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <MousePointer2 size={13} /> Sélection
           </button>
           <button onClick={entrerModeDessiner} className={`btn-ghost !text-xs ${mode === "dessiner" ? "!bg-ink-900 !text-volt-400" : ""}`}>
@@ -1200,6 +1315,14 @@ export default function PlanPage() {
           </button>
           <button onClick={armerPlacementTableau} className={`btn-ghost !text-xs ${placingTableau ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <Zap size={13} /> Position tableau
+          </button>
+          <button onClick={() => armerPlacementOuverture(placingOuverture === "porte" ? null : "porte")}
+            className={`btn-ghost !text-xs ${placingOuverture === "porte" ? "!bg-ink-900 !text-volt-400" : ""}`}>
+            <OuvertureIcon type="porte" size={13} /> Porte
+          </button>
+          <button onClick={() => armerPlacementOuverture(placingOuverture === "fenetre" ? null : "fenetre")}
+            className={`btn-ghost !text-xs ${placingOuverture === "fenetre" ? "!bg-ink-900 !text-volt-400" : ""}`}>
+            <OuvertureIcon type="fenetre" size={13} /> Fenêtre
           </button>
           <button onClick={() => setCircuitsManuelsOpen(o => !o)} className={`btn-ghost !text-xs ${circuitsManuelsOpen ? "!bg-ink-900 !text-volt-400" : ""}`}>
             🎛️ Circuits manuels
@@ -1295,7 +1418,7 @@ export default function PlanPage() {
                   <g key={piece.id}>
                     <polygon points={pts} fill={spec.color} fillOpacity={0.85}
                       stroke={isSelected ? "#F59E0B" : spec.stroke} strokeWidth={isSelected ? 2.5 : 1.5}
-                      style={{ cursor: mode === "select" && !placementType && !placingTableau ? "move" : "default" }}
+                      style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture ? "move" : "default" }}
                       onPointerDown={e => onPieceDown(piece, e)} />
                     <text x={c.x} y={c.y - 4} textAnchor="middle" fontSize={12} fontFamily="monospace" fontWeight={700} fill="#1c1917" style={{ pointerEvents: "none" }}>
                       {piece.nom || spec.label}
@@ -1312,8 +1435,40 @@ export default function PlanPage() {
                       const len = distance(pt, next);
                       return (
                         <EtiquetteLongueur key={`seg${i}`} aPx={toScreen(pt)} bPx={toScreen(next)} texte={`${len.toFixed(2)} m`}
-                          onClick={mode === "select" && !placementType && !placingTableau ? () => setEditingSegment({ pieceId: piece.id, segIndex: i }) : undefined}
+                          onClick={mode === "select" && !placementType && !placingTableau && !placingOuverture ? () => setEditingSegment({ pieceId: piece.id, segIndex: i }) : undefined}
                           actif={editingSegment?.pieceId === piece.id && editingSegment?.segIndex === i} />
+                      );
+                    })}
+                    {(piece.ouvertures ?? []).map(o => {
+                      const a = piece.contour[o.segIndex], b = piece.contour[(o.segIndex + 1) % piece.contour.length];
+                      if (!a || !b) return null;
+                      const centreM = { x: a.x + (b.x - a.x) * o.position, y: a.y + (b.y - a.y) * o.position };
+                      const pC = toScreen(centreM), pA = toScreen(a), pB = toScreen(b);
+                      const angleDeg = Math.atan2(pB.y - pA.y, pB.x - pA.x) * 180 / Math.PI;
+                      const largeurPx = Math.max(10, (o.largeur / 100) * PX_PER_M * zoom);
+                      const isSel = o.id === selectedOuvertureId;
+                      const couleur = o.type === "porte" ? "#92400E" : "#0369A1";
+                      return (
+                        <g key={`ouv-${o.id}`} onPointerDown={e => onOuverturePointerDown(piece, o, e)}
+                          style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture ? "grab" : "default" }}>
+                          <g transform={`translate(${pC.x}, ${pC.y}) rotate(${angleDeg})`}>
+                            <rect x={-largeurPx / 2} y={-4} width={largeurPx} height={8} fill="#fff" />
+                            <rect x={-largeurPx / 2 - 4} y={-11} width={largeurPx + 8} height={22} fill="transparent" />
+                            {o.type === "porte" ? (
+                              <>
+                                <line x1={-largeurPx / 2} y1={0} x2={-largeurPx / 2} y2={-largeurPx} stroke={couleur} strokeWidth={1.5} />
+                                <path d={`M ${-largeurPx / 2} ${-largeurPx} A ${largeurPx} ${largeurPx} 0 0 1 ${largeurPx / 2} 0`}
+                                  fill="none" stroke={couleur} strokeWidth={1} strokeDasharray="3,2" />
+                              </>
+                            ) : (
+                              <>
+                                <line x1={-largeurPx / 2} y1={-3} x2={largeurPx / 2} y2={-3} stroke={couleur} strokeWidth={1.5} />
+                                <line x1={-largeurPx / 2} y1={3} x2={largeurPx / 2} y2={3} stroke={couleur} strokeWidth={1.5} />
+                              </>
+                            )}
+                          </g>
+                          {isSel && <circle cx={pC.x} cy={pC.y} r={largeurPx / 2 + 6} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
+                        </g>
                       );
                     })}
                   </g>
@@ -1397,7 +1552,7 @@ export default function PlanPage() {
                 return (
                   <g key={a.id}
                     onPointerDown={e => onAppareillagePointerDown(piece, a, e)}
-                    style={{ cursor: mode === "select" && !placementType && !placingTableau ? (isSel ? "grab" : "pointer") : "default" }}>
+                    style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture ? (isSel ? "grab" : "pointer") : "default" }}>
                     <circle cx={p.x} cy={p.y} r={rZoneClic} fill={isSel ? "#FEF3C7" : "transparent"} stroke="none" />
                     <g transform={`translate(${p.x - symSize / 2}, ${p.y - symSize / 2})`} style={{ pointerEvents: "none" }}>
                       <AppareillageSymbol type={a.type} size={symSize} color={color} />
@@ -1423,7 +1578,7 @@ export default function PlanPage() {
                 const rZoneClic = 18;
                 return (
                   <g onPointerDown={onTableauPointerDown}
-                    style={{ cursor: mode === "select" && !placementType && !placingTableau ? (selectedTableau ? "grab" : "pointer") : "default" }}>
+                    style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture ? (selectedTableau ? "grab" : "pointer") : "default" }}>
                     <circle cx={p.x} cy={p.y} r={rZoneClic} fill={selectedTableau ? "#FEF3C7" : "transparent"} stroke="none" />
                     <g transform={`translate(${p.x - 12}, ${p.y - 12})`} style={{ pointerEvents: "none" }}>
                       <rect width="24" height="24" rx="4" fill="#1c1917" />
@@ -1571,6 +1726,42 @@ export default function PlanPage() {
                 <p className="text-[11px] text-ink-400">Glisse-le directement sur le plan pour le repositionner.</p>
               </div>
             )}
+
+            {selectedOuvertureId != null && mode === "select" && (() => {
+              const piece = niveauActif?.pieces.find(p => p.ouvertures?.some(o => o.id === selectedOuvertureId));
+              const o = piece?.ouvertures?.find(o => o.id === selectedOuvertureId);
+              if (!piece || !o) return null;
+              return (
+                <div className="absolute bottom-4 left-4 card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+                  <div className="flex items-center gap-2">
+                    <OuvertureIcon type={o.type} size={18} color="#1c1917" />
+                    <p className="text-sm font-semibold text-ink-900 flex-1">{o.type === "porte" ? "Porte" : "Fenêtre"}</p>
+                    <button onClick={() => supprimerOuverture(o.id)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0 w-24">Largeur (cm)</span>
+                    <input type="number" min={20} className="input !py-1 !text-xs !w-20"
+                      key={`ouv-${o.id}-largeur-${dragEndTick}`} defaultValue={o.largeur}
+                      onChange={e => { if (e.target.value !== "") modifierOuverture(o.id, { largeur: Number(e.target.value) }); }} />
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0 w-24">Hauteur (cm)</span>
+                    <input type="number" min={30} className="input !py-1 !text-xs !w-20"
+                      key={`ouv-${o.id}-hauteur-${dragEndTick}`} defaultValue={o.hauteur ?? (o.type === "porte" ? 204 : 120)}
+                      onChange={e => { if (e.target.value !== "") modifierOuverture(o.id, { hauteur: Number(e.target.value) }); }} />
+                  </div>
+                  {o.type === "fenetre" && (
+                    <div className="flex items-center gap-2 text-xs text-ink-500">
+                      <span className="shrink-0 w-24">Allège (cm)</span>
+                      <input type="number" min={0} className="input !py-1 !text-xs !w-20"
+                        key={`ouv-${o.id}-allege-${dragEndTick}`} defaultValue={o.allege ?? 90}
+                        onChange={e => { if (e.target.value !== "") modifierOuverture(o.id, { allege: Number(e.target.value) }); }} />
+                    </div>
+                  )}
+                  <p className="text-[11px] text-ink-400">Glisse-la directement sur le mur pour la repositionner — elle reste sur ce mur.</p>
+                </div>
+              );
+            })()}
 
             {selectedWaypoint && niveauActif && mode === "select" && (() => {
               const wp = niveauActif.liaisonWaypoints?.[selectedWaypoint.cle]?.find(w => w.id === selectedWaypoint.waypointId);
