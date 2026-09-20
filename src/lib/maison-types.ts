@@ -22,8 +22,11 @@ export interface AppareillagePlace {
   type: AppareillageType;
   x: number; // mètres
   y: number; // mètres
-  // Pour interrupteur / va_et_vient / telerupteur : id du point_lumineux (ou applique) commandé.
-  commandePourId?: number;
+  nom?: string;      // libellé (ex: nom du point lumineux)
+  hauteur?: number;  // hauteur d'installation en cm depuis le sol
+  // Pour interrupteur / va_et_vient / telerupteur : ids des point_lumineux (ou applique)
+  // commandés — un interrupteur peut commander plusieurs points lumineux.
+  commandePourIds?: number[];
   // Rempli par genererCircuits() — id du Breaker (electrical-constants.ts) qui dessert ce point.
   circuitId?: number;
 }

@@ -8,7 +8,7 @@
 
 import {
   Breaker, BreakerRow, PieceConfig, GroupeLumineux, CommandeType,
-  CIRCUITS, MAX_PAR_CIRCUIT, MIN_PRISES_PIECE, DIFF_HIERARCHY,
+  CIRCUITS, MAX_PAR_CIRCUIT, MIN_PRISES_PIECE,
   gaineRecommandee, cablesGroupe, cablesPrises, effectiveSection, uid,
 } from "./electrical-constants";
 import {
@@ -154,7 +154,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
 
     // Éclairage : déduction de la commande depuis les interrupteurs/va-et-vient/télérupteurs liés
     const lumItems = pointsLumineux.map(pl => {
-      const commandes = tousItems.filter(a => a.base.commandePourId === pl.base.id);
+      const commandes = tousItems.filter(a => a.base.commandePourIds?.includes(pl.base.id));
       let typeCommande: CommandeType = "simple";
       let nbCommandes = 1;
       if (commandes.some(c => c.base.type === "telerupteur")) {
@@ -193,41 +193,70 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
 // ─── ASSEMBLAGE EN RANGÉES DE TABLEAU (BreakerRow[]) ───────────────────────────
 
 /**
- * Répartit les circuits générés sur des rangées de 8 + 1 différentiel,
- * homogénéisées par exigence de différentiel croissante (AC < A < F).
- * Garantit au moins 2 différentiels dès que plus d'un circuit existe (Art. 531.2).
+ * Répartit les circuits générés sur des rangées de 8 + 1 différentiel.
+ *
+ * Règles appliquées :
+ *  - Regroupement STRICT par type de différentiel exact requis (AC/A/F) —
+ *    un circuit "Type A" (lave-linge, IRVE, plaque...) n'est jamais placé sous
+ *    un différentiel plus faible, et partage un différentiel A avec le moins
+ *    de rangées possible (minimise le nombre de différentiels A/F, plus chers).
+ *  - Entrelacement par catégorie (éclairage / prises / appareils dédiés) au
+ *    sein de chaque groupe de différentiel — évite qu'une rangée entière soit
+ *    "tout éclairage" ou "toutes les prises".
+ *  - Chaque rangée générée est taguée origine:"plan" (voir BreakerRow).
+ *  - Garantit au moins 2 différentiels dès que plus d'un circuit existe (Art. 531.2).
  */
+function categorieCircuit(b: Breaker): "lumiere" | "prises" | "dedies" {
+  const cat = CIRCUITS[b.circuit]?.category;
+  if (cat === "lumiere") return "lumiere";
+  if (cat === "prises") return "prises";
+  return "dedies";
+}
+
+function entrelacerParCategorie(breakers: Breaker[]): Breaker[] {
+  const groupes: Record<string, Breaker[]> = { lumiere: [], prises: [], dedies: [] };
+  breakers.forEach(b => groupes[categorieCircuit(b)].push(b));
+  const result: Breaker[] = [];
+  let reste = true;
+  while (reste) {
+    reste = false;
+    for (const c of ["lumiere", "prises", "dedies"]) {
+      const b = groupes[c].shift();
+      if (b) { result.push(b); reste = true; }
+    }
+  }
+  return result;
+}
+
 export function assemblerTableau(breakers: Breaker[]): BreakerRow[] {
-  const tries = [...breakers].sort((a, b) => {
-    const da = DIFF_HIERARCHY[CIRCUITS[a.circuit]?.diffType ?? "AC"] ?? 0;
-    const db = DIFF_HIERARCHY[CIRCUITS[b.circuit]?.diffType ?? "AC"] ?? 0;
-    return da - db;
-  });
-
-  const pireDiff = (list: Breaker[]): string =>
-    list.reduce((worst, b) => {
-      const dt = CIRCUITS[b.circuit]?.diffType ?? "AC";
-      return (DIFF_HIERARCHY[dt] ?? 0) > (DIFF_HIERARCHY[worst] ?? 0) ? dt : worst;
-    }, "AC");
-
-  const mkRow = (name: string, list: Breaker[]): BreakerRow => {
+  const mkRow = (name: string, list: Breaker[], diffType: string): BreakerRow => {
     const slots: (Breaker | null)[] = Array(9).fill(null);
-    slots[0] = { id: uid(), label: "", circuit: "general", amperes: 25, type: `diff-${pireDiff(list)}`, customSection: "10.0", pieces: [] };
+    slots[0] = { id: uid(), label: "", circuit: "general", amperes: 25, type: `diff-${diffType}`, customSection: "10.0", pieces: [] };
     list.forEach((b, i) => { slots[i + 1] = b; });
-    return { id: uid(), name, slots };
+    return { id: uid(), name, slots, origine: "plan" };
   };
 
+  const parType: Record<string, Breaker[]> = { F: [], A: [], AC: [] };
+  breakers.forEach(b => {
+    const dt = CIRCUITS[b.circuit]?.diffType ?? "AC";
+    (parType[dt] ?? parType.AC).push(b);
+  });
+
   const rows: BreakerRow[] = [];
-  for (let i = 0; i < tries.length; i += 8) {
-    rows.push(mkRow(`Rangée ${rows.length + 1}`, tries.slice(i, i + 8)));
-  }
+  (["F", "A", "AC"] as const).forEach(dt => {
+    const entrelaces = entrelacerParCategorie(parType[dt]);
+    for (let i = 0; i < entrelaces.length; i += 8) {
+      rows.push(mkRow(`Rangée ${rows.length + 1}`, entrelaces.slice(i, i + 8), dt));
+    }
+  });
 
   if (rows.length === 1) {
     const nonDiff = rows[0].slots.slice(1).filter((b): b is Breaker => b != null);
     if (nonDiff.length > 1) {
       const half = Math.ceil(nonDiff.length / 2);
+      const dt = CIRCUITS[nonDiff[0].circuit]?.diffType ?? "AC";
       rows.length = 0;
-      rows.push(mkRow("Rangée 1", nonDiff.slice(0, half)), mkRow("Rangée 2", nonDiff.slice(half)));
+      rows.push(mkRow("Rangée 1", nonDiff.slice(0, half), dt), mkRow("Rangée 2", nonDiff.slice(half), dt));
     }
   }
 
