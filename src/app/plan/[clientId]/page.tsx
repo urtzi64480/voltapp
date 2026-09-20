@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -13,9 +14,11 @@ import {
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
   NIVEAU_TYPES, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, ajusterLongueurContour,
-  nouveauNiveau, nouvellePiece, nouvelAppareillage, couleurCircuit, ordonnerParProximite,
+  nouveauNiveau, nouvellePiece, nouvelAppareillage, couleurCircuit, uidMaison,
+  LiaisonWaypoint, sequenceAncresCircuit, cleSegmentLiaison, construireCheminCircuit, longueurCircuitAvecWaypoints,
 } from "@/lib/maison-types";
 import { AppareillageSymbol, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
+import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow } from "@/lib/electrical-constants";
 
@@ -65,13 +68,6 @@ function snapAvecAlignement(m: Point, candidats: Point[], seuilM: number): Resul
 
 function escapeXml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function longueurCircuit(depart: Point, points: Point[]): number {
-  const ordonnes = ordonnerParProximite(depart, points);
-  let total = 0, last = depart;
-  for (const p of ordonnes) { total += distance(last, p); last = p; }
-  return total;
 }
 
 // ─── IMPRESSION ─────────────────────────────────────────────────────────────────
@@ -136,8 +132,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
     });
     parCircuit.forEach((points, circuitId) => {
       const color = colorMap.get(circuitId) ?? "#666";
-      const ordonnes = ordonnerParProximite(n.tableauPos!, points);
-      const chemin = [n.tableauPos!, ...ordonnes].map(toPx);
+      const chemin = construireCheminCircuit(n.tableauPos!, points, n.liaisonWaypoints).map(toPx);
       const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
       s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="1.2" stroke-dasharray="3,2" opacity="0.85"/>`;
     });
@@ -186,7 +181,7 @@ function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau
       let lgTxt = "";
       if (showLongueurs && niveau.tableauPos) {
         const pts = niveau.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
-        if (pts.length > 0) lgTxt = ` — ${longueurCircuit(niveau.tableauPos, pts).toFixed(1)}m`;
+        if (pts.length > 0) lgTxt = ` — ${longueurCircuitAvecWaypoints(niveau.tableauPos, pts, niveau.liaisonWaypoints).toFixed(1)}m`;
       }
       return `<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;"></span>${escapeXml(b.label || CIRCUITS[b.circuit]?.label || b.circuit)}${lgTxt}</span>`;
     }).join("") + `</div>`;
@@ -232,18 +227,20 @@ type DragMode =
   | { kind: "pan"; startX: number; startY: number; startPan: Point }
   | { kind: "vertex"; pieceId: number; vertexIndex: number }
   | { kind: "piece"; pieceId: number; startX: number; startY: number; startContour: Point[] }
-  | { kind: "appareillage"; pieceId: number; appareillageId: number };
+  | { kind: "appareillage"; pieceId: number; appareillageId: number }
+  | { kind: "liaison"; cle: string; waypointId: number };
 
 // ─── FORMULAIRES ────────────────────────────────────────────────────────────────
 
-function PieceForm({ initialNom, initialType, onValidate, onCancel, onDelete }: {
-  initialNom: string; initialType: PieceType;
-  onValidate: (nom: string, type: PieceType) => void;
+function PieceForm({ initialNom, initialType, initialHauteurPlafond, onValidate, onCancel, onDelete }: {
+  initialNom: string; initialType: PieceType; initialHauteurPlafond?: number;
+  onValidate: (nom: string, type: PieceType, hauteurPlafond: number | undefined) => void;
   onCancel: () => void;
   onDelete?: () => void;
 }) {
   const [nom, setNom] = useState(initialNom);
   const [type, setType] = useState<PieceType>(initialType);
+  const [hauteurPlafond, setHauteurPlafond] = useState(initialHauteurPlafond != null ? String(initialHauteurPlafond) : "");
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
       <div className="card w-full max-w-sm" onClick={e => e.stopPropagation()}>
@@ -262,9 +259,13 @@ function PieceForm({ initialNom, initialType, onValidate, onCancel, onDelete }: 
               {Object.entries(PIECE_TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
             </select>
           </div>
+          <div>
+            <label className="label">Hauteur sous plafond (m) — vide = hauteur du niveau</label>
+            <input className="input" inputMode="decimal" placeholder="Ex: 2.50" value={hauteurPlafond} onChange={e => setHauteurPlafond(e.target.value)} />
+          </div>
         </div>
         <div className="flex gap-2 p-4 border-t border-ink-200">
-          <button onClick={() => onValidate(nom, type)} className="btn-volt flex-1"><Save size={14} /> Valider</button>
+          <button onClick={() => onValidate(nom, type, hauteurPlafond.trim() === "" ? undefined : (parseFloat(hauteurPlafond.replace(",", ".")) || undefined))} className="btn-volt flex-1"><Save size={14} /> Valider</button>
           {onDelete && <button onClick={onDelete} className="btn-danger !px-3"><Trash2 size={14} /></button>}
         </div>
       </div>
@@ -320,9 +321,10 @@ function SegmentLengthForm({ longueurActuelle, onValidate, onCancel }: {
   );
 }
 
-function NiveauForm({ onValidate, onCancel }: { onValidate: (nom: string, type: NiveauType) => void; onCancel: () => void }) {
+function NiveauForm({ onValidate, onCancel }: { onValidate: (nom: string, type: NiveauType, hauteurPlafond: number) => void; onCancel: () => void }) {
   const [nom, setNom] = useState("");
   const [type, setType] = useState<NiveauType>("etage");
+  const [hauteurPlafond, setHauteurPlafond] = useState("2.50");
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
       <div className="card w-full max-w-sm" onClick={e => e.stopPropagation()}>
@@ -341,9 +343,13 @@ function NiveauForm({ onValidate, onCancel }: { onValidate: (nom: string, type: 
               {Object.entries(NIVEAU_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </div>
+          <div>
+            <label className="label">Hauteur sous plafond (m) — pour la vue 3D</label>
+            <input className="input" inputMode="decimal" value={hauteurPlafond} onChange={e => setHauteurPlafond(e.target.value)} />
+          </div>
         </div>
         <div className="flex gap-2 p-4 border-t border-ink-200">
-          <button onClick={() => onValidate(nom, type)} className="btn-volt flex-1"><Save size={14} /> Ajouter</button>
+          <button onClick={() => onValidate(nom, type, parseFloat(hauteurPlafond.replace(",", ".")) || 2.5)} className="btn-volt flex-1"><Save size={14} /> Ajouter</button>
         </div>
       </div>
     </div>
@@ -511,6 +517,7 @@ export default function PlanPage() {
   const [placingTableau, setPlacingTableau] = useState(false);
   const [pendingCommande, setPendingCommande] = useState<{ item: AppareillagePlace; estNouveau: boolean } | null>(null);
   const [selectedAppareillageId, setSelectedAppareillageId] = useState<number | null>(null);
+  const [selectedWaypoint, setSelectedWaypoint] = useState<{ cle: string; waypointId: number } | null>(null);
   const [placementError, setPlacementError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
@@ -518,6 +525,8 @@ export default function PlanPage() {
   const [showCircuits, setShowCircuits] = useState(false);
   const [showLongueurs, setShowLongueurs] = useState(false);
   const [showPrintForm, setShowPrintForm] = useState(false);
+  const [vue3D, setVue3D] = useState(false);
+  const vue3DRef = useRef<Vue3DHandle>(null);
   const [pushing, setPushing] = useState(false);
   const [pushMsg, setPushMsg] = useState<string | null>(null);
 
@@ -611,9 +620,29 @@ export default function PlanPage() {
             ...p, appareillages: p.appareillages.map(a => a.id === dragMode.appareillageId ? { ...a, x: m.x, y: m.y } : a),
           }),
         }));
+      } else if (dragMode.kind === "liaison") {
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const raw = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        const niveauCourant = niveaux.find(n => n.id === niveauActifId) ?? null;
+        const candidats = pointsReferenceNiveau(niveauCourant);
+        const seuilM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
+        const { point: m, guideX, guideY } = snapAvecAlignement(raw, candidats, seuilM);
+        setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
+        updateNiveauActif(n => ({
+          ...n,
+          liaisonWaypoints: {
+            ...(n.liaisonWaypoints ?? {}),
+            [dragMode.cle]: (n.liaisonWaypoints?.[dragMode.cle] ?? []).map(w => w.id === dragMode.waypointId ? { ...w, point: m } : w),
+          },
+        }));
       }
     };
-    const onUp = () => { setDragMode({ kind: "none" }); setSnapGuide(null); invalidateResultat(); };
+    const onUp = () => {
+      if (dragMode.kind !== "liaison") invalidateResultat();
+      setDragMode({ kind: "none" });
+      setSnapGuide(null);
+    };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     return () => {
@@ -716,6 +745,33 @@ export default function PlanPage() {
     }));
   };
 
+  // apresIndex = position dans la liste existante des coudes après laquelle insérer
+  // (0 = avant le premier coude existant, longueur actuelle = après le dernier).
+  const ajouterWaypoint = (cle: string, apresIndex: number, point: Point) => {
+    updateNiveauActif(n => {
+      const existants = n.liaisonWaypoints?.[cle] ?? [];
+      const nouveau: LiaisonWaypoint = { id: uidMaison(), point };
+      const maj = [...existants.slice(0, apresIndex), nouveau, ...existants.slice(apresIndex)];
+      return { ...n, liaisonWaypoints: { ...(n.liaisonWaypoints ?? {}), [cle]: maj } };
+    });
+  };
+  const supprimerWaypoint = (cle: string, waypointId: number) => {
+    updateNiveauActif(n => ({
+      ...n,
+      liaisonWaypoints: { ...(n.liaisonWaypoints ?? {}), [cle]: (n.liaisonWaypoints?.[cle] ?? []).filter(w => w.id !== waypointId) },
+    }));
+    setSelectedWaypoint(null);
+  };
+  const modifierHauteurWaypoint = (cle: string, waypointId: number, hauteur: number | undefined) => {
+    updateNiveauActif(n => ({
+      ...n,
+      liaisonWaypoints: {
+        ...(n.liaisonWaypoints ?? {}),
+        [cle]: (n.liaisonWaypoints?.[cle] ?? []).map(w => w.id === waypointId ? { ...w, hauteur } : w),
+      },
+    }));
+  };
+
   const lierCommande = (itemId: number, pointLumineuxIds: number[]) => {
     updateNiveauActif(n => ({
       ...n,
@@ -786,6 +842,7 @@ export default function PlanPage() {
 
     setSelectedPieceId(null);
     setSelectedAppareillageId(null);
+    setSelectedWaypoint(null);
     setDragMode({ kind: "pan", startX: e.clientX, startY: e.clientY, startPan: pan });
   };
 
@@ -804,6 +861,7 @@ export default function PlanPage() {
     } else {
       setSelectedPieceId(piece.id);
       setSelectedAppareillageId(null);
+      setSelectedWaypoint(null);
     }
   };
 
@@ -820,6 +878,7 @@ export default function PlanPage() {
     } else {
       setSelectedAppareillageId(a.id);
       setSelectedPieceId(null);
+      setSelectedWaypoint(null);
     }
   };
 
@@ -916,7 +975,22 @@ export default function PlanPage() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
-            <button onClick={() => setShowPrintForm(true)} className="btn-ghost"><Printer size={15} /> Imprimer</button>
+            <button onClick={() => setVue3D(v => !v)} className={`btn-ghost ${vue3D ? "!bg-ink-900 !text-volt-400" : ""}`}>
+              {vue3D ? "Vue 2D" : "Vue 3D"}
+            </button>
+            {vue3D ? (
+              <button onClick={() => {
+                const img = vue3DRef.current?.capturerImage();
+                if (!img) return;
+                const w = window.open("", "_blank");
+                if (!w) return;
+                w.document.write(`<html><head><title>Vue 3D — ${client?.nom ?? ""}</title><style>@page{margin:10mm}body{margin:0;text-align:center}img{max-width:100%}</style></head><body><img src="${img}" /></body></html>`);
+                w.document.close();
+                setTimeout(() => { w.print(); w.close(); }, 400);
+              }} className="btn-ghost"><Printer size={15} /> Imprimer la vue 3D</button>
+            ) : (
+              <button onClick={() => setShowPrintForm(true)} className="btn-ghost"><Printer size={15} /> Imprimer</button>
+            )}
             <button onClick={handleSave} disabled={saving} className={`btn-volt ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
               <Save size={15} />{saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
             </button>
@@ -933,8 +1007,18 @@ export default function PlanPage() {
             </button>
           ))}
           <button onClick={() => setShowNiveauForm(true)} className="btn-ghost !px-2 !py-1.5 shrink-0"><Plus size={14} /></button>
+          {niveauActif && (
+            <div className="flex items-center gap-1.5 ml-auto shrink-0 text-xs text-ink-400">
+              <span>Plafond</span>
+              <input type="number" step="0.1" className="input !py-1 !text-xs !w-16"
+                value={niveauActif.hauteurPlafond ?? 2.5}
+                onChange={e => updateNiveauActif(n => ({ ...n, hauteurPlafond: parseFloat(e.target.value) || 2.5 }))} />
+              <span>m</span>
+            </div>
+          )}
         </div>
 
+        {!vue3D && (
         <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 shrink-0 flex-wrap">
           <button onClick={() => { setMode("select"); setDrawingPoints([]); setPlacementType(null); setPlacingTableau(false); }}
             className={`btn-ghost !text-xs ${mode === "select" && !placementType && !placingTableau ? "!bg-ink-900 !text-volt-400" : ""}`}>
@@ -961,6 +1045,7 @@ export default function PlanPage() {
             <button onClick={() => zoomBtn(1)} className="btn-ghost !px-2 !py-1.5"><ZoomIn size={14} /></button>
           </div>
         </div>
+        )}
 
         <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 shrink-0 flex-wrap bg-ink-50">
           <button onClick={handleGenerer} className="btn-volt !text-xs"><Sparkles size={13} /> Générer les circuits</button>
@@ -1002,6 +1087,12 @@ export default function PlanPage() {
 
         <div className="flex-1 flex overflow-hidden">
           <div className="flex-1 relative overflow-hidden bg-white">
+            {vue3D ? (
+              niveauActif ? (
+                <Vue3D ref={vue3DRef} niveau={niveauActif} resultat={resultat} showCircuits={showCircuits} />
+              ) : null
+            ) : (
+              <>
             <svg
               ref={svgRef}
               className="w-full h-full block"
@@ -1056,6 +1147,8 @@ export default function PlanPage() {
               })}
 
               {showCircuits && resultat && niveauActif?.tableauPos && (() => {
+                const tableauPos = niveauActif.tableauPos;
+                const waypointsNiveau = niveauActif.liaisonWaypoints;
                 const tousAppareils = niveauActif.pieces.flatMap(p => p.appareillages);
                 const parCircuit = new Map<number, AppareillagePlace[]>();
                 tousAppareils.forEach(a => {
@@ -1064,12 +1157,50 @@ export default function PlanPage() {
                   arr.push(a);
                   parCircuit.set(a.circuitId, arr);
                 });
-                return Array.from(parCircuit.entries()).map(([circuitId, points]) => {
+                return Array.from(parCircuit.entries()).flatMap(([circuitId, points]) => {
                   const color = colorMap.get(circuitId) ?? "#666";
-                  const ordonnes = ordonnerParProximite(niveauActif.tableauPos!, points);
-                  const chemin = [niveauActif.tableauPos!, ...ordonnes].map(toScreen);
-                  const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
-                  return <path key={circuitId} d={d} fill="none" stroke={color} strokeWidth={2} strokeDasharray="6,4" opacity={0.8} />;
+                  const sequence = sequenceAncresCircuit(tableauPos, points);
+                  const elements: ReactNode[] = [];
+                  for (let i = 0; i < sequence.length - 1; i++) {
+                    const cle = cleSegmentLiaison(sequence[i].id, sequence[i + 1].id);
+                    const coudes = waypointsNiveau?.[cle] ?? [];
+                    // Sous-chaîne du segment : point de départ, coudes existants, point d'arrivée.
+                    const sousChaine = [sequence[i].point, ...coudes.map(c => c.point), sequence[i + 1].point];
+                    for (let j = 0; j < sousChaine.length - 1; j++) {
+                      const aPx = toScreen(sousChaine[j]), bPx = toScreen(sousChaine[j + 1]);
+                      elements.push(<line key={`${cle}-${j}`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={color} strokeWidth={2} strokeDasharray="6,4" opacity={0.8} />);
+                      if (mode === "select") {
+                        elements.push(
+                          <line key={`${cle}-${j}-hit`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="transparent" strokeWidth={14}
+                            style={{ cursor: "copy" }}
+                            onPointerDown={e => {
+                              e.stopPropagation();
+                              const rect = svgRef.current?.getBoundingClientRect();
+                              if (!rect) return;
+                              const m = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+                              ajouterWaypoint(cle, j, m);
+                            }} />
+                        );
+                      }
+                    }
+                    coudes.forEach(c => {
+                      const cPx = toScreen(c.point);
+                      const estSel = selectedWaypoint?.cle === cle && selectedWaypoint?.waypointId === c.id;
+                      elements.push(
+                        <rect key={`${cle}-wp-${c.id}`} x={cPx.x - 5} y={cPx.y - 5} width={10} height={10} rx={2}
+                          fill={estSel ? "#F59E0B" : "#fff"} stroke={color} strokeWidth={2}
+                          style={{ cursor: mode === "select" ? "grab" : "default" }}
+                          onPointerDown={e => {
+                            if (mode !== "select") return;
+                            e.stopPropagation();
+                            if (estSel) setDragMode({ kind: "liaison", cle, waypointId: c.id });
+                            else { setSelectedWaypoint({ cle, waypointId: c.id }); setSelectedPieceId(null); setSelectedAppareillageId(null); }
+                          }}
+                          onDoubleClick={e => { e.stopPropagation(); supprimerWaypoint(cle, c.id); }} />
+                      );
+                    });
+                  }
+                  return elements;
                 });
               })()}
 
@@ -1165,6 +1296,20 @@ export default function PlanPage() {
               </div>
             )}
 
+            {selectedWaypoint && niveauActif && mode === "select" && (() => {
+              const wp = niveauActif.liaisonWaypoints?.[selectedWaypoint.cle]?.find(w => w.id === selectedWaypoint.waypointId);
+              if (!wp) return null;
+              return (
+                <div className="absolute bottom-4 left-4 card card-inner !p-3 flex items-center gap-2 shadow-lg">
+                  <span className="text-xs text-ink-500 shrink-0">Coude — hauteur du câble (cm)</span>
+                  <input type="number" className="input !py-1 !text-xs !w-20" placeholder="—"
+                    value={wp.hauteur ?? ""}
+                    onChange={e => modifierHauteurWaypoint(selectedWaypoint.cle, selectedWaypoint.waypointId, e.target.value ? Number(e.target.value) : undefined)} />
+                  <button onClick={() => supprimerWaypoint(selectedWaypoint.cle, selectedWaypoint.waypointId)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
+                </div>
+              );
+            })()}
+
             {placementError && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-500 text-white text-xs font-semibold px-3 py-2 rounded-lg shadow-lg">
                 {placementError}
@@ -1190,7 +1335,7 @@ export default function PlanPage() {
                     const i = resultat.breakers.findIndex(x => x.id === b.id);
                     const pointsCircuit = niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id) ?? [];
                     const lg = showLongueurs && niveauActif?.tableauPos && pointsCircuit.length > 0
-                      ? longueurCircuit(niveauActif.tableauPos, pointsCircuit)
+                      ? longueurCircuitAvecWaypoints(niveauActif.tableauPos, pointsCircuit, niveauActif.liaisonWaypoints)
                       : null;
                     return (
                       <div key={b.id} className="flex items-center gap-1.5 text-[11px] text-ink-600">
@@ -1209,14 +1354,18 @@ export default function PlanPage() {
                 <p className="text-ink-300 text-sm">Clique sur "Dessiner une pièce" pour commencer</p>
               </div>
             )}
+              </>
+            )}
           </div>
 
+          {!vue3D && (
           <div className="hidden lg:flex lg:flex-col w-56 border-l border-ink-200 bg-white overflow-y-auto shrink-0 p-3">
             <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">Appareillages</p>
             <PaletteBoutons placementType={placementType} onSelect={armerPlacement} />
           </div>
+          )}
 
-          {paletteOpen && (
+          {!vue3D && paletteOpen && (
             <div className="lg:hidden fixed inset-0 z-40 flex justify-end" onClick={() => setPaletteOpen(false)}>
               <div className="absolute inset-0 bg-black/40" />
               <div className="relative w-72 max-w-[85vw] bg-white h-full overflow-y-auto p-3 shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -1231,15 +1380,19 @@ export default function PlanPage() {
         </div>
 
         <div className="px-4 py-1.5 bg-ink-50 border-t border-ink-100 text-[11px] text-ink-400 hidden md:block shrink-0">
-          Molette = zoom · Glisser le fond = déplacer la vue · En dessin : clic = ajouter un point, clic près du 1er point = fermer la pièce
+          {vue3D
+            ? "Glisser = tourner la caméra · Molette = zoom"
+            : "Molette = zoom · Glisser le fond = déplacer la vue · En dessin : clic = ajouter un point, clic près du 1er point = fermer la pièce"}
         </div>
       </div>
 
       {pendingContour && (
         <PieceForm
           initialNom="" initialType="autre"
-          onValidate={(nom, type) => {
-            updateNiveauActif(n => ({ ...n, pieces: [...n.pieces, nouvellePiece(pendingContour, nom, type)] }));
+          onValidate={(nom, type, hauteurPlafond) => {
+            const nouvelle = nouvellePiece(pendingContour, nom, type);
+            nouvelle.hauteurPlafond = hauteurPlafond;
+            updateNiveauActif(n => ({ ...n, pieces: [...n.pieces, nouvelle] }));
             setPendingContour(null);
             invalidateResultat();
           }}
@@ -1249,9 +1402,9 @@ export default function PlanPage() {
 
       {editingPiece && (
         <PieceForm
-          initialNom={editingPiece.nom} initialType={editingPiece.type}
-          onValidate={(nom, type) => {
-            updateNiveauActif(n => ({ ...n, pieces: n.pieces.map(p => p.id === editingPiece.id ? { ...p, nom, type } : p) }));
+          initialNom={editingPiece.nom} initialType={editingPiece.type} initialHauteurPlafond={editingPiece.hauteurPlafond}
+          onValidate={(nom, type, hauteurPlafond) => {
+            updateNiveauActif(n => ({ ...n, pieces: n.pieces.map(p => p.id === editingPiece.id ? { ...p, nom, type, hauteurPlafond } : p) }));
             setEditingPiece(null);
           }}
           onCancel={() => setEditingPiece(null)}
@@ -1266,9 +1419,10 @@ export default function PlanPage() {
 
       {showNiveauForm && (
         <NiveauForm
-          onValidate={(nom, type) => {
+          onValidate={(nom, type, hauteurPlafond) => {
             const nouveau = nouveauNiveau(type, niveaux.length);
             nouveau.nom = nom;
+            nouveau.hauteurPlafond = hauteurPlafond;
             setNiveaux(nvs => [...nvs, nouveau]);
             setNiveauActifId(nouveau.id);
             setShowNiveauForm(false);
