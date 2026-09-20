@@ -13,6 +13,7 @@ import {
 } from "./electrical-constants";
 import {
   Maison, Niveau, Piece, AppareillagePlace, aireDuPolygone,
+  CircuitManuel, FamilleCircuitManuel, familleCircuitManuelAppareillage, couleurCircuit,
 } from "./maison-types";
 
 // Appareillages dédiés → 1 circuit par instance (correspondance directe avec CIRCUITS)
@@ -88,6 +89,95 @@ function breakerFromClusterLumiere(cluster: (Item & { typeCommande: CommandeType
   };
 }
 
+// ─── RÉPARTITION MANUEL / AUTOMATIQUE ──────────────────────────────────────────
+// Sépare un pool d'items (prises d'une famille donnée, ou points lumineux) entre
+// ceux explicitement rattachés par l'utilisateur à un CircuitManuel de la bonne
+// famille (circuitManuelId) et le reste, qui repart dans le clustering spatial
+// automatique habituel. Un circuitManuelId pointant vers un circuit manuel
+// supprimé ou d'une autre famille retombe silencieusement dans l'automatique.
+function partitionnerManuelAuto<T extends { base: AppareillagePlace }>(
+  items: T[], manuels: CircuitManuel[], famille: FamilleCircuitManuel,
+): { manuelGroupes: Map<number, T[]>; auto: T[] } {
+  const idsValides = new Set(manuels.filter(m => m.famille === famille).map(m => m.id));
+  const manuelGroupes = new Map<number, T[]>();
+  const auto: T[] = [];
+  items.forEach(item => {
+    const mid = item.base.circuitManuelId;
+    if (mid != null && idsValides.has(mid)) {
+      const arr = manuelGroupes.get(mid) ?? [];
+      arr.push(item);
+      manuelGroupes.set(mid, arr);
+    } else {
+      auto.push(item);
+    }
+  });
+  return { manuelGroupes, auto };
+}
+
+function genererBreakersPrises(
+  items: Item[], circuitKey: string, niveauNom: string, manuels: CircuitManuel[], breakers: Breaker[],
+): void {
+  const max = MAX_PAR_CIRCUIT[circuitKey] ?? 8;
+  const { manuelGroupes, auto } = partitionnerManuelAuto(items, manuels, circuitKey as FamilleCircuitManuel);
+  manuelGroupes.forEach((groupe, manuelId) => {
+    const manuel = manuels.find(m => m.id === manuelId);
+    if (!manuel) return;
+    const chunks = clusteriser(groupe, max);
+    chunks.forEach((chunk, ci) => {
+      const b = breakerFromClusterPrises(chunk, circuitKey, niveauNom, ci + 1);
+      b.label = chunks.length > 1 ? `${manuel.nom} ${ci + 1}` : manuel.nom;
+      b.manuelId = manuel.id;
+      breakers.push(b);
+      chunk.forEach(item => { item.base.circuitId = b.id; });
+    });
+  });
+  let idx = 1;
+  for (const cluster of clusteriser(auto, max)) {
+    const b = breakerFromClusterPrises(cluster, circuitKey, niveauNom, idx++);
+    breakers.push(b);
+    cluster.forEach(item => { item.base.circuitId = b.id; });
+  }
+}
+
+// Rattache au même circuit que le(s) point(s) lumineux le(s) interrupteur / va-et-vient /
+// télérupteur qui le(s) commande(nt) ("retour lampe") — sans quoi ces commandes restent
+// hors de tout circuit et n'apparaissent jamais dans le tracé (2D et 3D).
+function rattacherRetoursLampe(tousItems: Item[], cluster: { base: AppareillagePlace }[], circuitId: number): void {
+  cluster.forEach(item => {
+    tousItems
+      .filter(cmd => cmd.base.commandePourIds?.includes(item.base.id))
+      .forEach(cmd => { cmd.base.circuitId = circuitId; });
+  });
+}
+
+function genererBreakersLumiere(
+  lumItems: (Item & { typeCommande: CommandeType; nbCommandes: number })[],
+  niveauNom: string, manuels: CircuitManuel[], breakers: Breaker[], tousItems: Item[],
+): void {
+  const max = MAX_PAR_CIRCUIT.lumiere ?? 8;
+  const { manuelGroupes, auto } = partitionnerManuelAuto(lumItems, manuels, "lumiere");
+  manuelGroupes.forEach((groupe, manuelId) => {
+    const manuel = manuels.find(m => m.id === manuelId);
+    if (!manuel) return;
+    const chunks = clusteriser(groupe, max);
+    chunks.forEach((chunk, ci) => {
+      const b = breakerFromClusterLumiere(chunk, niveauNom, ci + 1);
+      b.label = chunks.length > 1 ? `${manuel.nom} ${ci + 1}` : manuel.nom;
+      b.manuelId = manuel.id;
+      breakers.push(b);
+      chunk.forEach(item => { item.base.circuitId = b.id; });
+      rattacherRetoursLampe(tousItems, chunk, b.id);
+    });
+  });
+  let idx = 1;
+  for (const cluster of clusteriser(auto, max)) {
+    const b = breakerFromClusterLumiere(cluster, niveauNom, idx++);
+    breakers.push(b);
+    cluster.forEach(item => { item.base.circuitId = b.id; });
+    rattacherRetoursLampe(tousItems, cluster, b.id);
+  }
+}
+
 /**
  * Génère les circuits (Breaker[]) d'un logement complet à partir des positions
  * réelles des appareillages placés sur le plan. Règles :
@@ -123,34 +213,16 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
       }
     });
 
-    const prisesStandard = tousItems.filter(a =>
-      (a.base.type === "prise" || a.base.type === "prise_commandee") &&
-      !["cuisine", "exterieur", "garage"].includes(a.piece.type));
-    const prisesCuisine = tousItems.filter(a =>
-      (a.base.type === "prise" || a.base.type === "prise_commandee") && a.piece.type === "cuisine");
-    const prisesExtGarage = tousItems.filter(a =>
-      (a.base.type === "prise" || a.base.type === "prise_commandee") && (a.piece.type === "exterieur" || a.piece.type === "garage"));
-    const pointsLumineux = tousItems.filter(a => a.base.type === "point_lumineux" || a.base.type === "applique");
+    const prisesStandard = tousItems.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "prise_16");
+    const prisesCuisine = tousItems.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "cuisine_prises");
+    const prisesExtGarage = tousItems.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "exterieur");
+    const pointsLumineux = tousItems.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "lumiere");
     const dedies = tousItems.filter(a => !!CIRCUIT_DEDIE[a.base.type]);
 
-    let idx = 1;
-    for (const cluster of clusteriser(prisesStandard, MAX_PAR_CIRCUIT.prise_16 ?? 8)) {
-      const b = breakerFromClusterPrises(cluster, "prise_16", niveau.nom, idx++);
-      breakers.push(b);
-      cluster.forEach(item => { item.base.circuitId = b.id; });
-    }
-    idx = 1;
-    for (const cluster of clusteriser(prisesCuisine, MAX_PAR_CIRCUIT.cuisine_prises ?? 6)) {
-      const b = breakerFromClusterPrises(cluster, "cuisine_prises", niveau.nom, idx++);
-      breakers.push(b);
-      cluster.forEach(item => { item.base.circuitId = b.id; });
-    }
-    idx = 1;
-    for (const cluster of clusteriser(prisesExtGarage, MAX_PAR_CIRCUIT.exterieur ?? 8)) {
-      const b = breakerFromClusterPrises(cluster, "exterieur", niveau.nom, idx++);
-      breakers.push(b);
-      cluster.forEach(item => { item.base.circuitId = b.id; });
-    }
+    const manuels = niveau.circuitsManuels ?? [];
+    genererBreakersPrises(prisesStandard, "prise_16", niveau.nom, manuels, breakers);
+    genererBreakersPrises(prisesCuisine, "cuisine_prises", niveau.nom, manuels, breakers);
+    genererBreakersPrises(prisesExtGarage, "exterieur", niveau.nom, manuels, breakers);
 
     // Éclairage : déduction de la commande depuis les interrupteurs/va-et-vient/télérupteurs liés
     const lumItems = pointsLumineux.map(pl => {
@@ -166,12 +238,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
       }
       return { ...pl, typeCommande, nbCommandes };
     });
-    idx = 1;
-    for (const cluster of clusteriser(lumItems, MAX_PAR_CIRCUIT.lumiere ?? 8)) {
-      const b = breakerFromClusterLumiere(cluster, niveau.nom, idx++);
-      breakers.push(b);
-      cluster.forEach(item => { item.base.circuitId = b.id; });
-    }
+    genererBreakersLumiere(lumItems, niveau.nom, manuels, breakers, tousItems);
 
     // Appareils dédiés : un circuit par instance
     dedies.forEach(item => {
@@ -188,6 +255,29 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
   }
 
   return { maison: { niveaux }, breakers, alertes };
+}
+
+// ─── COULEUR RÉSOLUE PAR CIRCUIT (manuelle si définie, sinon procédurale) ──────
+// Un Breaker généré automatiquement n'a pas d'id stable d'une génération à l'autre —
+// sa couleur manuelle est donc indexée par son label (déterministe tant que la
+// composition du plan ne change pas) sur Niveau.couleursCircuits. Un circuit manuel
+// (Breaker.manuelId défini) prend directement la couleur de son CircuitManuel.
+export function construireColorMap(resultat: ResultatGeneration): Map<number, string> {
+  const map = new Map<number, string>();
+  let compteur = 0;
+  resultat.maison.niveaux.forEach(niveau => {
+    const nomsPieces = new Set(niveau.pieces.map(p => p.nom));
+    const breakersNiveau = resultat.breakers.filter(b => b.pieces.some(pc => nomsPieces.has(pc.nom)));
+    breakersNiveau.forEach(b => {
+      const manuel = b.manuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === b.manuelId) : undefined;
+      const couleur = niveau.couleursCircuits?.[b.label] ?? manuel?.couleur ?? couleurCircuit(compteur);
+      map.set(b.id, couleur);
+      compteur++;
+    });
+  });
+  // Filet de sécurité — un breaker qu'aucun niveau n'a matché (ne devrait pas arriver).
+  resultat.breakers.forEach((b, i) => { if (!map.has(b.id)) map.set(b.id, couleurCircuit(i)); });
+  return map;
 }
 
 // ─── ASSEMBLAGE EN RANGÉES DE TABLEAU (BreakerRow[]) ───────────────────────────

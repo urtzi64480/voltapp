@@ -29,6 +29,10 @@ export interface AppareillagePlace {
   commandePourIds?: number[];
   // Rempli par genererCircuits() — id du Breaker (electrical-constants.ts) qui dessert ce point.
   circuitId?: number;
+  // Rattachement manuel à un CircuitManuel (id stable, voir plus bas) — prioritaire sur le
+  // clustering automatique de genererCircuits() pour ce point, tant que le CircuitManuel visé
+  // existe toujours et correspond à la bonne famille (prises/cuisine/extérieur/éclairage).
+  circuitManuelId?: number;
 }
 
 export interface Piece {
@@ -52,6 +56,44 @@ export interface LiaisonWaypoint {
 }
 export type LiaisonWaypoints = Record<string, LiaisonWaypoint[]>;
 
+// ─── CIRCUITS MANUELS ────────────────────────────────────────────────────────
+// Un circuit créé et nommé à la main par l'utilisateur (au lieu de laisser le
+// clustering spatial de genererCircuits() décider). Id stable (uidMaison), donc
+// résiste aux régénérations — contrairement au Breaker.id, réattribué à chaque
+// clic sur "Générer les circuits". Scope : par niveau (un circuit ne traverse
+// jamais deux niveaux). "famille" reprend les seules familles regroupables de
+// CIRCUITS (electrical-constants.ts) — les appareils dédiés ont toujours leur
+// propre circuit et ne sont pas concernés par l'assignation manuelle.
+export type FamilleCircuitManuel = "prise_16" | "cuisine_prises" | "exterieur" | "lumiere";
+
+export const FAMILLES_CIRCUIT_MANUEL: Record<FamilleCircuitManuel, string> = {
+  prise_16: "Prises",
+  cuisine_prises: "Prises cuisine",
+  exterieur: "Prises extérieur / garage",
+  lumiere: "Éclairage",
+};
+
+export interface CircuitManuel {
+  id: number;
+  nom: string;
+  famille: FamilleCircuitManuel;
+  couleur?: string; // couleur imposée sur le plan/l'impression/la vue 3D — sinon couleur procédurale
+}
+
+// Détermine à quelle famille de circuit manuel un appareillage donné (dans une pièce
+// donnée) est éligible, ou null s'il n'est jamais regroupable à la main (interrupteurs —
+// rattachés automatiquement au circuit de leur(s) point(s) lumineux commandé(s) — et
+// appareils dédiés, qui ont toujours leur propre circuit individuel).
+export function familleCircuitManuelAppareillage(type: AppareillageType, pieceType: PieceType): FamilleCircuitManuel | null {
+  if (type === "prise" || type === "prise_commandee") {
+    if (pieceType === "cuisine") return "cuisine_prises";
+    if (pieceType === "exterieur" || pieceType === "garage") return "exterieur";
+    return "prise_16";
+  }
+  if (type === "point_lumineux" || type === "applique") return "lumiere";
+  return null;
+}
+
 export interface Niveau {
   id: number;
   nom: string;
@@ -62,6 +104,11 @@ export interface Niveau {
   tableauHauteur?: number; // cm — hauteur d'installation du tableau (vue 3D), 150 par défaut
   hauteurPlafond?: number; // mètres — pour la vue 3D (2.5 par défaut)
   liaisonWaypoints?: LiaisonWaypoints;
+  circuitsManuels?: CircuitManuel[];
+  // Couleur imposée par circuit AUTOMATIQUE (non manuel), indexée par le label généré
+  // (déterministe tant que la composition du plan ne change pas) — les circuits manuels
+  // utilisent CircuitManuel.couleur à la place (voir construireColorMap, maison-engine.ts).
+  couleursCircuits?: Record<string, string>;
 }
 
 export interface Maison {
@@ -150,7 +197,7 @@ export function trouverPiece(pt: Point, pieces: Piece[]): Piece | null {
   return null;
 }
 
-function distancePointSegment(p: Point, a: Point, b: Point): number {
+export function distanceAuSegment(p: Point, a: Point, b: Point): number {
   const dx = b.x - a.x, dy = b.y - a.y;
   const lenSq = dx * dx + dy * dy;
   if (lenSq === 0) return distance(p, a);
@@ -165,9 +212,25 @@ export function distanceAuMurLePlusProche(point: Point, contour: Point[]): numbe
   let min = Infinity;
   for (let i = 0; i < contour.length; i++) {
     const a = contour[i], b = contour[(i + 1) % contour.length];
-    min = Math.min(min, distancePointSegment(point, a, b));
+    min = Math.min(min, distanceAuSegment(point, a, b));
   }
   return min;
+}
+
+// Distance (mètres) de point à CHAQUE mur du contour, dans l'ordre des segments —
+// utilisé pour permettre de caler un appareillage par rapport à n'importe quel mur
+// de la pièce (pas seulement le plus proche).
+export function distancesTousLesMurs(point: Point, contour: Point[]): number[] {
+  return contour.map((a, i) => distanceAuSegment(point, a, contour[(i + 1) % contour.length]));
+}
+
+function segmentLePlusProche(point: Point, contour: Point[]): number {
+  let bestIdx = 0, bestD = Infinity;
+  for (let i = 0; i < contour.length; i++) {
+    const d = distanceAuSegment(point, contour[i], contour[(i + 1) % contour.length]);
+    if (d < bestD) { bestD = d; bestIdx = i; }
+  }
+  return bestIdx;
 }
 
 // Point le plus proche de p sur le segment [a, b] (projection bornée au segment).
@@ -181,31 +244,32 @@ function pointLePlusProcheSurSegment(p: Point, a: Point, b: Point): Point {
 }
 
 // Repositionne un appareillage pour qu'il soit exactement à distanceCible (mètres) du
-// mur le plus proche, en gardant sa position "le long du mur" (le pied de la perpendiculaire)
-// inchangée — seul l'écart au mur change. Si le point est confondu avec le mur (distance nulle),
-// utilise la normale du segment orientée vers l'intérieur de la pièce (côté du centroïde).
-export function positionnerADistanceDuMur(point: Point, contour: Point[], distanceCible: number): Point {
-  let meilleur: { pied: Point; d: number; a: Point; b: Point } | null = null;
-  for (let i = 0; i < contour.length; i++) {
-    const a = contour[i], b = contour[(i + 1) % contour.length];
-    const pied = pointLePlusProcheSurSegment(point, a, b);
-    const d = distance(point, pied);
-    if (!meilleur || d < meilleur.d) meilleur = { pied, d, a, b };
-  }
-  if (!meilleur) return point;
-  let dx = point.x - meilleur.pied.x, dy = point.y - meilleur.pied.y;
+// mur donné (segIndex du contour), en gardant sa position "le long de ce mur" (le pied
+// de la perpendiculaire) inchangée — seul l'écart à CE mur change. Si le point est
+// confondu avec le mur (distance nulle), utilise la normale du segment orientée vers
+// l'intérieur de la pièce (côté du centroïde).
+export function positionnerADistanceDuSegment(point: Point, contour: Point[], segIndex: number, distanceCible: number): Point {
+  const a = contour[segIndex], b = contour[(segIndex + 1) % contour.length];
+  if (!a || !b) return point;
+  const pied = pointLePlusProcheSurSegment(point, a, b);
+  let dx = point.x - pied.x, dy = point.y - pied.y;
   let norme = Math.hypot(dx, dy);
   if (norme < 0.001) {
-    const segDx = meilleur.b.x - meilleur.a.x, segDy = meilleur.b.y - meilleur.a.y;
+    const segDx = b.x - a.x, segDy = b.y - a.y;
     const segLen = Math.hypot(segDx, segDy) || 1;
     let nx = -segDy / segLen, ny = segDx / segLen;
     const c = centroide(contour);
-    const versCentre = { x: c.x - meilleur.pied.x, y: c.y - meilleur.pied.y };
+    const versCentre = { x: c.x - pied.x, y: c.y - pied.y };
     if (nx * versCentre.x + ny * versCentre.y < 0) { nx = -nx; ny = -ny; }
     dx = nx; dy = ny; norme = 1;
   }
   const ux = dx / norme, uy = dy / norme;
-  return { x: meilleur.pied.x + ux * distanceCible, y: meilleur.pied.y + uy * distanceCible };
+  return { x: pied.x + ux * distanceCible, y: pied.y + uy * distanceCible };
+}
+
+// Même chose mais vis-à-vis du mur le plus proche (raccourci pratique).
+export function positionnerADistanceDuMur(point: Point, contour: Point[], distanceCible: number): Point {
+  return positionnerADistanceDuSegment(point, contour, segmentLePlusProche(point, contour), distanceCible);
 }
 
 // Ordonne une liste de points par plus-proche-voisin à partir d'un point de départ

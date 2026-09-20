@@ -31,6 +31,10 @@ export interface Breaker {
   type: string;
   customSection?: string;
   pieces: PieceConfig[];
+  // Rempli par le module Plan quand ce circuit provient d'un CircuitManuel (voir
+  // maison-types.ts / maison-engine.ts) — id stable, permet de retrouver sa couleur/son
+  // nom d'un niveau même après régénération. Ignoré ailleurs (module Tableau).
+  manuelId?: number;
 }
 
 export interface BreakerRow {
