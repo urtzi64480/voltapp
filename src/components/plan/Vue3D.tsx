@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { Niveau, PIECE_TYPES, centroide, AppareillageType, sequenceAncresCircuit, cleSegmentLiaison } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, centroide, AppareillageType, Ouverture, sequenceAncresCircuit, cleSegmentLiaison } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap } from "@/lib/maison-engine";
 import { initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 
@@ -94,6 +94,67 @@ function creerEtiquetteSprite(texte: string, couleurFond: string): THREE.Sprite 
   return sprite;
 }
 
+// ─── MURS AVEC OUVERTURES (portes/fenêtres) ────────────────────────────────────
+// Un mur plein = une seule boîte par arête du contour (comportement historique).
+// Un mur avec ouverture(s) = plusieurs boîtes disposées pour laisser un trou :
+// un linteau plein au-dessus de l'ouverture jusqu'au plafond, une allège pleine
+// en dessous pour une fenêtre (une porte va jusqu'au sol, pas d'allège), et les
+// pans de mur pleins entre deux ouvertures ou jusqu'aux extrémités du segment.
+function construireMurAvecOuvertures(
+  a: { x: number; y: number }, b: { x: number; y: number }, hauteurMur: number,
+  ouvertures: Ouverture[], epaisseur: number, murMat: THREE.Material, scene: THREE.Scene,
+): void {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const longueur = Math.hypot(dx, dy);
+  if (longueur < 0.01) return;
+  const angle = Math.atan2(dy, dx);
+  const ux = dx / longueur, uy = dy / longueur;
+
+  const ajouterPan = (centreLong: number, largeur: number, centreHauteur: number, hauteur: number) => {
+    if (largeur < 0.005 || hauteur < 0.005) return;
+    const geo = new THREE.BoxGeometry(largeur, hauteur, epaisseur);
+    const mesh = new THREE.Mesh(geo, murMat);
+    mesh.position.set(a.x + ux * centreLong, centreHauteur, a.y + uy * centreLong);
+    mesh.rotation.y = -angle;
+    scene.add(mesh);
+  };
+
+  const segs = ouvertures
+    .map(o => ({ o, centre: Math.min(longueur, Math.max(0, o.position * longueur)), larg: o.largeur / 100 }))
+    .sort((s1, s2) => s1.centre - s2.centre);
+
+  if (segs.length === 0) {
+    ajouterPan(longueur / 2, longueur, hauteurMur / 2, hauteurMur);
+    return;
+  }
+
+  let curseur = 0;
+  segs.forEach(({ o, centre, larg }) => {
+    const debut = Math.max(curseur, centre - larg / 2);
+    const fin = Math.min(longueur, centre + larg / 2);
+    if (fin <= debut) return; // ouvertures qui se chevauchent — on ignore le chevauchement
+    if (debut > curseur) ajouterPan((curseur + debut) / 2, debut - curseur, hauteurMur / 2, hauteurMur);
+
+    const hAllege = o.type === "fenetre" ? (o.allege ?? 90) / 100 : 0;
+    const hOuverture = (o.hauteur ?? (o.type === "porte" ? 204 : 120)) / 100;
+    const hLinteauBas = Math.min(hauteurMur, hAllege + hOuverture);
+    if (hLinteauBas < hauteurMur - 0.01) ajouterPan((debut + fin) / 2, fin - debut, (hLinteauBas + hauteurMur) / 2, hauteurMur - hLinteauBas);
+    if (hAllege > 0.01) ajouterPan((debut + fin) / 2, fin - debut, hAllege / 2, hAllege);
+
+    // Vitrage simple pour une fenêtre — vide pour une porte (une ouverture, tout simplement).
+    if (o.type === "fenetre") {
+      const vitreGeo = new THREE.BoxGeometry(fin - debut, hOuverture, 0.01);
+      const vitreMat = new THREE.MeshStandardMaterial({ color: 0xBAE6FD, transparent: true, opacity: 0.35 });
+      const vitre = new THREE.Mesh(vitreGeo, vitreMat);
+      vitre.position.set(a.x + ux * ((debut + fin) / 2), hAllege + hOuverture / 2, a.y + uy * ((debut + fin) / 2));
+      vitre.rotation.y = -angle;
+      scene.add(vitre);
+    }
+    curseur = fin;
+  });
+  if (curseur < longueur) ajouterPan((curseur + longueur) / 2, longueur - curseur, hauteurMur / 2, hauteurMur);
+}
+
 function creerMarqueurAppareillage(type: AppareillageType, couleur: string): THREE.Group {
   const groupe = new THREE.Group();
   const forme = FORME_PAR_TYPE[type];
@@ -164,20 +225,14 @@ const Vue3D = forwardRef<Vue3DHandle, {
       sol.rotation.x = -Math.PI / 2;
       scene.add(sol);
 
-      // Murs (un segment de boîte par arête du contour) — hauteur propre à la pièce si définie
+      // Murs (un ou plusieurs pans de boîte par arête du contour, troués aux ouvertures) —
+      // hauteur propre à la pièce si définie
       const hauteurMurs = piece.hauteurPlafond ?? hauteurPlafond;
       const murMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f4 });
       piece.contour.forEach((a, i) => {
         const b = piece.contour[(i + 1) % piece.contour.length];
-        const dx = b.x - a.x, dy = b.y - a.y;
-        const longueur = Math.hypot(dx, dy);
-        if (longueur < 0.01) return;
-        const angle = Math.atan2(dy, dx);
-        const murGeo = new THREE.BoxGeometry(longueur, hauteurMurs, EPAISSEUR_MUR);
-        const mur = new THREE.Mesh(murGeo, murMat);
-        mur.position.set((a.x + b.x) / 2, hauteurMurs / 2, (a.y + b.y) / 2);
-        mur.rotation.y = -angle;
-        scene.add(mur);
+        const ouverturesSegment = (piece.ouvertures ?? []).filter(o => o.segIndex === i);
+        construireMurAvecOuvertures(a, b, hauteurMurs, ouverturesSegment, EPAISSEUR_MUR, murMat, scene);
       });
 
       // Appareillages — forme + couleur propres au type + étiquette d'initiales face
