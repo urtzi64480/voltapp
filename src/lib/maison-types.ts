@@ -59,6 +59,7 @@ export interface Niveau {
   ordre: number;
   pieces: Piece[];
   tableauPos?: Point; // position du tableau électrique / GTL sur ce niveau
+  tableauHauteur?: number; // cm — hauteur d'installation du tableau (vue 3D), 150 par défaut
   hauteurPlafond?: number; // mètres — pour la vue 3D (2.5 par défaut)
   liaisonWaypoints?: LiaisonWaypoints;
 }
@@ -167,6 +168,44 @@ export function distanceAuMurLePlusProche(point: Point, contour: Point[]): numbe
     min = Math.min(min, distancePointSegment(point, a, b));
   }
   return min;
+}
+
+// Point le plus proche de p sur le segment [a, b] (projection bornée au segment).
+function pointLePlusProcheSurSegment(p: Point, a: Point, b: Point): Point {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return a;
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  return { x: a.x + t * dx, y: a.y + t * dy };
+}
+
+// Repositionne un appareillage pour qu'il soit exactement à distanceCible (mètres) du
+// mur le plus proche, en gardant sa position "le long du mur" (le pied de la perpendiculaire)
+// inchangée — seul l'écart au mur change. Si le point est confondu avec le mur (distance nulle),
+// utilise la normale du segment orientée vers l'intérieur de la pièce (côté du centroïde).
+export function positionnerADistanceDuMur(point: Point, contour: Point[], distanceCible: number): Point {
+  let meilleur: { pied: Point; d: number; a: Point; b: Point } | null = null;
+  for (let i = 0; i < contour.length; i++) {
+    const a = contour[i], b = contour[(i + 1) % contour.length];
+    const pied = pointLePlusProcheSurSegment(point, a, b);
+    const d = distance(point, pied);
+    if (!meilleur || d < meilleur.d) meilleur = { pied, d, a, b };
+  }
+  if (!meilleur) return point;
+  let dx = point.x - meilleur.pied.x, dy = point.y - meilleur.pied.y;
+  let norme = Math.hypot(dx, dy);
+  if (norme < 0.001) {
+    const segDx = meilleur.b.x - meilleur.a.x, segDy = meilleur.b.y - meilleur.a.y;
+    const segLen = Math.hypot(segDx, segDy) || 1;
+    let nx = -segDy / segLen, ny = segDx / segLen;
+    const c = centroide(contour);
+    const versCentre = { x: c.x - meilleur.pied.x, y: c.y - meilleur.pied.y };
+    if (nx * versCentre.x + ny * versCentre.y < 0) { nx = -nx; ny = -ny; }
+    dx = nx; dy = ny; norme = 1;
+  }
+  const ux = dx / norme, uy = dy / norme;
+  return { x: meilleur.pied.x + ux * distanceCible, y: meilleur.pied.y + uy * distanceCible };
 }
 
 // Ordonne une liste de points par plus-proche-voisin à partir d'un point de départ
