@@ -10,7 +10,7 @@
 
 import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { Niveau, PIECE_TYPES, centroide, AppareillageType, sequenceAncresCircuit, cleSegmentLiaison } from "@/lib/maison-types";
 import { ResultatGeneration } from "@/lib/maison-engine";
 import { couleurCircuit } from "@/lib/maison-types";
