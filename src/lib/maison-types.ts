@@ -47,11 +47,16 @@ export interface Ouverture {
   largeur: number;    // cm
   hauteur?: number;   // cm — hauteur de l'ouverture (porte : depuis le sol ; fenêtre : au-dessus de l'allège)
   allege?: number;    // cm — hauteur d'allège (fenêtre uniquement) ; ignoré pour une porte (va jusqu'au sol)
+  // Porte uniquement — sens d'ouverture : "gauche" = charnière du côté du premier sommet
+  // du mur (segIndex), "droite" = côté du second sommet. ouvreVersInterieur détermine si
+  // le vantail (symbole du plan) bat vers l'intérieur (défaut) ou l'extérieur de la pièce.
+  charniere?: "gauche" | "droite";
+  ouvreVersInterieur?: boolean;
 }
 
 export function nouvelleOuverture(type: OuvertureType, segIndex: number, position: number): Ouverture {
   return type === "porte"
-    ? { id: uidMaison(), type, segIndex, position, largeur: 90, hauteur: 204 }
+    ? { id: uidMaison(), type, segIndex, position, largeur: 90, hauteur: 204, charniere: "gauche", ouvreVersInterieur: true }
     : { id: uidMaison(), type, segIndex, position, largeur: 100, hauteur: 120, allege: 90 };
 }
 
