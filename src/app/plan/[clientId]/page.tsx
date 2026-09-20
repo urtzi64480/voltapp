@@ -13,15 +13,16 @@ import {
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
-  NIVEAU_TYPES, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, ajusterLongueurContour, distanceAuMurLePlusProche,
-  positionnerADistanceDuMur,
-  nouveauNiveau, nouvellePiece, nouvelAppareillage, couleurCircuit, uidMaison,
+  NIVEAU_TYPES, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, ajusterLongueurContour,
+  distanceAuSegment, positionnerADistanceDuSegment,
+  CircuitManuel, FamilleCircuitManuel, FAMILLES_CIRCUIT_MANUEL, familleCircuitManuelAppareillage,
+  nouveauNiveau, nouvellePiece, nouvelAppareillage, uidMaison,
   LiaisonWaypoint, sequenceAncresCircuit, cleSegmentLiaison, construireCheminCircuit, longueurCircuitAvecWaypoints,
 } from "@/lib/maison-types";
 import { AppareillageSymbol, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
-import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
-import { CIRCUITS, BreakerRow } from "@/lib/electrical-constants";
+import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
+import { CIRCUITS, BreakerRow, Breaker } from "@/lib/electrical-constants";
 
 const PX_PER_M = 60;
 const MIN_ZOOM = 0.25;
@@ -95,8 +96,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
     ...niveauResultatComplet,
     pieces: piecesSelectionnees ? niveauResultatComplet.pieces.filter(p => piecesSelectionnees.has(p.id)) : niveauResultatComplet.pieces,
   };
-  const colorMap = new Map<number, string>();
-  if (resultat) resultat.breakers.forEach((b, i) => colorMap.set(b.id, couleurCircuit(i)));
+  const colorMap = resultat ? construireColorMap(resultat) : new Map<number, string>();
 
   let s = `<svg width="${W.toFixed(0)}" height="${H.toFixed(0)}" viewBox="0 0 ${W.toFixed(0)} ${H.toFixed(0)}" xmlns="http://www.w3.org/2000/svg">`;
   s += `<rect width="${W.toFixed(0)}" height="${H.toFixed(0)}" fill="#fff"/>`;
@@ -173,8 +173,9 @@ function gaineNiveauHtml(troncon: TronconGaine | undefined): string {
 function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau, showLongueurs: boolean): string {
   if (!resultat) return "";
   const nomsPieces = new Set(niveau.pieces.map(p => p.nom));
+  const colorMap = construireColorMap(resultat);
   const utilises = resultat.breakers
-    .map((b, i) => ({ b, color: couleurCircuit(i) }))
+    .map(b => ({ b, color: colorMap.get(b.id) ?? "#666" }))
     .filter(({ b }) => b.pieces.some(p => nomsPieces.has(p.nom)));
   if (utilises.length === 0) return "";
   return `<div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 6mm 6mm;font-size:8pt;font-family:monospace;">` +
@@ -549,6 +550,7 @@ export default function PlanPage() {
   const [pendingCommande, setPendingCommande] = useState<{ item: AppareillagePlace; estNouveau: boolean } | null>(null);
   const [selectedAppareillageId, setSelectedAppareillageId] = useState<number | null>(null);
   const [selectedTableau, setSelectedTableau] = useState(false);
+  const [circuitsManuelsOpen, setCircuitsManuelsOpen] = useState(false);
   const [selectedWaypoint, setSelectedWaypoint] = useState<{ cle: string; waypointId: number } | null>(null);
   const [placementError, setPlacementError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -788,13 +790,13 @@ export default function PlanPage() {
     }));
   };
 
-  // Repositionne l'appareillage pour qu'il soit exactement à distanceCm du mur le plus
-  // proche de sa pièce, sans bouger sa position "le long du mur" — pratique pour caler
-  // une prise à une cote précise sans jouer avec le drag au pixel près.
-  const modifierDistanceMur = (piece: Piece, appareillageId: number, distanceCm: number) => {
+  // Repositionne l'appareillage pour qu'il soit exactement à distanceCm du mur segIndex
+  // de sa pièce (n'importe lequel des murs, pas seulement le plus proche), sans bouger sa
+  // position "le long de ce mur" — pratique pour caler une prise à une cote précise.
+  const modifierDistanceSegment = (piece: Piece, appareillageId: number, segIndex: number, distanceCm: number) => {
     const appareillage = piece.appareillages.find(a => a.id === appareillageId);
     if (!appareillage) return;
-    const nouveauPoint = positionnerADistanceDuMur({ x: appareillage.x, y: appareillage.y }, piece.contour, Math.max(0, distanceCm) / 100);
+    const nouveauPoint = positionnerADistanceDuSegment({ x: appareillage.x, y: appareillage.y }, piece.contour, segIndex, Math.max(0, distanceCm) / 100);
     updateNiveauActif(n => ({
       ...n,
       pieces: n.pieces.map(p => p.id !== piece.id ? p : {
@@ -804,8 +806,69 @@ export default function PlanPage() {
     invalidateResultat();
   };
 
+  // Position exacte (mètres) — pour un placement au centimètre près sans passer par le drag.
+  const modifierPositionExacte = (appareillageId: number, x: number, y: number) => {
+    if (Number.isNaN(x) || Number.isNaN(y)) return;
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({
+        ...p, appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, x, y } : a),
+      })),
+    }));
+    invalidateResultat();
+  };
+
   const modifierTableauHauteur = (hauteur: number | undefined) => {
     updateNiveauActif(n => ({ ...n, tableauHauteur: hauteur }));
+  };
+
+  // ─── CIRCUITS MANUELS ────────────────────────────────────────────────────────
+
+  const ajouterCircuitManuel = (famille: FamilleCircuitManuel) => {
+    const nouveau: CircuitManuel = { id: uidMaison(), nom: `${FAMILLES_CIRCUIT_MANUEL[famille]} — nouveau`, famille };
+    updateNiveauActif(n => ({ ...n, circuitsManuels: [...(n.circuitsManuels ?? []), nouveau] }));
+    invalidateResultat();
+  };
+  const renommerCircuitManuel = (manuelId: number, nom: string) => {
+    updateNiveauActif(n => ({
+      ...n, circuitsManuels: (n.circuitsManuels ?? []).map(m => m.id === manuelId ? { ...m, nom } : m),
+    }));
+  };
+  const changerCouleurCircuitManuel = (manuelId: number, couleur: string) => {
+    updateNiveauActif(n => ({
+      ...n, circuitsManuels: (n.circuitsManuels ?? []).map(m => m.id === manuelId ? { ...m, couleur } : m),
+    }));
+  };
+  const supprimerCircuitManuel = (manuelId: number) => {
+    updateNiveauActif(n => ({
+      ...n,
+      circuitsManuels: (n.circuitsManuels ?? []).filter(m => m.id !== manuelId),
+      pieces: n.pieces.map(p => ({
+        ...p,
+        appareillages: p.appareillages.map(a => a.circuitManuelId === manuelId ? { ...a, circuitManuelId: undefined } : a),
+      })),
+    }));
+    invalidateResultat();
+  };
+  // Rattache (ou détache, avec undefined) un appareillage à un circuit manuel — prioritaire
+  // sur le clustering automatique une fois "Générer les circuits" relancé.
+  const assignerCircuitManuel = (appareillageId: number, manuelId: number | undefined) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({
+        ...p, appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, circuitManuelId: manuelId } : a),
+      })),
+    }));
+    invalidateResultat();
+  };
+  // Couleur d'un circuit déjà généré (manuel ou automatique) — voir construireColorMap
+  // (maison-engine.ts) pour la logique de résolution symétrique.
+  const definirCouleurCircuit = (b: Breaker, couleur: string) => {
+    if (b.manuelId != null) {
+      changerCouleurCircuitManuel(b.manuelId, couleur);
+    } else {
+      updateNiveauActif(n => ({ ...n, couleursCircuits: { ...(n.couleursCircuits ?? {}), [b.label]: couleur } }));
+    }
   };
 
   // apresIndex = position dans la liste existante des coudes après laquelle insérer
@@ -1046,8 +1109,7 @@ export default function PlanPage() {
     ? niveauActif?.pieces.find(p => p.appareillages.some(a => a.id === selectedAppareillage.id)) ?? null
     : null;
 
-  const colorMap = new Map<number, string>();
-  if (resultat) resultat.breakers.forEach((b, i) => colorMap.set(b.id, couleurCircuit(i)));
+  const colorMap = resultat ? construireColorMap(resultat) : new Map<number, string>();
 
   const symSize = Math.min(28, Math.max(11, 16 * zoom));
 
@@ -1121,6 +1183,9 @@ export default function PlanPage() {
           </button>
           <button onClick={armerPlacementTableau} className={`btn-ghost !text-xs ${placingTableau ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <Zap size={13} /> Position tableau
+          </button>
+          <button onClick={() => setCircuitsManuelsOpen(o => !o)} className={`btn-ghost !text-xs ${circuitsManuelsOpen ? "!bg-ink-900 !text-volt-400" : ""}`}>
+            🎛️ Circuits manuels
           </button>
           <button onClick={() => setPaletteOpen(o => !o)} className={`btn-ghost !text-xs lg:hidden ${paletteOpen ? "!bg-ink-900 !text-volt-400" : ""}`}>
             Appareillages
@@ -1279,16 +1344,25 @@ export default function PlanPage() {
                       const cPx = toScreen(c.point);
                       const estSel = selectedWaypoint?.cle === cle && selectedWaypoint?.waypointId === c.id;
                       elements.push(
-                        <rect key={`${cle}-wp-${c.id}`} x={cPx.x - 5} y={cPx.y - 5} width={10} height={10} rx={2}
-                          fill={estSel ? "#F59E0B" : "#fff"} stroke={color} strokeWidth={2}
+                        <g key={`${cle}-wp-${c.id}`}
                           style={{ cursor: mode === "select" ? "grab" : "default" }}
                           onPointerDown={e => {
                             if (mode !== "select") return;
                             e.stopPropagation();
-                            if (estSel) setDragMode({ kind: "liaison", cle, waypointId: c.id });
-                            else { setSelectedWaypoint({ cle, waypointId: c.id }); setSelectedPieceId(null); setSelectedAppareillageId(null); }
+                            // Sélectionne ET arme le déplacement dès le premier appui, comme les
+                            // appareillages et le tableau — un simple clic sans bouger reste une
+                            // sélection puisque le déplacement ne prend effet qu'au premier pointermove.
+                            setSelectedWaypoint({ cle, waypointId: c.id });
+                            setSelectedPieceId(null);
+                            setSelectedAppareillageId(null);
+                            setSelectedTableau(false);
+                            setDragMode({ kind: "liaison", cle, waypointId: c.id });
                           }}
-                          onDoubleClick={e => { e.stopPropagation(); supprimerWaypoint(cle, c.id); }} />
+                          onDoubleClick={e => { e.stopPropagation(); supprimerWaypoint(cle, c.id); }}>
+                          <circle cx={cPx.x} cy={cPx.y} r={14} fill={estSel ? "#FEF3C7" : "transparent"} stroke="none" />
+                          <rect x={cPx.x - 5} y={cPx.y - 5} width={10} height={10} rx={2}
+                            fill={estSel ? "#F59E0B" : "#fff"} stroke={color} strokeWidth={2} style={{ pointerEvents: "none" }} />
+                        </g>
                       );
                     });
                   }
@@ -1374,7 +1448,7 @@ export default function PlanPage() {
             )}
 
             {selectedAppareillage && mode === "select" && (
-              <div className="absolute bottom-4 left-4 card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+              <div className="absolute bottom-4 left-4 card card-inner !p-3 flex flex-col gap-2 shadow-lg w-72 max-h-[80vh] overflow-y-auto">
                 <div className="flex items-center gap-2">
                   <AppareillageSymbol type={selectedAppareillage.type} size={22} />
                   <input className="input !py-1 !text-sm flex-1 min-w-0" placeholder={labelAppareillage(selectedAppareillage.type)}
@@ -1388,18 +1462,54 @@ export default function PlanPage() {
                     value={selectedAppareillage.hauteur ?? ""}
                     onChange={e => modifierHauteur(selectedAppareillage.id, e.target.value ? Number(e.target.value) : undefined)} />
                 </div>
+                <div className="flex items-center gap-2 text-xs text-ink-500">
+                  <span className="shrink-0 w-16">Position X/Y</span>
+                  <input type="number" step="0.01" className="input !py-1 !text-xs !w-20"
+                    value={selectedAppareillage.x.toFixed(2)}
+                    onChange={e => { if (e.target.value !== "") modifierPositionExacte(selectedAppareillage.id, Number(e.target.value), selectedAppareillage.y); }} />
+                  <input type="number" step="0.01" className="input !py-1 !text-xs !w-20"
+                    value={selectedAppareillage.y.toFixed(2)}
+                    onChange={e => { if (e.target.value !== "") modifierPositionExacte(selectedAppareillage.id, selectedAppareillage.x, Number(e.target.value)); }} />
+                  <span className="text-ink-400">m</span>
+                </div>
                 {pieceDeSelectedAppareillage && (
-                  <div className="flex items-center gap-2 text-xs text-ink-500">
-                    <span className="shrink-0">Distance au mur (cm)</span>
-                    <input type="number" min={0} className="input !py-1 !text-xs !w-20"
-                      value={Math.round(distanceAuMurLePlusProche({ x: selectedAppareillage.x, y: selectedAppareillage.y }, pieceDeSelectedAppareillage.contour) * 100)}
-                      onChange={e => {
-                        if (e.target.value === "") return;
-                        modifierDistanceMur(pieceDeSelectedAppareillage, selectedAppareillage.id, Number(e.target.value));
-                      }} />
-                    <span className="text-ink-400 ml-auto">mur le + proche</span>
+                  <div className="flex flex-col gap-1 border-t border-ink-100 pt-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">Distance à chaque mur (cm)</span>
+                    <div className="flex flex-col gap-1 max-h-28 overflow-y-auto pr-1">
+                      {pieceDeSelectedAppareillage.contour.map((pt, i) => {
+                        const next = pieceDeSelectedAppareillage.contour[(i + 1) % pieceDeSelectedAppareillage.contour.length];
+                        const d = distanceAuSegment({ x: selectedAppareillage.x, y: selectedAppareillage.y }, pt, next);
+                        return (
+                          <div key={i} className="flex items-center gap-2 text-xs text-ink-500">
+                            <span className="w-12 shrink-0 text-ink-400">Mur {i + 1}</span>
+                            <input type="number" min={0} className="input !py-0.5 !text-xs !w-20"
+                              value={Math.round(d * 100)}
+                              onChange={e => {
+                                if (e.target.value === "") return;
+                                modifierDistanceSegment(pieceDeSelectedAppareillage, selectedAppareillage.id, i, Number(e.target.value));
+                              }} />
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
+                {pieceDeSelectedAppareillage && (() => {
+                  const famille = familleCircuitManuelAppareillage(selectedAppareillage.type, pieceDeSelectedAppareillage.type);
+                  if (!famille) return null;
+                  const options = (niveauActif?.circuitsManuels ?? []).filter(m => m.famille === famille);
+                  return (
+                    <div className="flex items-center gap-2 text-xs text-ink-500 border-t border-ink-100 pt-2">
+                      <span className="shrink-0">Circuit</span>
+                      <select className="input !py-1 !text-xs flex-1"
+                        value={selectedAppareillage.circuitManuelId ?? ""}
+                        onChange={e => assignerCircuitManuel(selectedAppareillage.id, e.target.value ? Number(e.target.value) : undefined)}>
+                        <option value="">Automatique</option>
+                        {options.map(m => <option key={m.id} value={m.id}>{m.nom}</option>)}
+                      </select>
+                    </div>
+                  );
+                })()}
                 {(["interrupteur", "va_et_vient", "telerupteur"] as AppareillageType[]).includes(selectedAppareillage.type) && (
                   <button onClick={() => setPendingCommande({ item: selectedAppareillage, estNouveau: false })}
                     className="btn-ghost !text-xs justify-center">
@@ -1442,6 +1552,41 @@ export default function PlanPage() {
               );
             })()}
 
+            {circuitsManuelsOpen && niveauActif && (
+              <div className="absolute top-4 right-4 card card-inner !p-3 flex flex-col gap-2 shadow-lg w-80 max-h-[70vh] overflow-y-auto z-10">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-ink-900">Circuits manuels — {niveauActif.nom || NIVEAU_TYPES[niveauActif.type]}</p>
+                  <button onClick={() => setCircuitsManuelsOpen(false)} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={14} /></button>
+                </div>
+                <p className="text-[11px] text-ink-400">
+                  Crée un circuit nommé et coloré à la main, puis rattache-lui des appareillages depuis leur panneau (menu "Circuit"). Prioritaire sur le clustering automatique à la prochaine génération.
+                </p>
+                {(Object.keys(FAMILLES_CIRCUIT_MANUEL) as FamilleCircuitManuel[]).map(famille => {
+                  const items = (niveauActif.circuitsManuels ?? []).filter(m => m.famille === famille);
+                  return (
+                    <div key={famille} className="flex flex-col gap-1.5 border-t border-ink-100 pt-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">{FAMILLES_CIRCUIT_MANUEL[famille]}</span>
+                        <button onClick={() => ajouterCircuitManuel(famille)} className="btn-ghost !px-1.5 !py-0.5 !text-[11px]"><Plus size={11} /> Ajouter</button>
+                      </div>
+                      {items.length === 0 && <p className="text-[11px] text-ink-300 italic">Aucun circuit manuel</p>}
+                      {items.map(m => (
+                        <div key={m.id} className="flex items-center gap-1.5">
+                          <input type="color" title="Couleur du circuit"
+                            className="w-5 h-5 shrink-0 rounded-full border-0 p-0 cursor-pointer overflow-hidden"
+                            value={m.couleur ?? "#78716c"}
+                            onChange={e => changerCouleurCircuitManuel(m.id, e.target.value)} />
+                          <input className="input !py-1 !text-xs flex-1 min-w-0" value={m.nom}
+                            onChange={e => renommerCircuitManuel(m.id, e.target.value)} />
+                          <button onClick={() => supprimerCircuitManuel(m.id)} className="btn-danger !px-1.5 !py-1 shrink-0"><Trash2 size={11} /></button>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {placementError && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-500 text-white text-xs font-semibold px-3 py-2 rounded-lg shadow-lg">
                 {placementError}
@@ -1460,18 +1605,20 @@ export default function PlanPage() {
             )}
 
             {showCircuits && resultat && circuitsNiveauActif.length > 0 && (
-              <div className="absolute bottom-4 right-4 card card-inner !p-3 max-w-[240px] max-h-48 overflow-y-auto shadow-lg">
+              <div className="absolute bottom-4 right-4 card card-inner !p-3 max-w-[260px] max-h-56 overflow-y-auto shadow-lg">
                 <p className="text-[10px] font-semibold text-ink-400 uppercase tracking-wide mb-1.5">Circuits</p>
                 <div className="flex flex-col gap-1">
                   {circuitsNiveauActif.map(b => {
-                    const i = resultat.breakers.findIndex(x => x.id === b.id);
                     const pointsCircuit = niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id) ?? [];
                     const lg = showLongueurs && niveauActif?.tableauPos && pointsCircuit.length > 0
                       ? longueurCircuitAvecWaypoints(niveauActif.tableauPos, pointsCircuit, niveauActif.liaisonWaypoints)
                       : null;
                     return (
                       <div key={b.id} className="flex items-center gap-1.5 text-[11px] text-ink-600">
-                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: couleurCircuit(i) }} />
+                        <input type="color" title="Choisir la couleur de ce circuit"
+                          className="w-4 h-4 shrink-0 rounded-full border-0 p-0 cursor-pointer overflow-hidden"
+                          value={colorMap.get(b.id) ?? "#666666"}
+                          onChange={e => definirCouleurCircuit(b, e.target.value)} />
                         <span className="truncate flex-1">{b.label}</span>
                         {lg !== null && <span className="font-mono text-ink-400 shrink-0">{lg.toFixed(1)}m</span>}
                       </div>
