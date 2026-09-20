@@ -23,6 +23,46 @@ const PX_PER_M = 60;
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4;
 
+// Accroche grille + alignement (façon logiciel de dessin vectoriel) : un point saisi
+// s'arrondit à la grille fine (10cm) par défaut, et s'aligne exactement sur un sommet
+// existant proche (mur voisin, autre pièce) plutôt que sur la grille quand les deux
+// sont en concurrence — l'alignement gagne toujours sur le simple arrondi de grille.
+const SNAP_GRID_M = 0.1;
+const ALIGN_THRESHOLD_PX = 8;
+
+function arrondiGrille(v: number, pas: number = SNAP_GRID_M): number {
+  return Math.round(v / pas) * pas;
+}
+
+function pointsReferenceNiveau(niveau: Niveau | null, excludePieceId?: number, excludeIndex?: number): Point[] {
+  if (!niveau) return [];
+  const pts: Point[] = [];
+  niveau.pieces.forEach(p => {
+    p.contour.forEach((pt, i) => {
+      if (p.id === excludePieceId && i === excludeIndex) return;
+      pts.push(pt);
+    });
+  });
+  return pts;
+}
+
+interface ResultatSnap { point: Point; guideX?: number; guideY?: number; }
+
+function snapAvecAlignement(m: Point, candidats: Point[], seuilM: number): ResultatSnap {
+  let x = arrondiGrille(m.x);
+  let y = arrondiGrille(m.y);
+  let guideX: number | undefined;
+  let guideY: number | undefined;
+  let meilleurDX = seuilM, meilleurDY = seuilM;
+  candidats.forEach(c => {
+    const dx = Math.abs(c.x - m.x);
+    if (dx < meilleurDX) { meilleurDX = dx; x = c.x; guideX = c.x; }
+    const dy = Math.abs(c.y - m.y);
+    if (dy < meilleurDY) { meilleurDY = dy; y = c.y; guideY = c.y; }
+  });
+  return { point: { x, y }, guideX, guideY };
+}
+
 function escapeXml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -366,6 +406,7 @@ export default function PlanPage() {
   const [selectedPieceId, setSelectedPieceId] = useState<number | null>(null);
   const [editingPiece, setEditingPiece] = useState<Piece | null>(null);
   const [editingSegment, setEditingSegment] = useState<{ pieceId: number; segIndex: number } | null>(null);
+  const [snapGuide, setSnapGuide] = useState<{ x?: number; y?: number } | null>(null);
   const [dragMode, setDragMode] = useState<DragMode>({ kind: "none" });
 
   const [placementType, setPlacementType] = useState<AppareillageType | null>(null);
@@ -434,7 +475,12 @@ export default function PlanPage() {
       } else if (dragMode.kind === "vertex") {
         const rect = svgRef.current?.getBoundingClientRect();
         if (!rect) return;
-        const m = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        const raw = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        const niveauCourant = niveaux.find(n => n.id === niveauActifId) ?? null;
+        const candidats = pointsReferenceNiveau(niveauCourant, dragMode.pieceId, dragMode.vertexIndex);
+        const seuilM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
+        const { point: m, guideX, guideY } = snapAvecAlignement(raw, candidats, seuilM);
+        setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
         updateNiveauActif(n => ({
           ...n,
           pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : {
@@ -442,8 +488,8 @@ export default function PlanPage() {
           }),
         }));
       } else if (dragMode.kind === "piece") {
-        const dxM = (e.clientX - dragMode.startX) / (PX_PER_M * zoom);
-        const dyM = (e.clientY - dragMode.startY) / (PX_PER_M * zoom);
+        const dxM = arrondiGrille((e.clientX - dragMode.startX) / (PX_PER_M * zoom));
+        const dyM = arrondiGrille((e.clientY - dragMode.startY) / (PX_PER_M * zoom));
         updateNiveauActif(n => ({
           ...n,
           pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : {
@@ -452,7 +498,7 @@ export default function PlanPage() {
         }));
       }
     };
-    const onUp = () => { setDragMode({ kind: "none" }); invalidateResultat(); };
+    const onUp = () => { setDragMode({ kind: "none" }); setSnapGuide(null); invalidateResultat(); };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     return () => {
@@ -550,7 +596,10 @@ export default function PlanPage() {
         const first = toScreen(drawingPoints[0]);
         if (Math.hypot(px - first.x, py - first.y) < 12) { finirDessin(drawingPoints); return; }
       }
-      setDrawingPoints(pts => [...pts, m]);
+      const seuilM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
+      const candidats = [...pointsReferenceNiveau(niveauActif), ...drawingPoints];
+      const { point: mSnap } = snapAvecAlignement(m, candidats, seuilM);
+      setDrawingPoints(pts => [...pts, mSnap]);
       return;
     }
 
@@ -660,6 +709,19 @@ export default function PlanPage() {
   for (let y = yStart; y <= yEnd; y += step) gridLinesY.push(y);
 
   const selectedPiece = niveauActif?.pieces.find(p => p.id === selectedPieceId) ?? null;
+
+  const seuilAlignementM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
+  let curseurSnap: ResultatSnap | null = null;
+  if (mode === "dessiner" && cursorPx) {
+    const mCurseur = toMeters(cursorPx.x, cursorPx.y);
+    const candidatsCurseur = [...pointsReferenceNiveau(niveauActif), ...drawingPoints];
+    curseurSnap = snapAvecAlignement(mCurseur, candidatsCurseur, seuilAlignementM);
+  }
+  const guideActif: { x?: number; y?: number } | null =
+    dragMode.kind === "vertex" ? snapGuide
+    : mode === "dessiner" && curseurSnap && (curseurSnap.guideX !== undefined || curseurSnap.guideY !== undefined)
+      ? { x: curseurSnap.guideX, y: curseurSnap.guideY }
+      : null;
   const selectedAppareillage = niveauActif?.pieces.flatMap(p => p.appareillages).find(a => a.id === selectedAppareillageId) ?? null;
 
   const colorMap = new Map<number, string>();
@@ -869,10 +931,19 @@ export default function PlanPage() {
                 );
               })()}
 
+              {guideActif?.x !== undefined && (() => {
+                const p = toScreen({ x: guideActif.x, y: 0 });
+                return <line x1={p.x} y1={0} x2={p.x} y2={H} stroke="#F59E0B" strokeWidth={1} strokeDasharray="4,3" opacity={0.7} />;
+              })()}
+              {guideActif?.y !== undefined && (() => {
+                const p = toScreen({ x: 0, y: guideActif.y });
+                return <line x1={0} y1={p.y} x2={W} y2={p.y} stroke="#F59E0B" strokeWidth={1} strokeDasharray="4,3" opacity={0.7} />;
+              })()}
+
               {mode === "dessiner" && drawingPoints.length > 0 && (
                 <>
                   <polyline
-                    points={[...drawingPoints.map(toScreen), ...(cursorPx ? [cursorPx] : [])].map(p => `${p.x},${p.y}`).join(" ")}
+                    points={[...drawingPoints.map(toScreen), ...(curseurSnap ? [toScreen(curseurSnap.point)] : [])].map(p => `${p.x},${p.y}`).join(" ")}
                     fill="none" stroke="#F59E0B" strokeWidth={2} strokeDasharray="6,4" />
                   {drawingPoints.map((pt, i) => {
                     const p = toScreen(pt);
@@ -882,10 +953,9 @@ export default function PlanPage() {
                     const prev = drawingPoints[i];
                     return <EtiquetteLongueur key={`dseg${i}`} aPx={toScreen(prev)} bPx={toScreen(pt)} texte={`${distance(prev, pt).toFixed(2)} m`} />;
                   })}
-                  {cursorPx && (() => {
+                  {curseurSnap && (() => {
                     const last = drawingPoints[drawingPoints.length - 1];
-                    const curM = toMeters(cursorPx.x, cursorPx.y);
-                    return <EtiquetteLongueur key="live" aPx={toScreen(last)} bPx={cursorPx} texte={`${distance(last, curM).toFixed(2)} m`} actif />;
+                    return <EtiquetteLongueur key="live" aPx={toScreen(last)} bPx={toScreen(curseurSnap!.point)} texte={`${distance(last, curseurSnap!.point).toFixed(2)} m`} actif />;
                   })()}
                 </>
               )}
