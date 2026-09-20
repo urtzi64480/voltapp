@@ -684,7 +684,10 @@ export default function PlanPage() {
       }
     };
     const onUp = () => {
-      if (dragMode.kind !== "liaison") invalidateResultat();
+      // "pan" (clic dans le vide / déplacement de la vue) et "liaison" (coude, déjà
+      // exclu) ne changent jamais la composition électrique du plan — les exclure d'ici
+      // évite de réinitialiser les circuits générés à chaque simple clic hors pièce.
+      if (dragMode.kind !== "liaison" && dragMode.kind !== "pan") invalidateResultat();
       setDragMode({ kind: "none" });
       setSnapGuide(null);
     };
