@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
-  NIVEAU_TYPES, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece,
+  NIVEAU_TYPES, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, ajusterLongueurContour,
   nouveauNiveau, nouvellePiece, nouvelAppareillage, couleurCircuit, ordonnerParProximite,
 } from "@/lib/maison-types";
 import { AppareillageSymbol, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
@@ -60,6 +60,17 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
     s += `<polygon points="${pts}" fill="${spec.color}" stroke="#333" stroke-width="1.5"/>`;
     s += `<text x="${c.x.toFixed(1)}" y="${c.y.toFixed(1)}" font-size="10" text-anchor="middle" font-family="monospace" fill="#111">${escapeXml(p.nom || spec.label)}</text>`;
     s += `<text x="${c.x.toFixed(1)}" y="${(c.y + 12).toFixed(1)}" font-size="8" text-anchor="middle" font-family="monospace" fill="#555">${surf} m²</text>`;
+    p.contour.forEach((pt, i) => {
+      const next = p.contour[(i + 1) % p.contour.length];
+      const len = distance(pt, next);
+      const aPx = toPx(pt), bPx = toPx(next);
+      const mx = (aPx.x + bPx.x) / 2, my = (aPx.y + bPx.y) / 2;
+      const dx = bPx.x - aPx.x, dy = bPx.y - aPx.y;
+      const l = Math.hypot(dx, dy) || 1;
+      const nx = -dy / l, ny = dx / l;
+      const lx = mx + nx * 7, ly = my + ny * 7;
+      s += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" font-size="6" text-anchor="middle" font-family="monospace" fill="#444">${len.toFixed(2)}m</text>`;
+    });
   });
 
   if (showCircuits && resultat && n.tableauPos) {
@@ -197,6 +208,54 @@ function PieceForm({ initialNom, initialType, onValidate, onCancel, onDelete }: 
   );
 }
 
+function EtiquetteLongueur({ aPx, bPx, texte, onClick, actif }: {
+  aPx: Point; bPx: Point; texte: string; onClick?: () => void; actif?: boolean;
+}) {
+  const mx = (aPx.x + bPx.x) / 2, my = (aPx.y + bPx.y) / 2;
+  const dx = bPx.x - aPx.x, dy = bPx.y - aPx.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len, ny = dx / len;
+  const lx = mx + nx * 9, ly = my + ny * 9;
+  const w = Math.max(28, texte.length * 6 + 6);
+  return (
+    <g transform={`translate(${lx}, ${ly})`}
+      onPointerDown={onClick ? (e) => { e.stopPropagation(); onClick(); } : undefined}
+      style={{ cursor: onClick ? "pointer" : "default" }}>
+      <rect x={-w / 2} y={-7} width={w} height={14} rx={3}
+        fill={actif ? "#F59E0B" : "white"} stroke={actif ? "#F59E0B" : "#d6d3d1"} strokeWidth={1} opacity={0.95} />
+      <text x={0} y={4} textAnchor="middle" fontSize={9} fontFamily="monospace" fontWeight={600}
+        fill={actif ? "#1c1917" : "#57534e"} style={{ pointerEvents: "none" }}>{texte}</text>
+    </g>
+  );
+}
+
+function SegmentLengthForm({ longueurActuelle, onValidate, onCancel }: {
+  longueurActuelle: number; onValidate: (nouvelleLongueur: number) => void; onCancel: () => void;
+}) {
+  const [valeur, setValeur] = useState(longueurActuelle.toFixed(2));
+  const num = parseFloat(valeur.replace(",", "."));
+  const valide = !isNaN(num) && num > 0;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+      <div className="card w-full max-w-xs" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-ink-200">
+          <p className="font-semibold text-ink-900">Longueur du segment</p>
+          <button onClick={onCancel} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={16} /></button>
+        </div>
+        <div className="p-4">
+          <label className="label">Longueur (mètres)</label>
+          <input autoFocus className="input" inputMode="decimal" value={valeur}
+            onChange={e => setValeur(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && valide) onValidate(num); }} />
+        </div>
+        <div className="flex gap-2 p-4 border-t border-ink-200">
+          <button disabled={!valide} onClick={() => onValidate(num)} className="btn-volt flex-1 disabled:opacity-40">Valider</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function NiveauForm({ onValidate, onCancel }: { onValidate: (nom: string, type: NiveauType) => void; onCancel: () => void }) {
   const [nom, setNom] = useState("");
   const [type, setType] = useState<NiveauType>("etage");
@@ -306,6 +365,7 @@ export default function PlanPage() {
 
   const [selectedPieceId, setSelectedPieceId] = useState<number | null>(null);
   const [editingPiece, setEditingPiece] = useState<Piece | null>(null);
+  const [editingSegment, setEditingSegment] = useState<{ pieceId: number; segIndex: number } | null>(null);
   const [dragMode, setDragMode] = useState<DragMode>({ kind: "none" });
 
   const [placementType, setPlacementType] = useState<AppareillageType | null>(null);
@@ -464,6 +524,18 @@ export default function PlanPage() {
       })),
     }));
     setPendingCommande(null);
+    invalidateResultat();
+  };
+
+  const appliquerLongueurSegment = (nouvelleLongueur: number) => {
+    if (!editingSegment) return;
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => p.id !== editingSegment.pieceId ? p : {
+        ...p, contour: ajusterLongueurContour(p.contour, editingSegment.segIndex, nouvelleLongueur),
+      }),
+    }));
+    setEditingSegment(null);
     invalidateResultat();
   };
 
@@ -742,6 +814,15 @@ export default function PlanPage() {
                       const p = toScreen(pt);
                       return <circle key={i} cx={p.x} cy={p.y} r={6} fill="#fff" stroke="#F59E0B" strokeWidth={2} style={{ cursor: "grab" }} onPointerDown={e => onVertexDown(piece.id, i, e)} />;
                     })}
+                    {piece.contour.map((pt, i) => {
+                      const next = piece.contour[(i + 1) % piece.contour.length];
+                      const len = distance(pt, next);
+                      return (
+                        <EtiquetteLongueur key={`seg${i}`} aPx={toScreen(pt)} bPx={toScreen(next)} texte={`${len.toFixed(2)} m`}
+                          onClick={mode === "select" && !placementType && !placingTableau ? () => setEditingSegment({ pieceId: piece.id, segIndex: i }) : undefined}
+                          actif={editingSegment?.pieceId === piece.id && editingSegment?.segIndex === i} />
+                      );
+                    })}
                   </g>
                 );
               })}
@@ -797,6 +878,15 @@ export default function PlanPage() {
                     const p = toScreen(pt);
                     return <circle key={i} cx={p.x} cy={p.y} r={i === 0 ? 7 : 5} fill={i === 0 ? "#F59E0B" : "#fff"} stroke="#F59E0B" strokeWidth={2} />;
                   })}
+                  {drawingPoints.slice(1).map((pt, i) => {
+                    const prev = drawingPoints[i];
+                    return <EtiquetteLongueur key={`dseg${i}`} aPx={toScreen(prev)} bPx={toScreen(pt)} texte={`${distance(prev, pt).toFixed(2)} m`} />;
+                  })}
+                  {cursorPx && (() => {
+                    const last = drawingPoints[drawingPoints.length - 1];
+                    const curM = toMeters(cursorPx.x, cursorPx.y);
+                    return <EtiquetteLongueur key="live" aPx={toScreen(last)} bPx={cursorPx} texte={`${distance(last, curM).toFixed(2)} m`} actif />;
+                  })()}
                 </>
               )}
             </svg>
@@ -938,6 +1028,21 @@ export default function PlanPage() {
           onCancel={() => { removerAppareillage(pendingCommande.id); setPendingCommande(null); }}
         />
       )}
+
+      {editingSegment && niveauActif && (() => {
+        const piece = niveauActif.pieces.find(p => p.id === editingSegment.pieceId);
+        if (!piece) return null;
+        const a = piece.contour[editingSegment.segIndex];
+        const b = piece.contour[(editingSegment.segIndex + 1) % piece.contour.length];
+        if (!a || !b) return null;
+        return (
+          <SegmentLengthForm
+            longueurActuelle={distance(a, b)}
+            onValidate={appliquerLongueurSegment}
+            onCancel={() => setEditingSegment(null)}
+          />
+        );
+      })()}
     </Shell>
   );
 }
