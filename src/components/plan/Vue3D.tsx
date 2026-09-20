@@ -228,7 +228,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
     // ── Repère : x du plan → x 3D, y du plan → z 3D (profondeur), hauteur → y 3D (vertical) ──
 
     const niveauResultat = resultat?.maison.niveaux.find(n => n.id === niveau.id) ?? niveau;
-    const colorMap = resultat ? construireColorMap(resultat) : new Map<number, string>();
+    const colorMap = resultat ? construireColorMap(resultat, [niveau]) : new Map<number, string>();
 
     // Sol + murs par pièce
     niveauResultat.pieces.forEach(piece => {
