@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
-  NIVEAU_TYPES, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, ajusterLongueurContour,
+  NIVEAU_TYPES, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, ajusterLongueurContour, distanceAuMurLePlusProche,
   nouveauNiveau, nouvellePiece, nouvelAppareillage, couleurCircuit, uidMaison,
   LiaisonWaypoint, sequenceAncresCircuit, cleSegmentLiaison, construireCheminCircuit, longueurCircuitAvecWaypoints,
 } from "@/lib/maison-types";
@@ -487,6 +487,35 @@ function PrintForm({ niveaux, resultatDisponible, onValider, onCancel }: {
   );
 }
 
+function Print3DForm({ niveaux, niveauActifId, onValider, onCancel }: {
+  niveaux: Niveau[]; niveauActifId: number | null;
+  onValider: (niveauId: number) => void; onCancel: () => void;
+}) {
+  const [choix, setChoix] = useState<number>(niveauActifId ?? niveaux[0]?.id);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+      <div className="card w-full max-w-sm" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-ink-200">
+          <p className="font-semibold text-ink-900">Imprimer la vue 3D</p>
+          <button onClick={onCancel} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={16} /></button>
+        </div>
+        <div className="p-4">
+          <label className="label">Niveau à imprimer</label>
+          <select className="input" value={choix} onChange={e => setChoix(Number(e.target.value))}>
+            {[...niveaux].sort((a, b) => a.ordre - b.ordre).map(n => (
+              <option key={n.id} value={n.id}>{n.nom || NIVEAU_TYPES[n.type]}</option>
+            ))}
+          </select>
+          <p className="text-xs text-ink-400 mt-2">L'impression 3D capture la vue actuelle (circuits inclus si affichés) d'un niveau à la fois.</p>
+        </div>
+        <div className="flex gap-2 p-4 border-t border-ink-200">
+          <button onClick={() => onValider(choix)} className="btn-volt flex-1"><Printer size={14} /> Imprimer</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 
 export default function PlanPage() {
@@ -525,6 +554,7 @@ export default function PlanPage() {
   const [showCircuits, setShowCircuits] = useState(false);
   const [showLongueurs, setShowLongueurs] = useState(false);
   const [showPrintForm, setShowPrintForm] = useState(false);
+  const [show3DPrintForm, setShow3DPrintForm] = useState(false);
   const [vue3D, setVue3D] = useState(false);
   const vue3DRef = useRef<Vue3DHandle>(null);
   const [pushing, setPushing] = useState(false);
@@ -896,6 +926,27 @@ export default function PlanPage() {
     setShowCircuits(true);
   };
 
+  const capturerEtImprimer3D = () => {
+    const img = vue3DRef.current?.capturerImage();
+    if (!img) return;
+    const w = window.open("", "_blank");
+    if (!w) return;
+    w.document.write(`<html><head><title>Vue 3D — ${client?.nom ?? ""}</title><style>@page{margin:10mm}body{margin:0;text-align:center}img{max-width:100%}</style></head><body><img src="${img}" /></body></html>`);
+    w.document.close();
+    setTimeout(() => { w.print(); w.close(); }, 400);
+  };
+
+  const handleImprimer3D = (niveauId: number) => {
+    setShow3DPrintForm(false);
+    if (niveauId === niveauActifId) {
+      setTimeout(capturerEtImprimer3D, 100);
+    } else {
+      setNiveauActifId(niveauId);
+      // laisse le temps au composant Vue3D de se remonter sur le nouveau niveau avant la capture
+      setTimeout(capturerEtImprimer3D, 500);
+    }
+  };
+
   const handlePousserVersTableau = async () => {
     if (!resultat || resultat.breakers.length === 0) return;
     setPushing(true);
@@ -945,6 +996,9 @@ export default function PlanPage() {
       ? { x: curseurSnap.guideX, y: curseurSnap.guideY }
       : null;
   const selectedAppareillage = niveauActif?.pieces.flatMap(p => p.appareillages).find(a => a.id === selectedAppareillageId) ?? null;
+  const pieceDeSelectedAppareillage = selectedAppareillage
+    ? niveauActif?.pieces.find(p => p.appareillages.some(a => a.id === selectedAppareillage.id)) ?? null
+    : null;
 
   const colorMap = new Map<number, string>();
   if (resultat) resultat.breakers.forEach((b, i) => colorMap.set(b.id, couleurCircuit(i)));
@@ -979,15 +1033,7 @@ export default function PlanPage() {
               {vue3D ? "Vue 2D" : "Vue 3D"}
             </button>
             {vue3D ? (
-              <button onClick={() => {
-                const img = vue3DRef.current?.capturerImage();
-                if (!img) return;
-                const w = window.open("", "_blank");
-                if (!w) return;
-                w.document.write(`<html><head><title>Vue 3D — ${client?.nom ?? ""}</title><style>@page{margin:10mm}body{margin:0;text-align:center}img{max-width:100%}</style></head><body><img src="${img}" /></body></html>`);
-                w.document.close();
-                setTimeout(() => { w.print(); w.close(); }, 400);
-              }} className="btn-ghost"><Printer size={15} /> Imprimer la vue 3D</button>
+              <button onClick={() => setShow3DPrintForm(true)} className="btn-ghost"><Printer size={15} /> Imprimer la vue 3D</button>
             ) : (
               <button onClick={() => setShowPrintForm(true)} className="btn-ghost"><Printer size={15} /> Imprimer</button>
             )}
@@ -1283,6 +1329,11 @@ export default function PlanPage() {
                   <input type="number" className="input !py-1 !text-xs !w-20" placeholder="—"
                     value={selectedAppareillage.hauteur ?? ""}
                     onChange={e => modifierHauteur(selectedAppareillage.id, e.target.value ? Number(e.target.value) : undefined)} />
+                  {pieceDeSelectedAppareillage && (
+                    <span className="text-ink-400 ml-auto">
+                      Mur le + proche : {(distanceAuMurLePlusProche({ x: selectedAppareillage.x, y: selectedAppareillage.y }, pieceDeSelectedAppareillage.contour) * 100).toFixed(0)} cm
+                    </span>
+                  )}
                 </div>
                 {(["interrupteur", "va_et_vient", "telerupteur"] as AppareillageType[]).includes(selectedAppareillage.type) && (
                   <button onClick={() => setPendingCommande({ item: selectedAppareillage, estNouveau: false })}
@@ -1465,6 +1516,14 @@ export default function PlanPage() {
             imprimerPlan(niveaux, client?.nom ?? "", resultat, avecCircuits, avecLongueurs, piecesSelectionnees);
           }}
           onCancel={() => setShowPrintForm(false)}
+        />
+      )}
+
+      {show3DPrintForm && (
+        <Print3DForm
+          niveaux={niveaux} niveauActifId={niveauActifId}
+          onValider={handleImprimer3D}
+          onCancel={() => setShow3DPrintForm(false)}
         />
       )}
     </Shell>
