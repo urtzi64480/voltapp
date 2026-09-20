@@ -282,6 +282,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
       etiquetteTableau.position.set(0, 0.42, 0.08);
       groupeTableau.add(etiquetteTableau);
       groupeTableau.position.set(niveau.tableauPos.x, hTableau, niveau.tableauPos.y);
+      groupeTableau.rotation.y = -((niveau.tableauRotation ?? 0) * Math.PI) / 180;
       scene.add(groupeTableau);
     }
 
