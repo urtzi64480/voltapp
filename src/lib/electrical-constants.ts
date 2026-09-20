@@ -37,6 +37,10 @@ export interface BreakerRow {
   id: number;
   name: string;
   slots: (Breaker | null)[];
+  // Tag posé par le module Plan sur les rangées qu'il génère — permet à un nouveau
+  // "pousser vers le tableau" de remplacer proprement ce lot au lieu de le dupliquer,
+  // sans jamais toucher aux rangées créées à la main dans l'éditeur de tableau.
+  origine?: "plan";
 }
 
 export const BREAKER_TYPES: Record<string, { label: string; width: number; desc: string; isDiff?: boolean; diffType?: string }> = {
