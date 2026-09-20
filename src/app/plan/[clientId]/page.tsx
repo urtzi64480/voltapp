@@ -18,11 +18,12 @@ import {
   distanceAuSegment, positionnerADistanceDuSegment,
   CircuitManuel, FamilleCircuitManuel, FAMILLES_CIRCUIT_MANUEL, familleCircuitManuelAppareillage,
   nouveauNiveau, nouvellePiece, nouvelAppareillage, uidMaison, reamorcerCompteurId, dedupliquerIds,
-  LiaisonWaypoint, sequenceAncresCircuit, cleSegmentLiaison, construireCheminCircuit, longueurCircuitAvecWaypoints,
+  LiaisonWaypoint, cleSegmentLiaison,
+  cheminSegment, longueurBranchesEclairage, centroidePoints,
 } from "@/lib/maison-types";
 import { AppareillageSymbol, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
-import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
+import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker } from "@/lib/electrical-constants";
 
 const PX_PER_M = 60;
@@ -154,10 +155,25 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       parCircuit.set(a.circuitId, arr);
     });
     parCircuit.forEach((points, circuitId) => {
+      const breaker = resultat.breakers.find(b => b.id === circuitId);
+      if (!breaker) return;
       const color = colorMap.get(circuitId) ?? "#666";
-      const chemin = construireCheminCircuit(n.tableauPos!, points, n.liaisonWaypoints).map(toPx);
-      const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
-      s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="1.2" stroke-dasharray="3,2" opacity="0.85"/>`;
+      const segments = segmentsPourCircuit(breaker, points, n, n.tableauPos!);
+      segments.forEach(seg => {
+        const chemin = cheminSegment(seg, n.liaisonWaypoints).map(toPx);
+        const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+        s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="1.2" stroke-dasharray="3,2" opacity="0.85"/>`;
+      });
+      if (breaker.circuit === "lumiere") {
+        const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
+        if (lumieres.length > 1) {
+          const boitePos = n.boitesDerivation?.[breaker.label] ?? centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y })));
+          const pos = toPx(boitePos);
+          s += `<rect x="${(pos.x - 4).toFixed(1)}" y="${(pos.y - 4).toFixed(1)}" width="8" height="8" fill="#fff" stroke="${color}" stroke-width="1.2"/>`;
+          s += `<line x1="${(pos.x - 3.5).toFixed(1)}" y1="${(pos.y - 3.5).toFixed(1)}" x2="${(pos.x + 3.5).toFixed(1)}" y2="${(pos.y + 3.5).toFixed(1)}" stroke="${color}" stroke-width="0.8"/>`;
+          s += `<line x1="${(pos.x - 3.5).toFixed(1)}" y1="${(pos.y + 3.5).toFixed(1)}" x2="${(pos.x + 3.5).toFixed(1)}" y2="${(pos.y - 3.5).toFixed(1)}" stroke="${color}" stroke-width="0.8"/>`;
+        }
+      }
     });
   }
 
@@ -205,7 +221,10 @@ function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau
       let lgTxt = "";
       if (showLongueurs && niveau.tableauPos) {
         const pts = niveau.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
-        if (pts.length > 0) lgTxt = ` — ${longueurCircuitAvecWaypoints(niveau.tableauPos, pts, niveau.liaisonWaypoints).toFixed(1)}m`;
+        if (pts.length > 0) {
+          const segments = segmentsPourCircuit(b, pts, niveau, niveau.tableauPos);
+          lgTxt = ` — ${longueurBranchesEclairage(segments, niveau.liaisonWaypoints).toFixed(1)}m`;
+        }
       }
       return `<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;"></span>${escapeXml(b.label || CIRCUITS[b.circuit]?.label || b.circuit)}${lgTxt}</span>`;
     }).join("") + `</div>`;
@@ -254,6 +273,7 @@ type DragMode =
   | { kind: "appareillage"; pieceId: number; appareillageId: number }
   | { kind: "ouverture"; pieceId: number; ouvertureId: number }
   | { kind: "tableau" }
+  | { kind: "boite"; label: string }
   | { kind: "liaison"; cle: string; waypointId: number };
 
 // ─── FORMULAIRES ────────────────────────────────────────────────────────────────
@@ -620,6 +640,7 @@ export default function PlanPage() {
   const [placingOuverture, setPlacingOuverture] = useState<OuvertureType | null>(null);
   const [ouvertureMenuOpen, setOuvertureMenuOpen] = useState(false);
   const [selectedOuvertureId, setSelectedOuvertureId] = useState<number | null>(null);
+  const [selectedBoite, setSelectedBoite] = useState<string | null>(null);
   const [circuitsManuelsOpen, setCircuitsManuelsOpen] = useState(false);
   const [selectedWaypoint, setSelectedWaypoint] = useState<{ cle: string; waypointId: number } | null>(null);
   const [placementError, setPlacementError] = useState<string | null>(null);
@@ -762,6 +783,16 @@ export default function PlanPage() {
             ...p, ouvertures: (p.ouvertures ?? []).map(o => o.id === dragMode.ouvertureId ? { ...o, position: t } : o),
           }),
         }));
+      } else if (dragMode.kind === "boite") {
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const raw = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        const niveauCourant = niveaux.find(n => n.id === niveauActifId) ?? null;
+        const candidats = pointsReferenceNiveau(niveauCourant);
+        const seuilM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
+        const { point: m, guideX, guideY } = snapAvecAlignement(raw, candidats, seuilM);
+        setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
+        updateNiveauActif(n => ({ ...n, boitesDerivation: { ...(n.boitesDerivation ?? {}), [dragMode.label]: m } }));
       } else if (dragMode.kind === "liaison") {
         const rect = svgRef.current?.getBoundingClientRect();
         if (!rect) return;
@@ -781,11 +812,11 @@ export default function PlanPage() {
       }
     };
     const onUp = () => {
-      // "pan" (clic dans le vide / déplacement de la vue), "liaison" (coude) et
-      // "ouverture" (porte/fenêtre, sans impact électrique) ne changent jamais la
-      // composition électrique du plan — les exclure évite de réinitialiser les
-      // circuits générés à chaque simple clic ou déplacement d'ouverture.
-      if (dragMode.kind !== "liaison" && dragMode.kind !== "pan" && dragMode.kind !== "ouverture") invalidateResultat();
+      // "pan" (clic dans le vide / déplacement de la vue), "liaison" (coude), "ouverture"
+      // (porte/fenêtre) et "boite" (boîte de dérivation, purement cosmétique) ne changent
+      // jamais la composition électrique du plan — les exclure évite de réinitialiser les
+      // circuits générés à chaque simple clic ou déplacement de ces éléments.
+      if (!["liaison", "pan", "ouverture", "boite"].includes(dragMode.kind)) invalidateResultat();
       setDragEndTick(t => t + 1);
       setDragMode({ kind: "none" });
       setSnapGuide(null);
@@ -844,20 +875,20 @@ export default function PlanPage() {
   };
 
   const entrerModeDessiner = () => {
-    setMode("dessiner"); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null);
+    setMode("dessiner"); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
     setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null);
   };
   const armerPlacement = (t: AppareillageType | null) => {
     setPlacementType(t); setMode("select"); setPlacingTableau(false); setPlacingOuverture(null); setDrawingPoints([]);
-    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
   };
   const armerPlacementTableau = () => {
     setPlacingTableau(true); setMode("select"); setPlacementType(null); setPlacingOuverture(null); setDrawingPoints([]);
-    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
   };
   const armerPlacementOuverture = (t: OuvertureType | null) => {
     setPlacingOuverture(t); setMode("select"); setPlacementType(null); setPlacingTableau(false); setDrawingPoints([]);
-    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
   };
 
   const removerAppareillage = (appareillageId: number) => {
@@ -884,7 +915,7 @@ export default function PlanPage() {
       ...n,
       pieces: n.pieces.map(p => ({ ...p, ouvertures: (p.ouvertures ?? []).filter(o => o.id !== ouvertureId) })),
     }));
-    setSelectedOuvertureId(null);
+    setSelectedOuvertureId(null); setSelectedBoite(null);
   };
   const modifierOuverture = (ouvertureId: number, patch: Partial<Pick<Ouverture, "largeur" | "hauteur" | "allege" | "charniere" | "ouvreVersInterieur" | "coulisseVers">>) => {
     updateNiveauActif(n => ({
@@ -1143,7 +1174,7 @@ export default function PlanPage() {
     setSelectedPieceId(null);
     setSelectedAppareillageId(null);
     setSelectedTableau(false);
-    setSelectedOuvertureId(null);
+    setSelectedOuvertureId(null); setSelectedBoite(null);
     setSelectedWaypoint(null);
     setDragMode({ kind: "pan", startX: e.clientX, startY: e.clientY, startPan: pan });
   };
@@ -1164,7 +1195,7 @@ export default function PlanPage() {
       setSelectedPieceId(piece.id);
       setSelectedAppareillageId(null);
       setSelectedTableau(false);
-      setSelectedOuvertureId(null);
+      setSelectedOuvertureId(null); setSelectedBoite(null);
       setSelectedWaypoint(null);
     }
   };
@@ -1183,7 +1214,7 @@ export default function PlanPage() {
     setSelectedAppareillageId(a.id);
     setSelectedTableau(false);
     setSelectedPieceId(null);
-    setSelectedOuvertureId(null);
+    setSelectedOuvertureId(null); setSelectedBoite(null);
     setSelectedWaypoint(null);
     setDragMode({ kind: "appareillage", pieceId: piece.id, appareillageId: a.id });
   };
@@ -1194,7 +1225,7 @@ export default function PlanPage() {
     setSelectedTableau(true);
     setSelectedPieceId(null);
     setSelectedAppareillageId(null);
-    setSelectedOuvertureId(null);
+    setSelectedOuvertureId(null); setSelectedBoite(null);
     setSelectedWaypoint(null);
     setDragMode({ kind: "tableau" });
   };
@@ -1206,8 +1237,21 @@ export default function PlanPage() {
     setSelectedPieceId(null);
     setSelectedAppareillageId(null);
     setSelectedTableau(false);
+    setSelectedBoite(null);
     setSelectedWaypoint(null);
     setDragMode({ kind: "ouverture", pieceId: piece.id, ouvertureId: o.id });
+  };
+
+  const onBoitePointerDown = (label: string, e: React.PointerEvent) => {
+    if (mode !== "select" || placementType || placingTableau || placingOuverture) return;
+    e.stopPropagation();
+    setSelectedBoite(label);
+    setSelectedPieceId(null);
+    setSelectedAppareillageId(null);
+    setSelectedTableau(false);
+    setSelectedOuvertureId(null);
+    setSelectedWaypoint(null);
+    setDragMode({ kind: "boite", label });
   };
 
   const handleSave = useCallback(async () => {
@@ -1342,7 +1386,7 @@ export default function PlanPage() {
 
         <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 bg-ink-50 overflow-x-auto shrink-0">
           {[...niveaux].sort((a, b) => a.ordre - b.ordre).map(n => (
-            <button key={n.id} onClick={() => { setNiveauActifId(n.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); }}
+            <button key={n.id} onClick={() => { setNiveauActifId(n.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); }}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
                 n.id === niveauActifId ? "bg-ink-900 text-volt-400" : "bg-white border border-ink-200 text-ink-500 hover:border-ink-400"
               }`}>
@@ -1616,14 +1660,16 @@ export default function PlanPage() {
                   parCircuit.set(a.circuitId, arr);
                 });
                 return Array.from(parCircuit.entries()).flatMap(([circuitId, points]) => {
+                  const breaker = resultat.breakers.find(b => b.id === circuitId);
+                  if (!breaker) return [];
                   const color = colorMap.get(circuitId) ?? "#666";
-                  const sequence = sequenceAncresCircuit(tableauPos, points);
+                  const segments = segmentsPourCircuit(breaker, points, niveauActif, tableauPos);
                   const elements: ReactNode[] = [];
-                  for (let i = 0; i < sequence.length - 1; i++) {
-                    const cle = cleSegmentLiaison(sequence[i].id, sequence[i + 1].id);
+                  segments.forEach(seg => {
+                    const cle = cleSegmentLiaison(seg.aId, seg.bId);
                     const coudes = waypointsNiveau?.[cle] ?? [];
                     // Sous-chaîne du segment : point de départ, coudes existants, point d'arrivée.
-                    const sousChaine = [sequence[i].point, ...coudes.map(c => c.point), sequence[i + 1].point];
+                    const sousChaine = [seg.aPoint, ...coudes.map(c => c.point), seg.bPoint];
                     for (let j = 0; j < sousChaine.length - 1; j++) {
                       const aPx = toScreen(sousChaine[j]), bPx = toScreen(sousChaine[j + 1]);
                       elements.push(<line key={`${cle}-${j}`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={color} strokeWidth={2} strokeDasharray="6,4" opacity={0.8} />);
@@ -1657,6 +1703,7 @@ export default function PlanPage() {
                             setSelectedPieceId(null);
                             setSelectedAppareillageId(null);
                             setSelectedTableau(false);
+                            setSelectedBoite(null);
                             setDragMode({ kind: "liaison", cle, waypointId: c.id });
                           }}
                           onDoubleClick={e => { e.stopPropagation(); supprimerWaypoint(cle, c.id); }}>
@@ -1666,6 +1713,26 @@ export default function PlanPage() {
                         </g>
                       );
                     });
+                  });
+                  // Boîte de dérivation, déplaçable en drag-drop — un seul câble arrive du
+                  // tableau, chaque lampe repart en étoile, plutôt qu'une chaîne en série.
+                  if (breaker.circuit === "lumiere") {
+                    const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
+                    if (lumieres.length > 1) {
+                      const boitePos = niveauActif.boitesDerivation?.[breaker.label] ?? centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y })));
+                      const p = toScreen(boitePos);
+                      const estSelBoite = selectedBoite === breaker.label;
+                      elements.push(
+                        <g key={`boite-${breaker.label}`} onPointerDown={e => onBoitePointerDown(breaker.label, e)}
+                          style={{ cursor: mode === "select" ? "grab" : "default" }}>
+                          <circle cx={p.x} cy={p.y} r={13} fill={estSelBoite ? "#FEF3C7" : "transparent"} stroke="none" />
+                          <rect x={p.x - 6} y={p.y - 6} width={12} height={12} fill="#fff" stroke={color} strokeWidth={2} />
+                          <line x1={p.x - 4.5} y1={p.y - 4.5} x2={p.x + 4.5} y2={p.y + 4.5} stroke={color} strokeWidth={1} />
+                          <line x1={p.x - 4.5} y1={p.y + 4.5} x2={p.x + 4.5} y2={p.y - 4.5} stroke={color} strokeWidth={1} />
+                          {estSelBoite && <circle cx={p.x} cy={p.y} r={13} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
+                        </g>
+                      );
+                    }
                   }
                   return elements;
                 });
@@ -2054,7 +2121,7 @@ export default function PlanPage() {
                   {circuitsNiveauActif.map(b => {
                     const pointsCircuit = niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id) ?? [];
                     const lg = showLongueurs && niveauActif?.tableauPos && pointsCircuit.length > 0
-                      ? longueurCircuitAvecWaypoints(niveauActif.tableauPos, pointsCircuit, niveauActif.liaisonWaypoints)
+                      ? longueurBranchesEclairage(segmentsPourCircuit(b, pointsCircuit, niveauActif, niveauActif.tableauPos), niveauActif.liaisonWaypoints)
                       : null;
                     return (
                       <div key={b.id} className="flex items-center gap-1.5 text-[11px] text-ink-600">
