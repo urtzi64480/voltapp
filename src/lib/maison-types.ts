@@ -78,6 +78,25 @@ export const nouvelAppareillage = (type: AppareillageType, x: number, y: number)
   id: uidMaison(), type, x, y,
 });
 
+export function distance(a: Point, b: Point): number {
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+// Déplace le point d'arrivée d'un segment (contour[segIndex+1]) le long de sa direction
+// actuelle pour lui donner la longueur voulue, en gardant contour[segIndex] fixe.
+export function ajusterLongueurContour(contour: Point[], segIndex: number, nouvelleLongueur: number): Point[] {
+  const n = contour.length;
+  const a = contour[segIndex];
+  const b = contour[(segIndex + 1) % n];
+  if (!a || !b) return contour;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const longueurActuelle = Math.hypot(dx, dy);
+  if (longueurActuelle < 0.001) return contour;
+  const ratio = nouvelleLongueur / longueurActuelle;
+  const nouveauB: Point = { x: a.x + dx * ratio, y: a.y + dy * ratio };
+  return contour.map((pt, i) => (i === (segIndex + 1) % n ? nouveauB : pt));
+}
+
 export function aireDuPolygone(points: Point[]): number {
   if (points.length < 3) return 0;
   let a = 0;
