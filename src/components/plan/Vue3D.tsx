@@ -2,15 +2,16 @@
 
 // Vue 3D d'un niveau du plan — murs extrudés depuis le contour des pièces, sol,
 // appareillages positionnés à leur hauteur d'installation réelle. Caméra orbitale
-// (glisser = tourner, molette = zoom). Nécessite le paquet npm "three" (voir note
-// de livraison — à ajouter dans package.json, ce fichier ne peut pas le faire).
+// écrite à la main (glisser = tourner, molette = zoom) pour n'avoir aucune
+// dépendance sur les sous-chemins d'import de three (examples/jsm, addons…) qui
+// posent problème selon les versions/bundlers. Nécessite uniquement le paquet
+// npm "three" lui-même (voir note de livraison — à ajouter dans package.json).
 //
 // Ce composant remplace le canvas 2D quand la vue 3D est activée dans la page plan ;
 // il ne gère ni le dessin des pièces ni le placement des appareillages (lecture seule).
 
 import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { Niveau, PIECE_TYPES, centroide, AppareillageType, sequenceAncresCircuit, cleSegmentLiaison } from "@/lib/maison-types";
 import { ResultatGeneration } from "@/lib/maison-engine";
 import { couleurCircuit } from "@/lib/maison-types";
@@ -168,18 +169,47 @@ const Vue3D = forwardRef<Vue3DHandle, {
     const etendue = tousPts.length > 0
       ? Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 4)
       : 8;
-    camera.position.set(cx + etendue * 0.7, etendue * 0.7, cy + etendue * 0.7);
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(cx, hauteurPlafond / 2, cy);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
-    controls.update();
+    // ── Caméra orbitale manuelle (coordonnées sphériques autour de la cible) ──
+    const cible = new THREE.Vector3(cx, hauteurPlafond / 2, cy);
+    let rayon = etendue * 1.1;
+    let azimut = Math.PI / 4;
+    let polaire = Math.PI / 3; // 0 = vue du dessus, PI/2 = vue de côté
+
+    const appliquerCamera = () => {
+      const x = cible.x + rayon * Math.sin(polaire) * Math.sin(azimut);
+      const y = cible.y + rayon * Math.cos(polaire);
+      const z = cible.z + rayon * Math.sin(polaire) * Math.cos(azimut);
+      camera.position.set(x, y, z);
+      camera.lookAt(cible);
+    };
+    appliquerCamera();
+
+    let enRotation = false;
+    let dernierX = 0, dernierY = 0;
+    const onPointerDown = (e: PointerEvent) => { enRotation = true; dernierX = e.clientX; dernierY = e.clientY; };
+    const onPointerMove = (e: PointerEvent) => {
+      if (!enRotation) return;
+      const dx = e.clientX - dernierX, dy = e.clientY - dernierY;
+      dernierX = e.clientX; dernierY = e.clientY;
+      azimut -= dx * 0.006;
+      polaire = Math.min(Math.PI - 0.05, Math.max(0.05, polaire - dy * 0.006));
+      appliquerCamera();
+    };
+    const onPointerUp = () => { enRotation = false; };
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      rayon = Math.min(etendue * 6, Math.max(etendue * 0.15, rayon * (e.deltaY > 0 ? 1.1 : 1 / 1.1)));
+      appliquerCamera();
+    };
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
 
     let frameId: number;
     const animate = () => {
       frameId = requestAnimationFrame(animate);
-      controls.update();
       renderer.render(scene, camera);
     };
     animate();
@@ -195,7 +225,10 @@ const Vue3D = forwardRef<Vue3DHandle, {
     return () => {
       cancelAnimationFrame(frameId);
       window.removeEventListener("resize", onResize);
-      controls.dispose();
+      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      renderer.domElement.removeEventListener("wheel", onWheel);
       renderer.dispose();
       scene.traverse(obj => {
         if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
