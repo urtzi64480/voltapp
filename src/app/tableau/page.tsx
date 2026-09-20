@@ -6,52 +6,11 @@ import { Client } from "@/types";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { Zap, Plus, ShieldCheck, ShieldAlert, ShieldX, Search, ChevronRight, X } from "lucide-react";
-
-interface BreakerRow {
-  id: number;
-  name: string;
-  capacity: number;
-  breakers: { id: number; label: string; circuit: string; amperes: number; type: string }[];
-}
-
-const BREAKER_TYPES: Record<string, { isDiff?: boolean; diffType?: string }> = {
-  "1P": {}, "2P": {},
-  "diff-AC": { isDiff: true, diffType: "AC" },
-  "diff-A":  { isDiff: true, diffType: "A" },
-  "diff-F":  { isDiff: true, diffType: "F" },
-};
-
-const CIRCUITS: Record<string, { label: string; icon: string; ampMax: number; diffType: string | null }> = {
-  lumiere:         { label: "Lumière",         icon: "💡", ampMax: 10,  diffType: "AC" },
-  prise_16:        { label: "Prises 16A",      icon: "🔌", ampMax: 16,  diffType: "AC" },
-  prise_20:        { label: "Prises 20A",      icon: "🔌", ampMax: 20,  diffType: "AC" },
-  cuisine_prises:  { label: "Prises cuisine",  icon: "🍳", ampMax: 20,  diffType: "AC" },
-  plaque:          { label: "Plaque cuisson",  icon: "🔥", ampMax: 32,  diffType: "A"  },
-  four:            { label: "Four",            icon: "🥘", ampMax: 20,  diffType: "AC" },
-  lave_linge:      { label: "Lave-linge",      icon: "🧺", ampMax: 20,  diffType: "A"  },
-  lave_vaisselle:  { label: "Lave-vaisselle",  icon: "🍽️", ampMax: 20,  diffType: "AC" },
-  seche_linge:     { label: "Sèche-linge",     icon: "👕", ampMax: 20,  diffType: "A"  },
-  chauffe_eau:     { label: "Chauffe-eau",     icon: "🚿", ampMax: 20,  diffType: "AC" },
-  chauffage:       { label: "Chauffage élec.", icon: "🌡️", ampMax: 20,  diffType: "AC" },
-  clim:            { label: "Climatisation",   icon: "❄️", ampMax: 20,  diffType: "F"  },
-  seche_serviette: { label: "Sèche-serviette", icon: "🛁", ampMax: 16,  diffType: "AC" },
-  congelateur:     { label: "Congélateur",     icon: "🧊", ampMax: 20,  diffType: "AC" },
-  irve:            { label: "IRVE",            icon: "🔋", ampMax: 32,  diffType: "A"  },
-  piscine:         { label: "Piscine/PAC",     icon: "🏊", ampMax: 20,  diffType: "F"  },
-  vmc:             { label: "VMC",             icon: "💨", ampMax: 10,  diffType: "AC" },
-  alarme:          { label: "Alarme",          icon: "🔔", ampMax: 6,   diffType: "AC" },
-  exterieur:       { label: "Extérieur",       icon: "🌿", ampMax: 16,  diffType: "AC" },
-  garage:          { label: "Garage",          icon: "🏠", ampMax: 16,  diffType: "AC" },
-  general:         { label: "Général",         icon: "⚡", ampMax: 63,  diffType: null },
-  parafoudre:      { label: "Parafoudre",      icon: "⛈️", ampMax: 0,   diffType: null },
-  autre:           { label: "Autre",           icon: "⚙️", ampMax: 32,  diffType: "AC" },
-};
-
-const DIFF_HIERARCHY: Record<string, number> = { AC: 0, A: 1, F: 2 };
+import { BreakerRow, BREAKER_TYPES, CIRCUITS, DIFF_HIERARCHY } from "@/lib/electrical-constants";
 
 function quickScore(rows: BreakerRow[]) {
   let errors = 0;
-  const all = rows.flatMap(r => (r.breakers ?? []).filter((b): b is typeof b => b != null && typeof (b as any)?.type === "string"));
+  const all = rows.flatMap(r => (r.slots ?? []).filter((b): b is typeof b => b != null && typeof (b as any)?.type === "string"));
   const diffs = all.filter(b => BREAKER_TYPES[b?.type ?? ""]?.isDiff);
   if (diffs.length < 2) errors++;
   all.forEach(b => {
@@ -62,7 +21,8 @@ function quickScore(rows: BreakerRow[]) {
     let cov: typeof all[0] | null = null;
     for (const row of rows) {
       let last: typeof all[0] | null = null;
-      for (const rb of row.breakers) {
+      for (const rb of row.slots) {
+        if (!rb) continue;
         if (BREAKER_TYPES[rb?.type ?? ""]?.isDiff) last = rb;
         if (rb.id === b.id) { cov = last; break; }
       }
@@ -260,13 +220,11 @@ export default function TableauxPage() {
   const handleReassign = async (entry: TableauEntry, newClientId: string | null) => {
     setReassign(null);
     if (!newClientId) {
-      // Remove tableau from old client
       await supabase.from("clients").update({ tableau_config: null }).eq("id", entry.clientId);
       setTableaux(t => t.filter(x => x.clientId !== entry.clientId));
       return;
     }
     if (newClientId === entry.clientId) return;
-    // Move config to new client, clear old
     await Promise.all([
       supabase.from("clients").update({ tableau_config: JSON.stringify(entry.rows) }).eq("id", newClientId),
       supabase.from("clients").update({ tableau_config: null }).eq("id", entry.clientId),
@@ -299,7 +257,6 @@ export default function TableauxPage() {
           </button>
         </div>
 
-        {/* Search */}
         {tableaux.length > 3 && (
           <div className="relative mb-4">
             <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-400" />
@@ -334,13 +291,12 @@ export default function TableauxPage() {
                 ? "text-emerald-600 bg-emerald-50 border-emerald-200"
                 : score >= 60 ? "text-amber-600 bg-amber-50 border-amber-200"
                 : "text-red-600 bg-red-50 border-red-200";
-              const totalBreakers = rows.flatMap(r => r.breakers ?? []).filter(b => b != null && typeof b?.type === "string" && !BREAKER_TYPES[b?.type ?? ""]?.isDiff).length;
-              const preview = rows.flatMap(r => r.breakers ?? []).filter(b => b != null && typeof b?.type === "string" && !BREAKER_TYPES[b?.type ?? ""]?.isDiff).slice(0, 8);
+              const totalBreakers = rows.flatMap(r => r.slots ?? []).filter(b => b != null && typeof b?.type === "string" && !BREAKER_TYPES[b?.type ?? ""]?.isDiff).length;
+              const preview = rows.flatMap(r => r.slots ?? []).filter(b => b != null && typeof b?.type === "string" && !BREAKER_TYPES[b?.type ?? ""]?.isDiff).slice(0, 8);
 
               return (
                 <div key={entry.clientId} className="card card-inner hover:border-volt-300 transition-colors">
                   <div className="flex items-start gap-3">
-                    {/* Client avatar */}
                     <div className="w-10 h-10 rounded-full bg-ink-900 flex items-center justify-center text-volt-400 font-semibold text-sm shrink-0">
                       {(client.prenom ? client.prenom[0] : "") + (client.nom?.[0] ?? "")}
                     </div>
@@ -363,7 +319,6 @@ export default function TableauxPage() {
                         </div>
                       </div>
 
-                      {/* Circuit preview */}
                       <div className="flex flex-wrap gap-1.5 mt-2">
                         {preview.map(b => {
                           const c = CIRCUITS[b.circuit] || CIRCUITS.autre;
@@ -378,7 +333,6 @@ export default function TableauxPage() {
                         )}
                       </div>
 
-                      {/* Actions */}
                       <div className="flex gap-2 mt-3">
                         <Link href={`/tableau/${entry.clientId}`} className="btn-volt !py-1.5 !text-xs">
                           <Zap size={12} /> Ouvrir
