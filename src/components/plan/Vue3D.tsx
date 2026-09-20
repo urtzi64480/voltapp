@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { Niveau, PIECE_TYPES, centroide, AppareillageType, Ouverture, sequenceAncresCircuit, cleSegmentLiaison } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, centroide, AppareillageType, OuvertureEffective, ouverturesEffectivesMur, sequenceAncresCircuit, cleSegmentLiaison } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap } from "@/lib/maison-engine";
 import { initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 
@@ -102,13 +102,14 @@ function creerEtiquetteSprite(texte: string, couleurFond: string): THREE.Sprite 
 // pans de mur pleins entre deux ouvertures ou jusqu'aux extrémités du segment.
 function construireMurAvecOuvertures(
   a: { x: number; y: number }, b: { x: number; y: number }, hauteurMur: number,
-  ouvertures: Ouverture[], epaisseur: number, murMat: THREE.Material, scene: THREE.Scene,
+  ouvertures: OuvertureEffective[], epaisseur: number, murMat: THREE.Material, scene: THREE.Scene,
 ): void {
   const dx = b.x - a.x, dy = b.y - a.y;
   const longueur = Math.hypot(dx, dy);
   if (longueur < 0.01) return;
   const angle = Math.atan2(dy, dx);
   const ux = dx / longueur, uy = dy / longueur;
+  const nx = -uy, ny = ux; // perpendiculaire au mur, pour décaler légèrement un panneau coulissant
 
   const ajouterPan = (centreLong: number, largeur: number, centreHauteur: number, hauteur: number) => {
     if (largeur < 0.005 || hauteur < 0.005) return;
@@ -135,20 +136,37 @@ function construireMurAvecOuvertures(
     if (fin <= debut) return; // ouvertures qui se chevauchent — on ignore le chevauchement
     if (debut > curseur) ajouterPan((curseur + debut) / 2, debut - curseur, hauteurMur / 2, hauteurMur);
 
-    const hAllege = o.type === "fenetre" ? (o.allege ?? 90) / 100 : 0;
-    const hOuverture = (o.hauteur ?? (o.type === "porte" ? 204 : 120)) / 100;
+    const hAllege = (o.allege ?? 0) / 100;
+    const hOuverture = (o.hauteur ?? (o.type === "porte" || o.type === "porte_coulissante" ? 204 : 120)) / 100;
     const hLinteauBas = Math.min(hauteurMur, hAllege + hOuverture);
+    // Le trou lui-même (linteau + allège) est percé des DEUX côtés d'un mur mitoyen —
+    // sinon on verrait un mur plein depuis l'autre pièce. Le contenu (vitrage, panneau
+    // coulissant) n'est en revanche dessiné qu'une fois, côté propriétaire de l'ouverture.
     if (hLinteauBas < hauteurMur - 0.01) ajouterPan((debut + fin) / 2, fin - debut, (hLinteauBas + hauteurMur) / 2, hauteurMur - hLinteauBas);
     if (hAllege > 0.01) ajouterPan((debut + fin) / 2, fin - debut, hAllege / 2, hAllege);
 
-    // Vitrage simple pour une fenêtre — vide pour une porte (une ouverture, tout simplement).
-    if (o.type === "fenetre") {
+    if (o.proprietaire && o.type === "fenetre") {
       const vitreGeo = new THREE.BoxGeometry(fin - debut, hOuverture, 0.01);
       const vitreMat = new THREE.MeshStandardMaterial({ color: 0xBAE6FD, transparent: true, opacity: 0.35 });
       const vitre = new THREE.Mesh(vitreGeo, vitreMat);
       vitre.position.set(a.x + ux * ((debut + fin) / 2), hAllege + hOuverture / 2, a.y + uy * ((debut + fin) / 2));
       vitre.rotation.y = -angle;
       scene.add(vitre);
+    }
+
+    if (o.proprietaire && o.type === "porte_coulissante") {
+      // Panneau "garé" contre le mur adjacent, du côté choisi — pas de vantail qui bat.
+      const cote = o.coulisseVers === "gauche" ? -1 : 1;
+      const centrePanneau = cote > 0 ? fin + larg / 2 : debut - larg / 2;
+      const decalage = epaisseur * 0.3;
+      const panneauGeo = new THREE.BoxGeometry(larg, hOuverture, epaisseur * 0.4);
+      const panneauMat = new THREE.MeshStandardMaterial({ color: 0xD6C7A1 });
+      const panneau = new THREE.Mesh(panneauGeo, panneauMat);
+      panneau.position.set(
+        a.x + ux * centrePanneau + nx * decalage, hOuverture / 2, a.y + uy * centrePanneau + ny * decalage,
+      );
+      panneau.rotation.y = -angle;
+      scene.add(panneau);
     }
     curseur = fin;
   });
@@ -231,7 +249,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
       const murMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f4 });
       piece.contour.forEach((a, i) => {
         const b = piece.contour[(i + 1) % piece.contour.length];
-        const ouverturesSegment = (piece.ouvertures ?? []).filter(o => o.segIndex === i);
+        const ouverturesSegment = ouverturesEffectivesMur(niveauResultat.pieces, piece, i);
         construireMurAvecOuvertures(a, b, hauteurMurs, ouverturesSegment, EPAISSEUR_MUR, murMat, scene);
       });
 
