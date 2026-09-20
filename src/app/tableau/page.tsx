@@ -6,11 +6,11 @@ import { Client } from "@/types";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { Zap, Plus, ShieldCheck, ShieldAlert, ShieldX, Search, ChevronRight, X } from "lucide-react";
-import { BreakerRow, BREAKER_TYPES, CIRCUITS, DIFF_HIERARCHY } from "@/lib/electrical-constants";
+import { Breaker, BreakerRow, BREAKER_TYPES, CIRCUITS, DIFF_HIERARCHY } from "@/lib/electrical-constants";
 
 function quickScore(rows: BreakerRow[]) {
   let errors = 0;
-  const all = rows.flatMap(r => (r.slots ?? []).filter((b): b is typeof b => b != null && typeof (b as any)?.type === "string"));
+  const all = rows.flatMap(r => (r.slots ?? []).filter((b): b is Breaker => b != null && typeof b?.type === "string"));
   const diffs = all.filter(b => BREAKER_TYPES[b?.type ?? ""]?.isDiff);
   if (diffs.length < 2) errors++;
   all.forEach(b => {
