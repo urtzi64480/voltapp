@@ -15,6 +15,7 @@ import * as THREE from "three";
 import { Niveau, PIECE_TYPES, centroide, AppareillageType, sequenceAncresCircuit, cleSegmentLiaison } from "@/lib/maison-types";
 import { ResultatGeneration } from "@/lib/maison-engine";
 import { couleurCircuit } from "@/lib/maison-types";
+import { initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 
 const EPAISSEUR_MUR = 0.1; // mètres
 
@@ -27,6 +28,90 @@ const HAUTEUR_DEFAUT: Partial<Record<AppareillageType, number>> = {
   chauffe_eau: 1.8, chauffage: 0.3, clim: 2.0, seche_serviette: 1.2, congelateur: 0.85,
   irve: 1.0, piscine: 0.3, vmc: 2.2, alarme: 2.0,
 };
+
+// Hauteur d'installation par défaut du tableau électrique (mètres) quand non précisée.
+const HAUTEUR_TABLEAU_DEFAUT = 1.5;
+
+// ─── IDENTITÉ VISUELLE 3D DES APPAREILLAGES ────────────────────────────────────
+// Chaque appareillage a, en plus de sa position/hauteur réelles, une forme et une
+// couleur propres à son type (au lieu d'un simple point noir) + une étiquette
+// (initiales) toujours face caméra pour l'identifier sans ambiguïté.
+
+type FormeMarqueur = "plaque" | "ampoule" | "boite" | "cylindre";
+
+const FORME_PAR_TYPE: Record<AppareillageType, FormeMarqueur> = {
+  prise: "plaque", prise_commandee: "plaque",
+  interrupteur: "plaque", va_et_vient: "plaque", telerupteur: "plaque",
+  point_lumineux: "ampoule", applique: "ampoule",
+  four: "boite", plaque: "boite", lave_linge: "boite", lave_vaisselle: "boite", seche_linge: "boite",
+  chauffe_eau: "boite", chauffage: "boite", clim: "boite", seche_serviette: "boite", congelateur: "boite",
+  irve: "cylindre", piscine: "cylindre", vmc: "cylindre", alarme: "cylindre",
+};
+
+const COULEUR_PAR_TYPE: Record<AppareillageType, string> = {
+  prise: "#F59E0B", prise_commandee: "#D97706",
+  point_lumineux: "#FDE68A", applique: "#FCD34D",
+  interrupteur: "#3B82F6", va_et_vient: "#2563EB", telerupteur: "#1D4ED8",
+  four: "#DC2626", plaque: "#EA580C", lave_linge: "#0EA5E9", lave_vaisselle: "#0284C7",
+  seche_linge: "#0369A1", chauffe_eau: "#F97316", chauffage: "#EF4444", clim: "#06B6D4",
+  seche_serviette: "#F472B6", congelateur: "#818CF8",
+  irve: "#22C55E", piscine: "#14B8A6", vmc: "#A78BFA", alarme: "#EF4444",
+};
+
+function creerGeometrieMarqueur(forme: FormeMarqueur): THREE.BufferGeometry {
+  switch (forme) {
+    case "plaque": return new THREE.BoxGeometry(0.09, 0.09, 0.018);
+    case "ampoule": return new THREE.SphereGeometry(0.055, 16, 16);
+    case "cylindre": return new THREE.CylinderGeometry(0.05, 0.05, 0.14, 14);
+    case "boite": default: return new THREE.BoxGeometry(0.13, 0.13, 0.13);
+  }
+}
+
+// Étiquette ronde (initiales) toujours orientée face caméra — c'est elle qui rend
+// chaque appareillage identifiable au premier coup d'œil dans la vue 3D.
+function creerEtiquetteSprite(texte: string, couleurFond: string): THREE.Sprite {
+  const taille = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = taille; canvas.height = taille;
+  const ctx = canvas.getContext("2d")!;
+  ctx.beginPath();
+  ctx.arc(taille / 2, taille / 2, taille / 2 - 3, 0, Math.PI * 2);
+  ctx.fillStyle = couleurFond;
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "#1c1917";
+  ctx.stroke();
+  ctx.fillStyle = "#1c1917";
+  ctx.font = "bold 24px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(texte, taille / 2, taille / 2 + 1);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  const mat = new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(0.22, 0.22, 1);
+  sprite.renderOrder = 999;
+  return sprite;
+}
+
+function creerMarqueurAppareillage(type: AppareillageType, couleur: string): THREE.Group {
+  const groupe = new THREE.Group();
+  const forme = FORME_PAR_TYPE[type];
+  const geo = creerGeometrieMarqueur(forme);
+  const estAmpoule = forme === "ampoule";
+  const mat = new THREE.MeshStandardMaterial({
+    color: couleur,
+    emissive: estAmpoule ? couleur : 0x000000,
+    emissiveIntensity: estAmpoule ? 0.7 : 0,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  groupe.add(mesh);
+  const etiquette = creerEtiquetteSprite(initialesAppareillage(type), couleur);
+  etiquette.position.set(0, 0.13, 0);
+  groupe.add(etiquette);
+  return groupe;
+}
 
 export interface Vue3DHandle {
   capturerImage: () => string | null;
@@ -97,30 +182,42 @@ const Vue3D = forwardRef<Vue3DHandle, {
         scene.add(mur);
       });
 
-      // Appareillages
+      // Appareillages — forme + couleur propres au type + étiquette d'initiales face
+      // caméra, pour être identifiables d'un coup d'œil (jamais un simple point noir).
       piece.appareillages.forEach(app => {
         const h = app.hauteur != null ? app.hauteur / 100 : (HAUTEUR_DEFAUT[app.type] ?? 1.0);
-        const couleur = showCircuits && app.circuitId != null ? (colorMap.get(app.circuitId) ?? "#1c1917") : "#292524";
-        const geo = new THREE.SphereGeometry(0.04, 12, 12);
-        const mat = new THREE.MeshStandardMaterial({ color: couleur });
-        const marker = new THREE.Mesh(geo, mat);
+        const couleurCircuitApp = showCircuits && app.circuitId != null ? colorMap.get(app.circuitId) : undefined;
+        const couleur = couleurCircuitApp ?? COULEUR_PAR_TYPE[app.type] ?? "#78716c";
+        const marker = creerMarqueurAppareillage(app.type, couleur);
         marker.position.set(app.x, h, app.y);
         scene.add(marker);
       });
     });
 
-    // Tableau électrique
+    // Tableau électrique — armoire repérable (couleur, liseré et étiquette "TGBT"),
+    // positionné à sa hauteur d'installation réelle.
     if (niveau.tableauPos) {
-      const geo = new THREE.BoxGeometry(0.4, 0.5, 0.1);
-      const mat = new THREE.MeshStandardMaterial({ color: 0x1c1917 });
-      const tableau = new THREE.Mesh(geo, mat);
-      tableau.position.set(niveau.tableauPos.x, 1.5, niveau.tableauPos.y);
-      scene.add(tableau);
+      const hTableau = niveau.tableauHauteur != null ? niveau.tableauHauteur / 100 : HAUTEUR_TABLEAU_DEFAUT;
+      const groupeTableau = new THREE.Group();
+      const corpsGeo = new THREE.BoxGeometry(0.4, 0.5, 0.1);
+      const corpsMat = new THREE.MeshStandardMaterial({ color: 0x292524 });
+      groupeTableau.add(new THREE.Mesh(corpsGeo, corpsMat));
+      const liseretGeo = new THREE.BoxGeometry(0.42, 0.06, 0.11);
+      const liseretMat = new THREE.MeshStandardMaterial({ color: 0xFBBF24, emissive: 0xFBBF24, emissiveIntensity: 0.4 });
+      const liseret = new THREE.Mesh(liseretGeo, liseretMat);
+      liseret.position.set(0, 0.22, 0);
+      groupeTableau.add(liseret);
+      const etiquetteTableau = creerEtiquetteSprite("TGBT", "#FBBF24");
+      etiquetteTableau.position.set(0, 0.42, 0.08);
+      groupeTableau.add(etiquetteTableau);
+      groupeTableau.position.set(niveau.tableauPos.x, hTableau, niveau.tableauPos.y);
+      scene.add(groupeTableau);
     }
 
     // Circuits — tracé 3D en tenant compte des coudes manuels et de leur hauteur
     if (showCircuits && resultat && niveau.tableauPos) {
       const tableauPos = niveau.tableauPos;
+      const hauteurTableau = niveau.tableauHauteur != null ? niveau.tableauHauteur / 100 : HAUTEUR_TABLEAU_DEFAUT;
       const hauteurCoudeParDefaut = hauteurPlafond - 0.1;
       const tousAppareils = niveauResultat.pieces.flatMap(p => p.appareillages);
       const parCircuit = new Map<number, typeof tousAppareils>();
@@ -135,7 +232,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
         const sequence = sequenceAncresCircuit(tableauPos, points);
         const pts3D: THREE.Vector3[] = [];
         const hauteurAncre = (id: string): number => {
-          if (id === "tableau") return 1.5;
+          if (id === "tableau") return hauteurTableau;
           const app = tousAppareils.find(a => String(a.id) === id);
           if (!app) return 1.0;
           return app.hauteur != null ? app.hauteur / 100 : (HAUTEUR_DEFAUT[app.type] ?? 1.0);
@@ -235,6 +332,9 @@ const Vue3D = forwardRef<Vue3DHandle, {
           obj.geometry.dispose();
           if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
           else obj.material.dispose();
+        } else if (obj instanceof THREE.Sprite) {
+          obj.material.map?.dispose();
+          obj.material.dispose();
         }
       });
       if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);

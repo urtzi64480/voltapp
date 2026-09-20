@@ -35,6 +35,16 @@ const DEDIE_INITIALES: Record<string, string> = {
   congelateur: "CG", irve: "EV", piscine: "PI", vmc: "VMC", alarme: "AL",
 };
 
+// Initiales courtes par type — utilisées comme étiquette d'identification (ex. vue 3D),
+// même logique que les symboles 2D mais réduite à 1-3 caractères.
+const INITIALES_BASE: Record<string, string> = {
+  prise: "P", prise_commandee: "PC", point_lumineux: "PL", applique: "AP",
+  interrupteur: "I", va_et_vient: "VV", telerupteur: "BP",
+};
+export function initialesAppareillage(type: AppareillageType): string {
+  return INITIALES_BASE[type] ?? DEDIE_INITIALES[type] ?? "?";
+}
+
 // Symboles normalisés d'implantation (base CEI/NF EN 60617, convention UTE/Promotelec),
 // dessinés en SVG — même logique que le BreakerSVG existant du module Tableau.
 export function AppareillageSymbol({ type, size = 20, color = "#1c1917" }: {
