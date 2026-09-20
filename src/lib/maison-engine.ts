@@ -263,11 +263,17 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
 // sa couleur manuelle est donc indexée par son label (déterministe tant que la
 // composition du plan ne change pas) sur Niveau.couleursCircuits. Un circuit manuel
 // (Breaker.manuelId défini) prend directement la couleur de son CircuitManuel.
-export function construireColorMap(resultat: ResultatGeneration): Map<number, string> {
+// niveauxVivants (optionnel) : passe les niveaux "vivants" (état React actuel, édité en
+// direct par l'utilisateur — pas le résultat figé au moment du clic sur "Générer") pour
+// que les couleurs choisies dans le sélecteur s'appliquent immédiatement, sans attendre
+// une régénération. Sans ce paramètre, retombe sur les couleurs telles qu'elles étaient
+// au moment de la génération (utile pour un contexte qui n'a accès qu'au résultat figé).
+export function construireColorMap(resultat: ResultatGeneration, niveauxVivants?: Niveau[]): Map<number, string> {
   const map = new Map<number, string>();
   let compteur = 0;
-  resultat.maison.niveaux.forEach(niveau => {
-    const nomsPieces = new Set(niveau.pieces.map(p => p.nom));
+  resultat.maison.niveaux.forEach(niveauResultat => {
+    const niveau = niveauxVivants?.find(n => n.id === niveauResultat.id) ?? niveauResultat;
+    const nomsPieces = new Set(niveauResultat.pieces.map(p => p.nom));
     const breakersNiveau = resultat.breakers.filter(b => b.pieces.some(pc => nomsPieces.has(pc.nom)));
     breakersNiveau.forEach(b => {
       const manuel = b.manuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === b.manuelId) : undefined;
