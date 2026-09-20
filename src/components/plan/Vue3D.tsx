@@ -13,8 +13,7 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
 import { Niveau, PIECE_TYPES, centroide, AppareillageType, sequenceAncresCircuit, cleSegmentLiaison } from "@/lib/maison-types";
-import { ResultatGeneration } from "@/lib/maison-engine";
-import { couleurCircuit } from "@/lib/maison-types";
+import { ResultatGeneration, construireColorMap } from "@/lib/maison-engine";
 import { initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 
 const EPAISSEUR_MUR = 0.1; // mètres
@@ -150,8 +149,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
     // ── Repère : x du plan → x 3D, y du plan → z 3D (profondeur), hauteur → y 3D (vertical) ──
 
     const niveauResultat = resultat?.maison.niveaux.find(n => n.id === niveau.id) ?? niveau;
-    const colorMap = new Map<number, string>();
-    if (resultat) resultat.breakers.forEach((b, i) => colorMap.set(b.id, couleurCircuit(i)));
+    const colorMap = resultat ? construireColorMap(resultat) : new Map<number, string>();
 
     // Sol + murs par pièce
     niveauResultat.pieces.forEach(piece => {
