@@ -14,6 +14,7 @@ import {
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
   NIVEAU_TYPES, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, ajusterLongueurContour, distanceAuMurLePlusProche,
+  positionnerADistanceDuMur,
   nouveauNiveau, nouvellePiece, nouvelAppareillage, couleurCircuit, uidMaison,
   LiaisonWaypoint, sequenceAncresCircuit, cleSegmentLiaison, construireCheminCircuit, longueurCircuitAvecWaypoints,
 } from "@/lib/maison-types";
@@ -228,6 +229,7 @@ type DragMode =
   | { kind: "vertex"; pieceId: number; vertexIndex: number }
   | { kind: "piece"; pieceId: number; startX: number; startY: number; startContour: Point[] }
   | { kind: "appareillage"; pieceId: number; appareillageId: number }
+  | { kind: "tableau" }
   | { kind: "liaison"; cle: string; waypointId: number };
 
 // ─── FORMULAIRES ────────────────────────────────────────────────────────────────
@@ -546,6 +548,7 @@ export default function PlanPage() {
   const [placingTableau, setPlacingTableau] = useState(false);
   const [pendingCommande, setPendingCommande] = useState<{ item: AppareillagePlace; estNouveau: boolean } | null>(null);
   const [selectedAppareillageId, setSelectedAppareillageId] = useState<number | null>(null);
+  const [selectedTableau, setSelectedTableau] = useState(false);
   const [selectedWaypoint, setSelectedWaypoint] = useState<{ cle: string; waypointId: number } | null>(null);
   const [placementError, setPlacementError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -650,6 +653,16 @@ export default function PlanPage() {
             ...p, appareillages: p.appareillages.map(a => a.id === dragMode.appareillageId ? { ...a, x: m.x, y: m.y } : a),
           }),
         }));
+      } else if (dragMode.kind === "tableau") {
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const raw = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        const niveauCourant = niveaux.find(n => n.id === niveauActifId) ?? null;
+        const candidats = pointsReferenceNiveau(niveauCourant);
+        const seuilM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
+        const { point: m, guideX, guideY } = snapAvecAlignement(raw, candidats, seuilM);
+        setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
+        updateNiveauActif(n => ({ ...n, tableauPos: m }));
       } else if (dragMode.kind === "liaison") {
         const rect = svgRef.current?.getBoundingClientRect();
         if (!rect) return;
@@ -727,16 +740,16 @@ export default function PlanPage() {
   };
 
   const entrerModeDessiner = () => {
-    setMode("dessiner"); setSelectedPieceId(null); setSelectedAppareillageId(null);
+    setMode("dessiner"); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false);
     setPlacementType(null); setPlacingTableau(false);
   };
   const armerPlacement = (t: AppareillageType | null) => {
     setPlacementType(t); setMode("select"); setPlacingTableau(false); setDrawingPoints([]);
-    setSelectedPieceId(null); setSelectedAppareillageId(null);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false);
   };
   const armerPlacementTableau = () => {
     setPlacingTableau(true); setMode("select"); setPlacementType(null); setDrawingPoints([]);
-    setSelectedPieceId(null); setSelectedAppareillageId(null);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false);
   };
 
   const removerAppareillage = (appareillageId: number) => {
@@ -773,6 +786,26 @@ export default function PlanPage() {
         appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, hauteur } : a),
       })),
     }));
+  };
+
+  // Repositionne l'appareillage pour qu'il soit exactement à distanceCm du mur le plus
+  // proche de sa pièce, sans bouger sa position "le long du mur" — pratique pour caler
+  // une prise à une cote précise sans jouer avec le drag au pixel près.
+  const modifierDistanceMur = (piece: Piece, appareillageId: number, distanceCm: number) => {
+    const appareillage = piece.appareillages.find(a => a.id === appareillageId);
+    if (!appareillage) return;
+    const nouveauPoint = positionnerADistanceDuMur({ x: appareillage.x, y: appareillage.y }, piece.contour, Math.max(0, distanceCm) / 100);
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => p.id !== piece.id ? p : {
+        ...p, appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, x: nouveauPoint.x, y: nouveauPoint.y } : a),
+      }),
+    }));
+    invalidateResultat();
+  };
+
+  const modifierTableauHauteur = (hauteur: number | undefined) => {
+    updateNiveauActif(n => ({ ...n, tableauHauteur: hauteur }));
   };
 
   // apresIndex = position dans la liste existante des coudes après laquelle insérer
@@ -872,6 +905,7 @@ export default function PlanPage() {
 
     setSelectedPieceId(null);
     setSelectedAppareillageId(null);
+    setSelectedTableau(false);
     setSelectedWaypoint(null);
     setDragMode({ kind: "pan", startX: e.clientX, startY: e.clientY, startPan: pan });
   };
@@ -891,6 +925,7 @@ export default function PlanPage() {
     } else {
       setSelectedPieceId(piece.id);
       setSelectedAppareillageId(null);
+      setSelectedTableau(false);
       setSelectedWaypoint(null);
     }
   };
@@ -903,13 +938,24 @@ export default function PlanPage() {
   const onAppareillagePointerDown = (piece: Piece, a: AppareillagePlace, e: React.PointerEvent) => {
     if (mode !== "select" || placementType || placingTableau) return;
     e.stopPropagation();
-    if (selectedAppareillageId === a.id) {
-      setDragMode({ kind: "appareillage", pieceId: piece.id, appareillageId: a.id });
-    } else {
-      setSelectedAppareillageId(a.id);
-      setSelectedPieceId(null);
-      setSelectedWaypoint(null);
-    }
+    // Sélectionne ET arme le déplacement dès le premier appui (comme un vrai
+    // glisser-déposer) : un simple clic sans bouger équivaut juste à une sélection,
+    // puisque le déplacement ne prend effet qu'au premier pointermove.
+    setSelectedAppareillageId(a.id);
+    setSelectedTableau(false);
+    setSelectedPieceId(null);
+    setSelectedWaypoint(null);
+    setDragMode({ kind: "appareillage", pieceId: piece.id, appareillageId: a.id });
+  };
+
+  const onTableauPointerDown = (e: React.PointerEvent) => {
+    if (mode !== "select" || placementType || placingTableau) return;
+    e.stopPropagation();
+    setSelectedTableau(true);
+    setSelectedPieceId(null);
+    setSelectedAppareillageId(null);
+    setSelectedWaypoint(null);
+    setDragMode({ kind: "tableau" });
   };
 
   const handleSave = useCallback(async () => {
@@ -1045,7 +1091,7 @@ export default function PlanPage() {
 
         <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 bg-ink-50 overflow-x-auto shrink-0">
           {[...niveaux].sort((a, b) => a.ordre - b.ordre).map(n => (
-            <button key={n.id} onClick={() => { setNiveauActifId(n.id); setSelectedPieceId(null); setSelectedAppareillageId(null); }}
+            <button key={n.id} onClick={() => { setNiveauActifId(n.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); }}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
                 n.id === niveauActifId ? "bg-ink-900 text-volt-400" : "bg-white border border-ink-200 text-ink-500 hover:border-ink-400"
               }`}>
@@ -1254,22 +1300,34 @@ export default function PlanPage() {
                 const p = toScreen({ x: a.x, y: a.y });
                 const isSel = a.id === selectedAppareillageId;
                 const color = showCircuits && a.circuitId != null ? (colorMap.get(a.circuitId) ?? "#1c1917") : (isSel ? "#F59E0B" : "#1c1917");
+                // Cible de clic généreuse et indépendante du zoom (invisible, sous l'icône) :
+                // l'icône réelle peut être fine, la zone cliquable reste toujours confortable.
+                const rZoneClic = Math.max(16, symSize / 2 + 7);
                 return (
-                  <g key={a.id} transform={`translate(${p.x - symSize / 2}, ${p.y - symSize / 2})`}
+                  <g key={a.id}
                     onPointerDown={e => onAppareillagePointerDown(piece, a, e)}
                     style={{ cursor: mode === "select" && !placementType && !placingTableau ? (isSel ? "grab" : "pointer") : "default" }}>
-                    <AppareillageSymbol type={a.type} size={symSize} color={color} />
-                    {isSel && <rect x={-2} y={-2} width={symSize + 4} height={symSize + 4} fill="none" stroke="#F59E0B" strokeWidth={1.5} rx={3} />}
+                    <circle cx={p.x} cy={p.y} r={rZoneClic} fill={isSel ? "#FEF3C7" : "transparent"} stroke="none" />
+                    <g transform={`translate(${p.x - symSize / 2}, ${p.y - symSize / 2})`} style={{ pointerEvents: "none" }}>
+                      <AppareillageSymbol type={a.type} size={symSize} color={color} />
+                    </g>
+                    {isSel && <circle cx={p.x} cy={p.y} r={rZoneClic} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
                   </g>
                 );
               })}
 
               {niveauActif?.tableauPos && (() => {
                 const p = toScreen(niveauActif.tableauPos);
+                const rZoneClic = 18;
                 return (
-                  <g transform={`translate(${p.x - 12}, ${p.y - 12})`}>
-                    <rect width="24" height="24" rx="4" fill="#1c1917" />
-                    <text x="12" y="16" textAnchor="middle" fontSize="14" fill="#FBBF24">⚡</text>
+                  <g onPointerDown={onTableauPointerDown}
+                    style={{ cursor: mode === "select" && !placementType && !placingTableau ? (selectedTableau ? "grab" : "pointer") : "default" }}>
+                    <circle cx={p.x} cy={p.y} r={rZoneClic} fill={selectedTableau ? "#FEF3C7" : "transparent"} stroke="none" />
+                    <g transform={`translate(${p.x - 12}, ${p.y - 12})`} style={{ pointerEvents: "none" }}>
+                      <rect width="24" height="24" rx="4" fill="#1c1917" />
+                      <text x="12" y="16" textAnchor="middle" fontSize="14" fill="#FBBF24">⚡</text>
+                    </g>
+                    {selectedTableau && <circle cx={p.x} cy={p.y} r={rZoneClic} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
                   </g>
                 );
               })()}
@@ -1329,12 +1387,19 @@ export default function PlanPage() {
                   <input type="number" className="input !py-1 !text-xs !w-20" placeholder="—"
                     value={selectedAppareillage.hauteur ?? ""}
                     onChange={e => modifierHauteur(selectedAppareillage.id, e.target.value ? Number(e.target.value) : undefined)} />
-                  {pieceDeSelectedAppareillage && (
-                    <span className="text-ink-400 ml-auto">
-                      Mur le + proche : {(distanceAuMurLePlusProche({ x: selectedAppareillage.x, y: selectedAppareillage.y }, pieceDeSelectedAppareillage.contour) * 100).toFixed(0)} cm
-                    </span>
-                  )}
                 </div>
+                {pieceDeSelectedAppareillage && (
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0">Distance au mur (cm)</span>
+                    <input type="number" min={0} className="input !py-1 !text-xs !w-20"
+                      value={Math.round(distanceAuMurLePlusProche({ x: selectedAppareillage.x, y: selectedAppareillage.y }, pieceDeSelectedAppareillage.contour) * 100)}
+                      onChange={e => {
+                        if (e.target.value === "") return;
+                        modifierDistanceMur(pieceDeSelectedAppareillage, selectedAppareillage.id, Number(e.target.value));
+                      }} />
+                    <span className="text-ink-400 ml-auto">mur le + proche</span>
+                  </div>
+                )}
                 {(["interrupteur", "va_et_vient", "telerupteur"] as AppareillageType[]).includes(selectedAppareillage.type) && (
                   <button onClick={() => setPendingCommande({ item: selectedAppareillage, estNouveau: false })}
                     className="btn-ghost !text-xs justify-center">
@@ -1344,6 +1409,22 @@ export default function PlanPage() {
                 {selectedAppareillage.circuitId != null && (
                   <p className="text-xs text-ink-400">Circuit : {resultat?.breakers.find(b => b.id === selectedAppareillage.circuitId)?.label}</p>
                 )}
+              </div>
+            )}
+
+            {selectedTableau && niveauActif?.tableauPos && mode === "select" && (
+              <div className="absolute bottom-4 left-4 card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg leading-none">⚡</span>
+                  <p className="text-sm font-semibold text-ink-900 flex-1">Tableau électrique</p>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-ink-500">
+                  <span className="shrink-0">Hauteur d'installation (cm)</span>
+                  <input type="number" className="input !py-1 !text-xs !w-20" placeholder="150"
+                    value={niveauActif.tableauHauteur ?? ""}
+                    onChange={e => modifierTableauHauteur(e.target.value ? Number(e.target.value) : undefined)} />
+                </div>
+                <p className="text-[11px] text-ink-400">Glisse-le directement sur le plan pour le repositionner.</p>
               </div>
             )}
 
