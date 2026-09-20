@@ -10,139 +10,18 @@ import {
   ArrowLeft, Save, Printer, ShieldCheck, ShieldAlert,
   ShieldX, Plus, Trash2, Zap, Settings2, QrCode,
 } from "lucide-react";
+import {
+  CommandeType, GroupeLumineux, PieceConfig, Breaker, BreakerRow,
+  BREAKER_TYPES, CIRCUITS, SECTIONS_CABLE, GAINES_IRL,
+  gaineRecommandee, cablesGroupe, cablesPrises, labelCommande,
+  DIFF_HIERARCHY, AMPERES, getCategory, effectiveSection, uid,
+} from "@/lib/electrical-constants";
 
-// ─── TYPES ────────────────────────────────────────────────────────────────────
+// ─── CONSTANTES LOCALES (mise en page du tableau, propres à cette page) ────────
 
-type CommandeType = "simple" | "vav" | "telerupteur";
-type CircuitCategory = "lumiere" | "prises";
-
-interface GroupeLumineux {
-  nbPoints: number;
-  typeCommande: CommandeType;
-  nbCommandes: number;
-}
-
-interface PieceConfig {
-  nom: string;
-  groupes: GroupeLumineux[];
-  nbPrises: number;
-}
-
-interface Breaker {
-  id: number;
-  label: string;
-  circuit: string;
-  amperes: number;
-  type: string;
-  customSection?: string;
-  pieces: PieceConfig[];
-}
-
-interface BreakerRow {
-  id: number;
-  name: string;
-  slots: (Breaker | null)[];
-}
-
-// ─── NFC 15-100 CONSTANTS ─────────────────────────────────────────────────────
-
-const BREAKER_TYPES: Record<string, { label: string; width: number; desc: string; isDiff?: boolean; diffType?: string }> = {
-  "1P":      { label: "1P",    width: 1, desc: "Unipolaire" },
-  "2P":      { label: "2P",    width: 2, desc: "Bipolaire" },
-  "diff-AC": { label: "ID AC", width: 2, desc: "Différentiel Type AC", isDiff: true, diffType: "AC" },
-  "diff-A":  { label: "ID A",  width: 2, desc: "Différentiel Type A",  isDiff: true, diffType: "A"  },
-  "diff-F":  { label: "ID F",  width: 2, desc: "Différentiel Type F",  isDiff: true, diffType: "F"  },
-};
-
-const CIRCUITS: Record<string, {
-  label: string; icon: string; ampMax: number; dedié: boolean;
-  diffType: string | null; section: string | null; category: CircuitCategory | null;
-}> = {
-  lumiere:         { label: "Lumière",          icon: "💡", ampMax: 10, dedié: false, diffType: "AC", section: "1.5", category: "lumiere" },
-  prise_16:        { label: "Prises 16A",       icon: "🔌", ampMax: 16, dedié: false, diffType: "AC", section: "1.5", category: "prises" },
-  prise_20:        { label: "Prises 20A",       icon: "🔌", ampMax: 20, dedié: false, diffType: "AC", section: "2.5", category: "prises" },
-  cuisine_prises:  { label: "Prises cuisine",   icon: "🍳", ampMax: 20, dedié: false, diffType: "AC", section: "2.5", category: "prises" },
-  plaque:          { label: "Plaque cuisson",   icon: "🔥", ampMax: 32, dedié: true,  diffType: "A",  section: "6.0", category: null },
-  four:            { label: "Four",             icon: "🥘", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5", category: null },
-  lave_linge:      { label: "Lave-linge",       icon: "🧺", ampMax: 20, dedié: true,  diffType: "A",  section: "2.5", category: null },
-  lave_vaisselle:  { label: "Lave-vaisselle",   icon: "🍽️", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5", category: null },
-  seche_linge:     { label: "Sèche-linge",      icon: "👕", ampMax: 20, dedié: true,  diffType: "A",  section: "2.5", category: null },
-  chauffe_eau:     { label: "Chauffe-eau",      icon: "🚿", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5", category: null },
-  chauffage:       { label: "Chauffage élec.",  icon: "🌡️", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5", category: null },
-  clim:            { label: "Climatisation",    icon: "❄️", ampMax: 20, dedié: true,  diffType: "F",  section: "2.5", category: null },
-  seche_serviette: { label: "Sèche-serviette",  icon: "🛁", ampMax: 16, dedié: true,  diffType: "AC", section: "1.5", category: null },
-  congelateur:     { label: "Congélateur",      icon: "🧊", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5", category: null },
-  irve:            { label: "IRVE (recharge)",  icon: "🔋", ampMax: 32, dedié: true,  diffType: "A",  section: "6.0", category: null },
-  piscine:         { label: "Piscine/PAC",      icon: "🏊", ampMax: 20, dedié: true,  diffType: "F",  section: "2.5", category: null },
-  vmc:             { label: "VMC",              icon: "💨", ampMax: 10, dedié: true,  diffType: "AC", section: "1.5", category: null },
-  alarme:          { label: "Alarme",           icon: "🔔", ampMax: 6,  dedié: true,  diffType: "AC", section: "1.5", category: null },
-  exterieur:       { label: "Extérieur",        icon: "🌿", ampMax: 16, dedié: false, diffType: "AC", section: "1.5", category: "prises" },
-  garage:          { label: "Garage",           icon: "🏠", ampMax: 16, dedié: false, diffType: "AC", section: "1.5", category: "prises" },
-  general:         { label: "Général / Arrivée",icon: "⚡", ampMax: 63, dedié: true,  diffType: null, section: "10.0", category: null },
-  parafoudre:      { label: "Parafoudre",       icon: "⛈️", ampMax: 0,  dedié: true,  diffType: null, section: null,  category: null },
-  autre:           { label: "Autre",            icon: "⚙️", ampMax: 32, dedié: false, diffType: "AC", section: "2.5", category: null },
-};
-
-const SECTIONS_CABLE = ["1.5", "2.5", "4.0", "6.0", "10.0"];
-
-const CABLE_DIAM_MM: Record<string, number> = {
-  "1.5": 6.8, "2.5": 7.8, "4.0": 9.0, "6.0": 10.5, "10.0": 13.0,
-};
-
-const GAINES_IRL = [
-  { label: "IRL 16", diamInt: 12.2 },
-  { label: "IRL 20", diamInt: 15.8 },
-  { label: "IRL 25", diamInt: 20.0 },
-  { label: "IRL 32", diamInt: 26.0 },
-  { label: "IRL 40", diamInt: 33.0 },
-];
-
-function gaineRecommandee(sections: string[]): { gaine: string; tauxPct: number; ok: boolean } {
-  const totalSection = sections.reduce((sum, s) => {
-    const d = CABLE_DIAM_MM[s] ?? 8;
-    return sum + Math.PI * (d / 2) ** 2;
-  }, 0);
-  for (const g of GAINES_IRL) {
-    const sectionInt = Math.PI * (g.diamInt / 2) ** 2;
-    const taux = Math.round((totalSection / sectionInt) * 100);
-    if (taux <= 33) return { gaine: g.label, tauxPct: taux, ok: true };
-  }
-  const last = GAINES_IRL[GAINES_IRL.length - 1];
-  const sectionInt = Math.PI * (last.diamInt / 2) ** 2;
-  return { gaine: last.label + " (insuffisant)", tauxPct: Math.round((totalSection / sectionInt) * 100), ok: false };
-}
-
-function cablesGroupe(groupe: GroupeLumineux, section: string): string[] {
-  const cables: string[] = [section, section, section];
-  if (groupe.typeCommande === "simple") {
-    cables.push("1.5");
-  } else if (groupe.typeCommande === "vav") {
-    cables.push("1.5", "1.5");
-  } else {
-    for (let i = 0; i < groupe.nbCommandes; i++) cables.push("1.5");
-    cables.push("1.5");
-  }
-  return cables;
-}
-
-function cablesPrises(section: string): string[] {
-  return [section, section, section];
-}
-
-function labelCommande(g: GroupeLumineux): string {
-  if (g.typeCommande === "simple") return "Simple allumage";
-  if (g.typeCommande === "vav") return `Va-et-vient (${g.nbCommandes} inter.)`;
-  return `Télérupteur (${g.nbCommandes} BP)`;
-}
-
-const DIFF_HIERARCHY: Record<string, number> = { AC: 0, A: 1, F: 2 };
-const AMPERES = [2, 6, 10, 16, 20, 25, 32, 40, 63];
 const SLOT_W = 52;
 const DIFF_W = 96;
 const BREAKER_H = 130;
-
-let _id = 0;
-const uid = () => ++_id;
 
 const defaultGroupe = (): GroupeLumineux => ({ nbPoints: 1, typeCommande: "simple", nbCommandes: 1 });
 const defaultPiece = (): PieceConfig => ({ nom: "", groupes: [defaultGroupe()], nbPrises: 1 });
@@ -153,14 +32,6 @@ function safeBreakers(slots: (Breaker | null)[] | undefined): Breaker[] {
   return slots.filter((b): b is Breaker =>
     b != null && typeof b === "object" && typeof b.type === "string" && b.type.length > 0
   );
-}
-
-function getCategory(circuit: string): CircuitCategory | null {
-  return CIRCUITS[circuit]?.category ?? null;
-}
-
-function effectiveSection(b: Breaker): string {
-  return b.customSection ?? CIRCUITS[b.circuit]?.section ?? "2.5";
 }
 
 // ─── NFC 15-100 CHECKER ───────────────────────────────────────────────────────
@@ -488,7 +359,6 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
     });
   };
 
-  // Section recommandée max pour le calibre choisi
   const sectionNum = parseFloat(section);
   const maxAmpSection =
     sectionNum <= 1.5 ? 10 :
@@ -521,7 +391,6 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
               onChange={e => onUpdate({ ...breaker, label: e.target.value })} />
           </div>
 
-          {/* Sélecteur type différentiel uniquement pour les diffs */}
           {isDiff && (
             <div>
               <label className="label">Type différentiel</label>
@@ -564,7 +433,6 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                 </div>
               </div>
 
-              {/* ── SECTION CÂBLE ── */}
               <div>
                 <label className="label">Section câble</label>
                 <div className="flex flex-wrap gap-2">
@@ -863,7 +731,6 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
     return groups;
   }, [breaker.pieces, isLight, section]);
 
-  // SVG unifilaire
   const H = isLight ? 340 : 240;
   const midY = H / 2;
   const elements: React.ReactNode[] = [];
