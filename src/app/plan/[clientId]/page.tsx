@@ -861,7 +861,7 @@ export default function PlanPage() {
     }));
     setSelectedOuvertureId(null);
   };
-  const modifierOuverture = (ouvertureId: number, patch: Partial<Pick<Ouverture, "largeur" | "hauteur" | "allege">>) => {
+  const modifierOuverture = (ouvertureId: number, patch: Partial<Pick<Ouverture, "largeur" | "hauteur" | "allege" | "charniere" | "ouvreVersInterieur">>) => {
     updateNiveauActif(n => ({
       ...n,
       pieces: n.pieces.map(p => ({
@@ -1448,25 +1448,61 @@ export default function PlanPage() {
                       const largeurPx = Math.max(10, (o.largeur / 100) * PX_PER_M * zoom);
                       const isSel = o.id === selectedOuvertureId;
                       const couleur = o.type === "porte" ? "#92400E" : "#0369A1";
+
+                      // Symbole d'ouverture de porte (vantail + arc de débattement) — calculé en
+                      // mètres à partir de la charnière et du sens choisis, puis chaque point est
+                      // projeté à l'écran individuellement pour rester correct quelle que soit
+                      // l'orientation du mur (pas de rotation SVG locale à démêler).
+                      let vantail: { hinge: Point; bout: Point; arc: Point[] } | null = null;
+                      if (o.type === "porte") {
+                        const largeurM = o.largeur / 100;
+                        const dxw = b.x - a.x, dyw = b.y - a.y;
+                        const longueurMur = Math.hypot(dxw, dyw) || 1;
+                        const dirX = dxw / longueurMur, dirY = dyw / longueurMur;
+                        const jambeA = { x: centreM.x - dirX * (largeurM / 2), y: centreM.y - dirY * (largeurM / 2) };
+                        const jambeB = { x: centreM.x + dirX * (largeurM / 2), y: centreM.y + dirY * (largeurM / 2) };
+                        let nx = -dirY, ny = dirX;
+                        const cPiece = centroide(piece.contour);
+                        const versCentre = { x: cPiece.x - centreM.x, y: cPiece.y - centreM.y };
+                        if (nx * versCentre.x + ny * versCentre.y < 0) { nx = -nx; ny = -ny; }
+                        if (o.ouvreVersInterieur === false) { nx = -nx; ny = -ny; }
+                        const hinge = o.charniere === "droite" ? jambeB : jambeA;
+                        const autreJambe = o.charniere === "droite" ? jambeA : jambeB;
+                        const bout = { x: hinge.x + nx * largeurM, y: hinge.y + ny * largeurM };
+                        const v1 = { x: bout.x - hinge.x, y: bout.y - hinge.y };
+                        const v2 = { x: autreJambe.x - hinge.x, y: autreJambe.y - hinge.y };
+                        const ang1 = Math.atan2(v1.y, v1.x), ang2 = Math.atan2(v2.y, v2.x);
+                        let delta = ang2 - ang1;
+                        while (delta > Math.PI) delta -= 2 * Math.PI;
+                        while (delta < -Math.PI) delta += 2 * Math.PI;
+                        const N = 10;
+                        const arcM: Point[] = [];
+                        for (let k = 0; k <= N; k++) {
+                          const ang = ang1 + delta * (k / N);
+                          arcM.push({ x: hinge.x + largeurM * Math.cos(ang), y: hinge.y + largeurM * Math.sin(ang) });
+                        }
+                        vantail = { hinge: toScreen(hinge), bout: toScreen(bout), arc: arcM.map(toScreen) };
+                      }
+
                       return (
                         <g key={`ouv-${o.id}`} onPointerDown={e => onOuverturePointerDown(piece, o, e)}
                           style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture ? "grab" : "default" }}>
                           <g transform={`translate(${pC.x}, ${pC.y}) rotate(${angleDeg})`}>
                             <rect x={-largeurPx / 2} y={-4} width={largeurPx} height={8} fill="#fff" />
                             <rect x={-largeurPx / 2 - 4} y={-11} width={largeurPx + 8} height={22} fill="transparent" />
-                            {o.type === "porte" ? (
-                              <>
-                                <line x1={-largeurPx / 2} y1={0} x2={-largeurPx / 2} y2={-largeurPx} stroke={couleur} strokeWidth={1.5} />
-                                <path d={`M ${-largeurPx / 2} ${-largeurPx} A ${largeurPx} ${largeurPx} 0 0 1 ${largeurPx / 2} 0`}
-                                  fill="none" stroke={couleur} strokeWidth={1} strokeDasharray="3,2" />
-                              </>
-                            ) : (
+                            {o.type === "fenetre" && (
                               <>
                                 <line x1={-largeurPx / 2} y1={-3} x2={largeurPx / 2} y2={-3} stroke={couleur} strokeWidth={1.5} />
                                 <line x1={-largeurPx / 2} y1={3} x2={largeurPx / 2} y2={3} stroke={couleur} strokeWidth={1.5} />
                               </>
                             )}
                           </g>
+                          {vantail && (
+                            <>
+                              <line x1={vantail.hinge.x} y1={vantail.hinge.y} x2={vantail.bout.x} y2={vantail.bout.y} stroke={couleur} strokeWidth={1.5} />
+                              <polyline points={vantail.arc.map(p => `${p.x},${p.y}`).join(" ")} fill="none" stroke={couleur} strokeWidth={1} strokeDasharray="3,2" />
+                            </>
+                          )}
                           {isSel && <circle cx={pC.x} cy={pC.y} r={largeurPx / 2 + 6} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
                         </g>
                       );
@@ -1757,6 +1793,40 @@ export default function PlanPage() {
                         key={`ouv-${o.id}-allege-${dragEndTick}`} defaultValue={o.allege ?? 90}
                         onChange={e => { if (e.target.value !== "") modifierOuverture(o.id, { allege: Number(e.target.value) }); }} />
                     </div>
+                  )}
+                  {o.type === "porte" && (
+                    <>
+                      <div className="flex items-center gap-2 text-xs text-ink-500">
+                        <span className="shrink-0 w-24">Charnière</span>
+                        <div className="flex gap-1 flex-1">
+                          {(["gauche", "droite"] as const).map(c => (
+                            <button key={c} onClick={() => modifierOuverture(o.id, { charniere: c })}
+                              className={`flex-1 !text-xs px-2 py-1 rounded-md border transition-colors ${
+                                (o.charniere ?? "gauche") === c ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"
+                              }`}>
+                              {c === "gauche" ? "Gauche" : "Droite"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-ink-500">
+                        <span className="shrink-0 w-24">Ouvre vers</span>
+                        <div className="flex gap-1 flex-1">
+                          <button onClick={() => modifierOuverture(o.id, { ouvreVersInterieur: true })}
+                            className={`flex-1 !text-xs px-2 py-1 rounded-md border transition-colors ${
+                              o.ouvreVersInterieur !== false ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"
+                            }`}>
+                            Intérieur
+                          </button>
+                          <button onClick={() => modifierOuverture(o.id, { ouvreVersInterieur: false })}
+                            className={`flex-1 !text-xs px-2 py-1 rounded-md border transition-colors ${
+                              o.ouvreVersInterieur === false ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"
+                            }`}>
+                            Extérieur
+                          </button>
+                        </div>
+                      </div>
+                    </>
                   )}
                   <p className="text-[11px] text-ink-400">Glisse-la directement sur le mur pour la repositionner — elle reste sur ce mur.</p>
                 </div>
