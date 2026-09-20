@@ -291,8 +291,9 @@ export default function TableauxPage() {
                 ? "text-emerald-600 bg-emerald-50 border-emerald-200"
                 : score >= 60 ? "text-amber-600 bg-amber-50 border-amber-200"
                 : "text-red-600 bg-red-50 border-red-200";
-              const totalBreakers = rows.flatMap(r => r.slots ?? []).filter(b => b != null && typeof b?.type === "string" && !BREAKER_TYPES[b?.type ?? ""]?.isDiff).length;
-              const preview = rows.flatMap(r => r.slots ?? []).filter(b => b != null && typeof b?.type === "string" && !BREAKER_TYPES[b?.type ?? ""]?.isDiff).slice(0, 8);
+              const nonDiffBreakers = rows.flatMap(r => r.slots ?? []).filter((b): b is Breaker => b != null && typeof b?.type === "string" && !BREAKER_TYPES[b?.type ?? ""]?.isDiff);
+              const totalBreakers = nonDiffBreakers.length;
+              const preview = nonDiffBreakers.slice(0, 8);
 
               return (
                 <div key={entry.clientId} className="card card-inner hover:border-volt-300 transition-colors">
