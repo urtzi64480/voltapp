@@ -8,7 +8,7 @@ import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, X,
-  Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle,
+  Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -17,7 +17,7 @@ import {
 } from "@/lib/maison-types";
 import { AppareillageSymbol, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
-import { CIRCUITS } from "@/lib/electrical-constants";
+import { CIRCUITS, BreakerRow } from "@/lib/electrical-constants";
 
 const PX_PER_M = 60;
 const MIN_ZOOM = 0.25;
@@ -67,11 +67,19 @@ function escapeXml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function longueurCircuit(depart: Point, points: Point[]): number {
+  const ordonnes = ordonnerParProximite(depart, points);
+  let total = 0, last = depart;
+  for (const p of ordonnes) { total += distance(last, p); last = p; }
+  return total;
+}
+
 // ─── IMPRESSION ─────────────────────────────────────────────────────────────────
 
-function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, showCircuits: boolean): string {
+function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, showCircuits: boolean, piecesSelectionnees: Set<number> | null): string {
+  const pieces = piecesSelectionnees ? n.pieces.filter(p => piecesSelectionnees.has(p.id)) : n.pieces;
   const allPts = [
-    ...n.pieces.flatMap(p => p.contour),
+    ...pieces.flatMap(p => p.contour),
     ...(n.tableauPos ? [n.tableauPos] : []),
   ];
   if (allPts.length === 0) {
@@ -85,7 +93,11 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
   const W = wM * scale, H = hM * scale;
   const toPx = (p: Point) => ({ x: (p.x - minX) * scale, y: (p.y - minY) * scale });
 
-  const niveauResultat = resultat?.maison.niveaux.find(rn => rn.id === n.id) ?? n;
+  const niveauResultatComplet = resultat?.maison.niveaux.find(rn => rn.id === n.id) ?? n;
+  const niveauResultat: Niveau = {
+    ...niveauResultatComplet,
+    pieces: piecesSelectionnees ? niveauResultatComplet.pieces.filter(p => piecesSelectionnees.has(p.id)) : niveauResultatComplet.pieces,
+  };
   const colorMap = new Map<number, string>();
   if (resultat) resultat.breakers.forEach((b, i) => colorMap.set(b.id, couleurCircuit(i)));
 
@@ -162,7 +174,7 @@ function gaineNiveauHtml(troncon: TronconGaine | undefined): string {
   </div>`;
 }
 
-function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau): string {
+function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau, showLongueurs: boolean): string {
   if (!resultat) return "";
   const nomsPieces = new Set(niveau.pieces.map(p => p.nom));
   const utilises = resultat.breakers
@@ -170,12 +182,20 @@ function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau
     .filter(({ b }) => b.pieces.some(p => nomsPieces.has(p.nom)));
   if (utilises.length === 0) return "";
   return `<div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 6mm 6mm;font-size:8pt;font-family:monospace;">` +
-    utilises.map(({ b, color }) =>
-      `<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;"></span>${escapeXml(b.label || CIRCUITS[b.circuit]?.label || b.circuit)}</span>`
-    ).join("") + `</div>`;
+    utilises.map(({ b, color }) => {
+      let lgTxt = "";
+      if (showLongueurs && niveau.tableauPos) {
+        const pts = niveau.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
+        if (pts.length > 0) lgTxt = ` — ${longueurCircuit(niveau.tableauPos, pts).toFixed(1)}m`;
+      }
+      return `<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;"></span>${escapeXml(b.label || CIRCUITS[b.circuit]?.label || b.circuit)}${lgTxt}</span>`;
+    }).join("") + `</div>`;
 }
 
-function imprimerPlan(niveaux: Niveau[], clientName: string, resultat: ResultatGeneration | null, showCircuits: boolean) {
+function imprimerPlan(
+  niveaux: Niveau[], clientName: string, resultat: ResultatGeneration | null,
+  showCircuits: boolean, showLongueurs: boolean, piecesSelectionnees: Set<number> | null,
+) {
   const w = window.open("", "_blank");
   if (!w) return;
   let html = `<html><head><title>Plan — ${clientName}</title><style>
@@ -187,11 +207,14 @@ function imprimerPlan(niveaux: Niveau[], clientName: string, resultat: ResultatG
   </style></head><body>`;
   const gainesNiveaux = resultat ? genererGainesNiveaux(resultat) : [];
   [...niveaux].sort((a, b) => a.ordre - b.ordre).forEach(n => {
-    const niveauResultat = resultat?.maison.niveaux.find(rn => rn.id === n.id) ?? n;
-    html += `<h2>${escapeXml(n.nom || NIVEAU_TYPES[n.type])}</h2><div class="meta">${n.pieces.length} pièce${n.pieces.length > 1 ? "s" : ""}</div>`;
-    html += rendreSVGImprimable(n, resultat, showCircuits);
+    const piecesFiltrees = piecesSelectionnees ? n.pieces.filter(p => piecesSelectionnees.has(p.id)) : n.pieces;
+    if (piecesFiltrees.length === 0) return;
+    const niveauResultatComplet = resultat?.maison.niveaux.find(rn => rn.id === n.id) ?? n;
+    const niveauResultat: Niveau = { ...niveauResultatComplet, pieces: niveauResultatComplet.pieces.filter(p => piecesFiltrees.some(pf => pf.id === p.id)) };
+    html += `<h2>${escapeXml(n.nom || NIVEAU_TYPES[n.type])}</h2><div class="meta">${piecesFiltrees.length} pièce${piecesFiltrees.length > 1 ? "s" : ""}</div>`;
+    html += rendreSVGImprimable(n, resultat, showCircuits, piecesSelectionnees);
     if (showCircuits) {
-      html += legendeCircuitsHtml(resultat, niveauResultat);
+      html += legendeCircuitsHtml(resultat, niveauResultat, showLongueurs);
       const troncon = gainesNiveaux.find(g => g.niveau === (n.nom || n.type));
       html += gaineNiveauHtml(troncon);
     }
@@ -208,7 +231,8 @@ type DragMode =
   | { kind: "none" }
   | { kind: "pan"; startX: number; startY: number; startPan: Point }
   | { kind: "vertex"; pieceId: number; vertexIndex: number }
-  | { kind: "piece"; pieceId: number; startX: number; startY: number; startContour: Point[] };
+  | { kind: "piece"; pieceId: number; startX: number; startY: number; startContour: Point[] }
+  | { kind: "appareillage"; pieceId: number; appareillageId: number };
 
 // ─── FORMULAIRES ────────────────────────────────────────────────────────────────
 
@@ -328,29 +352,31 @@ function NiveauForm({ onValidate, onCancel }: { onValidate: (nom: string, type: 
 
 function CommandeLinkForm({ niveau, item, onValidate, onCancel }: {
   niveau: Niveau; item: AppareillagePlace;
-  onValidate: (pointLumineuxId: number) => void; onCancel: () => void;
+  onValidate: (pointLumineuxIds: number[]) => void; onCancel: () => void;
 }) {
   const points = niveau.pieces.flatMap(p =>
     p.appareillages.filter(a => a.type === "point_lumineux" || a.type === "applique").map(a => ({ a, pieceNom: p.nom })));
-  const [choix, setChoix] = useState<number | null>(points[0]?.a.id ?? null);
+  const [choix, setChoix] = useState<number[]>(item.commandePourIds ?? (points[0] ? [points[0].a.id] : []));
+  const toggle = (id: number) => setChoix(c => c.includes(id) ? c.filter(x => x !== id) : [...c, id]);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
       <div className="card w-full max-w-sm" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
-          <p className="font-semibold text-ink-900">{labelAppareillage(item.type)} — quel point lumineux ?</p>
+          <p className="font-semibold text-ink-900">{labelAppareillage(item.type)} — quel(s) point(s) lumineux ?</p>
           <button onClick={onCancel} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={16} /></button>
         </div>
-        <div className="p-4">
+        <div className="p-4 flex flex-col gap-1 max-h-64 overflow-y-auto">
           {points.length === 0 ? (
-            <p className="text-sm text-ink-400">Aucun point lumineux placé sur ce niveau. Place d'abord un point lumineux, puis sa commande.</p>
-          ) : (
-            <select className="input" value={choix ?? ""} onChange={e => setChoix(Number(e.target.value))}>
-              {points.map(({ a, pieceNom }) => <option key={a.id} value={a.id}>{pieceNom || "Pièce"} — point lumineux #{a.id}</option>)}
-            </select>
-          )}
+            <p className="text-sm text-ink-400">Aucun point lumineux placé sur ce niveau. Place d'abord un ou plusieurs points lumineux, puis leur commande.</p>
+          ) : points.map(({ a, pieceNom }) => (
+            <label key={a.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-ink-50 cursor-pointer">
+              <input type="checkbox" checked={choix.includes(a.id)} onChange={() => toggle(a.id)} />
+              <span className="text-sm text-ink-700">{pieceNom || "Pièce"} — {a.nom || `point lumineux #${a.id}`}</span>
+            </label>
+          ))}
         </div>
         <div className="flex gap-2 p-4 border-t border-ink-200">
-          <button disabled={choix == null} onClick={() => choix != null && onValidate(choix)} className="btn-volt flex-1 disabled:opacity-40">Lier</button>
+          <button disabled={choix.length === 0} onClick={() => onValidate(choix)} className="btn-volt flex-1 disabled:opacity-40">Lier ({choix.length})</button>
         </div>
       </div>
     </div>
@@ -383,6 +409,78 @@ function PaletteBoutons({ placementType, onSelect }: { placementType: Appareilla
   );
 }
 
+function PrintForm({ niveaux, resultatDisponible, onValider, onCancel }: {
+  niveaux: Niveau[]; resultatDisponible: boolean;
+  onValider: (piecesSelectionnees: Set<number> | null, avecCircuits: boolean, avecLongueurs: boolean) => void;
+  onCancel: () => void;
+}) {
+  const toutesPieces = niveaux.flatMap(n => n.pieces.map(p => p.id));
+  const [selection, setSelection] = useState<Set<number>>(new Set(toutesPieces));
+  const [avecCircuits, setAvecCircuits] = useState(resultatDisponible);
+  const [avecLongueurs, setAvecLongueurs] = useState(false);
+  const toutSelectionne = selection.size === toutesPieces.length;
+
+  const toggle = (id: number) => setSelection(s => {
+    const n = new Set(s);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+      <div className="card w-full max-w-sm max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-ink-200">
+          <p className="font-semibold text-ink-900">Imprimer le plan</p>
+          <button onClick={onCancel} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={16} /></button>
+        </div>
+        <div className="p-4 flex flex-col gap-3 overflow-y-auto flex-1">
+          <div className="flex items-center justify-between">
+            <label className="label mb-0">Pièces à inclure</label>
+            <button className="text-xs text-volt-600 font-semibold"
+              onClick={() => setSelection(toutSelectionne ? new Set() : new Set(toutesPieces))}>
+              {toutSelectionne ? "Tout désélectionner" : "Tout sélectionner"}
+            </button>
+          </div>
+          {[...niveaux].sort((a, b) => a.ordre - b.ordre).map(n => (
+            <div key={n.id} className="border border-ink-200 rounded-xl overflow-hidden">
+              <div className="px-3 py-1.5 bg-ink-100 text-xs font-bold text-ink-700 font-mono">{n.nom || NIVEAU_TYPES[n.type]}</div>
+              <div className="p-2 flex flex-col gap-0.5">
+                {n.pieces.length === 0 ? (
+                  <p className="text-xs text-ink-400 px-2 py-1">Aucune pièce</p>
+                ) : n.pieces.map(p => (
+                  <label key={p.id} className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-ink-50 cursor-pointer">
+                    <input type="checkbox" checked={selection.has(p.id)} onChange={() => toggle(p.id)} />
+                    <span className="text-sm text-ink-700">{p.nom || PIECE_TYPES[p.type].label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+          {resultatDisponible && (
+            <div className="flex flex-col gap-1.5 pt-2 border-t border-ink-100">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={avecCircuits} onChange={e => setAvecCircuits(e.target.checked)} />
+                <span className="text-sm text-ink-700">Inclure les circuits (couleurs + gaines)</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={avecLongueurs} disabled={!avecCircuits} onChange={e => setAvecLongueurs(e.target.checked)} />
+                <span className={`text-sm ${avecCircuits ? "text-ink-700" : "text-ink-300"}`}>Afficher la longueur de chaque circuit</span>
+              </label>
+            </div>
+          )}
+        </div>
+        <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
+          <button disabled={selection.size === 0}
+            onClick={() => onValider(toutSelectionne ? null : selection, avecCircuits, avecLongueurs)}
+            className="btn-volt flex-1 disabled:opacity-40">
+            <Printer size={14} /> Imprimer ({selection.size} pièce{selection.size > 1 ? "s" : ""})
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 
 export default function PlanPage() {
@@ -411,13 +509,15 @@ export default function PlanPage() {
 
   const [placementType, setPlacementType] = useState<AppareillageType | null>(null);
   const [placingTableau, setPlacingTableau] = useState(false);
-  const [pendingCommande, setPendingCommande] = useState<AppareillagePlace | null>(null);
+  const [pendingCommande, setPendingCommande] = useState<{ item: AppareillagePlace; estNouveau: boolean } | null>(null);
   const [selectedAppareillageId, setSelectedAppareillageId] = useState<number | null>(null);
   const [placementError, setPlacementError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   const [resultat, setResultat] = useState<ResultatGeneration | null>(null);
   const [showCircuits, setShowCircuits] = useState(false);
+  const [showLongueurs, setShowLongueurs] = useState(false);
+  const [showPrintForm, setShowPrintForm] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [pushMsg, setPushMsg] = useState<string | null>(null);
 
@@ -496,6 +596,21 @@ export default function PlanPage() {
             ...p, contour: dragMode.startContour.map(pt => ({ x: pt.x + dxM, y: pt.y + dyM })),
           }),
         }));
+      } else if (dragMode.kind === "appareillage") {
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const raw = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        const niveauCourant = niveaux.find(n => n.id === niveauActifId) ?? null;
+        const candidats = pointsReferenceNiveau(niveauCourant);
+        const seuilM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
+        const { point: m, guideX, guideY } = snapAvecAlignement(raw, candidats, seuilM);
+        setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
+        updateNiveauActif(n => ({
+          ...n,
+          pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : {
+            ...p, appareillages: p.appareillages.map(a => a.id === dragMode.appareillageId ? { ...a, x: m.x, y: m.y } : a),
+          }),
+        }));
       }
     };
     const onUp = () => { setDragMode({ kind: "none" }); setSnapGuide(null); invalidateResultat(); };
@@ -532,6 +647,20 @@ export default function PlanPage() {
     setPan({ x: cx - meterX * PX_PER_M * newZoom, y: cy - meterY * PX_PER_M * newZoom });
   };
 
+  const zoomSurPiece = (piece: Piece) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect || piece.contour.length === 0) return;
+    const xs = piece.contour.map(p => p.x), ys = piece.contour.map(p => p.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const margeM = 0.8;
+    const wM = Math.max(maxX - minX + margeM * 2, 0.5), hM = Math.max(maxY - minY + margeM * 2, 0.5);
+    const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min(rect.width / (wM * PX_PER_M), rect.height / (hM * PX_PER_M))));
+    const cxM = (minX + maxX) / 2, cyM = (minY + maxY) / 2;
+    setZoom(newZoom);
+    setPan({ x: rect.width / 2 - cxM * PX_PER_M * newZoom, y: rect.height / 2 - cyM * PX_PER_M * newZoom });
+  };
+
   const finirDessin = (points: Point[]) => {
     if (points.length < 3) return;
     setPendingContour(points);
@@ -556,19 +685,43 @@ export default function PlanPage() {
       ...n,
       pieces: n.pieces.map(p => ({
         ...p,
-        appareillages: p.appareillages.filter(a => a.id !== appareillageId && a.commandePourId !== appareillageId),
+        appareillages: p.appareillages
+          .filter(a => a.id !== appareillageId)
+          .map(a => a.commandePourIds?.includes(appareillageId)
+            ? { ...a, commandePourIds: a.commandePourIds.filter(id => id !== appareillageId) }
+            : a),
       })),
     }));
     setSelectedAppareillageId(null);
     invalidateResultat();
   };
 
-  const lierCommande = (itemId: number, pointLumineuxId: number) => {
+  const renommerAppareillage = (appareillageId: number, nom: string) => {
     updateNiveauActif(n => ({
       ...n,
       pieces: n.pieces.map(p => ({
         ...p,
-        appareillages: p.appareillages.map(a => a.id === itemId ? { ...a, commandePourId: pointLumineuxId } : a),
+        appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, nom } : a),
+      })),
+    }));
+  };
+
+  const modifierHauteur = (appareillageId: number, hauteur: number | undefined) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({
+        ...p,
+        appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, hauteur } : a),
+      })),
+    }));
+  };
+
+  const lierCommande = (itemId: number, pointLumineuxIds: number[]) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({
+        ...p,
+        appareillages: p.appareillages.map(a => a.id === itemId ? { ...a, commandePourIds: pointLumineuxIds } : a),
       })),
     }));
     setPendingCommande(null);
@@ -626,7 +779,7 @@ export default function PlanPage() {
       }));
       invalidateResultat();
       if (["interrupteur", "va_et_vient", "telerupteur"].includes(placementType)) {
-        setPendingCommande(nouveau);
+        setPendingCommande({ item: nouveau, estNouveau: true });
       }
       return;
     }
@@ -659,11 +812,15 @@ export default function PlanPage() {
     setDragMode({ kind: "vertex", pieceId, vertexIndex: index });
   };
 
-  const onAppareillagePointerDown = (a: AppareillagePlace, e: React.PointerEvent) => {
+  const onAppareillagePointerDown = (piece: Piece, a: AppareillagePlace, e: React.PointerEvent) => {
     if (mode !== "select" || placementType || placingTableau) return;
     e.stopPropagation();
-    setSelectedAppareillageId(a.id);
-    setSelectedPieceId(null);
+    if (selectedAppareillageId === a.id) {
+      setDragMode({ kind: "appareillage", pieceId: piece.id, appareillageId: a.id });
+    } else {
+      setSelectedAppareillageId(a.id);
+      setSelectedPieceId(null);
+    }
   };
 
   const handleSave = useCallback(async () => {
@@ -685,16 +842,20 @@ export default function PlanPage() {
     setPushing(true);
     const nouvellesRows = assemblerTableau(resultat.breakers);
     const { data: c } = await supabase.from("clients").select("tableau_config").eq("id", clientId).single();
-    let rows: any[] = [];
+    let rows: BreakerRow[] = [];
     if (c?.tableau_config) {
       try { const parsed = JSON.parse(c.tableau_config); if (Array.isArray(parsed)) rows = parsed; } catch {}
     }
-    const offset = maxIdRows(rows) + 100000;
-    const remap = remapperIdsRows(nouvellesRows, offset).map((r, i) => ({ ...r, name: `Rangée ${rows.length + i + 1}` }));
-    const rowsFinal = [...rows, ...remap];
+    // On retire l'ancien lot généré par le plan (tag origine:"plan") avant de réinsérer le
+    // nouveau — sinon chaque clic sur "Pousser" duplique les rangées. Les rangées créées à
+    // la main dans l'éditeur de tableau (sans ce tag) ne sont jamais touchées.
+    const rowsConservees = rows.filter(r => r.origine !== "plan");
+    const offset = maxIdRows(rowsConservees) + 100000;
+    const remap = remapperIdsRows(nouvellesRows, offset).map((r, i) => ({ ...r, name: `Rangée ${rowsConservees.length + i + 1}` }));
+    const rowsFinal = [...rowsConservees, ...remap];
     await supabase.from("clients").update({ tableau_config: JSON.stringify(rowsFinal) }).eq("id", clientId);
     setPushing(false);
-    setPushMsg(`${remap.length} rangée(s) et ${resultat.breakers.length} circuit(s) ajoutés au tableau.`);
+    setPushMsg(`${remap.length} rangée(s) et ${resultat.breakers.length} circuit(s) mis à jour dans le tableau.`);
     setTimeout(() => setPushMsg(null), 5000);
   };
 
@@ -755,7 +916,7 @@ export default function PlanPage() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
-            <button onClick={() => imprimerPlan(niveaux, client?.nom ?? "", resultat, showCircuits)} className="btn-ghost"><Printer size={15} /> Imprimer</button>
+            <button onClick={() => setShowPrintForm(true)} className="btn-ghost"><Printer size={15} /> Imprimer</button>
             <button onClick={handleSave} disabled={saving} className={`btn-volt ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
               <Save size={15} />{saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
             </button>
@@ -805,6 +966,9 @@ export default function PlanPage() {
           <button onClick={handleGenerer} className="btn-volt !text-xs"><Sparkles size={13} /> Générer les circuits</button>
           <button onClick={() => setShowCircuits(s => !s)} disabled={!resultat} className="btn-ghost !text-xs disabled:opacity-40">
             {showCircuits ? <Eye size={13} /> : <EyeOff size={13} />} Afficher les circuits
+          </button>
+          <button onClick={() => setShowLongueurs(s => !s)} disabled={!resultat || !showCircuits} className="btn-ghost !text-xs disabled:opacity-40">
+            📏 Longueurs des circuits
           </button>
           <button onClick={handlePousserVersTableau} disabled={!resultat || pushing} className="btn-ghost !text-xs disabled:opacity-40">
             <ArrowRightCircle size={13} /> {pushing ? "…" : "Pousser vers le tableau"}
@@ -909,14 +1073,14 @@ export default function PlanPage() {
                 });
               })()}
 
-              {niveauActif?.pieces.flatMap(p => p.appareillages).map(a => {
+              {niveauActif?.pieces.flatMap(piece => piece.appareillages.map(a => ({ piece, a }))).map(({ piece, a }) => {
                 const p = toScreen({ x: a.x, y: a.y });
                 const isSel = a.id === selectedAppareillageId;
                 const color = showCircuits && a.circuitId != null ? (colorMap.get(a.circuitId) ?? "#1c1917") : (isSel ? "#F59E0B" : "#1c1917");
                 return (
                   <g key={a.id} transform={`translate(${p.x - symSize / 2}, ${p.y - symSize / 2})`}
-                    onPointerDown={e => onAppareillagePointerDown(a, e)}
-                    style={{ cursor: mode === "select" && !placementType && !placingTableau ? "pointer" : "default" }}>
+                    onPointerDown={e => onAppareillagePointerDown(piece, a, e)}
+                    style={{ cursor: mode === "select" && !placementType && !placingTableau ? (isSel ? "grab" : "pointer") : "default" }}>
                     <AppareillageSymbol type={a.type} size={symSize} color={color} />
                     {isSel && <rect x={-2} y={-2} width={symSize + 4} height={symSize + 4} fill="none" stroke="#F59E0B" strokeWidth={1.5} rx={3} />}
                   </g>
@@ -969,20 +1133,35 @@ export default function PlanPage() {
                   <p className="text-sm font-semibold text-ink-900">{selectedPiece.nom || PIECE_TYPES[selectedPiece.type].label}</p>
                   <p className="text-xs text-ink-400">{PIECE_TYPES[selectedPiece.type].label} · {aireDuPolygone(selectedPiece.contour).toFixed(1)} m² · {selectedPiece.appareillages.length} appareillage(s)</p>
                 </div>
+                <button onClick={() => zoomSurPiece(selectedPiece)} className="btn-ghost !px-2 !py-1.5" title="Zoomer sur la pièce"><Search size={13} /></button>
                 <button onClick={() => setEditingPiece(selectedPiece)} className="btn-ghost !px-2 !py-1.5"><Pencil size={13} /></button>
               </div>
             )}
 
             {selectedAppareillage && mode === "select" && (
-              <div className="absolute bottom-4 left-4 card card-inner !p-3 flex items-center gap-3 shadow-lg">
-                <AppareillageSymbol type={selectedAppareillage.type} size={22} />
-                <div>
-                  <p className="text-sm font-semibold text-ink-900">{labelAppareillage(selectedAppareillage.type)}</p>
-                  {selectedAppareillage.circuitId != null && (
-                    <p className="text-xs text-ink-400">Circuit : {resultat?.breakers.find(b => b.id === selectedAppareillage.circuitId)?.label}</p>
-                  )}
+              <div className="absolute bottom-4 left-4 card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+                <div className="flex items-center gap-2">
+                  <AppareillageSymbol type={selectedAppareillage.type} size={22} />
+                  <input className="input !py-1 !text-sm flex-1 min-w-0" placeholder={labelAppareillage(selectedAppareillage.type)}
+                    value={selectedAppareillage.nom ?? ""}
+                    onChange={e => renommerAppareillage(selectedAppareillage.id, e.target.value)} />
+                  <button onClick={() => removerAppareillage(selectedAppareillage.id)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
                 </div>
-                <button onClick={() => removerAppareillage(selectedAppareillage.id)} className="btn-danger !px-2 !py-1.5"><Trash2 size={13} /></button>
+                <div className="flex items-center gap-2 text-xs text-ink-500">
+                  <span className="shrink-0">Hauteur (cm)</span>
+                  <input type="number" className="input !py-1 !text-xs !w-20" placeholder="—"
+                    value={selectedAppareillage.hauteur ?? ""}
+                    onChange={e => modifierHauteur(selectedAppareillage.id, e.target.value ? Number(e.target.value) : undefined)} />
+                </div>
+                {(["interrupteur", "va_et_vient", "telerupteur"] as AppareillageType[]).includes(selectedAppareillage.type) && (
+                  <button onClick={() => setPendingCommande({ item: selectedAppareillage, estNouveau: false })}
+                    className="btn-ghost !text-xs justify-center">
+                    Commande : {selectedAppareillage.commandePourIds?.length ?? 0} point(s) lumineux — modifier
+                  </button>
+                )}
+                {selectedAppareillage.circuitId != null && (
+                  <p className="text-xs text-ink-400">Circuit : {resultat?.breakers.find(b => b.id === selectedAppareillage.circuitId)?.label}</p>
+                )}
               </div>
             )}
 
@@ -1004,15 +1183,20 @@ export default function PlanPage() {
             )}
 
             {showCircuits && resultat && circuitsNiveauActif.length > 0 && (
-              <div className="absolute bottom-4 right-4 card card-inner !p-3 max-w-[220px] max-h-48 overflow-y-auto shadow-lg">
+              <div className="absolute bottom-4 right-4 card card-inner !p-3 max-w-[240px] max-h-48 overflow-y-auto shadow-lg">
                 <p className="text-[10px] font-semibold text-ink-400 uppercase tracking-wide mb-1.5">Circuits</p>
                 <div className="flex flex-col gap-1">
                   {circuitsNiveauActif.map(b => {
                     const i = resultat.breakers.findIndex(x => x.id === b.id);
+                    const pointsCircuit = niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id) ?? [];
+                    const lg = showLongueurs && niveauActif?.tableauPos && pointsCircuit.length > 0
+                      ? longueurCircuit(niveauActif.tableauPos, pointsCircuit)
+                      : null;
                     return (
                       <div key={b.id} className="flex items-center gap-1.5 text-[11px] text-ink-600">
                         <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: couleurCircuit(i) }} />
-                        <span className="truncate">{b.label}</span>
+                        <span className="truncate flex-1">{b.label}</span>
+                        {lg !== null && <span className="font-mono text-ink-400 shrink-0">{lg.toFixed(1)}m</span>}
                       </div>
                     );
                   })}
@@ -1095,9 +1279,12 @@ export default function PlanPage() {
 
       {pendingCommande && niveauActif && (
         <CommandeLinkForm
-          niveau={niveauActif} item={pendingCommande}
-          onValidate={pointLumineuxId => lierCommande(pendingCommande.id, pointLumineuxId)}
-          onCancel={() => { removerAppareillage(pendingCommande.id); setPendingCommande(null); }}
+          niveau={niveauActif} item={pendingCommande.item}
+          onValidate={pointLumineuxIds => lierCommande(pendingCommande.item.id, pointLumineuxIds)}
+          onCancel={() => {
+            if (pendingCommande.estNouveau) removerAppareillage(pendingCommande.item.id);
+            setPendingCommande(null);
+          }}
         />
       )}
 
@@ -1115,6 +1302,17 @@ export default function PlanPage() {
           />
         );
       })()}
+
+      {showPrintForm && (
+        <PrintForm
+          niveaux={niveaux} resultatDisponible={!!resultat}
+          onValider={(piecesSelectionnees, avecCircuits, avecLongueurs) => {
+            setShowPrintForm(false);
+            imprimerPlan(niveaux, client?.nom ?? "", resultat, avecCircuits, avecLongueurs, piecesSelectionnees);
+          }}
+          onCancel={() => setShowPrintForm(false)}
+        />
+      )}
     </Shell>
   );
 }
