@@ -214,6 +214,7 @@ export interface Niveau {
   pieces: Piece[];
   tableauPos?: Point; // position du tableau électrique / GTL sur ce niveau
   tableauHauteur?: number; // cm — hauteur d'installation du tableau (vue 3D), 150 par défaut
+  tableauRotation?: number; // degrés — orientation du tableau (aligné sur le mur porteur), 0 par défaut
   hauteurPlafond?: number; // mètres — pour la vue 3D (2.5 par défaut)
   liaisonWaypoints?: LiaisonWaypoints;
   circuitsManuels?: CircuitManuel[];
