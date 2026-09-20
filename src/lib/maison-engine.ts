@@ -12,8 +12,9 @@ import {
   gaineRecommandee, cablesGroupe, cablesPrises, effectiveSection, uid,
 } from "./electrical-constants";
 import {
-  Maison, Niveau, Piece, AppareillagePlace, aireDuPolygone,
+  Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone,
   CircuitManuel, FamilleCircuitManuel, familleCircuitManuelAppareillage, couleurCircuit,
+  SegmentCircuit, sequenceAncresCircuit, construireBranchesCircuitEclairage, centroidePoints,
 } from "./maison-types";
 
 // Appareillages dédiés → 1 circuit par instance (correspondance directe avec CIRCUITS)
@@ -278,6 +279,26 @@ export function construireColorMap(resultat: ResultatGeneration): Map<number, st
   // Filet de sécurité — un breaker qu'aucun niveau n'a matché (ne devrait pas arriver).
   resultat.breakers.forEach((b, i) => { if (!map.has(b.id)) map.set(b.id, couleurCircuit(i)); });
   return map;
+}
+
+// Segments à tracer pour un circuit donné — étoile depuis une boîte de dérivation pour
+// l'éclairage (un seul câble tableau -> boîte, puis chaque point lumineux en étoile, et
+// chaque interrupteur relié uniquement au(x) point(s) lumineux qu'il commande, jamais en
+// série avec le reste du circuit), simple chaîne par plus-proche-voisin pour tout le reste
+// (prises, appareils dédiés) comme précédemment. Partagé par le rendu 2D et la vue 3D.
+export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[], niveau: Niveau, tableauPos: Point): SegmentCircuit[] {
+  if (breaker.circuit === "lumiere") {
+    const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
+    const commandes = points.filter(a => a.type === "interrupteur" || a.type === "va_et_vient" || a.type === "telerupteur");
+    const boitePos = niveau.boitesDerivation?.[breaker.label] ?? centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y })));
+    return construireBranchesCircuitEclairage(tableauPos, boitePos, lumieres, commandes);
+  }
+  const sequence = sequenceAncresCircuit(tableauPos, points);
+  const segments: SegmentCircuit[] = [];
+  for (let i = 0; i < sequence.length - 1; i++) {
+    segments.push({ aId: sequence[i].id, aPoint: sequence[i].point, bId: sequence[i + 1].id, bPoint: sequence[i + 1].point });
+  }
+  return segments;
 }
 
 // ─── ASSEMBLAGE EN RANGÉES DE TABLEAU (BreakerRow[]) ───────────────────────────

@@ -215,6 +215,10 @@ export interface Niveau {
   tableauPos?: Point; // position du tableau électrique / GTL sur ce niveau
   tableauHauteur?: number; // cm — hauteur d'installation du tableau (vue 3D), 150 par défaut
   tableauRotation?: number; // degrés — orientation du tableau (aligné sur le mur porteur), 0 par défaut
+  // Position (déplacée à la main) de la boîte de dérivation de chaque circuit d'éclairage —
+  // indexée par le label du disjoncteur (stable tant que la composition du plan ne change
+  // pas, comme couleursCircuits). Sans entrée : position par défaut = centroïde des lampes.
+  boitesDerivation?: Record<string, Point>;
   hauteurPlafond?: number; // mètres — pour la vue 3D (2.5 par défaut)
   liaisonWaypoints?: LiaisonWaypoints;
   circuitsManuels?: CircuitManuel[];
@@ -531,6 +535,59 @@ function longueurChemin(chemin: Point[]): number {
 
 export function longueurCircuitAvecWaypoints(depart: Point, points: AppareillagePlace[], waypoints: LiaisonWaypoints | undefined): number {
   return longueurChemin(construireCheminCircuit(depart, points, waypoints));
+}
+
+// ─── TOPOLOGIE EN ÉTOILE DES CIRCUITS D'ÉCLAIRAGE (boîte de dérivation) ────────
+// Une chaîne série (tableau → lampe1 → lampe2 → …) n'a aucun sens électriquement :
+// en pratique, le câble arrive du tableau à UNE boîte de dérivation, d'où repart une
+// ligne indépendante vers chaque point lumineux du circuit — et chaque interrupteur
+// ne se raccorde qu'au(x) point(s) lumineux qu'il commande, jamais en série avec le
+// reste du circuit. Ces fonctions construisent cette topologie (utilisées par le
+// rendu 2D et la vue 3D) au lieu de la simple chaîne par plus-proche-voisin.
+
+export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoint: Point; }
+
+export function centroidePoints(points: Point[]): Point {
+  if (points.length === 0) return { x: 0, y: 0 };
+  return {
+    x: points.reduce((s, p) => s + p.x, 0) / points.length,
+    y: points.reduce((s, p) => s + p.y, 0) / points.length,
+  };
+}
+
+// tableau -> boîte (si ≥ 2 points lumineux ; sinon la boîte est inutile, lien direct)
+// boîte -> chaque point lumineux (étoile, jamais en série)
+// point lumineux -> chaque interrupteur/va-et-vient/télérupteur qui le commande
+export function construireBranchesCircuitEclairage(
+  depart: Point, boitePos: Point, lumieres: AppareillagePlace[], commandes: AppareillagePlace[],
+): SegmentCircuit[] {
+  const segments: SegmentCircuit[] = [];
+  if (lumieres.length <= 1) {
+    lumieres.forEach(l => segments.push({ aId: "tableau", aPoint: depart, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
+  } else {
+    segments.push({ aId: "tableau", aPoint: depart, bId: "boite", bPoint: boitePos });
+    lumieres.forEach(l => segments.push({ aId: "boite", aPoint: boitePos, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
+  }
+  commandes.forEach(c => {
+    (c.commandePourIds ?? []).forEach(lightId => {
+      const l = lumieres.find(x => x.id === lightId);
+      if (!l) return;
+      segments.push({ aId: String(l.id), aPoint: { x: l.x, y: l.y }, bId: String(c.id), bPoint: { x: c.x, y: c.y } });
+    });
+  });
+  return segments;
+}
+
+// Chemin d'UN segment de la topologie en étoile, coudes manuels compris (même clé stable
+// aId->bId que pour une chaîne classique — les coudes posés à la main restent valides).
+export function cheminSegment(seg: SegmentCircuit, waypoints: LiaisonWaypoints | undefined): Point[] {
+  const cle = cleSegmentLiaison(seg.aId, seg.bId);
+  const wps = waypoints?.[cle] ?? [];
+  return [seg.aPoint, ...wps.map(w => w.point), seg.bPoint];
+}
+
+export function longueurBranchesEclairage(segments: SegmentCircuit[], waypoints: LiaisonWaypoints | undefined): number {
+  return segments.reduce((total, seg) => total + longueurChemin(cheminSegment(seg, waypoints)), 0);
 }
 
 // Palette de couleurs procédurale pour distinguer les circuits sur le plan/l'impression.
