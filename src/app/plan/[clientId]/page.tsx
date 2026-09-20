@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
-  Ouverture, OuvertureType, nouvelleOuverture, positionSurSegment,
+  Ouverture, OuvertureType, nouvelleOuverture, positionSurSegment, OuvertureEffective, ouverturesEffectivesMur,
   NIVEAU_TYPES, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, ajusterLongueurContour,
   distanceAuSegment, positionnerADistanceDuSegment,
   CircuitManuel, FamilleCircuitManuel, FAMILLES_CIRCUIT_MANUEL, familleCircuitManuelAppareillage,
@@ -419,18 +419,42 @@ function CommandeLinkForm({ niveau, item, onValidate, onCancel }: {
 
 // Icône simple porte/fenêtre — pas de symbole normalisé dédié, juste de quoi
 // distinguer les deux boutons et l'ouverture posée sur le plan.
+const LABEL_OUVERTURE: Record<OuvertureType, string> = {
+  porte: "Porte", porte_coulissante: "Porte coulissante", fenetre: "Fenêtre", ouverture: "Ouverture murale",
+};
+
 function OuvertureIcon({ type, size = 16, color = "currentColor" }: { type: OuvertureType; size?: number; color?: string }) {
-  return type === "porte" ? (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
-      <path d="M3 14V2l9 2v10" stroke={color} strokeWidth={1.4} strokeLinejoin="round" />
-      <path d="M3 14 A9 9 0 0 0 12 5" stroke={color} strokeWidth={1} strokeDasharray="1.5,1.3" />
-    </svg>
-  ) : (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
-      <rect x={2} y={4} width={12} height={8} stroke={color} strokeWidth={1.4} />
-      <path d="M8 4v8M2 8h12" stroke={color} strokeWidth={1.2} />
-    </svg>
-  );
+  switch (type) {
+    case "porte":
+      return (
+        <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+          <path d="M3 14V2l9 2v10" stroke={color} strokeWidth={1.4} strokeLinejoin="round" />
+          <path d="M3 14 A9 9 0 0 0 12 5" stroke={color} strokeWidth={1} strokeDasharray="1.5,1.3" />
+        </svg>
+      );
+    case "porte_coulissante":
+      return (
+        <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+          <rect x={1} y={3} width={6} height={10} stroke={color} strokeWidth={1.3} />
+          <rect x={7} y={3} width={6} height={10} stroke={color} strokeWidth={1.3} strokeDasharray="1.4,1.2" />
+          <path d="M9 1 h3 M12 1 l-1.6 -1.2 M12 1 l-1.6 1.2" stroke={color} strokeWidth={0.9} />
+        </svg>
+      );
+    case "fenetre":
+      return (
+        <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+          <rect x={2} y={4} width={12} height={8} stroke={color} strokeWidth={1.4} />
+          <path d="M8 4v8M2 8h12" stroke={color} strokeWidth={1.2} />
+        </svg>
+      );
+    case "ouverture":
+    default:
+      return (
+        <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+          <rect x={2} y={3} width={12} height={10} stroke={color} strokeWidth={1.2} strokeDasharray="2,1.5" />
+        </svg>
+      );
+  }
 }
 
 function PaletteBoutons({ placementType, onSelect }: { placementType: AppareillageType | null; onSelect: (t: AppareillageType | null) => void }) {
@@ -594,6 +618,7 @@ export default function PlanPage() {
   const [dragEndTick, setDragEndTick] = useState(0);
   const [selectedTableau, setSelectedTableau] = useState(false);
   const [placingOuverture, setPlacingOuverture] = useState<OuvertureType | null>(null);
+  const [ouvertureMenuOpen, setOuvertureMenuOpen] = useState(false);
   const [selectedOuvertureId, setSelectedOuvertureId] = useState<number | null>(null);
   const [circuitsManuelsOpen, setCircuitsManuelsOpen] = useState(false);
   const [selectedWaypoint, setSelectedWaypoint] = useState<{ cle: string; waypointId: number } | null>(null);
@@ -861,7 +886,7 @@ export default function PlanPage() {
     }));
     setSelectedOuvertureId(null);
   };
-  const modifierOuverture = (ouvertureId: number, patch: Partial<Pick<Ouverture, "largeur" | "hauteur" | "allege" | "charniere" | "ouvreVersInterieur">>) => {
+  const modifierOuverture = (ouvertureId: number, patch: Partial<Pick<Ouverture, "largeur" | "hauteur" | "allege" | "charniere" | "ouvreVersInterieur" | "coulisseVers">>) => {
     updateNiveauActif(n => ({
       ...n,
       pieces: n.pieces.map(p => ({
@@ -1316,14 +1341,23 @@ export default function PlanPage() {
           <button onClick={armerPlacementTableau} className={`btn-ghost !text-xs ${placingTableau ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <Zap size={13} /> Position tableau
           </button>
-          <button onClick={() => armerPlacementOuverture(placingOuverture === "porte" ? null : "porte")}
-            className={`btn-ghost !text-xs ${placingOuverture === "porte" ? "!bg-ink-900 !text-volt-400" : ""}`}>
-            <OuvertureIcon type="porte" size={13} /> Porte
-          </button>
-          <button onClick={() => armerPlacementOuverture(placingOuverture === "fenetre" ? null : "fenetre")}
-            className={`btn-ghost !text-xs ${placingOuverture === "fenetre" ? "!bg-ink-900 !text-volt-400" : ""}`}>
-            <OuvertureIcon type="fenetre" size={13} /> Fenêtre
-          </button>
+          <div className="relative">
+            <button onClick={() => setOuvertureMenuOpen(o => !o)}
+              className={`btn-ghost !text-xs ${placingOuverture ? "!bg-ink-900 !text-volt-400" : ""}`}>
+              <OuvertureIcon type={placingOuverture ?? "porte"} size={13} /> {placingOuverture ? LABEL_OUVERTURE[placingOuverture] : "Porte / fenêtre"}
+            </button>
+            {ouvertureMenuOpen && (
+              <div className="absolute z-20 top-full left-0 mt-1 card card-inner !p-1 flex flex-col shadow-lg w-48">
+                {(["porte", "porte_coulissante", "fenetre", "ouverture"] as OuvertureType[]).map(t => (
+                  <button key={t}
+                    onClick={() => { armerPlacementOuverture(placingOuverture === t ? null : t); setOuvertureMenuOpen(false); }}
+                    className={`flex items-center gap-2 !text-xs px-2 py-1.5 rounded-md hover:bg-ink-50 ${placingOuverture === t ? "text-volt-600 font-semibold" : "text-ink-600"}`}>
+                    <OuvertureIcon type={t} size={14} /> {LABEL_OUVERTURE[t]}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button onClick={() => setCircuitsManuelsOpen(o => !o)} className={`btn-ghost !text-xs ${circuitsManuelsOpen ? "!bg-ink-900 !text-volt-400" : ""}`}>
             🎛️ Circuits manuels
           </button>
@@ -1420,6 +1454,25 @@ export default function PlanPage() {
                       stroke={isSelected ? "#F59E0B" : spec.stroke} strokeWidth={isSelected ? 2.5 : 1.5}
                       style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture ? "move" : "default" }}
                       onPointerDown={e => onPieceDown(piece, e)} />
+                    {niveauActif && piece.contour.flatMap((pt, i) => {
+                      const next = piece.contour[(i + 1) % piece.contour.length];
+                      // Ouvertures posées sur le mur mitoyen d'une AUTRE pièce, projetées ici en
+                      // simple trouée (pas de vantail/vitrage — déjà dessinés côté propriétaire) :
+                      // c'est ce qui fait que percer une porte d'un côté "perce" aussi la vue de
+                      // la pièce voisine, sans dupliquer la donnée de l'ouverture.
+                      const projetees = ouverturesEffectivesMur(niveauActif.pieces, piece, i).filter(e => !e.proprietaire);
+                      return projetees.map((e, k) => {
+                        const centreM = { x: pt.x + (next.x - pt.x) * e.position, y: pt.y + (next.y - pt.y) * e.position };
+                        const pC = toScreen(centreM), pA = toScreen(pt), pB = toScreen(next);
+                        const angleDeg = Math.atan2(pB.y - pA.y, pB.x - pA.x) * 180 / Math.PI;
+                        const largeurPx = Math.max(10, (e.largeur / 100) * PX_PER_M * zoom);
+                        return (
+                          <g key={`jumeau-${i}-${k}`} transform={`translate(${pC.x}, ${pC.y}) rotate(${angleDeg})`} style={{ pointerEvents: "none" }}>
+                            <rect x={-largeurPx / 2} y={-4} width={largeurPx} height={8} fill="#fff" />
+                          </g>
+                        );
+                      });
+                    })}
                     <text x={c.x} y={c.y - 4} textAnchor="middle" fontSize={12} fontFamily="monospace" fontWeight={700} fill="#1c1917" style={{ pointerEvents: "none" }}>
                       {piece.nom || spec.label}
                     </text>
@@ -1447,7 +1500,7 @@ export default function PlanPage() {
                       const angleDeg = Math.atan2(pB.y - pA.y, pB.x - pA.x) * 180 / Math.PI;
                       const largeurPx = Math.max(10, (o.largeur / 100) * PX_PER_M * zoom);
                       const isSel = o.id === selectedOuvertureId;
-                      const couleur = o.type === "porte" ? "#92400E" : "#0369A1";
+                      const couleur = o.type === "porte" || o.type === "porte_coulissante" ? "#92400E" : o.type === "fenetre" ? "#0369A1" : "#78716c";
 
                       // Symbole d'ouverture de porte (vantail + arc de débattement) — calculé en
                       // mètres à partir de la charnière et du sens choisis, puis chaque point est
@@ -1496,6 +1549,14 @@ export default function PlanPage() {
                                 <line x1={-largeurPx / 2} y1={3} x2={largeurPx / 2} y2={3} stroke={couleur} strokeWidth={1.5} />
                               </>
                             )}
+                            {o.type === "ouverture" && (
+                              <rect x={-largeurPx / 2} y={-4} width={largeurPx} height={8} fill="none" stroke={couleur} strokeWidth={1} strokeDasharray="2,2" />
+                            )}
+                            {o.type === "porte_coulissante" && (() => {
+                              const cote = o.coulisseVers === "gauche" ? -1 : 1;
+                              const xPanneau = cote > 0 ? largeurPx / 2 : -largeurPx / 2 - largeurPx;
+                              return <rect x={xPanneau} y={-3} width={largeurPx} height={6} fill={couleur} opacity={0.45} />;
+                            })()}
                           </g>
                           {vantail && (
                             <>
@@ -1771,7 +1832,7 @@ export default function PlanPage() {
                 <div className="absolute bottom-4 left-4 card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
                   <div className="flex items-center gap-2">
                     <OuvertureIcon type={o.type} size={18} color="#1c1917" />
-                    <p className="text-sm font-semibold text-ink-900 flex-1">{o.type === "porte" ? "Porte" : "Fenêtre"}</p>
+                    <p className="text-sm font-semibold text-ink-900 flex-1">{LABEL_OUVERTURE[o.type]}</p>
                     <button onClick={() => supprimerOuverture(o.id)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-ink-500">
@@ -1783,14 +1844,14 @@ export default function PlanPage() {
                   <div className="flex items-center gap-2 text-xs text-ink-500">
                     <span className="shrink-0 w-24">Hauteur (cm)</span>
                     <input type="number" min={30} className="input !py-1 !text-xs !w-20"
-                      key={`ouv-${o.id}-hauteur-${dragEndTick}`} defaultValue={o.hauteur ?? (o.type === "porte" ? 204 : 120)}
+                      key={`ouv-${o.id}-hauteur-${dragEndTick}`} defaultValue={o.hauteur ?? (o.type === "porte" || o.type === "porte_coulissante" ? 204 : 120)}
                       onChange={e => { if (e.target.value !== "") modifierOuverture(o.id, { hauteur: Number(e.target.value) }); }} />
                   </div>
-                  {o.type === "fenetre" && (
+                  {(o.type === "fenetre" || o.type === "ouverture") && (
                     <div className="flex items-center gap-2 text-xs text-ink-500">
-                      <span className="shrink-0 w-24">Allège (cm)</span>
+                      <span className="shrink-0 w-24">{o.type === "ouverture" ? "Départ / sol (cm)" : "Allège (cm)"}</span>
                       <input type="number" min={0} className="input !py-1 !text-xs !w-20"
-                        key={`ouv-${o.id}-allege-${dragEndTick}`} defaultValue={o.allege ?? 90}
+                        key={`ouv-${o.id}-allege-${dragEndTick}`} defaultValue={o.allege ?? (o.type === "fenetre" ? 90 : 0)}
                         onChange={e => { if (e.target.value !== "") modifierOuverture(o.id, { allege: Number(e.target.value) }); }} />
                     </div>
                   )}
@@ -1827,6 +1888,21 @@ export default function PlanPage() {
                         </div>
                       </div>
                     </>
+                  )}
+                  {o.type === "porte_coulissante" && (
+                    <div className="flex items-center gap-2 text-xs text-ink-500">
+                      <span className="shrink-0 w-24">Glisse vers</span>
+                      <div className="flex gap-1 flex-1">
+                        {(["gauche", "droite"] as const).map(c => (
+                          <button key={c} onClick={() => modifierOuverture(o.id, { coulisseVers: c })}
+                            className={`flex-1 !text-xs px-2 py-1 rounded-md border transition-colors ${
+                              (o.coulisseVers ?? "droite") === c ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"
+                            }`}>
+                            {c === "gauche" ? "Gauche" : "Droite"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   )}
                   <p className="text-[11px] text-ink-400">Glisse-la directement sur le mur pour la repositionner — elle reste sur ce mur.</p>
                 </div>
