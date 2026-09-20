@@ -16,7 +16,7 @@ import {
   NIVEAU_TYPES, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, ajusterLongueurContour,
   distanceAuSegment, positionnerADistanceDuSegment,
   CircuitManuel, FamilleCircuitManuel, FAMILLES_CIRCUIT_MANUEL, familleCircuitManuelAppareillage,
-  nouveauNiveau, nouvellePiece, nouvelAppareillage, uidMaison,
+  nouveauNiveau, nouvellePiece, nouvelAppareillage, uidMaison, reamorcerCompteurId, dedupliquerIds,
   LiaisonWaypoint, sequenceAncresCircuit, cleSegmentLiaison, construireCheminCircuit, longueurCircuitAvecWaypoints,
 } from "@/lib/maison-types";
 import { AppareillageSymbol, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
@@ -549,6 +549,10 @@ export default function PlanPage() {
   const [placingTableau, setPlacingTableau] = useState(false);
   const [pendingCommande, setPendingCommande] = useState<{ item: AppareillagePlace; estNouveau: boolean } | null>(null);
   const [selectedAppareillageId, setSelectedAppareillageId] = useState<number | null>(null);
+  // Incrémenté à chaque fin de geste de déplacement — sert uniquement de "key" pour forcer
+  // les champs de position/distance à se resynchroniser avec la géométrie après un drag,
+  // sans jamais les resynchroniser pendant la frappe (ce qui bloquait l'effacement).
+  const [dragEndTick, setDragEndTick] = useState(0);
   const [selectedTableau, setSelectedTableau] = useState(false);
   const [circuitsManuelsOpen, setCircuitsManuelsOpen] = useState(false);
   const [selectedWaypoint, setSelectedWaypoint] = useState<{ cle: string; waypointId: number } | null>(null);
@@ -582,9 +586,18 @@ export default function PlanPage() {
           try {
             const parsed = JSON.parse(raw);
             if (Array.isArray(parsed?.niveaux) && parsed.niveaux.length > 0) {
-              setNiveaux(parsed.niveaux);
-              setNiveauActifId(parsed.niveaux[0].id);
+              reamorcerCompteurId(parsed.niveaux);
+              // Nettoie une fois pour toutes d'éventuels id en double laissés par une
+              // session précédente (voir dedupliquerIds) — sinon deux appareillages
+              // différents peuvent partager le même id et se marcher dessus visuellement
+              // (l'un "increvable" au clic, qui dérive sur le plan).
+              const { niveaux: niveauxPropres, corrections } = dedupliquerIds(parsed.niveaux);
+              setNiveaux(niveauxPropres);
+              setNiveauActifId(niveauxPropres[0].id);
               setLoading(false);
+              if (corrections > 0) {
+                supabase.from("clients").update({ maison_config: JSON.stringify({ niveaux: niveauxPropres }) } as any).eq("id", clientId);
+              }
               return;
             }
           } catch {}
@@ -688,6 +701,7 @@ export default function PlanPage() {
       // exclu) ne changent jamais la composition électrique du plan — les exclure d'ici
       // évite de réinitialiser les circuits générés à chaque simple clic hors pièce.
       if (dragMode.kind !== "liaison" && dragMode.kind !== "pan") invalidateResultat();
+      setDragEndTick(t => t + 1);
       setDragMode({ kind: "none" });
       setSnapGuide(null);
     };
@@ -1393,6 +1407,17 @@ export default function PlanPage() {
                 );
               })}
 
+              {pieceDeSelectedAppareillage && mode === "select" && pieceDeSelectedAppareillage.contour.map((pt, i) => {
+                const next = pieceDeSelectedAppareillage.contour[(i + 1) % pieceDeSelectedAppareillage.contour.length];
+                const p = toScreen({ x: (pt.x + next.x) / 2, y: (pt.y + next.y) / 2 });
+                return (
+                  <g key={`mur-num-${i}`} style={{ pointerEvents: "none" }}>
+                    <circle cx={p.x} cy={p.y} r={10} fill="#1c1917" stroke="#fff" strokeWidth={1.5} />
+                    <text x={p.x} y={p.y + 3.5} textAnchor="middle" fontSize="11" fontWeight="700" fill="#fff">{i + 1}</text>
+                  </g>
+                );
+              })}
+
               {niveauActif?.tableauPos && (() => {
                 const p = toScreen(niveauActif.tableauPos);
                 const rZoneClic = 18;
@@ -1468,10 +1493,12 @@ export default function PlanPage() {
                 <div className="flex items-center gap-2 text-xs text-ink-500">
                   <span className="shrink-0 w-16">Position X/Y</span>
                   <input type="number" step="0.01" className="input !py-1 !text-xs !w-20"
-                    value={selectedAppareillage.x.toFixed(2)}
+                    key={`${selectedAppareillage.id}-x-${dragEndTick}`}
+                    defaultValue={selectedAppareillage.x.toFixed(2)}
                     onChange={e => { if (e.target.value !== "") modifierPositionExacte(selectedAppareillage.id, Number(e.target.value), selectedAppareillage.y); }} />
                   <input type="number" step="0.01" className="input !py-1 !text-xs !w-20"
-                    value={selectedAppareillage.y.toFixed(2)}
+                    key={`${selectedAppareillage.id}-y-${dragEndTick}`}
+                    defaultValue={selectedAppareillage.y.toFixed(2)}
                     onChange={e => { if (e.target.value !== "") modifierPositionExacte(selectedAppareillage.id, selectedAppareillage.x, Number(e.target.value)); }} />
                   <span className="text-ink-400">m</span>
                 </div>
@@ -1484,9 +1511,13 @@ export default function PlanPage() {
                         const d = distanceAuSegment({ x: selectedAppareillage.x, y: selectedAppareillage.y }, pt, next);
                         return (
                           <div key={i} className="flex items-center gap-2 text-xs text-ink-500">
-                            <span className="w-12 shrink-0 text-ink-400">Mur {i + 1}</span>
+                            <span className="w-14 shrink-0 text-ink-400 flex items-center gap-1">
+                              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-ink-900 text-white text-[9px] font-bold shrink-0">{i + 1}</span>
+                              Mur
+                            </span>
                             <input type="number" min={0} className="input !py-0.5 !text-xs !w-20"
-                              value={Math.round(d * 100)}
+                              key={`${selectedAppareillage.id}-mur${i}-${dragEndTick}`}
+                              defaultValue={Math.round(d * 100)}
                               onChange={e => {
                                 if (e.target.value === "") return;
                                 modifierDistanceSegment(pieceDeSelectedAppareillage, selectedAppareillage.id, i, Number(e.target.value));
