@@ -895,6 +895,25 @@ export default function PlanPage() {
     }));
   };
 
+  // Repositionne une ouverture pour qu'elle soit exactement à distanceCm d'une extrémité
+  // du mur qui la porte (donc du mur perpendiculaire/coin à cette extrémité) — largeur
+  // inchangée, seule sa position glisse le long du mur pour respecter la cote demandée.
+  const modifierDistanceBordOuverture = (piece: Piece, o: Ouverture, cote: "A" | "B", distanceCm: number) => {
+    const a = piece.contour[o.segIndex], b = piece.contour[(o.segIndex + 1) % piece.contour.length];
+    const longueurCm = distance(a, b) * 100;
+    if (longueurCm < 1) return;
+    const positionCm = cote === "A"
+      ? Math.max(0, distanceCm) + o.largeur / 2
+      : longueurCm - Math.max(0, distanceCm) - o.largeur / 2;
+    const t = Math.max(0, Math.min(1, positionCm / longueurCm));
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => p.id !== piece.id ? p : {
+        ...p, ouvertures: (p.ouvertures ?? []).map(ou => ou.id === o.id ? { ...ou, position: t } : ou),
+      }),
+    }));
+  };
+
 
   const renommerAppareillage = (appareillageId: number, nom: string) => {
     updateNiveauActif(n => ({
@@ -946,6 +965,19 @@ export default function PlanPage() {
 
   const modifierTableauHauteur = (hauteur: number | undefined) => {
     updateNiveauActif(n => ({ ...n, tableauHauteur: hauteur }));
+  };
+  const modifierTableauRotation = (rotationDeg: number) => {
+    updateNiveauActif(n => ({ ...n, tableauRotation: ((rotationDeg % 360) + 360) % 360 }));
+  };
+  // Calage rapide : aligne le tableau sur l'angle du mur le plus proche, quelle que soit
+  // la distance (pas de seuil ici, contrairement au placement d'ouvertures) — pratique
+  // utilitaire, l'angle reste ensuite librement modifiable à la main.
+  const alignerTableauSurMur = () => {
+    if (!niveauActif?.tableauPos) return;
+    const mur = trouverMurLePlusProche(niveauActif.pieces, niveauActif.tableauPos, Infinity);
+    if (!mur) return;
+    const a = mur.piece.contour[mur.segIndex], b = mur.piece.contour[(mur.segIndex + 1) % mur.piece.contour.length];
+    modifierTableauRotation(Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI);
   };
 
   // ─── CIRCUITS MANUELS ────────────────────────────────────────────────────────
@@ -1673,13 +1705,20 @@ export default function PlanPage() {
               {niveauActif?.tableauPos && (() => {
                 const p = toScreen(niveauActif.tableauPos);
                 const rZoneClic = 18;
+                // Angle écran équivalent à l'angle monde stocké — reconverti point par point
+                // via toScreen plutôt que réutilisé tel quel, au cas où l'échelle/l'axe y
+                // écran ne seraient pas dans le même sens que le repère monde.
+                const rotDeg = niveauActif.tableauRotation ?? 0;
+                const rotRad = (rotDeg * Math.PI) / 180;
+                const pDir = toScreen({ x: niveauActif.tableauPos.x + Math.cos(rotRad), y: niveauActif.tableauPos.y + Math.sin(rotRad) });
+                const angleEcran = Math.atan2(pDir.y - p.y, pDir.x - p.x) * 180 / Math.PI;
                 return (
                   <g onPointerDown={onTableauPointerDown}
                     style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture ? (selectedTableau ? "grab" : "pointer") : "default" }}>
                     <circle cx={p.x} cy={p.y} r={rZoneClic} fill={selectedTableau ? "#FEF3C7" : "transparent"} stroke="none" />
-                    <g transform={`translate(${p.x - 12}, ${p.y - 12})`} style={{ pointerEvents: "none" }}>
-                      <rect width="24" height="24" rx="4" fill="#1c1917" />
-                      <text x="12" y="16" textAnchor="middle" fontSize="14" fill="#FBBF24">⚡</text>
+                    <g transform={`translate(${p.x}, ${p.y}) rotate(${angleEcran})`} style={{ pointerEvents: "none" }}>
+                      <rect x={-12} y={-12} width="24" height="24" rx="4" fill="#1c1917" />
+                      <text x="0" y="4" textAnchor="middle" fontSize="14" fill="#FBBF24">⚡</text>
                     </g>
                     {selectedTableau && <circle cx={p.x} cy={p.y} r={rZoneClic} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
                   </g>
@@ -1820,6 +1859,16 @@ export default function PlanPage() {
                     value={niveauActif.tableauHauteur ?? ""}
                     onChange={e => modifierTableauHauteur(e.target.value ? Number(e.target.value) : undefined)} />
                 </div>
+                <div className="flex items-center gap-2 text-xs text-ink-500">
+                  <span className="shrink-0">Orientation (°)</span>
+                  <input type="number" className="input !py-1 !text-xs !w-20"
+                    key={`tableau-rotation-${dragEndTick}`}
+                    defaultValue={Math.round(niveauActif.tableauRotation ?? 0)}
+                    onChange={e => { if (e.target.value !== "") modifierTableauRotation(Number(e.target.value)); }} />
+                  <button onClick={alignerTableauSurMur} className="btn-ghost !text-[11px] !px-2 !py-1 flex-1">
+                    Aligner sur le mur
+                  </button>
+                </div>
                 <p className="text-[11px] text-ink-400">Glisse-le directement sur le plan pour le repositionner.</p>
               </div>
             )}
@@ -1841,6 +1890,29 @@ export default function PlanPage() {
                       key={`ouv-${o.id}-largeur-${dragEndTick}`} defaultValue={o.largeur}
                       onChange={e => { if (e.target.value !== "") modifierOuverture(o.id, { largeur: Number(e.target.value) }); }} />
                   </div>
+                  {(() => {
+                    const a = piece.contour[o.segIndex], b = piece.contour[(o.segIndex + 1) % piece.contour.length];
+                    const longueurCm = distance(a, b) * 100;
+                    const distA = o.position * longueurCm - o.largeur / 2;
+                    const distB = longueurCm - o.position * longueurCm - o.largeur / 2;
+                    return (
+                      <div className="flex flex-col gap-1 border-t border-ink-100 pt-2">
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">Distance exacte au mur (cm)</span>
+                        <div className="flex items-center gap-2 text-xs text-ink-500">
+                          <span className="shrink-0 w-24">Depuis mur début</span>
+                          <input type="number" min={0} className="input !py-1 !text-xs !w-20"
+                            key={`ouv-${o.id}-distA-${dragEndTick}`} defaultValue={Math.round(distA)}
+                            onChange={e => { if (e.target.value !== "") modifierDistanceBordOuverture(piece, o, "A", Number(e.target.value)); }} />
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-ink-500">
+                          <span className="shrink-0 w-24">Depuis mur fin</span>
+                          <input type="number" min={0} className="input !py-1 !text-xs !w-20"
+                            key={`ouv-${o.id}-distB-${dragEndTick}`} defaultValue={Math.round(distB)}
+                            onChange={e => { if (e.target.value !== "") modifierDistanceBordOuverture(piece, o, "B", Number(e.target.value)); }} />
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <div className="flex items-center gap-2 text-xs text-ink-500">
                     <span className="shrink-0 w-24">Hauteur (cm)</span>
                     <input type="number" min={30} className="input !py-1 !text-xs !w-20"
