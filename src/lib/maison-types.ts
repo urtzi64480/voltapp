@@ -134,6 +134,83 @@ export const PIECE_TYPES: Record<PieceType, { label: string; color: string; stro
 let _uidM = 0;
 export const uidMaison = (): number => ++_uidM;
 
+// Ré-amorce le compteur d'id global (partagé entre niveaux, pièces, appareillages,
+// coudes de liaison et circuits manuels) après le chargement d'un plan existant.
+// Sans ça, uidMaison() redémarre à 1 à chaque rechargement de page et rentre en
+// collision avec des id déjà présents dans les données sauvegardées : deux objets
+// différents finissent avec le même id, et supprimer/déplacer l'un affecte l'autre
+// de façon imprévisible (React les traite comme un seul et même élément).
+export function reamorcerCompteurId(niveaux: Niveau[]): void {
+  let max = 0;
+  niveaux.forEach(n => {
+    max = Math.max(max, n.id);
+    n.pieces.forEach(p => {
+      max = Math.max(max, p.id);
+      p.appareillages.forEach(a => { max = Math.max(max, a.id); });
+    });
+    (n.circuitsManuels ?? []).forEach(m => { max = Math.max(max, m.id); });
+    Object.values(n.liaisonWaypoints ?? {}).forEach(liste => liste.forEach(w => { max = Math.max(max, w.id); }));
+  });
+  if (max >= _uidM) _uidM = max;
+}
+
+// Corrige les id en double (voir reamorcerCompteurId ci-dessus pour la cause) déjà
+// présents dans un plan sauvegardé : réattribue un id neuf à chaque doublon rencontré
+// (le premier exemplaire garde le sien) et met à jour les références qui pointent
+// dessus (commandePourIds, circuitManuelId). N'y touche pas si tout est déjà propre.
+export function dedupliquerIds(niveaux: Niveau[]): { niveaux: Niveau[]; corrections: number } {
+  const vus = new Set<number>();
+  const remapApp = new Map<number, number>();
+  const remapManuel = new Map<number, number>();
+  let corrections = 0;
+
+  const prendre = (id: number): number => {
+    if (!vus.has(id)) { vus.add(id); return id; }
+    let nouveau = uidMaison();
+    while (vus.has(nouveau)) nouveau = uidMaison();
+    vus.add(nouveau);
+    corrections++;
+    return nouveau;
+  };
+
+  // Passe 1 : id définitifs pour chaque objet + table de correspondance ancien -> nouveau.
+  const niveauxV1 = niveaux.map(n => {
+    const nouvId = prendre(n.id);
+    const pieces = n.pieces.map(p => {
+      const nouvPId = prendre(p.id);
+      const appareillages = p.appareillages.map(a => {
+        const nouvAId = prendre(a.id);
+        if (nouvAId !== a.id) remapApp.set(a.id, nouvAId);
+        return { ...a, id: nouvAId };
+      });
+      return { ...p, id: nouvPId, appareillages };
+    });
+    const circuitsManuels = (n.circuitsManuels ?? []).map(m => {
+      const nouvMId = prendre(m.id);
+      if (nouvMId !== m.id) remapManuel.set(m.id, nouvMId);
+      return { ...m, id: nouvMId };
+    });
+    return { ...n, id: nouvId, pieces, circuitsManuels: n.circuitsManuels ? circuitsManuels : n.circuitsManuels };
+  });
+
+  if (corrections === 0) return { niveaux, corrections: 0 };
+
+  // Passe 2 : réécrit les références vers les id qui ont changé.
+  const niveauxV2 = niveauxV1.map(n => ({
+    ...n,
+    pieces: n.pieces.map(p => ({
+      ...p,
+      appareillages: p.appareillages.map(a => ({
+        ...a,
+        commandePourIds: a.commandePourIds?.map(id => remapApp.get(id) ?? id),
+        circuitManuelId: a.circuitManuelId != null ? (remapManuel.get(a.circuitManuelId) ?? a.circuitManuelId) : a.circuitManuelId,
+      })),
+    })),
+  }));
+
+  return { niveaux: niveauxV2, corrections };
+}
+
 export const nouveauNiveau = (type: NiveauType = "rdc", ordre = 0): Niveau => ({
   id: uidMaison(), nom: "", type, ordre, pieces: [],
 });
