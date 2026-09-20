@@ -119,7 +119,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
     ...niveauResultatComplet,
     pieces: piecesSelectionnees ? niveauResultatComplet.pieces.filter(p => piecesSelectionnees.has(p.id)) : niveauResultatComplet.pieces,
   };
-  const colorMap = resultat ? construireColorMap(resultat) : new Map<number, string>();
+  const colorMap = resultat ? construireColorMap(resultat, [n]) : new Map<number, string>();
 
   let s = `<svg width="${W.toFixed(0)}" height="${H.toFixed(0)}" viewBox="0 0 ${W.toFixed(0)} ${H.toFixed(0)}" xmlns="http://www.w3.org/2000/svg">`;
   s += `<rect width="${W.toFixed(0)}" height="${H.toFixed(0)}" fill="#fff"/>`;
@@ -208,10 +208,10 @@ function gaineNiveauHtml(troncon: TronconGaine | undefined): string {
   </div>`;
 }
 
-function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau, showLongueurs: boolean): string {
+function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau, showLongueurs: boolean, niveauVivant: Niveau): string {
   if (!resultat) return "";
   const nomsPieces = new Set(niveau.pieces.map(p => p.nom));
-  const colorMap = construireColorMap(resultat);
+  const colorMap = construireColorMap(resultat, [niveauVivant]);
   const utilises = resultat.breakers
     .map(b => ({ b, color: colorMap.get(b.id) ?? "#666" }))
     .filter(({ b }) => b.pieces.some(p => nomsPieces.has(p.nom)));
@@ -252,7 +252,7 @@ function imprimerPlan(
     html += `<h2>${escapeXml(n.nom || NIVEAU_TYPES[n.type])}</h2><div class="meta">${piecesFiltrees.length} pièce${piecesFiltrees.length > 1 ? "s" : ""}</div>`;
     html += rendreSVGImprimable(n, resultat, showCircuits, piecesSelectionnees);
     if (showCircuits) {
-      html += legendeCircuitsHtml(resultat, niveauResultat, showLongueurs);
+      html += legendeCircuitsHtml(resultat, niveauResultat, showLongueurs, n);
       const troncon = gainesNiveaux.find(g => g.niveau === (n.nom || n.type));
       html += gaineNiveauHtml(troncon);
     }
@@ -1342,7 +1342,7 @@ export default function PlanPage() {
     ? niveauActif?.pieces.find(p => p.appareillages.some(a => a.id === selectedAppareillage.id)) ?? null
     : null;
 
-  const colorMap = resultat ? construireColorMap(resultat) : new Map<number, string>();
+  const colorMap = resultat ? construireColorMap(resultat, niveaux) : new Map<number, string>();
 
   const symSize = Math.min(28, Math.max(11, 16 * zoom));
 
