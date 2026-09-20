@@ -37,7 +37,20 @@ export interface Piece {
   type: PieceType;
   contour: Point[]; // polygone fermé, mètres
   appareillages: AppareillagePlace[];
+  hauteurPlafond?: number; // mètres — remplace la hauteur du niveau pour cette pièce si définie (vue 3D)
 }
+
+// Points de coude manuels sur le tracé d'un circuit (pour le faire passer dans un mur,
+// par ex.) — clé stable indépendante du circuitId (qui change à chaque génération),
+// construite à partir des ids des deux ancres reliées ("tableau" ou id d'appareillage).
+// Un segment peut avoir plusieurs coudes, dans l'ordre, pour contourner un obstacle
+// (une pièce, par exemple) — pas seulement un simple détour à un point.
+export interface LiaisonWaypoint {
+  id: number;
+  point: Point;
+  hauteur?: number; // cm — hauteur d'implantation du câble à ce point (plinthe, gaine technique, plafond…)
+}
+export type LiaisonWaypoints = Record<string, LiaisonWaypoint[]>;
 
 export interface Niveau {
   id: number;
@@ -46,6 +59,8 @@ export interface Niveau {
   ordre: number;
   pieces: Piece[];
   tableauPos?: Point; // position du tableau électrique / GTL sur ce niveau
+  hauteurPlafond?: number; // mètres — pour la vue 3D (2.5 par défaut)
+  liaisonWaypoints?: LiaisonWaypoints;
 }
 
 export interface Maison {
@@ -135,21 +150,62 @@ export function trouverPiece(pt: Point, pieces: Piece[]): Piece | null {
 }
 
 // Ordonne une liste de points par plus-proche-voisin à partir d'un point de départ
-// (utilisé pour le tracé visuel des circuits sur le plan — pas un routage réel).
-export function ordonnerParProximite(depart: Point, points: Point[]): Point[] {
-  const remaining = [...points];
-  const ordered: Point[] = [];
+// ─── TRACÉ DES CIRCUITS AVEC POINTS DE COUDE MANUELS ───────────────────────────
+// Une ancre est soit le tableau ("tableau"), soit un appareillage (son id en texte).
+// La clé de segment est stable d'une génération de circuits à l'autre (contrairement
+// au circuitId, qui change à chaque clic sur "Générer") — les coudes posés à la main
+// survivent donc à une regénération.
+
+export interface AncrePoint { id: string; point: Point; }
+
+export function ordonnerAncresParProximite(depart: Point, items: AncrePoint[]): AncrePoint[] {
+  const remaining = [...items];
+  const ordered: AncrePoint[] = [];
   let last = depart;
   while (remaining.length > 0) {
     let bestIdx = 0, bestDist = Infinity;
     for (let i = 0; i < remaining.length; i++) {
-      const d = (remaining[i].x - last.x) ** 2 + (remaining[i].y - last.y) ** 2;
+      const d = (remaining[i].point.x - last.x) ** 2 + (remaining[i].point.y - last.y) ** 2;
       if (d < bestDist) { bestDist = d; bestIdx = i; }
     }
-    last = remaining.splice(bestIdx, 1)[0];
-    ordered.push(last);
+    const next = remaining.splice(bestIdx, 1)[0];
+    ordered.push(next);
+    last = next.point;
   }
   return ordered;
+}
+
+export function cleSegmentLiaison(idA: string, idB: string): string {
+  return `${idA}->${idB}`;
+}
+
+// Suite ordonnée des ancres d'un circuit : tableau puis chaque appareillage, par proximité.
+export function sequenceAncresCircuit(depart: Point, points: AppareillagePlace[]): AncrePoint[] {
+  const ancres: AncrePoint[] = points.map(a => ({ id: String(a.id), point: { x: a.x, y: a.y } }));
+  return [{ id: "tableau", point: depart }, ...ordonnerAncresParProximite(depart, ancres)];
+}
+
+// Chemin complet (mètres) en insérant les points de coude manuels présents dans waypoints.
+export function construireCheminCircuit(depart: Point, points: AppareillagePlace[], waypoints: LiaisonWaypoints | undefined): Point[] {
+  const sequence = sequenceAncresCircuit(depart, points);
+  const chemin: Point[] = [sequence[0].point];
+  for (let i = 0; i < sequence.length - 1; i++) {
+    const cle = cleSegmentLiaison(sequence[i].id, sequence[i + 1].id);
+    const wps = waypoints?.[cle] ?? [];
+    wps.forEach(w => chemin.push(w.point));
+    chemin.push(sequence[i + 1].point);
+  }
+  return chemin;
+}
+
+function longueurChemin(chemin: Point[]): number {
+  let total = 0;
+  for (let i = 0; i < chemin.length - 1; i++) total += distance(chemin[i], chemin[i + 1]);
+  return total;
+}
+
+export function longueurCircuitAvecWaypoints(depart: Point, points: AppareillagePlace[], waypoints: LiaisonWaypoints | undefined): number {
+  return longueurChemin(construireCheminCircuit(depart, points, waypoints));
 }
 
 // Palette de couleurs procédurale pour distinguer les circuits sur le plan/l'impression.
