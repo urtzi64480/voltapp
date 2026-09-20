@@ -149,6 +149,26 @@ export function trouverPiece(pt: Point, pieces: Piece[]): Piece | null {
   return null;
 }
 
+function distancePointSegment(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return distance(p, a);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  return distance(p, { x: a.x + t * dx, y: a.y + t * dy });
+}
+
+// Distance (mètres) au mur le plus proche du contour — dérivée de la position,
+// pas saisie manuellement : bouge l'appareillage et elle se recalcule seule.
+export function distanceAuMurLePlusProche(point: Point, contour: Point[]): number {
+  let min = Infinity;
+  for (let i = 0; i < contour.length; i++) {
+    const a = contour[i], b = contour[(i + 1) % contour.length];
+    min = Math.min(min, distancePointSegment(point, a, b));
+  }
+  return min;
+}
+
 // Ordonne une liste de points par plus-proche-voisin à partir d'un point de départ
 // ─── TRACÉ DES CIRCUITS AVEC POINTS DE COUDE MANUELS ───────────────────────────
 // Une ancre est soit le tableau ("tableau"), soit un appareillage (son id en texte).
