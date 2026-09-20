@@ -35,12 +35,33 @@ export interface AppareillagePlace {
   circuitManuelId?: number;
 }
 
+// Porte ou fenêtre placée sur un mur (segment du contour) d'une pièce — pas un objet
+// libre comme un appareillage : contrainte à glisser le long du mur qui la porte.
+export type OuvertureType = "porte" | "fenetre";
+
+export interface Ouverture {
+  id: number;
+  type: OuvertureType;
+  segIndex: number;   // quel mur du contour (même indexation que "Mur 1/2/3…" affiché sur le plan)
+  position: number;   // 0..1 — position du centre le long de ce mur
+  largeur: number;    // cm
+  hauteur?: number;   // cm — hauteur de l'ouverture (porte : depuis le sol ; fenêtre : au-dessus de l'allège)
+  allege?: number;    // cm — hauteur d'allège (fenêtre uniquement) ; ignoré pour une porte (va jusqu'au sol)
+}
+
+export function nouvelleOuverture(type: OuvertureType, segIndex: number, position: number): Ouverture {
+  return type === "porte"
+    ? { id: uidMaison(), type, segIndex, position, largeur: 90, hauteur: 204 }
+    : { id: uidMaison(), type, segIndex, position, largeur: 100, hauteur: 120, allege: 90 };
+}
+
 export interface Piece {
   id: number;
   nom: string;
   type: PieceType;
   contour: Point[]; // polygone fermé, mètres
   appareillages: AppareillagePlace[];
+  ouvertures?: Ouverture[];
   hauteurPlafond?: number; // mètres — remplace la hauteur du niveau pour cette pièce si définie (vue 3D)
 }
 
@@ -147,6 +168,7 @@ export function reamorcerCompteurId(niveaux: Niveau[]): void {
     n.pieces.forEach(p => {
       max = Math.max(max, p.id);
       p.appareillages.forEach(a => { max = Math.max(max, a.id); });
+      (p.ouvertures ?? []).forEach(o => { max = Math.max(max, o.id); });
     });
     (n.circuitsManuels ?? []).forEach(m => { max = Math.max(max, m.id); });
     Object.values(n.liaisonWaypoints ?? {}).forEach(liste => liste.forEach(w => { max = Math.max(max, w.id); }));
@@ -183,7 +205,8 @@ export function dedupliquerIds(niveaux: Niveau[]): { niveaux: Niveau[]; correcti
         if (nouvAId !== a.id) remapApp.set(a.id, nouvAId);
         return { ...a, id: nouvAId };
       });
-      return { ...p, id: nouvPId, appareillages };
+      const ouvertures = (p.ouvertures ?? []).map(o => ({ ...o, id: prendre(o.id) }));
+      return { ...p, id: nouvPId, appareillages, ouvertures: p.ouvertures ? ouvertures : p.ouvertures };
     });
     const circuitsManuels = (n.circuitsManuels ?? []).map(m => {
       const nouvMId = prendre(m.id);
@@ -318,6 +341,16 @@ function pointLePlusProcheSurSegment(p: Point, a: Point, b: Point): Point {
   let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
   t = Math.max(0, Math.min(1, t));
   return { x: a.x + t * dx, y: a.y + t * dy };
+}
+
+// Position (0..1) du point le plus proche de p sur le segment [a, b] — utilisé pour
+// glisser une porte/fenêtre le long du mur qui la porte (placement et drag).
+export function positionSurSegment(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return 0;
+  const t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+  return Math.max(0, Math.min(1, t));
 }
 
 // Repositionne un appareillage pour qu'il soit exactement à distanceCible (mètres) du
