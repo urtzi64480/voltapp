@@ -544,9 +544,11 @@ export default function PlanPage() {
   };
   const armerPlacement = (t: AppareillageType | null) => {
     setPlacementType(t); setMode("select"); setPlacingTableau(false); setDrawingPoints([]);
+    setSelectedPieceId(null); setSelectedAppareillageId(null);
   };
   const armerPlacementTableau = () => {
     setPlacingTableau(true); setMode("select"); setPlacementType(null); setDrawingPoints([]);
+    setSelectedPieceId(null); setSelectedAppareillageId(null);
   };
 
   const removerAppareillage = (appareillageId: number) => {
@@ -642,8 +644,8 @@ export default function PlanPage() {
   };
 
   const onPieceDown = (piece: Piece, e: React.PointerEvent) => {
-    e.stopPropagation();
     if (mode === "dessiner" || placementType || placingTableau) return;
+    e.stopPropagation();
     if (selectedPieceId === piece.id) {
       setDragMode({ kind: "piece", pieceId: piece.id, startX: e.clientX, startY: e.clientY, startContour: piece.contour });
     } else {
@@ -658,8 +660,8 @@ export default function PlanPage() {
   };
 
   const onAppareillagePointerDown = (a: AppareillagePlace, e: React.PointerEvent) => {
-    e.stopPropagation();
     if (mode !== "select" || placementType || placingTableau) return;
+    e.stopPropagation();
     setSelectedAppareillageId(a.id);
     setSelectedPieceId(null);
   };
