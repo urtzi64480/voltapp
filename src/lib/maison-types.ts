@@ -35,9 +35,10 @@ export interface AppareillagePlace {
   circuitManuelId?: number;
 }
 
-// Porte ou fenêtre placée sur un mur (segment du contour) d'une pièce — pas un objet
-// libre comme un appareillage : contrainte à glisser le long du mur qui la porte.
-export type OuvertureType = "porte" | "fenetre";
+// Porte, porte coulissante, fenêtre, ou simple ouverture murale (sans porte, entièrement
+// dimensionnée à la main) placée sur un mur (segment du contour) d'une pièce — pas un
+// objet libre comme un appareillage : contrainte à glisser le long du mur qui la porte.
+export type OuvertureType = "porte" | "porte_coulissante" | "fenetre" | "ouverture";
 
 export interface Ouverture {
   id: number;
@@ -45,19 +46,104 @@ export interface Ouverture {
   segIndex: number;   // quel mur du contour (même indexation que "Mur 1/2/3…" affiché sur le plan)
   position: number;   // 0..1 — position du centre le long de ce mur
   largeur: number;    // cm
-  hauteur?: number;   // cm — hauteur de l'ouverture (porte : depuis le sol ; fenêtre : au-dessus de l'allège)
-  allege?: number;    // cm — hauteur d'allège (fenêtre uniquement) ; ignoré pour une porte (va jusqu'au sol)
-  // Porte uniquement — sens d'ouverture : "gauche" = charnière du côté du premier sommet
-  // du mur (segIndex), "droite" = côté du second sommet. ouvreVersInterieur détermine si
-  // le vantail (symbole du plan) bat vers l'intérieur (défaut) ou l'extérieur de la pièce.
+  hauteur?: number;   // cm — hauteur de l'ouverture au-dessus de l'allège (0 pour une porte : va jusqu'au sol)
+  allege?: number;    // cm — hauteur du bas de l'ouverture depuis le sol (0 = au ras du sol)
+  // Porte battante uniquement — sens d'ouverture : "gauche" = charnière du côté du premier
+  // sommet du mur (segIndex), "droite" = côté du second sommet. ouvreVersInterieur détermine
+  // si le vantail (symbole du plan) bat vers l'intérieur (défaut) ou l'extérieur de la pièce.
   charniere?: "gauche" | "droite";
   ouvreVersInterieur?: boolean;
+  // Porte coulissante uniquement — côté du mur vers lequel le panneau coulisse (et se "gare").
+  coulisseVers?: "gauche" | "droite";
 }
 
 export function nouvelleOuverture(type: OuvertureType, segIndex: number, position: number): Ouverture {
-  return type === "porte"
-    ? { id: uidMaison(), type, segIndex, position, largeur: 90, hauteur: 204, charniere: "gauche", ouvreVersInterieur: true }
-    : { id: uidMaison(), type, segIndex, position, largeur: 100, hauteur: 120, allege: 90 };
+  switch (type) {
+    case "porte":
+      return { id: uidMaison(), type, segIndex, position, largeur: 90, hauteur: 204, allege: 0, charniere: "gauche", ouvreVersInterieur: true };
+    case "porte_coulissante":
+      return { id: uidMaison(), type, segIndex, position, largeur: 90, hauteur: 204, allege: 0, coulisseVers: "droite" };
+    case "fenetre":
+      return { id: uidMaison(), type, segIndex, position, largeur: 100, hauteur: 120, allege: 90 };
+    case "ouverture":
+    default:
+      return { id: uidMaison(), type, segIndex, position, largeur: 100, hauteur: 100, allege: 0 };
+  }
+}
+
+// ─── PERÇAGE AUTOMATIQUE DES MURS MITOYENS ─────────────────────────────────────
+// Deux pièces dessinées côte à côte n'ont, dans ce modèle, aucun mur "partagé" — chacune
+// a son propre contour indépendant. Une ouverture posée sur le mur de l'une ne perce donc
+// pas, en soi, le mur (géométriquement confondu) de l'autre. Les fonctions ci-dessous
+// détectent ces murs mitoyens (même droite, portion commune) et projettent les ouvertures
+// de l'un vers l'autre — utilisé en lecture seule par le rendu 2D et par la vue 3D, jamais
+// par la donnée elle-même : une ouverture n'a qu'un seul propriétaire, toujours.
+
+function projectionSurDroite(p: Point, origine: Point, dirX: number, dirY: number): number {
+  return (p.x - origine.x) * dirX + (p.y - origine.y) * dirY;
+}
+function distancePerpendiculaire(p: Point, origine: Point, dirX: number, dirY: number): number {
+  const t = projectionSurDroite(p, origine, dirX, dirY);
+  return distance(p, { x: origine.x + dirX * t, y: origine.y + dirY * t });
+}
+
+interface MurJumeau { piece: Piece; segIndex: number; loM: number; hiM: number; }
+
+// Cherche, parmi les AUTRES pièces, tous les murs géométriquement confondus (même droite,
+// à toleranceM près) avec le mur (a,b) donné, et qui recouvrent au moins 10cm de sa longueur.
+function trouverMursJumeaux(pieces: Piece[], pieceCourante: Piece, segIndex: number, toleranceM = 0.15): MurJumeau[] {
+  const a = pieceCourante.contour[segIndex], b = pieceCourante.contour[(segIndex + 1) % pieceCourante.contour.length];
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const longueur = Math.hypot(dx, dy);
+  if (longueur < 0.01) return [];
+  const dirX = dx / longueur, dirY = dy / longueur;
+  const resultats: MurJumeau[] = [];
+  pieces.forEach(piece => {
+    if (piece.id === pieceCourante.id) return;
+    piece.contour.forEach((c, i) => {
+      const d = piece.contour[(i + 1) % piece.contour.length];
+      if (distancePerpendiculaire(c, a, dirX, dirY) > toleranceM || distancePerpendiculaire(d, a, dirX, dirY) > toleranceM) return;
+      const tC = projectionSurDroite(c, a, dirX, dirY), tD = projectionSurDroite(d, a, dirX, dirY);
+      const lo = Math.max(0, Math.min(tC, tD)), hi = Math.min(longueur, Math.max(tC, tD));
+      if (hi - lo > 0.1) resultats.push({ piece, segIndex: i, loM: lo, hiM: hi });
+    });
+  });
+  return resultats;
+}
+
+// Une ouverture "effective" pour le rendu d'un mur donné — soit une ouverture posée
+// directement sur ce mur (proprietaire: true), soit une ouverture posée sur le mur
+// mitoyen d'une autre pièce et projetée ici (proprietaire: false, pour percer la vue
+// des deux côtés sans dupliquer la donnée).
+export interface OuvertureEffective {
+  type: OuvertureType;
+  position: number; // 0..1 sur CE segment
+  largeur: number;
+  hauteur?: number;
+  allege?: number;
+  coulisseVers?: "gauche" | "droite";
+  proprietaire: boolean;
+}
+
+export function ouverturesEffectivesMur(pieces: Piece[], piece: Piece, segIndex: number): OuvertureEffective[] {
+  const a = piece.contour[segIndex], b = piece.contour[(segIndex + 1) % piece.contour.length];
+  const longueur = distance(a, b) || 1;
+  const propres: OuvertureEffective[] = (piece.ouvertures ?? [])
+    .filter(o => o.segIndex === segIndex)
+    .map(o => ({ type: o.type, position: o.position, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: true }));
+
+  const projetees: OuvertureEffective[] = [];
+  trouverMursJumeaux(pieces, piece, segIndex).forEach(j => {
+    const aJ = j.piece.contour[j.segIndex], bJ = j.piece.contour[(j.segIndex + 1) % j.piece.contour.length];
+    (j.piece.ouvertures ?? []).filter(o => o.segIndex === j.segIndex).forEach(o => {
+      const centreM = { x: aJ.x + (bJ.x - aJ.x) * o.position, y: aJ.y + (bJ.y - aJ.y) * o.position };
+      const t = positionSurSegment(centreM, a, b);
+      const tM = t * longueur;
+      if (tM < j.loM - 0.01 || tM > j.hiM + 0.01) return; // hors du recouvrement réel — pas vraiment mitoyen ici
+      projetees.push({ type: o.type, position: t, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: false });
+    });
+  });
+  return [...propres, ...projetees];
 }
 
 export interface Piece {
