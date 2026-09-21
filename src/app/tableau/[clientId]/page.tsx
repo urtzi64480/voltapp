@@ -67,6 +67,25 @@ function checkNFC(rows: BreakerRow[]) {
       errors.push({ id: `max8-${row.id}`, msg: `Rangée "${row.name}" : plus de 8 circuits sous le différentiel.`, rule: "Art. 531.2.4" });
     }
 
+    // Calibre du différentiel vs charge réelle de la rangée — un ID doit couvrir la
+    // charge de ce qu'il protège, pas une valeur arbitraire. Foisonnement 0,5 sur tout
+    // sauf le chauffage électrique (compté à 100%, peu diversifié). Avertissement plutôt
+    // qu'erreur : c'est une règle de dimensionnement pratique, pas un article NFC unique
+    // et strict comme le sont les autres contrôles de cette liste.
+    if (diff && breakers.length > 0) {
+      const charge = breakers.reduce((somme, b) => {
+        const estChauffage = CIRCUITS[b.circuit]?.category === "chauffage";
+        return somme + (estChauffage ? b.amperes : b.amperes * 0.5);
+      }, 0);
+      if (diff.amperes < charge) {
+        warnings.push({
+          id: `diffamp-${row.id}`,
+          msg: `Rangée "${row.name}" : différentiel ${diff.amperes}A potentiellement sous-dimensionné pour les circuits protégés (charge estimée ≈ ${Math.ceil(charge)}A — chauffage compté à 100%, reste à 50%).`,
+          rule: "Dimensionnement amont/aval",
+        });
+      }
+    }
+
     breakers.forEach(b => {
       const spec = CIRCUITS[b.circuit];
       if (!spec) return;
@@ -110,6 +129,7 @@ function checkNFC(rows: BreakerRow[]) {
         prise_16: 16, prise_20: 20, cuisine_prises: 20,
         plaque: 32, four: 20, lave_linge: 20, lave_vaisselle: 20,
         seche_linge: 20, chauffe_eau: 20, chauffage: 20,
+        chauffage_16: 16, chauffage_20: 20,
         clim: 20, seche_serviette: 16, congelateur: 20,
         irve: 32, piscine: 20, vmc: 10, alarme: 6,
         exterieur: 16, garage: 16,
@@ -475,7 +495,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                       {breaker.pieces.map((piece, pi) => (
                         <div key={pi} className="border border-ink-200 rounded-xl overflow-hidden">
                           <div className="px-3 py-2 bg-ink-100 flex items-center gap-2">
-                            <span className="text-sm">{category === "lumiere" ? "💡" : "🔌"}</span>
+                            <span className="text-sm">{category === "lumiere" ? "💡" : category === "chauffage" ? "🌡️" : "🔌"}</span>
                             <span className="text-xs font-bold text-ink-700 font-mono">{piece.nom || `Pièce ${pi + 1}`}</span>
                           </div>
 
@@ -539,9 +559,9 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
                               </>
                             )}
 
-                            {category === "prises" && (
+                            {(category === "prises" || category === "chauffage") && (
                               <div className="flex items-center gap-2">
-                                <span className="text-xs text-ink-500 w-28 shrink-0">Nb de prises</span>
+                                <span className="text-xs text-ink-500 w-28 shrink-0">{category === "chauffage" ? "Nb de radiateurs" : "Nb de prises"}</span>
                                 <div className="flex gap-1 flex-wrap">
                                   {[1,2,3,4,5,6,8,10].map(n => (
                                     <button key={n} onClick={() => updatePiece(pi, { nbPrises: n })}
