@@ -74,6 +74,19 @@ function trouverMurLePlusProche(pieces: Piece[], pointMonde: Point, seuilM: numb
   return { piece: m.piece, segIndex: m.segIndex, t: m.t };
 }
 
+// Recalcule le segIndex d'une ouverture après suppression du sommet `k` (index dans le
+// contour AVANT suppression, qui comptait `n` sommets/segments). Le sommet supprimé
+// fusionne les deux murs qui s'y rejoignaient (segment k-1, qui se termine sur k, et
+// segment k, qui en part) en un seul nouveau mur — toute ouverture posée sur l'un de
+// ces deux murs perd son support géométrique d'origine et doit être retirée (null).
+// Les autres murs gardent leur géométrie inchangée ; seuls ceux situés après le sommet
+// supprimé voient leur index décalé d'un cran vers le bas.
+function remapperSegIndexApresSuppressionSommet(segIndex: number, k: number, n: number): number | null {
+  const segAvant = (k - 1 + n) % n;
+  if (segIndex === segAvant || segIndex === k) return null;
+  return segIndex > k ? segIndex - 1 : segIndex;
+}
+
 interface ResultatSnap { point: Point; guideX?: number; guideY?: number; }
 
 function snapAvecAlignement(m: Point, candidats: Point[], seuilM: number): ResultatSnap {
@@ -907,6 +920,47 @@ export default function PlanPage() {
     invalidateResultat();
   };
 
+  // ─── SOMMETS DU CONTOUR D'UNE PIÈCE ────────────────────────────────────────────
+
+  // Supprime le sommet `index` du contour de la pièce `pieceId`, si la pièce en compte
+  // encore plus de 3 (un polygone ne peut pas descendre sous 3 sommets). Toute ouverture
+  // (porte/fenêtre) posée sur l'un des deux murs qui se rejoignaient à ce sommet est
+  // retirée avec lui (ces murs disparaissent, remplacés par un seul nouveau mur) ; les
+  // autres ouvertures gardent leur position mais voient leur segIndex réindexé pour
+  // suivre le décalage des sommets suivants.
+  const supprimerSommetPiece = (pieceId: number, index: number) => {
+    const piece = niveauActif?.pieces.find(p => p.id === pieceId);
+    if (!piece) return;
+    const n = piece.contour.length;
+    if (n <= 3) {
+      setPlacementError("Une pièce doit garder au moins 3 sommets.");
+      setTimeout(() => setPlacementError(null), 2000);
+      return;
+    }
+    let ouvertureSelectionneeSupprimee = false;
+    updateNiveauActif(niv => ({
+      ...niv,
+      pieces: niv.pieces.map(p => {
+        if (p.id !== pieceId) return p;
+        const nouveauContour = p.contour.filter((_, i) => i !== index);
+        const nouvellesOuvertures = (p.ouvertures ?? [])
+          .map(o => {
+            const nouveauSegIndex = remapperSegIndexApresSuppressionSommet(o.segIndex, index, n);
+            if (nouveauSegIndex === null) {
+              if (o.id === selectedOuvertureId) ouvertureSelectionneeSupprimee = true;
+              return null;
+            }
+            return { ...o, segIndex: nouveauSegIndex };
+          })
+          .filter((o): o is Ouverture => o !== null);
+        return { ...p, contour: nouveauContour, ouvertures: nouvellesOuvertures };
+      }),
+    }));
+    if (editingSegment?.pieceId === pieceId) setEditingSegment(null);
+    if (ouvertureSelectionneeSupprimee) { setSelectedOuvertureId(null); setSelectedBoite(null); }
+    invalidateResultat();
+  };
+
   // ─── OUVERTURES (portes/fenêtres) ──────────────────────────────────────────────
   // Aucun impact électrique — ne déclenchent jamais invalidateResultat().
 
@@ -1557,7 +1611,15 @@ export default function PlanPage() {
                     </text>
                     {isSelected && mode === "select" && piece.contour.map((pt, i) => {
                       const p = toScreen(pt);
-                      return <circle key={i} cx={p.x} cy={p.y} r={6} fill="#fff" stroke="#F59E0B" strokeWidth={2} style={{ cursor: "grab" }} onPointerDown={e => onVertexDown(piece.id, i, e)} />;
+                      const peutSupprimer = piece.contour.length > 3;
+                      return (
+                        <circle key={i} cx={p.x} cy={p.y} r={6} fill="#fff" stroke="#F59E0B" strokeWidth={2}
+                          style={{ cursor: "grab" }}
+                          onPointerDown={e => onVertexDown(piece.id, i, e)}
+                          onDoubleClick={e => { e.stopPropagation(); supprimerSommetPiece(piece.id, i); }}>
+                          <title>{peutSupprimer ? "Double-clic pour supprimer ce sommet" : "Une pièce doit garder au moins 3 sommets"}</title>
+                        </circle>
+                      );
                     })}
                     {piece.contour.map((pt, i) => {
                       const next = piece.contour[(i + 1) % piece.contour.length];
@@ -1826,7 +1888,7 @@ export default function PlanPage() {
               <div className="absolute bottom-4 left-4 card card-inner !p-3 flex items-center gap-3 shadow-lg">
                 <div>
                   <p className="text-sm font-semibold text-ink-900">{selectedPiece.nom || PIECE_TYPES[selectedPiece.type].label}</p>
-                  <p className="text-xs text-ink-400">{PIECE_TYPES[selectedPiece.type].label} · {aireDuPolygone(selectedPiece.contour).toFixed(1)} m² · {selectedPiece.appareillages.length} appareillage(s)</p>
+                  <p className="text-xs text-ink-400">{PIECE_TYPES[selectedPiece.type].label} · {aireDuPolygone(selectedPiece.contour).toFixed(1)} m² · {selectedPiece.appareillages.length} appareillage(s) · {selectedPiece.contour.length} sommets</p>
                 </div>
                 <button onClick={() => zoomSurPiece(selectedPiece)} className="btn-ghost !px-2 !py-1.5" title="Zoomer sur la pièce"><Search size={13} /></button>
                 <button onClick={() => setEditingPiece(selectedPiece)} className="btn-ghost !px-2 !py-1.5"><Pencil size={13} /></button>
@@ -2171,7 +2233,7 @@ export default function PlanPage() {
         <div className="px-4 py-1.5 bg-ink-50 border-t border-ink-100 text-[11px] text-ink-400 hidden md:block shrink-0">
           {vue3D
             ? "Glisser = tourner la caméra · Molette = zoom"
-            : "Molette = zoom · Glisser le fond = déplacer la vue · En dessin : clic = ajouter un point, clic près du 1er point = fermer la pièce"}
+            : "Molette = zoom · Glisser le fond = déplacer la vue · En dessin : clic = ajouter un point, clic près du 1er point = fermer la pièce · Pièce sélectionnée : double-clic sur un sommet (rond orange) pour le supprimer (min. 3 sommets)"}
         </div>
       </div>
 
