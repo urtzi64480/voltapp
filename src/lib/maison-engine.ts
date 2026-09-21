@@ -9,6 +9,7 @@
 import {
   Breaker, BreakerRow, PieceConfig, GroupeLumineux, CommandeType,
   CIRCUITS, MAX_PAR_CIRCUIT, MIN_PRISES_PIECE,
+  PMAX_CHAUFFAGE_16A_W, PMAX_CHAUFFAGE_20A_W, PUISSANCE_CHAUFFAGE_DEFAUT_W,
   gaineRecommandee, cablesGroupe, cablesPrises, effectiveSection, uid,
 } from "./electrical-constants";
 import {
@@ -17,10 +18,13 @@ import {
   SegmentCircuit, sequenceAncresCircuit, construireBranchesCircuitEclairage, centroidePoints,
 } from "./maison-types";
 
-// Appareillages dédiés → 1 circuit par instance (correspondance directe avec CIRCUITS)
+// Appareillages dédiés → 1 circuit par instance (correspondance directe avec CIRCUITS).
+// Le chauffage n'en fait PAS partie : plusieurs radiateurs peuvent partager un circuit
+// tant que leur puissance cumulée reste dans le calibre du disjoncteur (NF C 15-100,
+// amendement A5) — voir genererBreakersChauffage, regroupement spatial + puissance.
 const CIRCUIT_DEDIE: Record<string, string> = {
   four: "four", plaque: "plaque", lave_linge: "lave_linge", lave_vaisselle: "lave_vaisselle",
-  seche_linge: "seche_linge", chauffe_eau: "chauffe_eau", chauffage: "chauffage", clim: "clim",
+  seche_linge: "seche_linge", chauffe_eau: "chauffe_eau", clim: "clim",
   seche_serviette: "seche_serviette", congelateur: "congelateur", irve: "irve",
   piscine: "piscine", vmc: "vmc", alarme: "alarme",
 };
@@ -88,6 +92,78 @@ function breakerFromClusterLumiere(cluster: (Item & { typeCommande: CommandeType
     id: uid(), label: `${spec.label} — ${niveauNom} ${idx}`, circuit: "lumiere",
     amperes: spec.ampMax, type: "1P", customSection: spec.section ?? "1.5", pieces,
   };
+}
+
+// ─── CHAUFFAGE ÉLECTRIQUE — REGROUPEMENT PAR PUISSANCE (NF C 15-100, amdt A5) ──
+// Contrairement aux autres appareils "dédiés" (four, chauffe-eau…), un circuit de
+// chauffage peut desservir plusieurs radiateurs tant que leur puissance cumulée reste
+// dans le calibre du disjoncteur : 3500 W max en 16A/1,5mm², 4500 W max en 20A/2,5mm²
+// (différentiel 30mA type AC). Un radiateur sans puissance renseignée compte pour
+// PUISSANCE_CHAUFFAGE_DEFAUT_W (valeur de secours, modifiable depuis son panneau).
+
+function puissanceChauffage(item: Item): number {
+  return item.base.puissanceW ?? PUISSANCE_CHAUFFAGE_DEFAUT_W;
+}
+
+// Même chaîne gloutonne plus-proche-voisin que clusteriser(), mais la coupure d'un
+// cluster se décide sur la puissance cumulée (maxW) plutôt que sur un nombre d'items —
+// un radiateur qui dépasserait seul ce plafond (cas extrême) reste isolé dans son
+// propre cluster plutôt que de bloquer le regroupement des autres.
+function clusteriserParPuissance(items: Item[], maxW: number): Item[][] {
+  if (items.length === 0) return [];
+  const remaining = [...items];
+  const clusters: Item[][] = [];
+  let current: Item[] = [];
+  let currentW = 0;
+  let last = remaining.shift()!;
+  current.push(last);
+  currentW += puissanceChauffage(last);
+  while (remaining.length > 0) {
+    let bestIdx = 0, bestDist = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const d = (remaining[i].x - last.x) ** 2 + (remaining[i].y - last.y) ** 2;
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    const next = remaining.splice(bestIdx, 1)[0];
+    const pNext = puissanceChauffage(next);
+    if (current.length > 0 && currentW + pNext > maxW) {
+      clusters.push(current);
+      current = [];
+      currentW = 0;
+    }
+    current.push(next);
+    currentW += pNext;
+    last = next;
+  }
+  if (current.length > 0) clusters.push(current);
+  return clusters;
+}
+
+// Choisit le calibre le plus léger (16A/1,5mm²) qui suffit à la puissance cumulée du
+// cluster, et ne passe en 20A/2,5mm² que si elle dépasse 3500W — jamais l'inverse.
+function breakerFromClusterChauffage(cluster: Item[], niveauNom: string, idx: number): Breaker {
+  const totalW = cluster.reduce((s, item) => s + puissanceChauffage(item), 0);
+  const circuitKey = totalW <= PMAX_CHAUFFAGE_16A_W ? "chauffage_16" : "chauffage_20";
+  const spec = CIRCUITS[circuitKey];
+  const parPiece = new Map<string, number>();
+  cluster.forEach(item => parPiece.set(item.pieceNom, (parPiece.get(item.pieceNom) ?? 0) + 1));
+  const pieces: PieceConfig[] = Array.from(parPiece.entries()).map(([nom, n]) => ({
+    nom, nbPrises: n, groupes: [{ nbPoints: 1, typeCommande: "simple", nbCommandes: 1 }],
+  }));
+  const totalKw = (totalW / 1000).toFixed(2).replace(/\.?0+$/, "");
+  return {
+    id: uid(), label: `${spec.label} — ${niveauNom} ${idx} (${totalKw} kW)`, circuit: circuitKey,
+    amperes: spec.ampMax, type: "1P", customSection: spec.section ?? "1.5", pieces,
+  };
+}
+
+function genererBreakersChauffage(items: Item[], niveauNom: string, breakers: Breaker[]): void {
+  let idx = 1;
+  for (const cluster of clusteriserParPuissance(items, PMAX_CHAUFFAGE_20A_W)) {
+    const b = breakerFromClusterChauffage(cluster, niveauNom, idx++);
+    breakers.push(b);
+    cluster.forEach(item => { item.base.circuitId = b.id; });
+  }
 }
 
 // ─── RÉPARTITION MANUEL / AUTOMATIQUE ──────────────────────────────────────────
@@ -184,7 +260,9 @@ function genererBreakersLumiere(
  * réelles des appareillages placés sur le plan. Règles :
  *  - Un circuit ne mélange jamais deux niveaux (frontière naturelle de
  *    regroupement — hypothèse de conception, pas une règle NFC).
- *  - Chaque appareil dédié reçoit son propre circuit (CIRCUITS[...].dedié).
+ *  - Chaque appareil dédié (four, chauffe-eau…) reçoit son propre circuit
+ *    (CIRCUITS[...].dedié) ; le chauffage fait exception et se regroupe par
+ *    puissance cumulée (voir genererBreakersChauffage).
  *  - Prises et éclairage sont regroupés par clustering spatial jusqu'aux
  *    seuils MAX_PAR_CIRCUIT (mêmes seuils que le compliance checker du
  *    module Tableau, pour un score NFC cohérent une fois généré).
@@ -218,12 +296,14 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     const prisesCuisine = tousItems.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "cuisine_prises");
     const prisesExtGarage = tousItems.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "exterieur");
     const pointsLumineux = tousItems.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "lumiere");
+    const chauffages = tousItems.filter(a => a.base.type === "chauffage");
     const dedies = tousItems.filter(a => !!CIRCUIT_DEDIE[a.base.type]);
 
     const manuels = niveau.circuitsManuels ?? [];
     genererBreakersPrises(prisesStandard, "prise_16", niveau.nom, manuels, breakers);
     genererBreakersPrises(prisesCuisine, "cuisine_prises", niveau.nom, manuels, breakers);
     genererBreakersPrises(prisesExtGarage, "exterieur", niveau.nom, manuels, breakers);
+    genererBreakersChauffage(chauffages, niveau.nom, breakers);
 
     // Éclairage : déduction de la commande depuis les interrupteurs/va-et-vient/télérupteurs liés
     const lumItems = pointsLumineux.map(pl => {
@@ -291,7 +371,8 @@ export function construireColorMap(resultat: ResultatGeneration, niveauxVivants?
 // l'éclairage (un seul câble tableau -> boîte, puis chaque point lumineux en étoile, et
 // chaque interrupteur relié uniquement au(x) point(s) lumineux qu'il commande, jamais en
 // série avec le reste du circuit), simple chaîne par plus-proche-voisin pour tout le reste
-// (prises, appareils dédiés) comme précédemment. Partagé par le rendu 2D et la vue 3D.
+// (prises, chauffage, appareils dédiés) comme précédemment. Partagé par le rendu 2D et la
+// vue 3D.
 export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[], niveau: Niveau, tableauPos: Point): SegmentCircuit[] {
   if (breaker.circuit === "lumiere") {
     const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
@@ -317,27 +398,28 @@ export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[
  *    un circuit "Type A" (lave-linge, IRVE, plaque...) n'est jamais placé sous
  *    un différentiel plus faible, et partage un différentiel A avec le moins
  *    de rangées possible (minimise le nombre de différentiels A/F, plus chers).
- *  - Entrelacement par catégorie (éclairage / prises / appareils dédiés) au
- *    sein de chaque groupe de différentiel — évite qu'une rangée entière soit
- *    "tout éclairage" ou "toutes les prises".
+ *  - Entrelacement par catégorie (éclairage / prises / chauffage / appareils
+ *    dédiés) au sein de chaque groupe de différentiel — évite qu'une rangée
+ *    entière soit "tout éclairage" ou "toutes les prises".
  *  - Chaque rangée générée est taguée origine:"plan" (voir BreakerRow).
  *  - Garantit au moins 2 différentiels dès que plus d'un circuit existe (Art. 531.2).
  */
-function categorieCircuit(b: Breaker): "lumiere" | "prises" | "dedies" {
+function categorieCircuit(b: Breaker): "lumiere" | "prises" | "chauffage" | "dedies" {
   const cat = CIRCUITS[b.circuit]?.category;
   if (cat === "lumiere") return "lumiere";
   if (cat === "prises") return "prises";
+  if (cat === "chauffage") return "chauffage";
   return "dedies";
 }
 
 function entrelacerParCategorie(breakers: Breaker[]): Breaker[] {
-  const groupes: Record<string, Breaker[]> = { lumiere: [], prises: [], dedies: [] };
+  const groupes: Record<string, Breaker[]> = { lumiere: [], prises: [], chauffage: [], dedies: [] };
   breakers.forEach(b => groupes[categorieCircuit(b)].push(b));
   const result: Breaker[] = [];
   let reste = true;
   while (reste) {
     reste = false;
-    for (const c of ["lumiere", "prises", "dedies"]) {
+    for (const c of ["lumiere", "prises", "chauffage", "dedies"]) {
       const b = groupes[c].shift();
       if (b) { result.push(b); reste = true; }
     }

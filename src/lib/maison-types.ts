@@ -24,6 +24,11 @@ export interface AppareillagePlace {
   y: number; // mètres
   nom?: string;      // libellé (ex: nom du point lumineux)
   hauteur?: number;  // hauteur d'installation en cm depuis le sol
+  // Puissance en watts — uniquement pour type "chauffage". Sert au regroupement des
+  // circuits de chauffage par puissance cumulée (NF C 15-100, amendement A5) : voir
+  // genererBreakersChauffage (maison-engine.ts). Valeur par défaut à la création :
+  // PUISSANCE_CHAUFFAGE_DEFAUT_W (electrical-constants.ts).
+  puissanceW?: number;
   // Pour interrupteur / va_et_vient / telerupteur : ids des point_lumineux (ou applique)
   // commandés — un interrupteur peut commander plusieurs points lumineux.
   commandePourIds?: number[];
@@ -165,6 +170,10 @@ export interface LiaisonWaypoint {
   id: number;
   point: Point;
   hauteur?: number; // cm — hauteur d'implantation du câble à ce point (plinthe, gaine technique, plafond…)
+  // Mode de pose de la gaine/câble à ce point : encastrée dans le mur/la cloison (défaut si
+  // non renseigné) ou posée en apparent (goulotte, moulure) sur la surface du mur. Affiché
+  // sur l'impression technique quand "Afficher les hauteurs d'implantation" est coché.
+  poseType?: "encastre" | "apparent";
 }
 export type LiaisonWaypoints = Record<string, LiaisonWaypoint[]>;
 
@@ -194,8 +203,9 @@ export interface CircuitManuel {
 
 // Détermine à quelle famille de circuit manuel un appareillage donné (dans une pièce
 // donnée) est éligible, ou null s'il n'est jamais regroupable à la main (interrupteurs —
-// rattachés automatiquement au circuit de leur(s) point(s) lumineux commandé(s) — et
-// appareils dédiés, qui ont toujours leur propre circuit individuel).
+// rattachés automatiquement au circuit de leur(s) point(s) lumineux commandé(s) —,
+// appareils dédiés, qui ont toujours leur propre circuit individuel, et le chauffage, qui
+// est regroupé automatiquement par puissance — voir genererBreakersChauffage).
 export function familleCircuitManuelAppareillage(type: AppareillageType, pieceType: PieceType): FamilleCircuitManuel | null {
   if (type === "prise" || type === "prise_commandee") {
     if (pieceType === "cuisine") return "cuisine_prises";
@@ -336,8 +346,12 @@ export const nouveauNiveau = (type: NiveauType = "rdc", ordre = 0): Niveau => ({
 export const nouvellePiece = (contour: Point[], nom = "", type: PieceType = "autre"): Piece => ({
   id: uidMaison(), nom, type, contour, appareillages: [],
 });
+// Puissance par défaut appliquée à la création d'un chauffage — modifiable ensuite depuis
+// le panneau de l'appareillage sélectionné (voir PUISSANCE_CHAUFFAGE_DEFAUT_W, electrical-constants.ts).
+const PUISSANCE_CHAUFFAGE_DEFAUT_W = 1000;
 export const nouvelAppareillage = (type: AppareillageType, x: number, y: number): AppareillagePlace => ({
   id: uidMaison(), type, x, y,
+  ...(type === "chauffage" ? { puissanceW: PUISSANCE_CHAUFFAGE_DEFAUT_W } : {}),
 });
 
 export function distance(a: Point, b: Point): number {

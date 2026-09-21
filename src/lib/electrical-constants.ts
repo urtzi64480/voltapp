@@ -9,7 +9,7 @@
 // partielle et désynchronisée du même dictionnaire CIRCUITS).
 
 export type CommandeType = "simple" | "vav" | "telerupteur";
-export type CircuitCategory = "lumiere" | "prises";
+export type CircuitCategory = "lumiere" | "prises" | "chauffage";
 
 export interface GroupeLumineux {
   nbPoints: number;
@@ -69,7 +69,16 @@ export const CIRCUITS: Record<string, {
   lave_vaisselle:  { label: "Lave-vaisselle",   icon: "🍽️", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5", category: null },
   seche_linge:     { label: "Sèche-linge",      icon: "👕", ampMax: 20, dedié: true,  diffType: "A",  section: "2.5", category: null },
   chauffe_eau:     { label: "Chauffe-eau",      icon: "🚿", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5", category: null },
+  // "chauffage" (historique) reste défini pour les circuits déjà sauvegardés (tableau_config
+  // existant, générés avant ce regroupement) — la génération à partir du plan produit
+  // désormais chauffage_16 / chauffage_20 selon la puissance cumulée du circuit (voir
+  // genererBreakersChauffage, maison-engine.ts). Ne pas réutiliser cette clé pour du nouveau.
   chauffage:       { label: "Chauffage élec.",  icon: "🌡️", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5", category: null },
+  // NF C 15-100 (amendement A5) : plusieurs radiateurs peuvent partager un circuit tant que
+  // la puissance cumulée reste sous le calibre du disjoncteur — 3500 W max en 16A/1,5mm²,
+  // 4500 W max en 20A/2,5mm², sur différentiel 30 mA type AC. Voir genererBreakersChauffage.
+  chauffage_16:    { label: "Chauffage élec.",  icon: "🌡️", ampMax: 16, dedié: false, diffType: "AC", section: "1.5", category: "chauffage" },
+  chauffage_20:    { label: "Chauffage élec.",  icon: "🌡️", ampMax: 20, dedié: false, diffType: "AC", section: "2.5", category: "chauffage" },
   clim:            { label: "Climatisation",    icon: "❄️", ampMax: 20, dedié: true,  diffType: "F",  section: "2.5", category: null },
   seche_serviette: { label: "Sèche-serviette",  icon: "🛁", ampMax: 16, dedié: true,  diffType: "AC", section: "1.5", category: null },
   congelateur:     { label: "Congélateur",      icon: "🧊", ampMax: 20, dedié: true,  diffType: "AC", section: "2.5", category: null },
@@ -120,6 +129,14 @@ export const MIN_PRISES_PIECE: Record<string, (surface?: number) => number> = {
   autre:   (s) => (s && s >= 4 ? 1 : 0),
 };
 
+// Plafonds de puissance par circuit de chauffage électrique — NF C 15-100, amendement A5
+// (homologué 27/05/2015, obligatoire depuis le 27/11/2015) : un circuit chauffage dédié
+// protégé en 16A/1,5mm² accepte jusqu'à 3500 W cumulés, un circuit en 20A/2,5mm² jusqu'à
+// 4500 W, sur différentiel 30 mA type AC. Voir genererBreakersChauffage (maison-engine.ts).
+export const PMAX_CHAUFFAGE_16A_W = 3500;
+export const PMAX_CHAUFFAGE_20A_W = 4500;
+export const PUISSANCE_CHAUFFAGE_DEFAUT_W = 1000;
+
 export function gaineRecommandee(sections: string[]): { gaine: string; tauxPct: number; ok: boolean } {
   const totalSection = sections.reduce((sum, s) => {
     const d = CABLE_DIAM_MM[s] ?? 8;
@@ -132,7 +149,10 @@ export function gaineRecommandee(sections: string[]): { gaine: string; tauxPct: 
   }
   const last = GAINES_IRL[GAINES_IRL.length - 1];
   const sectionInt = Math.PI * (last.diamInt / 2) ** 2;
-  return { gaine: last.label + " (insuffisant)", tauxPct: Math.round((totalSection / sectionInt) * 100), ok: false };
+  // Pas de mention verbale de non-conformité dans le libellé (ex. "(insuffisant)") — la
+  // gaine calculée reste la plus grande disponible, et `ok: false` seul porte l'info de
+  // dépassement pour un éventuel badge dans l'app ; le document imprimé reste factuel.
+  return { gaine: last.label, tauxPct: Math.round((totalSection / sectionInt) * 100), ok: false };
 }
 
 export function cablesGroupe(groupe: GroupeLumineux, section: string): string[] {
