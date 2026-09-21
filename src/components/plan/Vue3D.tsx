@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { Niveau, PIECE_TYPES, centroide, AppareillageType, OuvertureEffective, ouverturesEffectivesMur, cleSegmentLiaison } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, centroide, AppareillageType, OuvertureEffective, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 
@@ -305,7 +305,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
       });
       const hauteurAncre = (id: string): number => {
         if (id === "tableau") return hauteurTableau;
-        if (id === "boite") return hauteurCoudeParDefaut;
+        if (id === "boite" || id.startsWith("boite-")) return hauteurCoudeParDefaut;
         const app = tousAppareils.find(a => String(a.id) === id);
         if (!app) return 1.0;
         return app.hauteur != null ? app.hauteur / 100 : (HAUTEUR_DEFAUT[app.type] ?? 1.0);
@@ -325,22 +325,30 @@ const Vue3D = forwardRef<Vue3DHandle, {
           });
           pts3D.push(new THREE.Vector3(seg.bPoint.x, hauteurAncre(seg.bId), seg.bPoint.y));
           const geo = new THREE.BufferGeometry().setFromPoints(pts3D);
-          const mat = new THREE.LineBasicMaterial({ color });
+          // Liaison (navette) entre deux va-et-vient : couleur du circuit assombrie, comme
+          // en 2D — reste rattachée au circuit tout en se distinguant du reste du tracé.
+          const mat = new THREE.LineBasicMaterial({ color: seg.type === "navette" ? assombrirCouleur(color) : color });
           scene.add(new THREE.Line(geo, mat));
         });
 
-        // Boîte de dérivation — petit repère cubique identifiable, à la hauteur par défaut
-        // des coudes (sous plafond), là où convergent les branches en étoile.
+        // Boîte(s) de dérivation — un petit repère cubique par boîte nommée, à la hauteur
+        // par défaut des coudes (sous plafond) ; sans boîte nommée, une seule implicite au
+        // centroïde des lampes (comportement historique).
         if (breaker.circuit === "lumiere") {
           const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
-          if (lumieres.length > 1) {
-            const boitePos = niveau.boitesDerivation?.[breaker.label]
-              ?? { x: lumieres.reduce((s, l) => s + l.x, 0) / lumieres.length, y: lumieres.reduce((s, l) => s + l.y, 0) / lumieres.length };
+          const boitesExistantes = niveau.boitesDerivation?.[breaker.label] ?? [];
+          const dessinerBoite3D = (pt: { x: number; y: number }, ancreId: string) => {
             const geo = new THREE.BoxGeometry(0.08, 0.05, 0.08);
             const mat = new THREE.MeshStandardMaterial({ color: 0xffffff });
-            const boite = new THREE.Mesh(geo, mat);
-            boite.position.set(boitePos.x, hauteurAncre("boite"), boitePos.y);
-            scene.add(boite);
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(pt.x, hauteurAncre(ancreId), pt.y);
+            scene.add(mesh);
+          };
+          if (boitesExistantes.length > 0) {
+            boitesExistantes.forEach(b => dessinerBoite3D(b.point, `boite-${b.id}`));
+          } else if (lumieres.length > 1) {
+            const centre = { x: lumieres.reduce((s, l) => s + l.x, 0) / lumieres.length, y: lumieres.reduce((s, l) => s + l.y, 0) / lumieres.length };
+            dessinerBoite3D(centre, "boite");
           }
         }
       });
