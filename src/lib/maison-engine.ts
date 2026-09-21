@@ -29,13 +29,14 @@ const CIRCUIT_DEDIE: Record<string, string> = {
   piscine: "piscine", vmc: "vmc", alarme: "alarme",
 };
 
-// Libellés pour le message d'alerte "non raccordé" — seuls les interrupteurs/va-et-vient/
-// télérupteurs peuvent, en pratique, terminer une génération sans circuitId (une commande
-// sans point lumineux lié, ou liée à un point lumineux lui-même non raccordé) : tous les
-// autres types passent obligatoirement par un pool (manuel, prises/cuisine/extérieur/
-// éclairage/chauffage automatique, ou dédié). Fallback sur le type brut au besoin.
+// Libellés pour le message d'alerte "non raccordé" — soit une commande (interrupteur/
+// va-et-vient/télérupteur) qui ne pointe vers aucun point lumineux raccordé, soit un
+// appareillage explicitement exclu de la génération automatique (voir
+// Niveau.appareillagesExclus et terminerDessinCheminement, page.tsx). Fallback sur le
+// type brut au besoin.
 const LABEL_NON_RACCORDE: Record<string, string> = {
   interrupteur: "Interrupteur", va_et_vient: "Va-et-vient", telerupteur: "Télérupteur",
+  prise: "Prise", prise_commandee: "Prise commandée",
 };
 
 export interface ResultatGeneration {
@@ -307,9 +308,15 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
   const breakers: Breaker[] = [];
   const alertes: string[] = [];
 
+  // circuitId est remis à zéro ici pour TOUS les appareillages avant recalcul — sinon un
+  // appareillage explicitement exclu de cette génération (voir appareillagesExclus
+  // ci-dessous) conserverait le circuitId d'une génération précédente au lieu de redevenir
+  // effectivement non raccordé : sans ce reset, seuls les appareillages RETRAITÉS à chaque
+  // passe voyaient leur circuitId se mettre à jour, ceux qu'on choisit de ne plus traiter
+  // gardaient l'ancien par simple copie.
   const niveaux: Niveau[] = maisonIn.niveaux.map(n => ({
     ...n,
-    pieces: n.pieces.map(p => ({ ...p, appareillages: p.appareillages.map(a => ({ ...a })) })),
+    pieces: n.pieces.map(p => ({ ...p, appareillages: p.appareillages.map(a => ({ ...a, circuitId: undefined })) })),
   }));
 
   for (const niveau of niveaux) {
@@ -356,15 +363,24 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     });
     genererBreakersManuels(itemsParManuel, manuels, niveau.nom, breakers, tousItems);
 
+    // ─── Exclusions explicites (Niveau.appareillagesExclus) ────────────────────────
+    // Un appareillage exclu (voir terminerDessinCheminement, page.tsx — un membre non
+    // recliqué en redessinant le cheminement d'un circuit AUTOMATIQUE) ne rejoint plus
+    // AUCUN pool automatique : il reste sans circuitId (non raccordé, voir le garde-fou
+    // plus bas) tant qu'il n'est pas explicitement réinclus ou assigné à un circuit manuel.
+    const idsExclus = new Set(niveau.appareillagesExclus ?? []);
+    const resteApresExclusion = reste.filter(a => !idsExclus.has(a.base.id));
+
     // ─── Reste : classification automatique habituelle (prises/cuisine/extérieur/────
     // éclairage/chauffage/dédiés), inchangée à ceci près qu'elle ne porte plus que sur les
-    // appareillages qu'aucun circuit manuel n'a déjà pris en charge.
-    const prisesStandard = reste.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "prise_16");
-    const prisesCuisine = reste.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "cuisine_prises");
-    const prisesExtGarage = reste.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "exterieur");
-    const pointsLumineux = reste.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "lumiere");
-    const chauffages = reste.filter(a => a.base.type === "chauffage");
-    const dedies = reste.filter(a => !!CIRCUIT_DEDIE[a.base.type]);
+    // appareillages qu'aucun circuit manuel n'a déjà pris en charge, ET qui ne sont pas
+    // explicitement exclus.
+    const prisesStandard = resteApresExclusion.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "prise_16");
+    const prisesCuisine = resteApresExclusion.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "cuisine_prises");
+    const prisesExtGarage = resteApresExclusion.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "exterieur");
+    const pointsLumineux = resteApresExclusion.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "lumiere");
+    const chauffages = resteApresExclusion.filter(a => a.base.type === "chauffage");
+    const dedies = resteApresExclusion.filter(a => !!CIRCUIT_DEDIE[a.base.type]);
 
     genererBreakersPrises(prisesStandard, "prise_16", niveau.nom, breakers);
     genererBreakersPrises(prisesCuisine, "cuisine_prises", niveau.nom, breakers);
@@ -390,15 +406,33 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
 
     // ─── Garde-fou : tout appareillage encore sans circuit après tout ce qui précède ──
     // (typiquement un interrupteur/va-et-vient/télérupteur dont la commande ne pointe vers
-    // aucun point lumineux raccordé) reste invisible sur le tracé — sans alerte, l'absence
+    // aucun point lumineux raccordé, ou un appareillage explicitement exclu — voir
+    // Niveau.appareillagesExclus) reste invisible sur le tracé — sans alerte, l'absence
     // passe facilement inaperçue.
     niveau.pieces.forEach(piece => {
       piece.appareillages.forEach(a => {
         if (a.circuitId == null) {
           const label = LABEL_NON_RACCORDE[a.type] ?? a.type;
-          alertes.push(`"${piece.nom || piece.type}" (${niveau.nom}) : ${label} non raccordé à un circuit.`);
+          alertes.push(`"${piece.nom || piece.type}" (${niveau.nom}) : ${label} sans circuit assigné.`);
         }
       });
+    });
+
+    // ─── Garde-fou : cheminement dessiné à la main incomplet SUR UN CIRCUIT MANUEL ──
+    // Un circuit AUTOMATIQUE oublié au clic exclut désormais explicitement l'appareillage
+    // (voir Niveau.appareillagesExclus et le garde-fou "non raccordé" ci-dessus) — cette
+    // alerte-ci ne concerne donc que les circuits MANUELS, où un membre non recliqué en
+    // redessinant reste rattaché au même circuit (voir sequenceAncresCircuitOrdonnee,
+    // maison-types.ts) : sans elle, on pourrait croire avoir redessiné tout le câblage à la
+    // main alors qu'un membre suit en réalité un placement automatique par proximité.
+    Object.entries(niveau.ordresCircuits ?? {}).forEach(([label, ordre]) => {
+      const breaker = breakers.find(b => b.label === label);
+      if (!breaker || breaker.manuelId == null) return; // pas de circuit manuel à ce label — rien à signaler ici
+      const membres = niveau.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === breaker.id);
+      const oublies = membres.filter(a => !ordre.includes(a.id));
+      if (oublies.length > 0) {
+        alertes.push(`"${label}" (${niveau.nom}) : cheminement redessiné incomplet — ${oublies.length} appareillage(s) non cliqué(s), resté(s) sur ce circuit en fin de tracé par proximité.`);
+      }
     });
   }
 

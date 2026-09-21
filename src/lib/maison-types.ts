@@ -265,6 +265,15 @@ export interface Niveau {
   // MANUEL se renomme directement via CircuitManuel.nom (CircuitManuelForm, page.tsx) ; cette
   // liste ne concerne que les circuits que genererCircuits() compose lui-même.
   nomsCircuits?: Record<string, string>;
+  // Ids d'appareillages explicitement exclus de la génération automatique de circuits.
+  // Posé quand un cheminement dessiné à la main pour un circuit AUTOMATIQUE (voir
+  // terminerDessinCheminement, page.tsx) ne clique pas tous ses membres d'origine : plutôt
+  // que de réinjecter silencieusement les oubliés dans le même circuit, ils restent
+  // explicitement non raccordés (signalé par une alerte) tant que l'utilisateur ne les
+  // réinclut pas ou ne les assigne pas lui-même à un circuit (manuel, ou en les recliquant
+  // dans un cheminement). Sans effet sur un appareillage déjà rattaché à un circuit manuel
+  // (circuitManuelId prioritaire — voir genererCircuits, maison-engine.ts).
+  appareillagesExclus?: number[];
 }
 
 export interface Maison {
