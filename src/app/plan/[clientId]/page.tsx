@@ -1337,16 +1337,39 @@ export default function PlanPage() {
     supprimerCircuitManuel(manuelId);
     setCircuitManuelForm(null);
   };
+  // Corrige le résultat déjà généré (breakers + circuitId sur les appareillages) après la
+  // suppression d'UN circuit, au lieu de tout invalider (setResultat(null)) — sinon le
+  // panneau "Circuits" se fermait à chaque suppression, obligeant à recliquer "Générer les
+  // circuits" avant de pouvoir en supprimer un second. resultat.alertes n'est volontairement
+  // pas recalculé ici (recalcul complet réservé à une vraie régénération) — le badge rouge
+  // "non raccordé" sur le plan, lui, reste à jour car il lit circuitId en direct.
+  const retirerBreakerDuResultat = (breakerId: number, membreIds: number[]) => {
+    setResultat(r => r ? {
+      ...r,
+      breakers: r.breakers.filter(x => x.id !== breakerId),
+      maison: {
+        niveaux: r.maison.niveaux.map(n => ({
+          ...n,
+          pieces: n.pieces.map(p => ({
+            ...p,
+            appareillages: p.appareillages.map(a => membreIds.includes(a.id) ? { ...a, circuitId: undefined } : a),
+          })),
+        })),
+      },
+    } : r);
+  };
   const supprimerCircuitManuel = (manuelId: number) => {
+    const breaker = resultat?.breakers.find(b => b.manuelId === manuelId);
+    const membreIds = niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitManuelId === manuelId).map(a => a.id) ?? [];
     updateNiveauActif(n => ({
       ...n,
       circuitsManuels: (n.circuitsManuels ?? []).filter(m => m.id !== manuelId),
       pieces: n.pieces.map(p => ({
         ...p,
-        appareillages: p.appareillages.map(a => a.circuitManuelId === manuelId ? { ...a, circuitManuelId: undefined } : a),
+        appareillages: p.appareillages.map(a => a.circuitManuelId === manuelId ? { ...a, circuitManuelId: undefined, circuitId: undefined } : a),
       })),
     }));
-    invalidateResultat();
+    if (breaker) retirerBreakerDuResultat(breaker.id, membreIds);
   };
   // Supprime N'IMPORTE QUEL circuit déjà généré, manuel ou automatique. Un circuit manuel
   // se supprime lui-même (supprimerCircuitManuel, ci-dessus — ses membres retombent dans le
@@ -1358,12 +1381,16 @@ export default function PlanPage() {
   const supprimerCircuit = (b: Breaker) => {
     if (b.manuelId != null) { supprimerCircuitManuel(b.manuelId); return; }
     if (!niveauActif) return;
-    const membres = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
+    const membreIds = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id).map(a => a.id);
     updateNiveauActif(n => ({
       ...n,
-      appareillagesExclus: Array.from(new Set([...(n.appareillagesExclus ?? []), ...membres.map(a => a.id)])),
+      appareillagesExclus: Array.from(new Set([...(n.appareillagesExclus ?? []), ...membreIds])),
+      pieces: n.pieces.map(p => ({
+        ...p,
+        appareillages: p.appareillages.map(a => membreIds.includes(a.id) ? { ...a, circuitId: undefined } : a),
+      })),
     }));
-    invalidateResultat();
+    retirerBreakerDuResultat(b.id, membreIds);
   };
   // Rattache (ou détache, avec undefined) un appareillage à un circuit manuel — prioritaire
   // sur le clustering automatique une fois "Générer les circuits" relancé.
