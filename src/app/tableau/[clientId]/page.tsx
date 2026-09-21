@@ -14,7 +14,7 @@ import {
   CommandeType, GroupeLumineux, PieceConfig, Breaker, BreakerRow,
   BREAKER_TYPES, CIRCUITS, SECTIONS_CABLE, GAINES_IRL,
   gaineRecommandee, cablesGroupe, cablesPrises, labelCommande,
-  DIFF_HIERARCHY, AMPERES, getCategory, effectiveSection, uid,
+  DIFF_HIERARCHY, AMPERES, AMPERES_DIFFERENTIEL, getCategory, effectiveSection, uid,
 } from "@/lib/electrical-constants";
 
 // ─── CONSTANTES LOCALES (mise en page du tableau, propres à cette page) ────────
@@ -412,15 +412,33 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
           </div>
 
           {isDiff && (
-            <div>
-              <label className="label">Type différentiel</label>
-              <select className="input" value={breaker.type}
-                onChange={e => onUpdate({ ...breaker, type: e.target.value })}>
-                {Object.entries(BREAKER_TYPES)
-                  .filter(([k]) => BREAKER_TYPES[k].isDiff)
-                  .map(([k, v]) => <option key={k} value={k}>{v.label} — {v.desc}</option>)}
-              </select>
-            </div>
+            <>
+              <div>
+                <label className="label">Type différentiel</label>
+                <select className="input" value={breaker.type}
+                  onChange={e => onUpdate({ ...breaker, type: e.target.value })}>
+                  {Object.entries(BREAKER_TYPES)
+                    .filter(([k]) => BREAKER_TYPES[k].isDiff)
+                    .map(([k, v]) => <option key={k} value={k}>{v.label} — {v.desc}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">Calibre</label>
+                <div className="flex flex-wrap gap-2">
+                  {AMPERES_DIFFERENTIEL.map(a => (
+                    <button key={a} onClick={() => onUpdate({ ...breaker, amperes: a })}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-mono font-bold border transition-all ${
+                        breaker.amperes === a
+                          ? "bg-ink-900 text-volt-400 border-ink-700"
+                          : "bg-ink-50 text-ink-500 border-ink-200 hover:border-ink-400"
+                      }`}>{a}A</button>
+                  ))}
+                </div>
+                <p className="text-xs text-ink-400 mt-1.5">
+                  Doit couvrir la charge des circuits protégés — 40A/63A pour la quasi-totalité des tableaux résidentiels, 25A rare (tableau divisionnaire léger).
+                </p>
+              </div>
+            </>
           )}
 
           {!isDiff && (
