@@ -10,6 +10,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
+  GripHorizontal, ChevronUp, ChevronDown,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -357,6 +358,51 @@ function PieceForm({ initialNom, initialType, initialHauteurPlafond, onValidate,
           <button onClick={() => onValidate(nom, type, hauteurPlafond.trim() === "" ? undefined : (parseFloat(hauteurPlafond.replace(",", ".")) || undefined))} className="btn-volt flex-1"><Save size={14} /> Valider</button>
           {onDelete && <button onClick={onDelete} className="btn-danger !px-3"><Trash2 size={14} /></button>}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Enveloppe déplaçable pour les panneaux flottants (info pièce/appareillage/tableau/
+// ouverture/coude, circuits manuels, légende des circuits) — une poignée fine en haut
+// (grip) permet de les glisser n'importe où sur l'écran pour ne plus gêner la vue du plan.
+// Position de départ = son coin d'origine (corner) ; le déplacement est un simple offset
+// (translate) appliqué par-dessus, remis à zéro à chaque réouverture du panneau (le
+// composant est démonté/remonté avec la sélection qu'il représente).
+function DraggablePanel({ corner, className, children }: {
+  corner: "bl" | "br" | "tr";
+  className: string;
+  children: ReactNode;
+}) {
+  const [offset, setOffset] = useState({ dx: 0, dy: 0 });
+  const dragRef = useRef<{ x: number; y: number; dx: number; dy: number } | null>(null);
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      if (!dragRef.current) return;
+      setOffset({ dx: dragRef.current.dx + (e.clientX - dragRef.current.x), dy: dragRef.current.dy + (e.clientY - dragRef.current.y) });
+    };
+    const onUp = () => { dragRef.current = null; };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
+
+  const cornerClass = corner === "bl" ? "bottom-4 left-4" : corner === "br" ? "bottom-4 right-4" : "top-4 right-4";
+
+  return (
+    <div className={`absolute ${cornerClass} z-20`} style={{ transform: `translate(${offset.dx}px, ${offset.dy}px)` }}>
+      <div className={className}>
+        <div
+          className="flex items-center justify-center h-4 -mx-3 -mt-3 mb-2 rounded-t-xl bg-ink-100 hover:bg-ink-200 cursor-grab active:cursor-grabbing"
+          style={{ touchAction: "none" }}
+          onPointerDown={e => { e.stopPropagation(); dragRef.current = { x: e.clientX, y: e.clientY, dx: offset.dx, dy: offset.dy }; }}>
+          <GripHorizontal size={12} className="text-ink-400" />
+        </div>
+        {children}
       </div>
     </div>
   );
@@ -776,6 +822,11 @@ export default function PlanPage() {
   const [selectedWaypoint, setSelectedWaypoint] = useState<{ cle: string; waypointId: number } | null>(null);
   const [placementError, setPlacementError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Barre d'outils (dessin + circuits) repliable — pour libérer un maximum de hauteur pour
+  // le plan quand on n'en a pas besoin. Se replie ne laisse jamais un mode de placement/
+  // dessin en cours orphelin (voir toggleToolbar) : on repart toujours de "Sélection".
+  const [toolbarOuvert, setToolbarOuvert] = useState(true);
+  const [alertesOuvertes, setAlertesOuvertes] = useState(false);
 
   const [resultat, setResultat] = useState<ResultatGeneration | null>(null);
   const [showCircuits, setShowCircuits] = useState(false);
@@ -1008,6 +1059,20 @@ export default function PlanPage() {
     if (points.length < 3) return;
     setPendingContour(points);
     setDrawingPoints([]);
+  };
+
+  // Replier la barre annule tout mode de placement/dessin en cours (jamais de bouton
+  // "Terminer/Annuler" orphelin caché derrière la barre repliée) — repart toujours d'un
+  // état "Sélection" propre.
+  const toggleToolbar = () => {
+    setToolbarOuvert(o => {
+      if (o) {
+        setMode("select"); setDrawingPoints([]);
+        setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null);
+        setCheminementDessin(null);
+      }
+      return !o;
+    });
   };
 
   const entrerModeDessiner = () => {
@@ -1706,6 +1771,11 @@ export default function PlanPage() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            {!vue3D && (
+              <button onClick={toggleToolbar} className="btn-ghost !px-2 !py-1.5" title={toolbarOuvert ? "Replier la barre d'outils" : "Déplier la barre d'outils"}>
+                {toolbarOuvert ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+              </button>
+            )}
             <button onClick={() => setVue3D(v => !v)} className={`btn-ghost ${vue3D ? "!bg-ink-900 !text-volt-400" : ""}`}>
               {vue3D ? "Vue 2D" : "Vue 3D"}
             </button>
@@ -1722,7 +1792,7 @@ export default function PlanPage() {
 
         <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 bg-ink-50 overflow-x-auto shrink-0">
           {[...niveaux].sort((a, b) => a.ordre - b.ordre).map(n => (
-            <button key={n.id} onClick={() => { setNiveauActifId(n.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); }}
+            <button key={n.id} onClick={() => { setNiveauActifId(n.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setCheminementDessin(null); }}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
                 n.id === niveauActifId ? "bg-ink-900 text-volt-400" : "bg-white border border-ink-200 text-ink-500 hover:border-ink-400"
               }`}>
@@ -1741,8 +1811,8 @@ export default function PlanPage() {
           )}
         </div>
 
-        {!vue3D && (
-        <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 shrink-0 flex-wrap">
+        {!vue3D && toolbarOuvert && (
+        <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 shrink-0 flex-wrap bg-ink-50">
           <button onClick={() => { setMode("select"); setDrawingPoints([]); setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); }}
             className={`btn-ghost !text-xs ${mode === "select" && !placementType && !placingTableau && !placingOuverture ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <MousePointer2 size={13} /> Sélection
@@ -1782,15 +1852,9 @@ export default function PlanPage() {
               {drawingPoints.length >= 3 && <button onClick={() => finirDessin(drawingPoints)} className="btn-volt !text-xs">Terminer la pièce</button>}
             </>
           )}
-          <div className="ml-auto flex items-center gap-1">
-            <button onClick={() => zoomBtn(-1)} className="btn-ghost !px-2 !py-1.5"><ZoomOut size={14} /></button>
-            <span className="text-xs font-mono text-ink-400 w-10 text-center">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => zoomBtn(1)} className="btn-ghost !px-2 !py-1.5"><ZoomIn size={14} /></button>
-          </div>
-        </div>
-        )}
 
-        <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 shrink-0 flex-wrap bg-ink-50">
+          <div className="w-px h-5 bg-ink-200 mx-0.5 hidden sm:block" />
+
           <button onClick={handleGenerer} className="btn-volt !text-xs"><Sparkles size={13} /> Générer les circuits</button>
           <button onClick={() => setShowCircuits(s => !s)} disabled={!resultat} className="btn-ghost !text-xs disabled:opacity-40">
             {showCircuits ? <Eye size={13} /> : <EyeOff size={13} />} Afficher les circuits
@@ -1806,26 +1870,37 @@ export default function PlanPage() {
           )}
           {gaineNiveauActif && (
             <span className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-mono font-semibold ${couleurTauxUi(gaineNiveauActif.tauxPct)}`}>
-              🔀 Gaine principale : {gaineNiveauActif.gaine} · {gaineNiveauActif.tauxPct}%
+              🔀 {gaineNiveauActif.gaine} · {gaineNiveauActif.tauxPct}%
             </span>
           )}
           {resultat && !niveauActif?.tableauPos && (
             <span className="text-[11px] text-amber-600 font-semibold">Positionne le tableau pour voir le tracé des gaines</span>
+          )}
+          {resultat && resultat.alertes.length > 0 && (
+            <div className="relative">
+              <button onClick={() => setAlertesOuvertes(o => !o)}
+                className={`btn-ghost !text-xs !text-amber-700 ${alertesOuvertes ? "!bg-amber-100" : ""}`}>
+                <AlertTriangle size={13} /> {resultat.alertes.length} alerte{resultat.alertes.length > 1 ? "s" : ""}
+              </button>
+              {alertesOuvertes && (
+                <div className="absolute z-20 top-full left-0 mt-1 card card-inner !p-2 flex flex-col gap-1 shadow-lg w-72 max-h-56 overflow-y-auto">
+                  {resultat.alertes.map((a, i) => <p key={i} className="text-[11px] text-amber-700">{a}</p>)}
+                </div>
+              )}
+            </div>
           )}
           {pushMsg && (
             <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-2">
               {pushMsg} <Link href={`/tableau/${clientId}`} className="underline">Voir le tableau →</Link>
             </span>
           )}
-        </div>
 
-        {resultat && resultat.alertes.length > 0 && (
-          <div className="px-4 md:px-6 py-2 bg-amber-50 border-b border-amber-200 flex items-start gap-2 shrink-0 max-h-24 overflow-y-auto">
-            <AlertTriangle size={14} className="text-amber-500 mt-0.5 shrink-0" />
-            <div className="flex flex-col gap-0.5">
-              {resultat.alertes.map((a, i) => <p key={i} className="text-[11px] text-amber-700">{a}</p>)}
-            </div>
+          <div className="ml-auto flex items-center gap-1">
+            <button onClick={() => zoomBtn(-1)} className="btn-ghost !px-2 !py-1.5"><ZoomOut size={14} /></button>
+            <span className="text-xs font-mono text-ink-400 w-10 text-center">{Math.round(zoom * 100)}%</span>
+            <button onClick={() => zoomBtn(1)} className="btn-ghost !px-2 !py-1.5"><ZoomIn size={14} /></button>
           </div>
+        </div>
         )}
 
         <div className="flex-1 flex overflow-hidden">
@@ -2196,18 +2271,18 @@ export default function PlanPage() {
             </svg>
 
             {selectedPiece && mode === "select" && (
-              <div className="absolute bottom-4 left-4 card card-inner !p-3 flex items-center gap-3 shadow-lg">
+              <DraggablePanel corner="bl" className="card card-inner !p-3 flex items-center gap-3 shadow-lg">
                 <div>
                   <p className="text-sm font-semibold text-ink-900">{selectedPiece.nom || PIECE_TYPES[selectedPiece.type].label}</p>
                   <p className="text-xs text-ink-400">{PIECE_TYPES[selectedPiece.type].label} · {aireDuPolygone(selectedPiece.contour).toFixed(1)} m² · {selectedPiece.appareillages.length} appareillage(s) · {selectedPiece.contour.length} sommets</p>
                 </div>
                 <button onClick={() => zoomSurPiece(selectedPiece)} className="btn-ghost !px-2 !py-1.5" title="Zoomer sur la pièce"><Search size={13} /></button>
                 <button onClick={() => setEditingPiece(selectedPiece)} className="btn-ghost !px-2 !py-1.5"><Pencil size={13} /></button>
-              </div>
+              </DraggablePanel>
             )}
 
             {selectedAppareillage && mode === "select" && (
-              <div className="absolute bottom-4 left-4 card card-inner !p-3 flex flex-col gap-2 shadow-lg w-72 max-h-[80vh] overflow-y-auto">
+              <DraggablePanel corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-72 max-h-[80vh] overflow-y-auto">
                 <div className="flex items-center gap-2">
                   <AppareillageSymbol type={selectedAppareillage.type} size={22} />
                   <input className="input !py-1 !text-sm flex-1 min-w-0" placeholder={labelAppareillage(selectedAppareillage.type)}
@@ -2298,11 +2373,11 @@ export default function PlanPage() {
                 {selectedAppareillage.circuitId != null && (
                   <p className="text-xs text-ink-400">Circuit : {resultat?.breakers.find(b => b.id === selectedAppareillage.circuitId)?.label}</p>
                 )}
-              </div>
+              </DraggablePanel>
             )}
 
             {selectedTableau && niveauActif?.tableauPos && mode === "select" && (
-              <div className="absolute bottom-4 left-4 card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+              <DraggablePanel corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
                 <div className="flex items-center gap-2">
                   <span className="text-lg leading-none">⚡</span>
                   <p className="text-sm font-semibold text-ink-900 flex-1">Tableau électrique</p>
@@ -2324,7 +2399,7 @@ export default function PlanPage() {
                   </button>
                 </div>
                 <p className="text-[11px] text-ink-400">Glisse-le directement sur le plan pour le repositionner.</p>
-              </div>
+              </DraggablePanel>
             )}
 
             {selectedOuvertureId != null && mode === "select" && (() => {
@@ -2332,7 +2407,7 @@ export default function PlanPage() {
               const o = piece?.ouvertures?.find(o => o.id === selectedOuvertureId);
               if (!piece || !o) return null;
               return (
-                <div className="absolute bottom-4 left-4 card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+                <DraggablePanel corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
                   <div className="flex items-center gap-2">
                     <OuvertureIcon type={o.type} size={18} color="#1c1917" />
                     <p className="text-sm font-semibold text-ink-900 flex-1">{LABEL_OUVERTURE[o.type]}</p>
@@ -2431,7 +2506,7 @@ export default function PlanPage() {
                     </div>
                   )}
                   <p className="text-[11px] text-ink-400">Glisse-la directement sur le mur pour la repositionner — elle reste sur ce mur.</p>
-                </div>
+                </DraggablePanel>
               );
             })()}
 
@@ -2439,7 +2514,7 @@ export default function PlanPage() {
               const wp = niveauActif.liaisonWaypoints?.[selectedWaypoint.cle]?.find(w => w.id === selectedWaypoint.waypointId);
               if (!wp) return null;
               return (
-                <div className="absolute bottom-4 left-4 card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+                <DraggablePanel corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-ink-500 shrink-0">Coude — hauteur (cm)</span>
                     <input type="number" className="input !py-1 !text-xs !w-20" placeholder="—"
@@ -2460,12 +2535,12 @@ export default function PlanPage() {
                       ))}
                     </div>
                   </div>
-                </div>
+                </DraggablePanel>
               );
             })()}
 
             {circuitsManuelsOpen && niveauActif && (
-              <div className="absolute top-4 right-4 card card-inner !p-3 flex flex-col gap-2 shadow-lg w-80 max-h-[70vh] overflow-y-auto z-10">
+              <DraggablePanel corner="tr" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-80 max-h-[70vh] overflow-y-auto">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-semibold text-ink-900">Circuits manuels — {niveauActif.nom || NIVEAU_TYPES[niveauActif.type]}</p>
                   <button onClick={() => setCircuitsManuelsOpen(false)} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={14} /></button>
@@ -2491,7 +2566,7 @@ export default function PlanPage() {
                     );
                   })}
                 </div>
-              </div>
+              </DraggablePanel>
             )}
 
             {placementError && (
@@ -2522,7 +2597,7 @@ export default function PlanPage() {
             )}
 
             {showCircuits && resultat && circuitsNiveauActif.length > 0 && (
-              <div className="absolute bottom-4 right-4 card card-inner !p-3 max-w-[260px] max-h-56 overflow-y-auto shadow-lg">
+              <DraggablePanel corner="br" className="card card-inner !p-3 max-w-[260px] max-h-56 overflow-y-auto shadow-lg">
                 <div className="flex items-center justify-between mb-1.5 gap-2">
                   <p className="text-[10px] font-semibold text-ink-400 uppercase tracking-wide">Circuits</p>
                   <button className="text-[10px] text-volt-600 font-semibold shrink-0"
@@ -2568,7 +2643,7 @@ export default function PlanPage() {
                     );
                   })}
                 </div>
-              </div>
+              </DraggablePanel>
             )}
 
             {niveauActif && niveauActif.pieces.length === 0 && mode === "select" && (
