@@ -9,7 +9,7 @@ import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, X,
-  Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route, ChevronUp, ChevronDown,
+  Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -258,14 +258,18 @@ function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau
   return `<div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 6mm 6mm;font-size:8pt;font-family:monospace;">` +
     utilises.map(({ b, color }) => {
       let lgTxt = "";
-      if (showLongueurs && niveau.tableauPos) {
-        const pts = niveau.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
+      // Longueur calculée sur le niveau VIVANT (tableau/coudes/ordre de câblage actuels) plutôt
+      // que sur l'instantané figé au moment de la génération — sinon un cheminement redessiné
+      // ou un coude déplacé après coup ne se répercuterait pas sur la longueur imprimée.
+      if (showLongueurs && niveauVivant.tableauPos) {
+        const pts = niveauVivant.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
         if (pts.length > 0) {
-          const segments = segmentsPourCircuit(b, pts, niveau, niveau.tableauPos);
-          lgTxt = ` — ${longueurBranchesEclairage(segments, niveau.liaisonWaypoints).toFixed(1)}m`;
+          const segments = segmentsPourCircuit(b, pts, niveauVivant, niveauVivant.tableauPos);
+          lgTxt = ` — ${longueurBranchesEclairage(segments, niveauVivant.liaisonWaypoints).toFixed(1)}m`;
         }
       }
-      return `<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;"></span>${escapeXml(b.label || CIRCUITS[b.circuit]?.label || b.circuit)}${lgTxt}</span>`;
+      const nomCircuit = niveauVivant.nomsCircuits?.[b.label] ?? b.label;
+      return `<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;"></span>${escapeXml(nomCircuit || CIRCUITS[b.circuit]?.label || b.circuit)}${lgTxt}</span>`;
     }).join("") + `</div>`;
 }
 
@@ -549,70 +553,6 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
   );
 }
 
-function CheminementForm({ niveau, breaker, ordreEnregistre, onValidate, onCancel, onReset }: {
-  niveau: Niveau; breaker: Breaker; ordreEnregistre: number[] | undefined;
-  onValidate: (ordre: number[]) => void;
-  onCancel: () => void;
-  onReset: () => void;
-}) {
-  const membres = niveau.pieces.flatMap(p => p.appareillages.map(a => ({ a, pieceNom: p.nom }))).filter(({ a }) => a.circuitId === breaker.id);
-  const initial = ordreEnregistre
-    ? [
-        ...ordreEnregistre.map(id => membres.find(m => m.a.id === id)).filter((m): m is typeof membres[number] => !!m),
-        ...membres.filter(m => !ordreEnregistre.includes(m.a.id)),
-      ]
-    : membres;
-  const [ordre, setOrdre] = useState<number[]>(initial.map(m => m.a.id));
-
-  const monter = (idx: number) => setOrdre(o => {
-    if (idx === 0) return o;
-    const n = [...o];
-    [n[idx - 1], n[idx]] = [n[idx], n[idx - 1]];
-    return n;
-  });
-  const descendre = (idx: number) => setOrdre(o => {
-    if (idx === o.length - 1) return o;
-    const n = [...o];
-    [n[idx], n[idx + 1]] = [n[idx + 1], n[idx]];
-    return n;
-  });
-
-  const items = ordre.map(id => membres.find(m => m.a.id === id)).filter((m): m is typeof membres[number] => !!m);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
-      <div className="card w-full max-w-sm max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-4 border-b border-ink-200">
-          <p className="font-semibold text-ink-900">Ordre de câblage — {breaker.label}</p>
-          <button onClick={onCancel} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={16} /></button>
-        </div>
-        <p className="px-4 pt-3 text-[11px] text-ink-400">
-          Le câble part du tableau puis relie chaque appareillage dans l'ordre ci-dessous. Réordonne pour suivre un cheminement plus logique (moins d'allers-retours, contourner un obstacle…) — remplace l'ordre plus-proche-voisin calculé automatiquement.
-        </p>
-        <div className="p-4 flex flex-col gap-1 overflow-y-auto flex-1">
-          <div className="flex items-center gap-2 text-xs text-ink-500 px-2 py-1.5">
-            <Zap size={13} /> <span className="font-semibold">Tableau électrique</span>
-          </div>
-          {items.length === 0 && <p className="text-xs text-ink-400 italic px-2">Aucun appareillage sur ce circuit.</p>}
-          {items.map(({ a, pieceNom }, idx) => (
-            <div key={a.id} className="flex items-center gap-2 text-xs bg-ink-50 rounded-lg px-2 py-1.5">
-              <span className="w-4 text-center text-ink-400 font-mono shrink-0">{idx + 1}</span>
-              <AppareillageSymbol type={a.type} size={14} />
-              <span className="text-ink-700 truncate flex-1">{pieceNom || "Pièce"} — {a.nom || labelAppareillage(a.type)}</span>
-              <button onClick={() => monter(idx)} disabled={idx === 0} className="btn-ghost !p-1 disabled:opacity-30"><ChevronUp size={12} /></button>
-              <button onClick={() => descendre(idx)} disabled={idx === items.length - 1} className="btn-ghost !p-1 disabled:opacity-30"><ChevronDown size={12} /></button>
-            </div>
-          ))}
-        </div>
-        <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
-          <button onClick={() => onValidate(ordre)} className="btn-volt flex-1"><Save size={14} /> Appliquer</button>
-          {ordreEnregistre && <button onClick={onReset} className="btn-ghost !px-3" title="Revenir à l'ordre automatique">Auto</button>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── PALETTE ────────────────────────────────────────────────────────────────────
 
 // Icône simple porte/fenêtre — pas de symbole normalisé dédié, juste de quoi
@@ -829,8 +769,10 @@ export default function PlanPage() {
   const [circuitsManuelsOpen, setCircuitsManuelsOpen] = useState(false);
   // null = fermé ; { existing: null } = création ; { existing: <manuel> } = édition de ce circuit.
   const [circuitManuelForm, setCircuitManuelForm] = useState<{ existing: CircuitManuel | null } | null>(null);
-  // Circuit dont on édite l'ordre de câblage — null = panneau fermé.
-  const [cheminementForm, setCheminementForm] = useState<{ breaker: Breaker } | null>(null);
+  // Circuit dont on est en train de dessiner le cheminement à la main (clic sur ses
+  // appareillages, dans l'ordre) — null = pas de dessin en cours. ordre est l'état de
+  // travail local, appliqué (appliquerOrdreCircuit) seulement à la validation.
+  const [cheminementDessin, setCheminementDessin] = useState<{ breaker: Breaker; ordre: number[] } | null>(null);
   const [selectedWaypoint, setSelectedWaypoint] = useState<{ cle: string; waypointId: number } | null>(null);
   const [placementError, setPlacementError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -1353,6 +1295,21 @@ export default function PlanPage() {
     }
   };
 
+  // Renomme N'IMPORTE QUEL circuit (manuel ou automatique). Un circuit manuel se renomme
+  // directement via son CircuitManuel.nom (déjà la source de b.label) ; un circuit
+  // automatique n'a pas de nom propre — le renommage est stocké à part (Niveau.nomsCircuits,
+  // indexé par le label généré) et résolu à l'affichage via nomAffiche().
+  const renommerCircuit = (b: Breaker, nom: string) => {
+    if (b.manuelId != null) {
+      updateNiveauActif(n => ({
+        ...n, circuitsManuels: (n.circuitsManuels ?? []).map(m => m.id === b.manuelId ? { ...m, nom } : m),
+      }));
+    } else {
+      updateNiveauActif(n => ({ ...n, nomsCircuits: { ...(n.nomsCircuits ?? {}), [b.label]: nom } }));
+    }
+  };
+  const nomAffiche = (b: Breaker): string => niveauActif?.nomsCircuits?.[b.label] ?? b.label;
+
   // Ordre de câblage choisi à la main pour un circuit — indexé par label, voir
   // Niveau.ordresCircuits (maison-types.ts) et segmentsPourCircuit (maison-engine.ts) pour
   // la logique de tracé qui l'utilise.
@@ -1364,6 +1321,36 @@ export default function PlanPage() {
       const { [label]: _retire, ...reste } = n.ordresCircuits ?? {};
       return { ...n, ordresCircuits: reste };
     });
+  };
+
+  // ─── DESSIN DU CHEMINEMENT (clic sur les appareillages du circuit, dans l'ordre) ───────
+  const demarrerDessinCheminement = (b: Breaker) => {
+    setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null);
+    setMode("select"); setDrawingPoints([]);
+    setSelectedAppareillageId(null); setSelectedPieceId(null); setSelectedTableau(false);
+    setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedWaypoint(null);
+    const existant = niveauActif?.ordresCircuits?.[b.label];
+    setCheminementDessin({ breaker: b, ordre: existant ? [...existant] : [] });
+  };
+  // Clic sur un appareillage pendant le dessin : l'ajoute à la suite du tracé s'il n'y est
+  // pas déjà, ou le retire s'il y est déjà (pour corriger une erreur de clic sans tout refaire).
+  const toggleAppareillageCheminement = (appareillageId: number) => {
+    setCheminementDessin(cd => {
+      if (!cd) return cd;
+      const dansOrdre = cd.ordre.includes(appareillageId);
+      return { ...cd, ordre: dansOrdre ? cd.ordre.filter(id => id !== appareillageId) : [...cd.ordre, appareillageId] };
+    });
+  };
+  const terminerDessinCheminement = () => {
+    if (!cheminementDessin) return;
+    appliquerOrdreCircuit(cheminementDessin.breaker.label, cheminementDessin.ordre);
+    setCheminementDessin(null);
+  };
+  const annulerDessinCheminement = () => setCheminementDessin(null);
+  const reinitialiserDessinCheminement = () => {
+    if (!cheminementDessin) return;
+    reinitialiserOrdreCircuit(cheminementDessin.breaker.label);
+    setCheminementDessin(null);
   };
 
   // apresIndex = position dans la liste existante des coudes après laquelle insérer
@@ -1429,6 +1416,7 @@ export default function PlanPage() {
   };
 
   const onBackgroundPointerDown = (e: React.PointerEvent) => {
+    if (cheminementDessin) return; // dessin de cheminement : seuls les appareillages du circuit réagissent
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
     const px = e.clientX - rect.left, py = e.clientY - rect.top;
@@ -1504,7 +1492,7 @@ export default function PlanPage() {
   };
 
   const onPieceDown = (piece: Piece, e: React.PointerEvent) => {
-    if (mode === "dessiner" || placementType || placingTableau || placingOuverture) return;
+    if (cheminementDessin || mode === "dessiner" || placementType || placingTableau || placingOuverture) return;
     e.stopPropagation();
     if (selectedPieceId === piece.id) {
       setDragMode({ kind: "piece", pieceId: piece.id, startX: e.clientX, startY: e.clientY, startContour: piece.contour });
@@ -1518,11 +1506,22 @@ export default function PlanPage() {
   };
 
   const onVertexDown = (pieceId: number, index: number, e: React.PointerEvent) => {
+    if (cheminementDessin) return;
     e.stopPropagation();
     setDragMode({ kind: "vertex", pieceId, vertexIndex: index });
   };
 
   const onAppareillagePointerDown = (piece: Piece, a: AppareillagePlace, e: React.PointerEvent) => {
+    if (cheminementDessin) {
+      e.stopPropagation();
+      if (a.circuitId === cheminementDessin.breaker.id) {
+        toggleAppareillageCheminement(a.id);
+      } else {
+        setPlacementError("Cet appareillage n'appartient pas à ce circuit.");
+        setTimeout(() => setPlacementError(null), 2000);
+      }
+      return;
+    }
     if (mode !== "select" || placementType || placingTableau || placingOuverture) return;
     e.stopPropagation();
     // Sélectionne ET arme le déplacement dès le premier appui (comme un vrai
@@ -1537,6 +1536,7 @@ export default function PlanPage() {
   };
 
   const onTableauPointerDown = (e: React.PointerEvent) => {
+    if (cheminementDessin) return;
     if (mode !== "select" || placementType || placingTableau || placingOuverture) return;
     e.stopPropagation();
     setSelectedTableau(true);
@@ -1548,6 +1548,7 @@ export default function PlanPage() {
   };
 
   const onOuverturePointerDown = (piece: Piece, o: Ouverture, e: React.PointerEvent) => {
+    if (cheminementDessin) return;
     if (mode !== "select" || placementType || placingTableau || placingOuverture) return;
     e.stopPropagation();
     setSelectedOuvertureId(o.id);
@@ -1560,6 +1561,7 @@ export default function PlanPage() {
   };
 
   const onBoitePointerDown = (label: string, e: React.PointerEvent) => {
+    if (cheminementDessin) return;
     if (mode !== "select" || placementType || placingTableau || placingOuverture) return;
     e.stopPropagation();
     setSelectedBoite(label);
@@ -1618,7 +1620,15 @@ export default function PlanPage() {
   const handlePousserVersTableau = async () => {
     if (!resultat || resultat.breakers.length === 0) return;
     setPushing(true);
-    const nouvellesRows = assemblerTableau(resultat.breakers);
+    // Renommer un circuit automatique (Niveau.nomsCircuits) ne modifie jamais resultat.breakers
+    // (label "naturel", utilisé comme clé stable par couleursCircuits/ordresCircuits) — on
+    // résout donc le nom affiché ici, juste avant de pousser vers le tableau, en fusionnant
+    // les nomsCircuits de tous les niveaux (le label naturel inclut déjà le nom du niveau,
+    // donc pas de collision entre niveaux en pratique).
+    const tousNomsCircuits: Record<string, string> = {};
+    niveaux.forEach(n => Object.assign(tousNomsCircuits, n.nomsCircuits ?? {}));
+    const breakersAvecNoms = resultat.breakers.map(b => ({ ...b, label: tousNomsCircuits[b.label] ?? b.label }));
+    const nouvellesRows = assemblerTableau(breakersAvecNoms);
     const { data: c } = await supabase.from("clients").select("tableau_config").eq("id", clientId).single();
     let rows: BreakerRow[] = [];
     if (c?.tableau_config) {
@@ -2007,7 +2017,7 @@ export default function PlanPage() {
                     for (let j = 0; j < sousChaine.length - 1; j++) {
                       const aPx = toScreen(sousChaine[j]), bPx = toScreen(sousChaine[j + 1]);
                       elements.push(<line key={`${cle}-${j}`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={color} strokeWidth={2} strokeDasharray="6,4" opacity={0.8} />);
-                      if (mode === "select") {
+                      if (mode === "select" && !cheminementDessin) {
                         elements.push(
                           <line key={`${cle}-${j}-hit`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="transparent" strokeWidth={14}
                             style={{ cursor: "copy" }}
@@ -2028,7 +2038,7 @@ export default function PlanPage() {
                         <g key={`${cle}-wp-${c.id}`}
                           style={{ cursor: mode === "select" ? "grab" : "default" }}
                           onPointerDown={e => {
-                            if (mode !== "select") return;
+                            if (mode !== "select" || cheminementDessin) return;
                             e.stopPropagation();
                             // Sélectionne ET arme le déplacement dès le premier appui, comme les
                             // appareillages et le tableau — un simple clic sans bouger reste une
@@ -2123,6 +2133,35 @@ export default function PlanPage() {
                     </g>
                     {selectedTableau && <circle cx={p.x} cy={p.y} r={rZoneClic} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
                   </g>
+                );
+              })()}
+
+              {cheminementDessin && niveauActif?.tableauPos && (() => {
+                const membres = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === cheminementDessin.breaker.id);
+                const depart = toScreen(niveauActif.tableauPos);
+                const placesPx = cheminementDessin.ordre
+                  .map(id => membres.find(m => m.id === id))
+                  .filter((m): m is AppareillagePlace => !!m)
+                  .map(a => toScreen({ x: a.x, y: a.y }));
+                const chemin = [depart, ...placesPx];
+                const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+                return (
+                  <>
+                    {placesPx.length > 0 && <path d={d} fill="none" stroke="#F59E0B" strokeWidth={2.5} strokeDasharray="6,4" opacity={0.9} style={{ pointerEvents: "none" }} />}
+                    {membres.map(a => {
+                      const p = toScreen({ x: a.x, y: a.y });
+                      const idx = cheminementDessin.ordre.indexOf(a.id);
+                      const place = idx !== -1;
+                      return (
+                        <g key={`chem-badge-${a.id}`} style={{ pointerEvents: "none" }}>
+                          <circle cx={p.x} cy={p.y} r={11} fill={place ? "#F59E0B" : "#fff"} stroke="#F59E0B" strokeWidth={2} />
+                          <text x={p.x} y={p.y + 3.5} textAnchor="middle" fontSize="10" fontWeight="700" fill={place ? "#1c1917" : "#F59E0B"}>
+                            {place ? idx + 1 : "?"}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </>
                 );
               })()}
 
@@ -2471,6 +2510,16 @@ export default function PlanPage() {
                 Clique pour positionner le tableau électrique
               </div>
             )}
+            {cheminementDessin && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2.5 rounded-lg shadow-lg flex items-center gap-3 flex-wrap justify-center max-w-[92vw]">
+                <span>Cheminement « {nomAffiche(cheminementDessin.breaker)} » : clique ses appareillages dans l'ordre voulu ({cheminementDessin.ordre.length} placé{cheminementDessin.ordre.length > 1 ? "s" : ""})</span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button onClick={terminerDessinCheminement} className="btn-volt !text-[11px] !px-2 !py-1"><Save size={11} /> Terminer</button>
+                  <button onClick={reinitialiserDessinCheminement} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">Auto</button>
+                  <button onClick={annulerDessinCheminement} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">Annuler</button>
+                </div>
+              </div>
+            )}
 
             {showCircuits && resultat && circuitsNiveauActif.length > 0 && (
               <div className="absolute bottom-4 right-4 card card-inner !p-3 max-w-[260px] max-h-56 overflow-y-auto shadow-lg">
@@ -2505,11 +2554,13 @@ export default function PlanPage() {
                           value={colorMap.get(b.id) ?? "#666666"}
                           onClick={e => e.stopPropagation()}
                           onChange={e => definirCouleurCircuit(b, e.target.value)} />
-                        <span className="truncate flex-1">{b.label}</span>
+                        <input className="input !text-[11px] !py-0.5 !px-1.5 flex-1 min-w-0" value={nomAffiche(b)}
+                          onClick={e => e.stopPropagation()}
+                          onChange={e => renommerCircuit(b, e.target.value)} />
                         {lg !== null && <span className="font-mono text-ink-400 shrink-0">{lg.toFixed(1)}m</span>}
                         {CIRCUITS[b.circuit]?.category !== "lumiere" && (
-                          <button onClick={e => { e.preventDefault(); e.stopPropagation(); setCheminementForm({ breaker: b }); }}
-                            className="btn-ghost !p-0.5 shrink-0" title="Modifier l'ordre de câblage">
+                          <button onClick={e => { e.preventDefault(); e.stopPropagation(); demarrerDessinCheminement(b); }}
+                            className="btn-ghost !p-0.5 shrink-0" title="Dessiner le cheminement">
                             <Route size={12} />
                           </button>
                         )}
@@ -2654,17 +2705,6 @@ export default function PlanPage() {
           onValidate={validerCircuitManuel}
           onCancel={() => setCircuitManuelForm(null)}
           onDelete={circuitManuelForm.existing ? () => supprimerCircuitManuelEtFermer(circuitManuelForm.existing!.id) : undefined}
-        />
-      )}
-
-      {cheminementForm && niveauActif && (
-        <CheminementForm
-          niveau={niveauActif}
-          breaker={cheminementForm.breaker}
-          ordreEnregistre={niveauActif.ordresCircuits?.[cheminementForm.breaker.label]}
-          onValidate={ordre => { appliquerOrdreCircuit(cheminementForm.breaker.label, ordre); setCheminementForm(null); }}
-          onCancel={() => setCheminementForm(null)}
-          onReset={() => { reinitialiserOrdreCircuit(cheminementForm.breaker.label); setCheminementForm(null); }}
         />
       )}
     </Shell>
