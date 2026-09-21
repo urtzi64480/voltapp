@@ -67,7 +67,11 @@ function creerGeometrieMarqueur(forme: FormeMarqueur): THREE.BufferGeometry {
 }
 
 // Étiquette ronde (initiales) toujours orientée face caméra — c'est elle qui rend
-// chaque appareillage identifiable au premier coup d'œil dans la vue 3D.
+// chaque appareillage identifiable au premier coup d'œil dans la vue 3D. Le depth test
+// reste ACTIVÉ (contrairement à une version précédente) : sans lui, l'étiquette se
+// dessinait par-dessus tout le reste de la scène, murs compris, et restait visible même
+// depuis l'extérieur d'une pièce fermée — exactement ce qu'on veut éviter. depthWrite
+// reste désactivé (l'étiquette n'a pas besoin d'occulter ce qui est derrière ELLE).
 function creerEtiquetteSprite(texte: string, couleurFond: string): THREE.Sprite {
   const taille = 64;
   const canvas = document.createElement("canvas");
@@ -87,10 +91,9 @@ function creerEtiquetteSprite(texte: string, couleurFond: string): THREE.Sprite 
   ctx.fillText(texte, taille / 2, taille / 2 + 1);
   const texture = new THREE.CanvasTexture(canvas);
   texture.needsUpdate = true;
-  const mat = new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false });
+  const mat = new THREE.SpriteMaterial({ map: texture, depthWrite: false });
   const sprite = new THREE.Sprite(mat);
   sprite.scale.set(0.22, 0.22, 1);
-  sprite.renderOrder = 999;
   return sprite;
 }
 
@@ -356,6 +359,10 @@ const Vue3D = forwardRef<Vue3DHandle, {
       : 8;
 
     // ── Caméra orbitale manuelle (coordonnées sphériques autour de la cible) ──
+    // La cible ("cible") n'est plus figée sur le centre du niveau : le glisser-déplacer
+    // (clic droit, ou Maj + clic gauche) la déplace dans le plan de l'écran, ce qui permet
+    // de cadrer n'importe quel angle de vue pour l'impression — pas seulement tourner
+    // autour d'un point fixe.
     const cible = new THREE.Vector3(cx, hauteurPlafond / 2, cy);
     let rayon = etendue * 1.1;
     let azimut = Math.PI / 4;
@@ -370,18 +377,39 @@ const Vue3D = forwardRef<Vue3DHandle, {
     };
     appliquerCamera();
 
-    let enRotation = false;
+    type Interaction = "rotation" | "deplacement" | null;
+    let interaction: Interaction = null;
     let dernierX = 0, dernierY = 0;
-    const onPointerDown = (e: PointerEvent) => { enRotation = true; dernierX = e.clientX; dernierY = e.clientY; };
+    // Vecteurs de travail réutilisés à chaque déplacement (évite une allocation par frame).
+    const axeDroite = new THREE.Vector3();
+    const axeHaut = new THREE.Vector3();
+
+    const onPointerDown = (e: PointerEvent) => {
+      interaction = (e.button === 2 || e.shiftKey) ? "deplacement" : "rotation";
+      dernierX = e.clientX; dernierY = e.clientY;
+    };
     const onPointerMove = (e: PointerEvent) => {
-      if (!enRotation) return;
+      if (!interaction) return;
       const dx = e.clientX - dernierX, dy = e.clientY - dernierY;
       dernierX = e.clientX; dernierY = e.clientY;
-      azimut -= dx * 0.006;
-      polaire = Math.min(Math.PI - 0.05, Math.max(0.05, polaire - dy * 0.006));
+      if (interaction === "rotation") {
+        azimut -= dx * 0.006;
+        polaire = Math.min(Math.PI - 0.05, Math.max(0.05, polaire - dy * 0.006));
+      } else {
+        // Translation dans le plan écran (droite/haut de la caméra courante), à une vitesse
+        // proportionnelle à la distance à la cible — pour que le déplacement "suive" la
+        // souris pareil, qu'on soit zoomé de près ou vu de loin.
+        camera.updateMatrixWorld();
+        axeDroite.setFromMatrixColumn(camera.matrixWorld, 0);
+        axeHaut.setFromMatrixColumn(camera.matrixWorld, 1);
+        const facteur = rayon * 0.0016;
+        cible.addScaledVector(axeDroite, -dx * facteur);
+        cible.addScaledVector(axeHaut, dy * facteur);
+      }
       appliquerCamera();
     };
-    const onPointerUp = () => { enRotation = false; };
+    const onPointerUp = () => { interaction = null; };
+    const onContextMenu = (e: MouseEvent) => e.preventDefault(); // clic droit = déplacer, pas de menu navigateur
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       rayon = Math.min(etendue * 6, Math.max(etendue * 0.15, rayon * (e.deltaY > 0 ? 1.1 : 1 / 1.1)));
@@ -390,6 +418,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("contextmenu", onContextMenu);
     renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
 
     let frameId: number;
@@ -413,6 +442,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
+      renderer.domElement.removeEventListener("contextmenu", onContextMenu);
       renderer.domElement.removeEventListener("wheel", onWheel);
       renderer.dispose();
       scene.traverse(obj => {
