@@ -251,6 +251,15 @@ export interface Niveau {
   // (déterministe tant que la composition du plan ne change pas) — les circuits manuels
   // utilisent CircuitManuel.couleur à la place (voir construireColorMap, maison-engine.ts).
   couleursCircuits?: Record<string, string>;
+  // Ordre de câblage choisi à la main pour un circuit (tableau -> appareillage 1 ->
+  // appareillage 2 -> …), indexé par le label du disjoncteur — même convention de clé que
+  // couleursCircuits/boitesDerivation (stable tant que la composition du plan ne change pas).
+  // Remplace, pour ce circuit, le chemin plus-proche-voisin calculé automatiquement (voir
+  // segmentsPourCircuit, maison-engine.ts) — uniquement pertinent pour les circuits en
+  // chaîne (prises, chauffage, dédiés, manuels non-éclairage) ; l'éclairage garde toujours
+  // sa topologie en étoile depuis la boîte de dérivation. Un appareillage du circuit absent
+  // de cette liste (ajouté après coup) est simplement ajouté à la suite, par proximité.
+  ordresCircuits?: Record<string, number[]>;
 }
 
 export interface Maison {
@@ -541,6 +550,28 @@ export function cleSegmentLiaison(idA: string, idB: string): string {
 export function sequenceAncresCircuit(depart: Point, points: AppareillagePlace[]): AncrePoint[] {
   const ancres: AncrePoint[] = points.map(a => ({ id: String(a.id), point: { x: a.x, y: a.y } }));
   return [{ id: "tableau", point: depart }, ...ordonnerAncresParProximite(depart, ancres)];
+}
+
+// Même suite d'ancres que sequenceAncresCircuit, mais suivant un ordre choisi à la main
+// (liste d'ids d'appareillages, voir Niveau.ordresCircuits) plutôt que le plus-proche-voisin
+// automatique — pour un cheminement de câble plus logique (moins d'allers-retours, contourne
+// un obstacle…) sur un circuit en chaîne. Tout appareillage du circuit absent de `ordre`
+// (ajouté au plan après l'enregistrement de l'ordre) est ajouté à la suite, par proximité à
+// partir du dernier point ordonné — jamais perdu du tracé.
+export function sequenceAncresCircuitOrdonnee(depart: Point, points: AppareillagePlace[], ordre: number[]): AncrePoint[] {
+  const parId = new Map(points.map(a => [a.id, a]));
+  const vus = new Set<number>();
+  const ancres: AncrePoint[] = [];
+  ordre.forEach(id => {
+    const a = parId.get(id);
+    if (a && !vus.has(id)) {
+      ancres.push({ id: String(a.id), point: { x: a.x, y: a.y } });
+      vus.add(id);
+    }
+  });
+  const restants = points.filter(a => !vus.has(a.id)).map(a => ({ id: String(a.id), point: { x: a.x, y: a.y } }));
+  const dernierPoint = ancres.length > 0 ? ancres[ancres.length - 1].point : depart;
+  return [{ id: "tableau", point: depart }, ...ancres, ...ordonnerAncresParProximite(dernierPoint, restants)];
 }
 
 // Chemin complet (mètres) en insérant les points de coude manuels présents dans waypoints.
