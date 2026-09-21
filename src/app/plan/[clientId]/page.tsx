@@ -9,7 +9,7 @@ import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, X,
-  Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search,
+  Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route, ChevronUp, ChevronDown,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -549,6 +549,70 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
   );
 }
 
+function CheminementForm({ niveau, breaker, ordreEnregistre, onValidate, onCancel, onReset }: {
+  niveau: Niveau; breaker: Breaker; ordreEnregistre: number[] | undefined;
+  onValidate: (ordre: number[]) => void;
+  onCancel: () => void;
+  onReset: () => void;
+}) {
+  const membres = niveau.pieces.flatMap(p => p.appareillages.map(a => ({ a, pieceNom: p.nom }))).filter(({ a }) => a.circuitId === breaker.id);
+  const initial = ordreEnregistre
+    ? [
+        ...ordreEnregistre.map(id => membres.find(m => m.a.id === id)).filter((m): m is typeof membres[number] => !!m),
+        ...membres.filter(m => !ordreEnregistre.includes(m.a.id)),
+      ]
+    : membres;
+  const [ordre, setOrdre] = useState<number[]>(initial.map(m => m.a.id));
+
+  const monter = (idx: number) => setOrdre(o => {
+    if (idx === 0) return o;
+    const n = [...o];
+    [n[idx - 1], n[idx]] = [n[idx], n[idx - 1]];
+    return n;
+  });
+  const descendre = (idx: number) => setOrdre(o => {
+    if (idx === o.length - 1) return o;
+    const n = [...o];
+    [n[idx], n[idx + 1]] = [n[idx + 1], n[idx]];
+    return n;
+  });
+
+  const items = ordre.map(id => membres.find(m => m.a.id === id)).filter((m): m is typeof membres[number] => !!m);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+      <div className="card w-full max-w-sm max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-ink-200">
+          <p className="font-semibold text-ink-900">Ordre de câblage — {breaker.label}</p>
+          <button onClick={onCancel} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={16} /></button>
+        </div>
+        <p className="px-4 pt-3 text-[11px] text-ink-400">
+          Le câble part du tableau puis relie chaque appareillage dans l'ordre ci-dessous. Réordonne pour suivre un cheminement plus logique (moins d'allers-retours, contourner un obstacle…) — remplace l'ordre plus-proche-voisin calculé automatiquement.
+        </p>
+        <div className="p-4 flex flex-col gap-1 overflow-y-auto flex-1">
+          <div className="flex items-center gap-2 text-xs text-ink-500 px-2 py-1.5">
+            <Zap size={13} /> <span className="font-semibold">Tableau électrique</span>
+          </div>
+          {items.length === 0 && <p className="text-xs text-ink-400 italic px-2">Aucun appareillage sur ce circuit.</p>}
+          {items.map(({ a, pieceNom }, idx) => (
+            <div key={a.id} className="flex items-center gap-2 text-xs bg-ink-50 rounded-lg px-2 py-1.5">
+              <span className="w-4 text-center text-ink-400 font-mono shrink-0">{idx + 1}</span>
+              <AppareillageSymbol type={a.type} size={14} />
+              <span className="text-ink-700 truncate flex-1">{pieceNom || "Pièce"} — {a.nom || labelAppareillage(a.type)}</span>
+              <button onClick={() => monter(idx)} disabled={idx === 0} className="btn-ghost !p-1 disabled:opacity-30"><ChevronUp size={12} /></button>
+              <button onClick={() => descendre(idx)} disabled={idx === items.length - 1} className="btn-ghost !p-1 disabled:opacity-30"><ChevronDown size={12} /></button>
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
+          <button onClick={() => onValidate(ordre)} className="btn-volt flex-1"><Save size={14} /> Appliquer</button>
+          {ordreEnregistre && <button onClick={onReset} className="btn-ghost !px-3" title="Revenir à l'ordre automatique">Auto</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── PALETTE ────────────────────────────────────────────────────────────────────
 
 // Icône simple porte/fenêtre — pas de symbole normalisé dédié, juste de quoi
@@ -765,6 +829,8 @@ export default function PlanPage() {
   const [circuitsManuelsOpen, setCircuitsManuelsOpen] = useState(false);
   // null = fermé ; { existing: null } = création ; { existing: <manuel> } = édition de ce circuit.
   const [circuitManuelForm, setCircuitManuelForm] = useState<{ existing: CircuitManuel | null } | null>(null);
+  // Circuit dont on édite l'ordre de câblage — null = panneau fermé.
+  const [cheminementForm, setCheminementForm] = useState<{ breaker: Breaker } | null>(null);
   const [selectedWaypoint, setSelectedWaypoint] = useState<{ cle: string; waypointId: number } | null>(null);
   const [placementError, setPlacementError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -1285,6 +1351,19 @@ export default function PlanPage() {
     } else {
       updateNiveauActif(n => ({ ...n, couleursCircuits: { ...(n.couleursCircuits ?? {}), [b.label]: couleur } }));
     }
+  };
+
+  // Ordre de câblage choisi à la main pour un circuit — indexé par label, voir
+  // Niveau.ordresCircuits (maison-types.ts) et segmentsPourCircuit (maison-engine.ts) pour
+  // la logique de tracé qui l'utilise.
+  const appliquerOrdreCircuit = (label: string, ordre: number[]) => {
+    updateNiveauActif(n => ({ ...n, ordresCircuits: { ...(n.ordresCircuits ?? {}), [label]: ordre } }));
+  };
+  const reinitialiserOrdreCircuit = (label: string) => {
+    updateNiveauActif(n => {
+      const { [label]: _retire, ...reste } = n.ordresCircuits ?? {};
+      return { ...n, ordresCircuits: reste };
+    });
   };
 
   // apresIndex = position dans la liste existante des coudes après laquelle insérer
@@ -2428,6 +2507,12 @@ export default function PlanPage() {
                           onChange={e => definirCouleurCircuit(b, e.target.value)} />
                         <span className="truncate flex-1">{b.label}</span>
                         {lg !== null && <span className="font-mono text-ink-400 shrink-0">{lg.toFixed(1)}m</span>}
+                        {CIRCUITS[b.circuit]?.category !== "lumiere" && (
+                          <button onClick={e => { e.preventDefault(); e.stopPropagation(); setCheminementForm({ breaker: b }); }}
+                            className="btn-ghost !p-0.5 shrink-0" title="Modifier l'ordre de câblage">
+                            <Route size={12} />
+                          </button>
+                        )}
                       </label>
                     );
                   })}
@@ -2569,6 +2654,17 @@ export default function PlanPage() {
           onValidate={validerCircuitManuel}
           onCancel={() => setCircuitManuelForm(null)}
           onDelete={circuitManuelForm.existing ? () => supprimerCircuitManuelEtFermer(circuitManuelForm.existing!.id) : undefined}
+        />
+      )}
+
+      {cheminementForm && niveauActif && (
+        <CheminementForm
+          niveau={niveauActif}
+          breaker={cheminementForm.breaker}
+          ordreEnregistre={niveauActif.ordresCircuits?.[cheminementForm.breaker.label]}
+          onValidate={ordre => { appliquerOrdreCircuit(cheminementForm.breaker.label, ordre); setCheminementForm(null); }}
+          onCancel={() => setCheminementForm(null)}
+          onReset={() => { reinitialiserOrdreCircuit(cheminementForm.breaker.label); setCheminementForm(null); }}
         />
       )}
     </Shell>
