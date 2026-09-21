@@ -29,6 +29,15 @@ const CIRCUIT_DEDIE: Record<string, string> = {
   piscine: "piscine", vmc: "vmc", alarme: "alarme",
 };
 
+// Libellés pour le message d'alerte "non raccordé" — seuls les interrupteurs/va-et-vient/
+// télérupteurs peuvent, en pratique, terminer une génération sans circuitId (une commande
+// sans point lumineux lié, ou liée à un point lumineux lui-même non raccordé) : tous les
+// autres types passent obligatoirement par un pool (manuel, prises/cuisine/extérieur/
+// éclairage/chauffage automatique, ou dédié). Fallback sur le type brut au besoin.
+const LABEL_NON_RACCORDE: Record<string, string> = {
+  interrupteur: "Interrupteur", va_et_vient: "Va-et-vient", telerupteur: "Télérupteur",
+};
+
 export interface ResultatGeneration {
   maison: Maison; // copie de la maison d'entrée, avec circuitId renseigné sur chaque appareillage concerné
   breakers: Breaker[];
@@ -314,6 +323,15 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
       if (minReq > 0 && nbPrises < minReq) {
         alertes.push(`"${piece.nom || piece.type}" (${niveau.nom}) : ${nbPrises} prise(s) placée(s), minimum NF C 15-100 recommandé ${minReq}.`);
       }
+
+      // Un chauffage sans puissance renseignée est regroupé sur la base d'une valeur par
+      // défaut (PUISSANCE_CHAUFFAGE_DEFAUT_W) — le calibre retenu (16A/3500W max ou
+      // 20A/4500W max, NF C 15-100 amdt A5) peut donc ne pas correspondre à la réalité une
+      // fois la puissance réelle connue. Prévient plutôt que de laisser un circuit
+      // silencieusement mal dimensionné.
+      piece.appareillages.filter(a => a.type === "chauffage" && a.puissanceW == null).forEach(() => {
+        alertes.push(`"${piece.nom || piece.type}" (${niveau.nom}) : chauffage sans puissance renseignée — regroupement basé sur ${PUISSANCE_CHAUFFAGE_DEFAUT_W} W par défaut, à vérifier (calibre limité à 3500 W en 16A ou 4500 W en 20A, NF C 15-100 amdt A5).`);
+      });
     });
 
     // ─── Circuits manuels d'abord : ils retirent leurs membres du pool automatique ────
@@ -368,6 +386,19 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
       };
       breakers.push(b);
       item.base.circuitId = b.id;
+    });
+
+    // ─── Garde-fou : tout appareillage encore sans circuit après tout ce qui précède ──
+    // (typiquement un interrupteur/va-et-vient/télérupteur dont la commande ne pointe vers
+    // aucun point lumineux raccordé) reste invisible sur le tracé — sans alerte, l'absence
+    // passe facilement inaperçue.
+    niveau.pieces.forEach(piece => {
+      piece.appareillages.forEach(a => {
+        if (a.circuitId == null) {
+          const label = LABEL_NON_RACCORDE[a.type] ?? a.type;
+          alertes.push(`"${piece.nom || piece.type}" (${niveau.nom}) : ${label} non raccordé à un circuit.`);
+        }
+      });
     });
   }
 
@@ -465,10 +496,32 @@ function entrelacerParCategorie(breakers: Breaker[]): Breaker[] {
   return result;
 }
 
+// Calibre de l'ID (interrupteur différentiel) en tête de rangée — jusqu'ici fixé à 25A
+// quelle que soit la charge réelle, ce qui pouvait sous-dimensionner le différentiel par
+// rapport aux circuits qu'il protège (un ID doit couvrir la charge de sa rangée, pas une
+// valeur arbitraire). Règle appliquée, alignée sur la pratique professionnelle courante :
+//  - la toute première rangée du tableau est TOUJOURS en 63A, tête de tableau, avant même
+//    tout calcul de charge (pratique standard, indépendante du contenu de cette rangée) ;
+//  - pour les autres rangées, on somme les calibres des disjoncteurs protégés avec un
+//    coefficient de foisonnement de 0,5 (usage rarement simultané), SAUF le chauffage
+//    électrique qui compte à 100% (peu diversifié — usage quasi simultané en saison de
+//    chauffe) ; le résultat est arrondi au calibre standard immédiatement supérieur parmi
+//    40A/63A (25A n'est en pratique quasiment jamais utilisé pour une rangée de tableau
+//    principal — réservé aux tableaux divisionnaires légers).
+function calibreDifferentiel(list: Breaker[], premiereRangee: boolean): number {
+  if (premiereRangee) return 63;
+  const charge = list.reduce((somme, b) => {
+    const estChauffage = CIRCUITS[b.circuit]?.category === "chauffage";
+    return somme + (estChauffage ? b.amperes : b.amperes * 0.5);
+  }, 0);
+  return charge > 40 ? 63 : 40;
+}
+
 export function assemblerTableau(breakers: Breaker[]): BreakerRow[] {
-  const mkRow = (name: string, list: Breaker[], diffType: string): BreakerRow => {
+  const mkRow = (name: string, list: Breaker[], diffType: string, premiereRangee: boolean): BreakerRow => {
     const slots: (Breaker | null)[] = Array(9).fill(null);
-    slots[0] = { id: uid(), label: "", circuit: "general", amperes: 25, type: `diff-${diffType}`, customSection: "10.0", pieces: [] };
+    const amperesId = calibreDifferentiel(list, premiereRangee);
+    slots[0] = { id: uid(), label: "", circuit: "general", amperes: amperesId, type: `diff-${diffType}`, customSection: "10.0", pieces: [] };
     list.forEach((b, i) => { slots[i + 1] = b; });
     return { id: uid(), name, slots, origine: "plan" };
   };
@@ -483,7 +536,7 @@ export function assemblerTableau(breakers: Breaker[]): BreakerRow[] {
   (["F", "A", "AC"] as const).forEach(dt => {
     const entrelaces = entrelacerParCategorie(parType[dt]);
     for (let i = 0; i < entrelaces.length; i += 8) {
-      rows.push(mkRow(`Rangée ${rows.length + 1}`, entrelaces.slice(i, i + 8), dt));
+      rows.push(mkRow(`Rangée ${rows.length + 1}`, entrelaces.slice(i, i + 8), dt, rows.length === 0));
     }
   });
 
@@ -493,7 +546,7 @@ export function assemblerTableau(breakers: Breaker[]): BreakerRow[] {
       const half = Math.ceil(nonDiff.length / 2);
       const dt = CIRCUITS[nonDiff[0].circuit]?.diffType ?? "AC";
       rows.length = 0;
-      rows.push(mkRow("Rangée 1", nonDiff.slice(0, half), dt), mkRow("Rangée 2", nonDiff.slice(half), dt));
+      rows.push(mkRow("Rangée 1", nonDiff.slice(0, half), dt, true), mkRow("Rangée 2", nonDiff.slice(half), dt, false));
     }
   }
 
