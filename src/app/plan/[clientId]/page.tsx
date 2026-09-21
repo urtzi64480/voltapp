@@ -110,7 +110,7 @@ function escapeXml(str: string): string {
 
 // ─── IMPRESSION ─────────────────────────────────────────────────────────────────
 
-function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, showCircuits: boolean, piecesSelectionnees: Set<number> | null): string {
+function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, showCircuits: boolean, showHauteurs: boolean, piecesSelectionnees: Set<number> | null): string {
   const pieces = piecesSelectionnees ? n.pieces.filter(p => piecesSelectionnees.has(p.id)) : n.pieces;
   const allPts = [
     ...pieces.flatMap(p => p.contour),
@@ -176,6 +176,21 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
         const chemin = cheminSegment(seg, n.liaisonWaypoints).map(toPx);
         const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
         s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="1.2" stroke-dasharray="3,2" opacity="0.85"/>`;
+        // Hauteur/pose de chaque coude (passage de gaine dans le mur, ou en apparent) —
+        // uniquement les coudes qui portent une info à afficher, pour ne pas polluer un
+        // tracé simple sans coude renseigné.
+        if (showHauteurs) {
+          const cle = cleSegmentLiaison(seg.aId, seg.bId);
+          const coudes = n.liaisonWaypoints?.[cle] ?? [];
+          coudes.forEach(c => {
+            if (c.hauteur == null && !c.poseType) return;
+            const pC = toPx(c.point);
+            const pose = c.poseType === "apparent" ? "apparent" : "encastré";
+            const txt = c.hauteur != null ? `${c.hauteur}cm (${pose})` : `(${pose})`;
+            s += `<circle cx="${pC.x.toFixed(1)}" cy="${pC.y.toFixed(1)}" r="2" fill="${color}"/>`;
+            s += `<text x="${(pC.x + 4).toFixed(1)}" y="${(pC.y - 4).toFixed(1)}" font-size="6" font-family="monospace" fill="#333">${escapeXml(txt)}</text>`;
+          });
+        }
       });
       if (breaker.circuit === "lumiere") {
         const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
@@ -195,6 +210,9 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       const pos = toPx({ x: a.x, y: a.y });
       const color = showCircuits && a.circuitId != null ? (colorMap.get(a.circuitId) ?? "#1c1917") : "#1c1917";
       s += appareillageSymbolSvgString(a.type, pos.x, pos.y, 10, color);
+      if (showHauteurs && a.hauteur != null) {
+        s += `<text x="${(pos.x + 7).toFixed(1)}" y="${(pos.y + 3).toFixed(1)}" font-size="6" font-family="monospace" fill="#555">${a.hauteur}cm</text>`;
+      }
     });
   });
 
@@ -202,6 +220,9 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
     const pos = toPx(n.tableauPos);
     s += `<rect x="${(pos.x - 6).toFixed(1)}" y="${(pos.y - 6).toFixed(1)}" width="12" height="12" rx="2" fill="#1c1917"/>`;
     s += `<text x="${pos.x.toFixed(1)}" y="${(pos.y + 3).toFixed(1)}" font-size="8" text-anchor="middle" fill="#FBBF24">⚡</text>`;
+    if (showHauteurs && n.tableauHauteur != null) {
+      s += `<text x="${pos.x.toFixed(1)}" y="${(pos.y + 16).toFixed(1)}" font-size="6" text-anchor="middle" font-family="monospace" fill="#555">${n.tableauHauteur}cm</text>`;
+    }
   }
 
   s += `</svg>`;
@@ -245,7 +266,7 @@ function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau
 
 function imprimerPlan(
   niveaux: Niveau[], clientName: string, resultat: ResultatGeneration | null,
-  showCircuits: boolean, showLongueurs: boolean, piecesSelectionnees: Set<number> | null,
+  showCircuits: boolean, showLongueurs: boolean, showHauteurs: boolean, piecesSelectionnees: Set<number> | null,
 ) {
   const w = window.open("", "_blank");
   if (!w) return;
@@ -263,7 +284,7 @@ function imprimerPlan(
     const niveauResultatComplet = resultat?.maison.niveaux.find(rn => rn.id === n.id) ?? n;
     const niveauResultat: Niveau = { ...niveauResultatComplet, pieces: niveauResultatComplet.pieces.filter(p => piecesFiltrees.some(pf => pf.id === p.id)) };
     html += `<h2>${escapeXml(n.nom || NIVEAU_TYPES[n.type])}</h2><div class="meta">${piecesFiltrees.length} pièce${piecesFiltrees.length > 1 ? "s" : ""}</div>`;
-    html += rendreSVGImprimable(n, resultat, showCircuits, piecesSelectionnees);
+    html += rendreSVGImprimable(n, resultat, showCircuits, showHauteurs, piecesSelectionnees);
     if (showCircuits) {
       html += legendeCircuitsHtml(resultat, niveauResultat, showLongueurs, n);
       const troncon = gainesNiveaux.find(g => g.niveau === (n.nom || n.type));
@@ -516,13 +537,14 @@ function PaletteBoutons({ placementType, onSelect }: { placementType: Appareilla
 
 function PrintForm({ niveaux, resultatDisponible, onValider, onCancel }: {
   niveaux: Niveau[]; resultatDisponible: boolean;
-  onValider: (piecesSelectionnees: Set<number> | null, avecCircuits: boolean, avecLongueurs: boolean) => void;
+  onValider: (piecesSelectionnees: Set<number> | null, avecCircuits: boolean, avecLongueurs: boolean, avecHauteurs: boolean) => void;
   onCancel: () => void;
 }) {
   const toutesPieces = niveaux.flatMap(n => n.pieces.map(p => p.id));
   const [selection, setSelection] = useState<Set<number>>(new Set(toutesPieces));
   const [avecCircuits, setAvecCircuits] = useState(resultatDisponible);
   const [avecLongueurs, setAvecLongueurs] = useState(false);
+  const [avecHauteurs, setAvecHauteurs] = useState(false);
   const toutSelectionne = selection.size === toutesPieces.length;
 
   const toggle = (id: number) => setSelection(s => {
@@ -561,22 +583,28 @@ function PrintForm({ niveaux, resultatDisponible, onValider, onCancel }: {
               </div>
             </div>
           ))}
-          {resultatDisponible && (
-            <div className="flex flex-col gap-1.5 pt-2 border-t border-ink-100">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={avecCircuits} onChange={e => setAvecCircuits(e.target.checked)} />
-                <span className="text-sm text-ink-700">Inclure les circuits (couleurs + gaines)</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={avecLongueurs} disabled={!avecCircuits} onChange={e => setAvecLongueurs(e.target.checked)} />
-                <span className={`text-sm ${avecCircuits ? "text-ink-700" : "text-ink-300"}`}>Afficher la longueur de chaque circuit</span>
-              </label>
-            </div>
-          )}
+          <div className="flex flex-col gap-1.5 pt-2 border-t border-ink-100">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={avecHauteurs} onChange={e => setAvecHauteurs(e.target.checked)} />
+              <span className="text-sm text-ink-700">Afficher les hauteurs d'implantation (appareillages + gaines)</span>
+            </label>
+            {resultatDisponible && (
+              <>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={avecCircuits} onChange={e => setAvecCircuits(e.target.checked)} />
+                  <span className="text-sm text-ink-700">Inclure les circuits (couleurs + gaines)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={avecLongueurs} disabled={!avecCircuits} onChange={e => setAvecLongueurs(e.target.checked)} />
+                  <span className={`text-sm ${avecCircuits ? "text-ink-700" : "text-ink-300"}`}>Afficher la longueur de chaque circuit</span>
+                </label>
+              </>
+            )}
+          </div>
         </div>
         <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
           <button disabled={selection.size === 0}
-            onClick={() => onValider(toutSelectionne ? null : selection, avecCircuits, avecLongueurs)}
+            onClick={() => onValider(toutSelectionne ? null : selection, avecCircuits, avecLongueurs, avecHauteurs)}
             className="btn-volt flex-1 disabled:opacity-40">
             <Printer size={14} /> Imprimer ({selection.size} pièce{selection.size > 1 ? "s" : ""})
           </button>
@@ -1020,6 +1048,20 @@ export default function PlanPage() {
     }));
   };
 
+  // Puissance (W) d'un chauffage — sert au regroupement des circuits chauffage par
+  // puissance cumulée (NF C 15-100, amdt A5) : une régénération est nécessaire pour que
+  // le changement se répercute sur les circuits déjà générés.
+  const modifierPuissance = (appareillageId: number, puissanceW: number | undefined) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({
+        ...p,
+        appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, puissanceW } : a),
+      })),
+    }));
+    invalidateResultat();
+  };
+
   // Repositionne l'appareillage pour qu'il soit exactement à distanceCm du mur segIndex
   // de sa pièce (n'importe lequel des murs, pas seulement le plus proche), sans bouger sa
   // position "le long de ce mur" — pratique pour caler une prise à une cote précise.
@@ -1137,6 +1179,17 @@ export default function PlanPage() {
       liaisonWaypoints: {
         ...(n.liaisonWaypoints ?? {}),
         [cle]: (n.liaisonWaypoints?.[cle] ?? []).map(w => w.id === waypointId ? { ...w, hauteur } : w),
+      },
+    }));
+  };
+  // Mode de pose (encastré dans le mur / apparent en goulotte) du passage de gaine à ce
+  // coude — affiché avec la hauteur sur l'impression technique (option "hauteurs d'implantation").
+  const modifierPoseWaypoint = (cle: string, waypointId: number, poseType: "encastre" | "apparent") => {
+    updateNiveauActif(n => ({
+      ...n,
+      liaisonWaypoints: {
+        ...(n.liaisonWaypoints ?? {}),
+        [cle]: (n.liaisonWaypoints?.[cle] ?? []).map(w => w.id === waypointId ? { ...w, poseType } : w),
       },
     }));
   };
@@ -1910,6 +1963,15 @@ export default function PlanPage() {
                     value={selectedAppareillage.hauteur ?? ""}
                     onChange={e => modifierHauteur(selectedAppareillage.id, e.target.value ? Number(e.target.value) : undefined)} />
                 </div>
+                {selectedAppareillage.type === "chauffage" && (
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0">Puissance (W)</span>
+                    <input type="number" min={0} step={50} className="input !py-1 !text-xs !w-24" placeholder="1000"
+                      value={selectedAppareillage.puissanceW ?? ""}
+                      onChange={e => modifierPuissance(selectedAppareillage.id, e.target.value ? Number(e.target.value) : undefined)} />
+                    <span className="text-ink-400">— regroupé par puissance (NF C 15-100)</span>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 text-xs text-ink-500">
                   <span className="shrink-0 w-16">Position X/Y</span>
                   <input type="number" step="0.01" className="input !py-1 !text-xs !w-20"
@@ -2114,12 +2176,27 @@ export default function PlanPage() {
               const wp = niveauActif.liaisonWaypoints?.[selectedWaypoint.cle]?.find(w => w.id === selectedWaypoint.waypointId);
               if (!wp) return null;
               return (
-                <div className="absolute bottom-4 left-4 card card-inner !p-3 flex items-center gap-2 shadow-lg">
-                  <span className="text-xs text-ink-500 shrink-0">Coude — hauteur du câble (cm)</span>
-                  <input type="number" className="input !py-1 !text-xs !w-20" placeholder="—"
-                    value={wp.hauteur ?? ""}
-                    onChange={e => modifierHauteurWaypoint(selectedWaypoint.cle, selectedWaypoint.waypointId, e.target.value ? Number(e.target.value) : undefined)} />
-                  <button onClick={() => supprimerWaypoint(selectedWaypoint.cle, selectedWaypoint.waypointId)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
+                <div className="absolute bottom-4 left-4 card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-ink-500 shrink-0">Coude — hauteur (cm)</span>
+                    <input type="number" className="input !py-1 !text-xs !w-20" placeholder="—"
+                      value={wp.hauteur ?? ""}
+                      onChange={e => modifierHauteurWaypoint(selectedWaypoint.cle, selectedWaypoint.waypointId, e.target.value ? Number(e.target.value) : undefined)} />
+                    <button onClick={() => supprimerWaypoint(selectedWaypoint.cle, selectedWaypoint.waypointId)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0">Pose</span>
+                    <div className="flex gap-1 flex-1">
+                      {(["encastre", "apparent"] as const).map(pose => (
+                        <button key={pose} onClick={() => modifierPoseWaypoint(selectedWaypoint.cle, selectedWaypoint.waypointId, pose)}
+                          className={`flex-1 !text-xs px-2 py-1 rounded-md border transition-colors ${
+                            (wp.poseType ?? "encastre") === pose ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"
+                          }`}>
+                          {pose === "encastre" ? "Encastré" : "Apparent"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               );
             })()}
@@ -2311,9 +2388,9 @@ export default function PlanPage() {
       {showPrintForm && (
         <PrintForm
           niveaux={niveaux} resultatDisponible={!!resultat}
-          onValider={(piecesSelectionnees, avecCircuits, avecLongueurs) => {
+          onValider={(piecesSelectionnees, avecCircuits, avecLongueurs, avecHauteurs) => {
             setShowPrintForm(false);
-            imprimerPlan(niveaux, client?.nom ?? "", resultat, avecCircuits, avecLongueurs, piecesSelectionnees);
+            imprimerPlan(niveaux, client?.nom ?? "", resultat, avecCircuits, avecLongueurs, avecHauteurs, piecesSelectionnees);
           }}
           onCancel={() => setShowPrintForm(false)}
         />
