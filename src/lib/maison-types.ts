@@ -260,6 +260,11 @@ export interface Niveau {
   // sa topologie en étoile depuis la boîte de dérivation. Un appareillage du circuit absent
   // de cette liste (ajouté après coup) est simplement ajouté à la suite, par proximité.
   ordresCircuits?: Record<string, number[]>;
+  // Nom personnalisé d'un circuit AUTOMATIQUE (non manuel), indexé par le label généré —
+  // même convention de clé que couleursCircuits/ordresCircuits/boitesDerivation. Un circuit
+  // MANUEL se renomme directement via CircuitManuel.nom (CircuitManuelForm, page.tsx) ; cette
+  // liste ne concerne que les circuits que genererCircuits() compose lui-même.
+  nomsCircuits?: Record<string, string>;
 }
 
 export interface Maison {
