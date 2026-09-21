@@ -369,9 +369,17 @@ function PieceForm({ initialNom, initialType, initialHauteurPlafond, onValidate,
 // Position de départ = son coin d'origine (corner) ; le déplacement est un simple offset
 // (translate) appliqué par-dessus, remis à zéro à chaque réouverture du panneau (le
 // composant est démonté/remonté avec la sélection qu'il représente).
-function DraggablePanel({ corner, className, children }: {
-  corner: "bl" | "br" | "tr";
+// Enveloppe déplaçable pour les panneaux flottants (info pièce/appareillage/tableau/
+// ouverture/coude, circuits manuels, légende des circuits, dessin de cheminement) — une
+// poignée fine en haut (grip) permet de les glisser n'importe où sur l'écran pour ne plus
+// gêner la vue du plan. Position de départ = son coin d'origine (corner) ; le déplacement
+// est un simple offset (translate) appliqué par-dessus, remis à zéro à chaque réouverture
+// du panneau (le composant est démonté/remonté avec la sélection qu'il représente).
+// dark : bandeau à fond sombre (ex. dessin de cheminement) — adapte la couleur de la poignée.
+function DraggablePanel({ corner, className, dark, children }: {
+  corner: "bl" | "br" | "tr" | "tc";
   className: string;
+  dark?: boolean;
   children: ReactNode;
 }) {
   const [offset, setOffset] = useState({ dx: 0, dy: 0 });
@@ -391,16 +399,19 @@ function DraggablePanel({ corner, className, children }: {
     };
   }, []);
 
-  const cornerClass = corner === "bl" ? "bottom-4 left-4" : corner === "br" ? "bottom-4 right-4" : "top-4 right-4";
+  const cornerClass = corner === "bl" ? "bottom-4 left-4" : corner === "br" ? "bottom-4 right-4" : corner === "tr" ? "top-4 right-4" : "top-4 left-1/2";
+  // "tc" (top-center) a besoin d'un -50% de centrage en plus de l'offset de glisser-déposer —
+  // les deux se composent dans un seul transform (translations pures : l'ordre n'a pas d'importance).
+  const transform = `${corner === "tc" ? "translateX(-50%) " : ""}translate(${offset.dx}px, ${offset.dy}px)`;
 
   return (
-    <div className={`absolute ${cornerClass} z-20`} style={{ transform: `translate(${offset.dx}px, ${offset.dy}px)` }}>
+    <div className={`absolute ${cornerClass} z-20`} style={{ transform }}>
       <div className={className}>
         <div
-          className="flex items-center justify-center h-4 -mx-3 -mt-3 mb-2 rounded-t-xl bg-ink-100 hover:bg-ink-200 cursor-grab active:cursor-grabbing"
+          className={`flex items-center justify-center h-4 -mx-3 -mt-3 mb-2 rounded-t-xl cursor-grab active:cursor-grabbing ${dark ? "bg-white/10 hover:bg-white/20" : "bg-ink-100 hover:bg-ink-200"}`}
           style={{ touchAction: "none" }}
           onPointerDown={e => { e.stopPropagation(); dragRef.current = { x: e.clientX, y: e.clientY, dx: offset.dx, dy: offset.dy }; }}>
-          <GripHorizontal size={12} className="text-ink-400" />
+          <GripHorizontal size={12} className={dark ? "text-white/50" : "text-ink-400"} />
         </div>
         {children}
       </div>
@@ -2586,14 +2597,15 @@ export default function PlanPage() {
               </div>
             )}
             {cheminementDessin && (
-              <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2.5 rounded-lg shadow-lg flex items-center gap-3 flex-wrap justify-center max-w-[92vw]">
+              <DraggablePanel corner="tc" dark
+                className="bg-ink-900 text-volt-400 text-xs font-semibold p-3 rounded-lg shadow-lg flex items-center gap-3 flex-wrap justify-center max-w-[92vw]">
                 <span>Cheminement « {nomAffiche(cheminementDessin.breaker)} » : clique ses appareillages dans l'ordre voulu ({cheminementDessin.ordre.length} placé{cheminementDessin.ordre.length > 1 ? "s" : ""})</span>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button onClick={terminerDessinCheminement} className="btn-volt !text-[11px] !px-2 !py-1"><Save size={11} /> Terminer</button>
                   <button onClick={reinitialiserDessinCheminement} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">Auto</button>
                   <button onClick={annulerDessinCheminement} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">Annuler</button>
                 </div>
-              </div>
+              </DraggablePanel>
             )}
 
             {showCircuits && resultat && circuitsNiveauActif.length > 0 && (
@@ -2678,7 +2690,7 @@ export default function PlanPage() {
 
         <div className="px-4 py-1.5 bg-ink-50 border-t border-ink-100 text-[11px] text-ink-400 hidden md:block shrink-0">
           {vue3D
-            ? "Glisser = tourner la caméra · Molette = zoom"
+            ? "Glisser = tourner la caméra · Clic droit (ou Maj + glisser) = déplacer la vue · Molette = zoom"
             : "Molette = zoom · Glisser le fond = déplacer la vue · En dessin : clic = ajouter un point, clic près du 1er point = fermer la pièce · Pièce sélectionnée : double-clic sur un sommet (rond orange) pour le supprimer (min. 3 sommets)"}
         </div>
       </div>
