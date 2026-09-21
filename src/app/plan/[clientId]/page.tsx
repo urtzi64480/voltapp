@@ -1353,9 +1353,20 @@ export default function PlanPage() {
   const assignerCircuitManuel = (appareillageId: number, manuelId: number | undefined) => {
     updateNiveauActif(n => ({
       ...n,
+      // Une assignation manuelle explicite lève toute exclusion précédente — c'est
+      // exactement le geste attendu pour "récupérer" un appareillage exclu.
+      appareillagesExclus: manuelId != null ? (n.appareillagesExclus ?? []).filter(id => id !== appareillageId) : n.appareillagesExclus,
       pieces: n.pieces.map(p => ({
         ...p, appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, circuitManuelId: manuelId } : a),
       })),
+    }));
+    invalidateResultat();
+  };
+  // Retire un appareillage de la liste d'exclusion (Niveau.appareillagesExclus) pour qu'il
+  // rejoigne à nouveau la génération automatique à la prochaine régénération.
+  const reinclureAppareillage = (appareillageId: number) => {
+    updateNiveauActif(n => ({
+      ...n, appareillagesExclus: (n.appareillagesExclus ?? []).filter(id => id !== appareillageId),
     }));
     invalidateResultat();
   };
@@ -1419,8 +1430,30 @@ export default function PlanPage() {
   };
   const terminerDessinCheminement = () => {
     if (!cheminementDessin) return;
+    // Appareillage du circuit non recliqué en dessinant : pour un circuit MANUEL, reste
+    // rattaché au même circuit (comportement historique, voir sequenceAncresCircuitOrdonnee)
+    // — un simple avertissement suffit. Pour un circuit AUTOMATIQUE en revanche, "oublier"
+    // un appareillage au clic doit vraiment l'EXCLURE de ce circuit (pas le rattacher quand
+    // même en silence) — pour pouvoir librement le réaffecter ailleurs ensuite ; il devient
+    // alors non raccordé, et une alerte le signale nommément après régénération.
+    const estManuel = cheminementDessin.breaker.manuelId != null;
+    const membres = niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === cheminementDessin.breaker.id) ?? [];
+    const oublies = membres.filter(a => !cheminementDessin.ordre.includes(a.id));
+    if (oublies.length > 0) {
+      if (estManuel) {
+        setPlacementError(`${oublies.length} appareillage(s) non cliqué(s) — resté(s) sur ce circuit, en fin de tracé.`);
+      } else {
+        updateNiveauActif(n => ({
+          ...n,
+          appareillagesExclus: Array.from(new Set([...(n.appareillagesExclus ?? []), ...oublies.map(a => a.id)])),
+        }));
+        setPlacementError(`${oublies.length} appareillage(s) exclu(s) de ce circuit — non raccordé(s) tant que tu ne les réaffectes pas.`);
+      }
+      setTimeout(() => setPlacementError(null), 3500);
+    }
     appliquerOrdreCircuit(cheminementDessin.breaker.label, cheminementDessin.ordre);
     setCheminementDessin(null);
+    if (!estManuel && oublies.length > 0) invalidateResultat();
   };
   const annulerDessinCheminement = () => setCheminementDessin(null);
   const reinitialiserDessinCheminement = () => {
@@ -2381,9 +2414,14 @@ export default function PlanPage() {
                     Commande : {selectedAppareillage.commandePourIds?.length ?? 0} point(s) lumineux — modifier
                   </button>
                 )}
-                {selectedAppareillage.circuitId != null && (
+                {selectedAppareillage.circuitId != null ? (
                   <p className="text-xs text-ink-400">Circuit : {resultat?.breakers.find(b => b.id === selectedAppareillage.circuitId)?.label}</p>
-                )}
+                ) : niveauActif?.appareillagesExclus?.includes(selectedAppareillage.id) ? (
+                  <div className="flex items-center justify-between gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                    <span className="text-amber-700">Exclu de la génération automatique</span>
+                    <button onClick={() => reinclureAppareillage(selectedAppareillage.id)} className="btn-ghost !text-[11px] !px-1.5 !py-0.5 shrink-0">Réinclure</button>
+                  </div>
+                ) : null}
               </DraggablePanel>
             )}
 
