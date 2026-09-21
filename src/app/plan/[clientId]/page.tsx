@@ -20,7 +20,8 @@ import {
   CircuitManuel, FamilleCircuitManuel,
   nouveauNiveau, nouvellePiece, nouvelAppareillage, uidMaison, reamorcerCompteurId, dedupliquerIds,
   LiaisonWaypoint, cleSegmentLiaison,
-  cheminSegment, longueurBranchesEclairage, centroidePoints,
+  cheminSegment, longueurBranchesEclairage, centroidePoints, assombrirCouleur,
+  BoiteDerivation, migrerBoitesDerivation,
 } from "@/lib/maison-types";
 import { AppareillageSymbol, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
@@ -181,7 +182,8 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       segments.forEach(seg => {
         const chemin = cheminSegment(seg, n.liaisonWaypoints).map(toPx);
         const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
-        s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="1.2" stroke-dasharray="3,2" opacity="0.85"/>`;
+        const couleurSegment = seg.type === "navette" ? assombrirCouleur(color) : color;
+        s += `<path d="${d}" fill="none" stroke="${couleurSegment}" stroke-width="1.2" stroke-dasharray="3,2" opacity="0.85"/>`;
         // Hauteur/pose de chaque coude (passage de gaine dans le mur, ou en apparent) —
         // uniquement les coudes qui portent une info à afficher, pour ne pas polluer un
         // tracé simple sans coude renseigné.
@@ -200,12 +202,18 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       });
       if (breaker.circuit === "lumiere") {
         const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
-        if (lumieres.length > 1) {
-          const boitePos = n.boitesDerivation?.[breaker.label] ?? centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y })));
-          const pos = toPx(boitePos);
+        const boitesExistantes = n.boitesDerivation?.[breaker.label] ?? [];
+        const dessinerBoiteImprimee = (pt: Point, nom?: string) => {
+          const pos = toPx(pt);
           s += `<rect x="${(pos.x - 4).toFixed(1)}" y="${(pos.y - 4).toFixed(1)}" width="8" height="8" fill="#fff" stroke="${color}" stroke-width="1.2"/>`;
           s += `<line x1="${(pos.x - 3.5).toFixed(1)}" y1="${(pos.y - 3.5).toFixed(1)}" x2="${(pos.x + 3.5).toFixed(1)}" y2="${(pos.y + 3.5).toFixed(1)}" stroke="${color}" stroke-width="0.8"/>`;
           s += `<line x1="${(pos.x - 3.5).toFixed(1)}" y1="${(pos.y + 3.5).toFixed(1)}" x2="${(pos.x + 3.5).toFixed(1)}" y2="${(pos.y - 3.5).toFixed(1)}" stroke="${color}" stroke-width="0.8"/>`;
+          if (nom) s += `<text x="${pos.x.toFixed(1)}" y="${(pos.y - 6).toFixed(1)}" font-size="6" text-anchor="middle" font-family="monospace" fill="#111">${escapeXml(nom)}</text>`;
+        };
+        if (boitesExistantes.length > 0) {
+          boitesExistantes.forEach(b => dessinerBoiteImprimee(b.point, b.nom));
+        } else if (lumieres.length > 1) {
+          dessinerBoiteImprimee(centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y }))));
         }
       }
     });
@@ -317,7 +325,7 @@ type DragMode =
   | { kind: "appareillage"; pieceId: number; appareillageId: number }
   | { kind: "ouverture"; pieceId: number; ouvertureId: number }
   | { kind: "tableau" }
-  | { kind: "boite"; label: string }
+  | { kind: "boite"; label: string; boiteId: number }
   | { kind: "liaison"; cle: string; waypointId: number };
 
 // ─── FORMULAIRES ────────────────────────────────────────────────────────────────
@@ -538,13 +546,14 @@ function CommandeLinkForm({ niveau, item, onValidate, onCancel }: {
 function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }: {
   niveau: Niveau;
   existing: CircuitManuel | null; // null = création, sinon édition de ce circuit
-  onValidate: (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[]) => void;
+  onValidate: (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[], creerBoite: boolean) => void;
   onCancel: () => void;
   onDelete?: () => void;
 }) {
   const [nom, setNom] = useState(existing?.nom ?? "");
   const [famille, setFamille] = useState<FamilleCircuitManuel>(existing?.famille ?? "prise_16");
   const [couleur, setCouleur] = useState(existing?.couleur ?? "");
+  const [creerBoite, setCreerBoite] = useState(false);
   const tousAppareils = niveau.pieces.flatMap(p => p.appareillages.map(a => ({ a, pieceNom: p.nom })));
   const [membres, setMembres] = useState<Set<number>>(
     () => new Set(existing ? tousAppareils.filter(({ a }) => a.circuitManuelId === existing.id).map(({ a }) => a.id) : []),
@@ -582,6 +591,12 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
               {couleur && <button onClick={() => setCouleur("")} className="text-xs text-ink-400 underline">Réinitialiser</button>}
             </div>
           </div>
+          {!existing && famille === "lumiere" && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={creerBoite} onChange={e => setCreerBoite(e.target.checked)} />
+              <span className="text-sm text-ink-700">Créer une boîte de dérivation pour ce circuit</span>
+            </label>
+          )}
           <div>
             <label className="label">Appareillages sur ce circuit ({membres.size})</label>
             <div className="flex flex-col gap-0.5 max-h-56 overflow-y-auto border border-ink-100 rounded-lg p-1.5">
@@ -601,7 +616,7 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
           </div>
         </div>
         <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
-          <button disabled={!nomValide} onClick={() => onValidate(nom.trim(), famille, couleur || undefined, Array.from(membres))}
+          <button disabled={!nomValide} onClick={() => onValidate(nom.trim(), famille, couleur || undefined, Array.from(membres), creerBoite)}
             className="btn-volt flex-1 disabled:opacity-40"><Save size={14} /> {existing ? "Enregistrer" : "Créer"}</button>
           {onDelete && <button onClick={onDelete} className="btn-danger !px-3"><Trash2 size={14} /></button>}
         </div>
@@ -822,7 +837,7 @@ export default function PlanPage() {
   const [placingOuverture, setPlacingOuverture] = useState<OuvertureType | null>(null);
   const [ouvertureMenuOpen, setOuvertureMenuOpen] = useState(false);
   const [selectedOuvertureId, setSelectedOuvertureId] = useState<number | null>(null);
-  const [selectedBoite, setSelectedBoite] = useState<string | null>(null);
+  const [selectedBoite, setSelectedBoite] = useState<{ label: string; boiteId: number } | null>(null);
   const [circuitsManuelsOpen, setCircuitsManuelsOpen] = useState(false);
   // null = fermé ; { existing: null } = création ; { existing: <manuel> } = édition de ce circuit.
   const [circuitManuelForm, setCircuitManuelForm] = useState<{ existing: CircuitManuel | null } | null>(null);
@@ -871,6 +886,9 @@ export default function PlanPage() {
           try {
             const parsed = JSON.parse(raw);
             if (Array.isArray(parsed?.niveaux) && parsed.niveaux.length > 0) {
+              // Doit tourner avant reamorcerCompteurId : assigne de nouveaux id (uidMaison())
+              // aux boîtes migrées depuis l'ancien format, que le compteur doit ensuite couvrir.
+              migrerBoitesDerivation(parsed.niveaux);
               reamorcerCompteurId(parsed.niveaux);
               // Nettoie une fois pour toutes d'éventuels id en double laissés par une
               // session précédente (voir dedupliquerIds) — sinon deux appareillages
@@ -990,7 +1008,13 @@ export default function PlanPage() {
         const seuilM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
         const { point: m, guideX, guideY } = snapAvecAlignement(raw, candidats, seuilM);
         setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
-        updateNiveauActif(n => ({ ...n, boitesDerivation: { ...(n.boitesDerivation ?? {}), [dragMode.label]: m } }));
+        updateNiveauActif(n => ({
+          ...n,
+          boitesDerivation: {
+            ...(n.boitesDerivation ?? {}),
+            [dragMode.label]: (n.boitesDerivation?.[dragMode.label] ?? []).map(b => b.id === dragMode.boiteId ? { ...b, point: m } : b),
+          },
+        }));
       } else if (dragMode.kind === "liaison") {
         const rect = svgRef.current?.getBoundingClientRect();
         if (!rect) return;
@@ -1312,12 +1336,17 @@ export default function PlanPage() {
   // Création OU mise à jour d'un circuit manuel EN UN SEUL GESTE, membres compris : plus
   // besoin d'aller assigner appareillage par appareillage après coup. membreIds est l'état
   // complet souhaité (coché/décoché dans le formulaire) — les appareillages retirés de la
-  // liste sont détachés, ceux ajoutés sont rattachés, en une seule mise à jour.
-  const validerCircuitManuel = (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[]) => {
+  // liste sont détachés, ceux ajoutés sont rattachés, en une seule mise à jour. creerBoite
+  // (uniquement à la création d'un circuit lumière) crée aussi une première boîte de
+  // dérivation, positionnée au tableau (ou à l'origine) faute de membres à ce stade.
+  const validerCircuitManuel = (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[], creerBoite: boolean) => {
     const existing = circuitManuelForm?.existing ?? null;
     const id = existing ? existing.id : uidMaison();
     updateNiveauActif(n => ({
       ...n,
+      boitesDerivation: (!existing && famille === "lumiere" && creerBoite)
+        ? { ...(n.boitesDerivation ?? {}), [nom]: [{ id: uidMaison(), nom: "Boîte 1", point: n.tableauPos ?? { x: 0, y: 0 } }] }
+        : n.boitesDerivation,
       circuitsManuels: existing
         ? (n.circuitsManuels ?? []).map(m => m.id === id ? { ...m, nom, famille, couleur } : m)
         : [...(n.circuitsManuels ?? []), { id, nom, famille, couleur }],
@@ -1440,6 +1469,15 @@ export default function PlanPage() {
     }
   };
   const nomAffiche = (b: Breaker): string => niveauActif?.nomsCircuits?.[b.label] ?? b.label;
+  // Variantes "directes" pour un circuit MANUEL pas encore généré (aucun Breaker n'existe
+  // encore pour lui) — mêmes champs (CircuitManuel.nom / .couleur) que ci-dessus, appelées
+  // depuis le panneau "Circuits" quand ce circuit n'a encore aucun appareillage raccordé.
+  const renommerCircuitManuelDirect = (manuelId: number, nom: string) => {
+    updateNiveauActif(n => ({ ...n, circuitsManuels: (n.circuitsManuels ?? []).map(m => m.id === manuelId ? { ...m, nom } : m) }));
+  };
+  const changerCouleurCircuitManuelDirect = (manuelId: number, couleur: string) => {
+    updateNiveauActif(n => ({ ...n, circuitsManuels: (n.circuitsManuels ?? []).map(m => m.id === manuelId ? { ...m, couleur } : m) }));
+  };
 
   // Ordre de câblage choisi à la main pour un circuit — indexé par label, voir
   // Niveau.ordresCircuits (maison-types.ts) et segmentsPourCircuit (maison-engine.ts) pour
@@ -1713,17 +1751,62 @@ export default function PlanPage() {
     setDragMode({ kind: "ouverture", pieceId: piece.id, ouvertureId: o.id });
   };
 
-  const onBoitePointerDown = (label: string, e: React.PointerEvent) => {
+  const onBoitePointerDown = (label: string, boite: BoiteDerivation | null, positionActuelle: Point, e: React.PointerEvent) => {
     if (cheminementDessin) return;
     if (mode !== "select" || placementType || placingTableau || placingOuverture) return;
     e.stopPropagation();
-    setSelectedBoite(label);
+    let boiteId = boite?.id;
+    if (boiteId == null) {
+      // Boîte implicite (jamais nommée) : la première interaction la "promeut" en vraie
+      // boîte nommée, à sa position actuelle — pour qu'elle devienne déplaçable et
+      // renommable comme n'importe quelle autre dès qu'on y touche.
+      boiteId = uidMaison();
+      const nouvelId = boiteId;
+      updateNiveauActif(n => ({
+        ...n,
+        boitesDerivation: {
+          ...(n.boitesDerivation ?? {}),
+          [label]: [...(n.boitesDerivation?.[label] ?? []), { id: nouvelId, nom: "Boîte 1", point: positionActuelle }],
+        },
+      }));
+    }
+    setSelectedBoite({ label, boiteId });
     setSelectedPieceId(null);
     setSelectedAppareillageId(null);
     setSelectedTableau(false);
     setSelectedOuvertureId(null);
     setSelectedWaypoint(null);
-    setDragMode({ kind: "boite", label });
+    setDragMode({ kind: "boite", label, boiteId });
+  };
+  // Ajoute une nouvelle boîte de dérivation nommée à un circuit d'éclairage — proposée pour
+  // tout circuit lumière, généré (label = breaker.label) ou manuel pas encore généré (label
+  // = nom du CircuitManuel, qui deviendra son label naturel dès la première génération).
+  const ajouterBoiteDerivation = (label: string) => {
+    if (!niveauActif) return;
+    const breaker = resultat?.breakers.find(b => b.label === label);
+    let centre = niveauActif.tableauPos ?? { x: 0, y: 0 };
+    if (breaker) {
+      const lumieres = niveauActif.pieces.flatMap(p => p.appareillages)
+        .filter(a => a.circuitId === breaker.id && (a.type === "point_lumineux" || a.type === "applique"));
+      if (lumieres.length > 0) centre = centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y })));
+    }
+    const existantes = niveauActif.boitesDerivation?.[label] ?? [];
+    const decalage = existantes.length * 0.4;
+    const nouvelle: BoiteDerivation = { id: uidMaison(), nom: `Boîte ${existantes.length + 1}`, point: { x: centre.x + decalage, y: centre.y } };
+    updateNiveauActif(n => ({ ...n, boitesDerivation: { ...(n.boitesDerivation ?? {}), [label]: [...existantes, nouvelle] } }));
+  };
+  const renommerBoiteDerivation = (label: string, boiteId: number, nom: string) => {
+    updateNiveauActif(n => ({
+      ...n,
+      boitesDerivation: { ...(n.boitesDerivation ?? {}), [label]: (n.boitesDerivation?.[label] ?? []).map(b => b.id === boiteId ? { ...b, nom } : b) },
+    }));
+  };
+  const supprimerBoiteDerivation = (label: string, boiteId: number) => {
+    updateNiveauActif(n => ({
+      ...n,
+      boitesDerivation: { ...(n.boitesDerivation ?? {}), [label]: (n.boitesDerivation?.[label] ?? []).filter(b => b.id !== boiteId) },
+    }));
+    setSelectedBoite(null);
   };
 
   const handleSave = useCallback(async () => {
@@ -1838,6 +1921,24 @@ export default function PlanPage() {
   const circuitsNiveauActif = niveauActif
     ? resultat?.breakers.filter(b => b.pieces.some(pc => niveauActif.pieces.some(p => p.nom === pc.nom))) ?? []
     : [];
+
+  // Fusionne les circuits déjà générés (circuitsNiveauActif) avec les circuits MANUELS qui
+  // n'ont pas encore de Breaker (créés à l'instant, ou sans aucun appareillage raccordé —
+  // genererCircuits ne produit rien pour un circuit manuel vide) : sans cette fusion, un
+  // circuit manuel tout juste créé resterait invisible dans le panneau "Circuits" jusqu'à
+  // avoir raccordé quelque chose ET relancé une génération.
+  const circuitsAffiches: { key: string; breaker: Breaker | null; manuel: CircuitManuel | null }[] = niveauActif ? (() => {
+    const items = circuitsNiveauActif.map(b => ({
+      key: `b-${b.id}`, breaker: b as Breaker | null,
+      manuel: b.manuelId != null ? (niveauActif.circuitsManuels ?? []).find(m => m.id === b.manuelId) ?? null : null,
+    }));
+    const manuelsDejaListes = new Set(items.map(it => it.manuel?.id).filter((id): id is number => id != null));
+    (niveauActif.circuitsManuels ?? []).forEach(m => {
+      if (manuelsDejaListes.has(m.id)) return;
+      items.push({ key: `m-${m.id}`, breaker: null, manuel: m });
+    });
+    return items;
+  })() : [];
 
   const gainesNiveaux = resultat ? genererGainesNiveaux(resultat) : [];
   const gaineNiveauActif = niveauActif
@@ -2175,11 +2276,14 @@ export default function PlanPage() {
                   segments.forEach(seg => {
                     const cle = cleSegmentLiaison(seg.aId, seg.bId);
                     const coudes = waypointsNiveau?.[cle] ?? [];
+                    // Liaison (navette) entre deux va-et-vient : couleur du circuit assombrie,
+                    // pour rester rattachée au circuit tout en se distinguant du reste du tracé.
+                    const couleurSegment = seg.type === "navette" ? assombrirCouleur(color) : color;
                     // Sous-chaîne du segment : point de départ, coudes existants, point d'arrivée.
                     const sousChaine = [seg.aPoint, ...coudes.map(c => c.point), seg.bPoint];
                     for (let j = 0; j < sousChaine.length - 1; j++) {
                       const aPx = toScreen(sousChaine[j]), bPx = toScreen(sousChaine[j + 1]);
-                      elements.push(<line key={`${cle}-${j}`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={color} strokeWidth={2} strokeDasharray="6,4" opacity={0.8} />);
+                      elements.push(<line key={`${cle}-${j}`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={couleurSegment} strokeWidth={2} strokeDasharray="6,4" opacity={0.8} />);
                       if (mode === "select" && !cheminementDessin) {
                         elements.push(
                           <line key={`${cle}-${j}-hit`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="transparent" strokeWidth={14}
@@ -2221,22 +2325,40 @@ export default function PlanPage() {
                       );
                     });
                   });
-                  // Boîte de dérivation, déplaçable en drag-drop — un seul câble arrive du
-                  // tableau, chaque lampe repart en étoile, plutôt qu'une chaîne en série.
+                  // Boîte(s) de dérivation, déplaçables en drag-drop et nommées indépendamment
+                  // — le câble les chaîne dans l'ordre, chaque lampe repart en étoile depuis
+                  // la boîte la plus proche d'elle (voir construireBranchesCircuitEclairage).
                   if (breaker.circuit === "lumiere") {
                     const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
-                    if (lumieres.length > 1) {
-                      const boitePos = niveauActif.boitesDerivation?.[breaker.label] ?? centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y })));
+                    const boitesExistantes = niveauActif.boitesDerivation?.[breaker.label] ?? [];
+                    if (boitesExistantes.length > 0) {
+                      boitesExistantes.forEach(boite => {
+                        const p = toScreen(boite.point);
+                        const estSelBoite = selectedBoite?.label === breaker.label && selectedBoite?.boiteId === boite.id;
+                        elements.push(
+                          <g key={`boite-${breaker.label}-${boite.id}`} onPointerDown={e => onBoitePointerDown(breaker.label, boite, boite.point, e)}
+                            style={{ cursor: mode === "select" ? "grab" : "default" }}>
+                            <circle cx={p.x} cy={p.y} r={13} fill={estSelBoite ? "#FEF3C7" : "transparent"} stroke="none" />
+                            <rect x={p.x - 6} y={p.y - 6} width={12} height={12} fill="#fff" stroke={color} strokeWidth={2} />
+                            <line x1={p.x - 4.5} y1={p.y - 4.5} x2={p.x + 4.5} y2={p.y + 4.5} stroke={color} strokeWidth={1} />
+                            <line x1={p.x - 4.5} y1={p.y + 4.5} x2={p.x + 4.5} y2={p.y - 4.5} stroke={color} strokeWidth={1} />
+                            <text x={p.x} y={p.y - 10} textAnchor="middle" fontSize="9" fontWeight="700" fill="#1c1917" style={{ pointerEvents: "none" }}>{boite.nom}</text>
+                            {estSelBoite && <circle cx={p.x} cy={p.y} r={13} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
+                          </g>
+                        );
+                      });
+                    } else if (lumieres.length > 1) {
+                      // Boîte implicite (jamais nommée) — la première interaction la promeut
+                      // en vraie boîte nommée, voir onBoitePointerDown.
+                      const boitePos = centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y })));
                       const p = toScreen(boitePos);
-                      const estSelBoite = selectedBoite === breaker.label;
                       elements.push(
-                        <g key={`boite-${breaker.label}`} onPointerDown={e => onBoitePointerDown(breaker.label, e)}
+                        <g key={`boite-${breaker.label}-implicite`} onPointerDown={e => onBoitePointerDown(breaker.label, null, boitePos, e)}
                           style={{ cursor: mode === "select" ? "grab" : "default" }}>
-                          <circle cx={p.x} cy={p.y} r={13} fill={estSelBoite ? "#FEF3C7" : "transparent"} stroke="none" />
+                          <circle cx={p.x} cy={p.y} r={13} fill="transparent" stroke="none" />
                           <rect x={p.x - 6} y={p.y - 6} width={12} height={12} fill="#fff" stroke={color} strokeWidth={2} />
                           <line x1={p.x - 4.5} y1={p.y - 4.5} x2={p.x + 4.5} y2={p.y + 4.5} stroke={color} strokeWidth={1} />
                           <line x1={p.x - 4.5} y1={p.y + 4.5} x2={p.x + 4.5} y2={p.y - 4.5} stroke={color} strokeWidth={1} />
-                          {estSelBoite && <circle cx={p.x} cy={p.y} r={13} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
                         </g>
                       );
                     }
@@ -2645,6 +2767,23 @@ export default function PlanPage() {
               );
             })()}
 
+            {selectedBoite && niveauActif && mode === "select" && (() => {
+              const boite = niveauActif.boitesDerivation?.[selectedBoite.label]?.find(b => b.id === selectedBoite.boiteId);
+              if (!boite) return null;
+              return (
+                <DraggablePanel corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg leading-none">🔀</span>
+                    <input className="input !py-1 !text-sm flex-1 min-w-0" placeholder="Boîte de dérivation"
+                      value={boite.nom}
+                      onChange={e => renommerBoiteDerivation(selectedBoite.label, selectedBoite.boiteId, e.target.value)} />
+                    <button onClick={() => supprimerBoiteDerivation(selectedBoite.label, selectedBoite.boiteId)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
+                  </div>
+                  <p className="text-[11px] text-ink-400">Glisse-la directement sur le plan pour la repositionner.</p>
+                </DraggablePanel>
+              );
+            })()}
+
             {circuitsManuelsOpen && niveauActif && (
               <DraggablePanel corner="tr" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-80 max-h-[70vh] overflow-y-auto">
                 <div className="flex items-center justify-between">
@@ -2703,50 +2842,69 @@ export default function PlanPage() {
               </DraggablePanel>
             )}
 
-            {showCircuits && resultat && circuitsNiveauActif.length > 0 && (
+            {circuitsAffiches.length > 0 && (
               <DraggablePanel corner="br" className="card card-inner !p-3 max-w-[260px] max-h-56 overflow-y-auto shadow-lg">
                 <div className="flex items-center justify-between mb-1.5 gap-2">
                   <p className="text-[10px] font-semibold text-ink-400 uppercase tracking-wide">Circuits</p>
-                  <button className="text-[10px] text-volt-600 font-semibold shrink-0"
-                    onClick={() => {
-                      const idsNiveau = circuitsNiveauActif.map(b => b.id);
-                      const tousVisibles = idsNiveau.every(id => circuitsVisibles.has(id));
-                      setCircuitsVisibles(prev => {
-                        const next = new Set(prev);
-                        idsNiveau.forEach(id => (tousVisibles ? next.delete(id) : next.add(id)));
-                        return next;
-                      });
-                    }}>
-                    {circuitsNiveauActif.every(b => circuitsVisibles.has(b.id)) ? "Tout masquer" : "Tout afficher"}
-                  </button>
+                  {circuitsNiveauActif.length > 0 && (
+                    <button className="text-[10px] text-volt-600 font-semibold shrink-0"
+                      onClick={() => {
+                        const idsNiveau = circuitsNiveauActif.map(b => b.id);
+                        const tousVisibles = idsNiveau.every(id => circuitsVisibles.has(id));
+                        setCircuitsVisibles(prev => {
+                          const next = new Set(prev);
+                          idsNiveau.forEach(id => (tousVisibles ? next.delete(id) : next.add(id)));
+                          return next;
+                        });
+                      }}>
+                      {circuitsNiveauActif.every(b => circuitsVisibles.has(b.id)) ? "Tout masquer" : "Tout afficher"}
+                    </button>
+                  )}
                 </div>
                 <div className="flex flex-col gap-1">
-                  {circuitsNiveauActif.map(b => {
-                    const pointsCircuit = niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id) ?? [];
-                    const lg = showLongueurs && niveauActif?.tableauPos && pointsCircuit.length > 0
+                  {circuitsAffiches.map(item => {
+                    const b = item.breaker;
+                    const manuel = item.manuel;
+                    const estLumiere = b ? CIRCUITS[b.circuit]?.category === "lumiere" : manuel?.famille === "lumiere";
+                    const labelStockage = b ? b.label : manuel!.nom; // clé pour boitesDerivation
+                    const nomAffichage = b ? nomAffiche(b) : manuel!.nom;
+                    const couleur = b ? (colorMap.get(b.id) ?? "#666666") : (manuel!.couleur ?? "#78716c");
+                    const visible = b ? circuitsVisibles.has(b.id) : true;
+                    const pointsCircuit = b ? (niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id) ?? []) : [];
+                    const lg = b && showLongueurs && niveauActif?.tableauPos && pointsCircuit.length > 0
                       ? longueurBranchesEclairage(segmentsPourCircuit(b, pointsCircuit, niveauActif, niveauActif.tableauPos), niveauActif.liaisonWaypoints)
                       : null;
-                    const visible = circuitsVisibles.has(b.id);
                     return (
-                      <label key={b.id} className={`flex items-center gap-1.5 text-[11px] cursor-pointer ${visible ? "text-ink-600" : "text-ink-300"}`}>
-                        <input type="checkbox" checked={visible} onChange={() => toggleCircuitVisible(b.id)}
-                          title={visible ? "Masquer ce circuit" : "Afficher ce circuit"} />
+                      <label key={item.key} className={`flex items-center gap-1.5 text-[11px] cursor-pointer ${visible ? "text-ink-600" : "text-ink-300"}`}>
+                        {b ? (
+                          <input type="checkbox" checked={visible} onChange={() => toggleCircuitVisible(b.id)}
+                            title={visible ? "Masquer ce circuit" : "Afficher ce circuit"} />
+                        ) : (
+                          <span className="w-[13px] shrink-0" />
+                        )}
                         <input type="color" title="Choisir la couleur de ce circuit"
                           className="w-4 h-4 shrink-0 rounded-full border-0 p-0 cursor-pointer overflow-hidden"
-                          value={colorMap.get(b.id) ?? "#666666"}
+                          value={couleur}
                           onClick={e => e.stopPropagation()}
-                          onChange={e => definirCouleurCircuit(b, e.target.value)} />
-                        <input className="input !text-[11px] !py-0.5 !px-1.5 flex-1 min-w-0" value={nomAffiche(b)}
+                          onChange={e => b ? definirCouleurCircuit(b, e.target.value) : changerCouleurCircuitManuelDirect(manuel!.id, e.target.value)} />
+                        <input className="input !text-[11px] !py-0.5 !px-1.5 flex-1 min-w-0" value={nomAffichage}
                           onClick={e => e.stopPropagation()}
-                          onChange={e => renommerCircuit(b, e.target.value)} />
+                          onChange={e => b ? renommerCircuit(b, e.target.value) : renommerCircuitManuelDirect(manuel!.id, e.target.value)} />
                         {lg !== null && <span className="font-mono text-ink-400 shrink-0">{lg.toFixed(1)}m</span>}
-                        {CIRCUITS[b.circuit]?.category !== "lumiere" && (
+                        {!b && <span className="text-[9px] text-ink-400 shrink-0 italic whitespace-nowrap">à générer</span>}
+                        {b && CIRCUITS[b.circuit]?.category !== "lumiere" && (
                           <button onClick={e => { e.preventDefault(); e.stopPropagation(); demarrerDessinCheminement(b); }}
                             className="btn-ghost !p-0.5 shrink-0" title="Dessiner le cheminement">
                             <Route size={12} />
                           </button>
                         )}
-                        <button onClick={e => { e.preventDefault(); e.stopPropagation(); supprimerCircuit(b); }}
+                        {estLumiere && (
+                          <button onClick={e => { e.preventDefault(); e.stopPropagation(); ajouterBoiteDerivation(labelStockage); }}
+                            className="btn-ghost !p-0.5 shrink-0" title="Ajouter une boîte de dérivation">
+                            <Plus size={12} />
+                          </button>
+                        )}
+                        <button onClick={e => { e.preventDefault(); e.stopPropagation(); b ? supprimerCircuit(b) : supprimerCircuitManuel(manuel!.id); }}
                           className="btn-ghost !p-0.5 shrink-0 !text-red-500" title="Supprimer ce circuit">
                           <Trash2 size={12} />
                         </button>
