@@ -109,6 +109,12 @@ export const GAINES_IRL = [
 
 export const DIFF_HIERARCHY: Record<string, number> = { AC: 0, A: 1, F: 2 };
 export const AMPERES = [2, 6, 10, 16, 20, 25, 32, 40, 63];
+// Calibres réellement commercialisés pour un interrupteur différentiel (ID) résidentiel —
+// distinct de AMPERES (calibres de disjoncteur de circuit) : un ID ne se choisit pas parmi
+// les petits calibres (2/6/10/16/20/32A, qui n'existent pas pour ce type d'appareil), et
+// 25A reste rare (réservé aux tableaux divisionnaires légers) — 40A/63A couvrent la quasi-
+// totalité des tableaux principaux résidentiels, 80/100/125A les installations plus lourdes.
+export const AMPERES_DIFFERENTIEL = [25, 40, 63, 80, 100, 125];
 
 // Seuils de regroupement par circuit — alignés sur le compliance checker (checkNFC)
 // déjà en place dans /tableau/[clientId]/page.tsx (règles socles16 / socles20).

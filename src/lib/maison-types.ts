@@ -177,6 +177,14 @@ export interface LiaisonWaypoint {
 }
 export type LiaisonWaypoints = Record<string, LiaisonWaypoint[]>;
 
+// Boîte de dérivation d'un circuit d'éclairage — nommée, positionnée et déplaçable
+// indépendamment (voir Niveau.boitesDerivation ci-dessus et construireBranchesCircuitEclairage).
+export interface BoiteDerivation {
+  id: number;
+  nom: string;
+  point: Point;
+}
+
 // ─── CIRCUITS MANUELS ────────────────────────────────────────────────────────
 // Un circuit créé et composé à la main par l'utilisateur — nom, type électrique ET
 // membres explicitement choisis (voir CircuitManuelForm, page.tsx) — plutôt que par le
@@ -240,10 +248,15 @@ export interface Niveau {
   tableauPos?: Point; // position du tableau électrique / GTL sur ce niveau
   tableauHauteur?: number; // cm — hauteur d'installation du tableau (vue 3D), 150 par défaut
   tableauRotation?: number; // degrés — orientation du tableau (aligné sur le mur porteur), 0 par défaut
-  // Position (déplacée à la main) de la boîte de dérivation de chaque circuit d'éclairage —
-  // indexée par le label du disjoncteur (stable tant que la composition du plan ne change
-  // pas, comme couleursCircuits). Sans entrée : position par défaut = centroïde des lampes.
-  boitesDerivation?: Record<string, Point>;
+  // Boîte(s) de dérivation d'un circuit d'éclairage — indexé par le label du disjoncteur
+  // (stable tant que la composition du plan ne change pas, comme couleursCircuits). Une
+  // liste plutôt qu'un point unique : plusieurs boîtes nommées peuvent être ajoutées,
+  // déplacées et renommées indépendamment (voir ajouterBoiteDerivation, page.tsx) — le
+  // câble les chaîne dans l'ordre de la liste (tableau -> boîte 1 -> boîte 2 -> …), et
+  // chaque lampe se raccorde à la boîte la plus proche d'elle (voir
+  // construireBranchesCircuitEclairage). Liste vide ou absente : comportement historique
+  // (une boîte implicite non nommée, positionnée au centroïde des lampes).
+  boitesDerivation?: Record<string, BoiteDerivation[]>;
   hauteurPlafond?: number; // mètres — pour la vue 3D (2.5 par défaut)
   liaisonWaypoints?: LiaisonWaypoints;
   circuitsManuels?: CircuitManuel[];
@@ -316,6 +329,7 @@ export function reamorcerCompteurId(niveaux: Niveau[]): void {
     });
     (n.circuitsManuels ?? []).forEach(m => { max = Math.max(max, m.id); });
     Object.values(n.liaisonWaypoints ?? {}).forEach(liste => liste.forEach(w => { max = Math.max(max, w.id); }));
+    Object.values(n.boitesDerivation ?? {}).forEach(liste => liste.forEach(b => { max = Math.max(max, b.id); }));
   });
   if (max >= _uidM) _uidM = max;
 }
@@ -376,6 +390,28 @@ export function dedupliquerIds(niveaux: Niveau[]): { niveaux: Niveau[]; correcti
   }));
 
   return { niveaux: niveauxV2, corrections };
+}
+
+// Migration : Niveau.boitesDerivation stockait autrefois un point unique par circuit
+// (Record<label, Point>). Il stocke maintenant une LISTE de boîtes nommées, déplaçables
+// indépendamment (Record<label, BoiteDerivation[]>) — pour permettre plusieurs boîtes de
+// dérivation sur un même circuit d'éclairage. Convertit en place un plan déjà sauvegardé
+// (ancien format) au chargement : sans cette conversion, une boîte déjà positionnée sur un
+// plan existant ferait planter la génération (un Point brut là où un tableau est attendu).
+export function migrerBoitesDerivation(niveaux: Niveau[]): void {
+  niveaux.forEach(n => {
+    const brut = n.boitesDerivation as unknown as Record<string, Point | BoiteDerivation[]> | undefined;
+    if (!brut) return;
+    const migre: Record<string, BoiteDerivation[]> = {};
+    Object.entries(brut).forEach(([label, valeur]) => {
+      if (Array.isArray(valeur)) {
+        migre[label] = valeur;
+      } else if (valeur && typeof valeur === "object" && "x" in valeur && "y" in valeur) {
+        migre[label] = [{ id: uidMaison(), nom: "Boîte 1", point: valeur as Point }];
+      }
+    });
+    n.boitesDerivation = migre;
+  });
 }
 
 export const nouveauNiveau = (type: NiveauType = "rdc", ordre = 0): Niveau => ({
@@ -619,7 +655,7 @@ export function longueurCircuitAvecWaypoints(depart: Point, points: Appareillage
 // reste du circuit. Ces fonctions construisent cette topologie (utilisées par le
 // rendu 2D et la vue 3D) au lieu de la simple chaîne par plus-proche-voisin.
 
-export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoint: Point; }
+export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoint: Point; type?: "navette"; }
 
 export function centroidePoints(points: Point[]): Point {
   if (points.length === 0) return { x: 0, y: 0 };
@@ -629,23 +665,73 @@ export function centroidePoints(points: Point[]): Point {
   };
 }
 
-// tableau -> boîte (si ≥ 2 points lumineux ; sinon la boîte est inutile, lien direct)
-// boîte -> chaque point lumineux (étoile, jamais en série)
-// point lumineux -> chaque interrupteur/va-et-vient/télérupteur qui le commande
+// tableau -> boîte(s) de dérivation, chaînées dans l'ordre où elles ont été créées
+// (tableau -> boîte 1 -> boîte 2 -> …) ; sans boîte nommée, comportement historique — une
+// boîte implicite unique (si ≥ 2 lampes) ou lien direct (1 seule lampe).
+// boîte -> chaque lampe qui lui est la plus proche (étoile depuis CETTE boîte, jamais
+// toutes les lampes reliées à toutes les boîtes ni en série entre elles).
+// point lumineux -> commande(s) : un interrupteur simple ou un télérupteur (par bouton
+// poussoir) se raccorde indépendamment à la lampe, comme avant. Un groupe de va-et-vient
+// commandant la MÊME lampe, en revanche, ne se câble PAS chacun indépendamment vers la
+// lampe : électriquement, seul le premier (le plus proche) reçoit le retour lampe — les
+// suivants sont câblés EN CHAÎNE avec leur voisin précédent via les fils navette. Ces
+// segments navette sont marqués (type: "navette") pour être distingués visuellement
+// (couleur plus sombre) du reste du tracé, voir assombrirCouleur ci-dessous.
 export function construireBranchesCircuitEclairage(
-  depart: Point, boitePos: Point, lumieres: AppareillagePlace[], commandes: AppareillagePlace[],
+  depart: Point, boites: BoiteDerivation[], lumieres: AppareillagePlace[], commandes: AppareillagePlace[],
 ): SegmentCircuit[] {
   const segments: SegmentCircuit[] = [];
-  if (lumieres.length <= 1) {
-    lumieres.forEach(l => segments.push({ aId: "tableau", aPoint: depart, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
+
+  if (boites.length === 0) {
+    // Aucune boîte nommée pour ce circuit — comportement historique : une boîte implicite
+    // (jamais affichée nommée, positionnée au centroïde) si ≥ 2 lampes, sinon lien direct.
+    if (lumieres.length <= 1) {
+      lumieres.forEach(l => segments.push({ aId: "tableau", aPoint: depart, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
+    } else {
+      const centre = centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y })));
+      segments.push({ aId: "tableau", aPoint: depart, bId: "boite", bPoint: centre });
+      lumieres.forEach(l => segments.push({ aId: "boite", aPoint: centre, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
+    }
   } else {
-    segments.push({ aId: "tableau", aPoint: depart, bId: "boite", bPoint: boitePos });
-    lumieres.forEach(l => segments.push({ aId: "boite", aPoint: boitePos, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
+    let precedentId = "tableau";
+    let precedentPoint = depart;
+    boites.forEach(boite => {
+      const id = `boite-${boite.id}`;
+      segments.push({ aId: precedentId, aPoint: precedentPoint, bId: id, bPoint: boite.point });
+      precedentId = id;
+      precedentPoint = boite.point;
+    });
+    lumieres.forEach(l => {
+      let plusProche = boites[0];
+      let meilleureDistance = distance(boites[0].point, l);
+      boites.forEach(boite => {
+        const d = distance(boite.point, l);
+        if (d < meilleureDistance) { meilleureDistance = d; plusProche = boite; }
+      });
+      segments.push({ aId: `boite-${plusProche.id}`, aPoint: plusProche.point, bId: String(l.id), bPoint: { x: l.x, y: l.y } });
+    });
   }
-  commandes.forEach(c => {
-    (c.commandePourIds ?? []).forEach(lightId => {
-      const l = lumieres.find(x => x.id === lightId);
-      if (!l) return;
+
+  lumieres.forEach(l => {
+    const commandesDeCetteLampe = commandes.filter(c => c.commandePourIds?.includes(l.id));
+    const vaEtVient = commandesDeCetteLampe
+      .filter(c => c.type === "va_et_vient")
+      .sort((c1, c2) => distance({ x: c1.x, y: c1.y }, l) - distance({ x: c2.x, y: c2.y }, l));
+    const autres = commandesDeCetteLampe.filter(c => c.type !== "va_et_vient");
+
+    vaEtVient.forEach((c, i) => {
+      if (i === 0) {
+        segments.push({ aId: String(l.id), aPoint: { x: l.x, y: l.y }, bId: String(c.id), bPoint: { x: c.x, y: c.y } });
+      } else {
+        const precedent = vaEtVient[i - 1];
+        segments.push({
+          aId: String(precedent.id), aPoint: { x: precedent.x, y: precedent.y },
+          bId: String(c.id), bPoint: { x: c.x, y: c.y }, type: "navette",
+        });
+      }
+    });
+
+    autres.forEach(c => {
       segments.push({ aId: String(l.id), aPoint: { x: l.x, y: l.y }, bId: String(c.id), bPoint: { x: c.x, y: c.y } });
     });
   });
@@ -668,4 +754,27 @@ export function longueurBranchesEclairage(segments: SegmentCircuit[], waypoints:
 const TEINTES = [0, 210, 140, 280, 40, 320, 170, 60, 250, 10, 190, 95];
 export function couleurCircuit(index: number): string {
   return `hsl(${TEINTES[index % TEINTES.length]}, 70%, 42%)`;
+}
+
+// Assombrit une couleur de circuit (hex "#RRGGBB" choisi au sélecteur, ou hsl(...)
+// procédurale de couleurCircuit()) — utilisé pour distinguer visuellement la liaison
+// (navette) entre deux va-et-vient du reste du tracé, tout en restant clairement
+// rattachée à la couleur de son circuit (même teinte, plus foncée). Formats inconnus
+// renvoyés inchangés plutôt que de produire une couleur incorrecte.
+export function assombrirCouleur(couleur: string, facteur = 0.55): string {
+  const matchHsl = couleur.match(/^hsl\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)%,\s*(\d+(?:\.\d+)?)%\)$/);
+  if (matchHsl) {
+    const [, h, s, l] = matchHsl;
+    return `hsl(${h}, ${s}%, ${Math.max(0, parseFloat(l) * facteur).toFixed(1)}%)`;
+  }
+  const matchHex = couleur.match(/^#([0-9a-fA-F]{6})$/);
+  if (matchHex) {
+    const n = parseInt(matchHex[1], 16);
+    const r = Math.round(((n >> 16) & 255) * facteur);
+    const g = Math.round(((n >> 8) & 255) * facteur);
+    const b = Math.round((n & 255) * facteur);
+    const clamp = (v: number) => Math.max(0, Math.min(255, v));
+    return `#${[r, g, b].map(v => clamp(v).toString(16).padStart(2, "0")).join("")}`;
+  }
+  return couleur;
 }

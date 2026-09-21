@@ -10,12 +10,13 @@ import {
   Breaker, BreakerRow, PieceConfig, GroupeLumineux, CommandeType,
   CIRCUITS, MAX_PAR_CIRCUIT, MIN_PRISES_PIECE,
   PMAX_CHAUFFAGE_16A_W, PMAX_CHAUFFAGE_20A_W, PUISSANCE_CHAUFFAGE_DEFAUT_W,
+  AMPERES_DIFFERENTIEL,
   gaineRecommandee, cablesGroupe, cablesPrises, effectiveSection, uid,
 } from "./electrical-constants";
 import {
   Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone,
   CircuitManuel, familleCircuitManuelAppareillage, couleurCircuit,
-  SegmentCircuit, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage, centroidePoints,
+  SegmentCircuit, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage,
 } from "./maison-types";
 
 // Appareillages dédiés → 1 circuit par instance (correspondance directe avec CIRCUITS).
@@ -217,7 +218,11 @@ function deduireCommandeLumiere(tousItems: Item[], pointLumineuxId: number): { t
     return { typeCommande: "telerupteur", nbCommandes: commandes.filter(c => c.base.type === "telerupteur").length || 1 };
   }
   if (commandes.some(c => c.base.type === "va_et_vient")) {
-    return { typeCommande: "vav", nbCommandes: 2 };
+    // Nombre réel de va-et-vient posés pour cette lampe plutôt qu'une valeur fixe à 2 — une
+    // configuration à 3 commandes ou plus (permutateurs) reste rare mais n'est pas empêchée
+    // par le plan, autant que ce chiffre (repris tel quel dans le module Tableau) reflète
+    // ce qui est réellement dessiné.
+    return { typeCommande: "vav", nbCommandes: commandes.filter(c => c.base.type === "va_et_vient").length };
   }
   return { typeCommande: "simple", nbCommandes: 1 };
 }
@@ -479,8 +484,8 @@ export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[
   if (breaker.circuit === "lumiere") {
     const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
     const commandes = points.filter(a => a.type === "interrupteur" || a.type === "va_et_vient" || a.type === "telerupteur");
-    const boitePos = niveau.boitesDerivation?.[breaker.label] ?? centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y })));
-    return construireBranchesCircuitEclairage(tableauPos, boitePos, lumieres, commandes);
+    const boites = niveau.boitesDerivation?.[breaker.label] ?? [];
+    return construireBranchesCircuitEclairage(tableauPos, boites, lumieres, commandes);
   }
   const ordre = niveau.ordresCircuits?.[breaker.label];
   const sequence = ordre ? sequenceAncresCircuitOrdonnee(tableauPos, points, ordre) : sequenceAncresCircuit(tableauPos, points);
@@ -548,7 +553,11 @@ function calibreDifferentiel(list: Breaker[], premiereRangee: boolean): number {
     const estChauffage = CIRCUITS[b.circuit]?.category === "chauffage";
     return somme + (estChauffage ? b.amperes : b.amperes * 0.5);
   }, 0);
-  return charge > 40 ? 63 : 40;
+  // Le plus petit calibre standard (AMPERES_DIFFERENTIEL, electrical-constants.ts) qui
+  // couvre la charge calculée, jamais en dessous de 40A pour une rangée de tableau
+  // principal (25A n'est en pratique quasiment jamais utilisé ici) — reste modifiable à la
+  // main ensuite dans le module Tableau si ce choix automatique ne convient pas.
+  return AMPERES_DIFFERENTIEL.find(a => a >= 40 && a >= charge) ?? AMPERES_DIFFERENTIEL[AMPERES_DIFFERENTIEL.length - 1];
 }
 
 export function assemblerTableau(breakers: Breaker[]): BreakerRow[] {
