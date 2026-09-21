@@ -1348,6 +1348,23 @@ export default function PlanPage() {
     }));
     invalidateResultat();
   };
+  // Supprime N'IMPORTE QUEL circuit déjà généré, manuel ou automatique. Un circuit manuel
+  // se supprime lui-même (supprimerCircuitManuel, ci-dessus — ses membres retombent dans le
+  // clustering automatique). Un circuit AUTOMATIQUE n'a pas d'existence propre à effacer :
+  // le "supprimer" revient à exclure tous ses membres actuels (même mécanisme que "oublier"
+  // un appareillage en redessinant son cheminement, voir terminerDessinCheminement) — ils
+  // deviennent non raccordés, librement réaffectables ensuite, plutôt que reformer aussitôt
+  // le même circuit à la prochaine génération.
+  const supprimerCircuit = (b: Breaker) => {
+    if (b.manuelId != null) { supprimerCircuitManuel(b.manuelId); return; }
+    if (!niveauActif) return;
+    const membres = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
+    updateNiveauActif(n => ({
+      ...n,
+      appareillagesExclus: Array.from(new Set([...(n.appareillagesExclus ?? []), ...membres.map(a => a.id)])),
+    }));
+    invalidateResultat();
+  };
   // Rattache (ou détache, avec undefined) un appareillage à un circuit manuel — prioritaire
   // sur le clustering automatique une fois "Générer les circuits" relancé.
   const assignerCircuitManuel = (appareillageId: number, manuelId: number | undefined) => {
@@ -2208,6 +2225,11 @@ export default function PlanPage() {
                 // Cible de clic généreuse et indépendante du zoom (invisible, sous l'icône) :
                 // l'icône réelle peut être fine, la zone cliquable reste toujours confortable.
                 const rZoneClic = Math.max(16, symSize / 2 + 7);
+                // Pastille d'alerte directement sur le plan — un appareillage sans circuit
+                // après génération (exclu, commande orpheline…) se repère sans devoir ouvrir
+                // la liste des alertes. Uniquement pertinent une fois un résultat généré :
+                // avant ça, l'absence de circuitId ne veut encore rien dire.
+                const nonRaccorde = resultat != null && a.circuitId == null;
                 return (
                   <g key={a.id}
                     onPointerDown={e => onAppareillagePointerDown(piece, a, e)}
@@ -2217,6 +2239,12 @@ export default function PlanPage() {
                       <AppareillageSymbol type={a.type} size={symSize} color={color} />
                     </g>
                     {isSel && <circle cx={p.x} cy={p.y} r={rZoneClic} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
+                    {nonRaccorde && (
+                      <g transform={`translate(${p.x + symSize / 2 - 1}, ${p.y - symSize / 2 - 1})`} style={{ pointerEvents: "none" }}>
+                        <circle cx={0} cy={0} r={6.5} fill="#EF4444" stroke="#fff" strokeWidth={1.5} />
+                        <text x={0} y={2.8} textAnchor="middle" fontSize={9} fontWeight={800} fill="#fff">!</text>
+                      </g>
+                    )}
                   </g>
                 );
               })}
@@ -2421,6 +2449,8 @@ export default function PlanPage() {
                     <span className="text-amber-700">Exclu de la génération automatique</span>
                     <button onClick={() => reinclureAppareillage(selectedAppareillage.id)} className="btn-ghost !text-[11px] !px-1.5 !py-0.5 shrink-0">Réinclure</button>
                   </div>
+                ) : resultat ? (
+                  <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-2 py-1.5">Non raccordé à un circuit.</p>
                 ) : null}
               </DraggablePanel>
             )}
@@ -2689,6 +2719,10 @@ export default function PlanPage() {
                             <Route size={12} />
                           </button>
                         )}
+                        <button onClick={e => { e.preventDefault(); e.stopPropagation(); supprimerCircuit(b); }}
+                          className="btn-ghost !p-0.5 shrink-0 !text-red-500" title="Supprimer ce circuit">
+                          <Trash2 size={12} />
+                        </button>
                       </label>
                     );
                   })}
