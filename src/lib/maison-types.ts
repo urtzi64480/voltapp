@@ -178,16 +178,29 @@ export interface LiaisonWaypoint {
 export type LiaisonWaypoints = Record<string, LiaisonWaypoint[]>;
 
 // ─── CIRCUITS MANUELS ────────────────────────────────────────────────────────
-// Un circuit créé et nommé à la main par l'utilisateur (au lieu de laisser le
-// clustering spatial de genererCircuits() décider). Id stable (uidMaison), donc
-// résiste aux régénérations — contrairement au Breaker.id, réattribué à chaque
-// clic sur "Générer les circuits". Scope : par niveau (un circuit ne traverse
-// jamais deux niveaux). "famille" reprend les seules familles regroupables de
-// CIRCUITS (electrical-constants.ts) — les appareils dédiés ont toujours leur
-// propre circuit et ne sont pas concernés par l'assignation manuelle.
-export type FamilleCircuitManuel = "prise_16" | "cuisine_prises" | "exterieur" | "lumiere";
+// Un circuit créé et composé à la main par l'utilisateur — nom, type électrique ET
+// membres explicitement choisis (voir CircuitManuelForm, page.tsx) — plutôt que par le
+// clustering automatique de genererCircuits(). Id stable (uidMaison), donc résiste aux
+// régénérations, contrairement au Breaker.id, réattribué à chaque clic sur "Générer les
+// circuits". Scope : par niveau (un circuit ne traverse jamais deux niveaux).
+//
+// "famille" est la clé du type électrique choisi dans CIRCUITS (electrical-constants.ts —
+// "prise_16", "lumiere", "chauffage_16", "four", "autre", etc.) : N'IMPORTE laquelle des
+// clés CIRCUITS convient, pas seulement les 4 familles "groupables" d'origine — un circuit
+// manuel peut représenter n'importe quel type de circuit, avec exactement les appareillages
+// que l'utilisateur y a mis (voir genererBreakersChauffage… non, voir breakerFromClusterManuel
+// dans maison-engine.ts, qui construit un unique Breaker par circuit manuel, jamais scindé
+// automatiquement). Le type reste `string` (plutôt qu'un littéral union) pour ne jamais avoir
+// à modifier ce fichier quand une nouvelle entrée CIRCUITS apparaît, et parce que les valeurs
+// déjà enregistrées ("prise_16", "cuisine_prises", "exterieur", "lumiere") restent valides
+// telles quelles — aucune migration de données nécessaire.
+export type FamilleCircuitManuel = string;
 
-export const FAMILLES_CIRCUIT_MANUEL: Record<FamilleCircuitManuel, string> = {
+// Historique : label des 4 familles d'origine (prises/cuisine/extérieur/éclairage), du temps
+// où un circuit manuel ne pouvait être que l'une d'elles. Remplacé dans l'UI par les labels de
+// CIRCUITS (electrical-constants.ts), qui couvrent maintenant tout type de circuit — conservé
+// ici uniquement pour compatibilité d'éventuels autres appelants.
+export const FAMILLES_CIRCUIT_MANUEL: Record<"prise_16" | "cuisine_prises" | "exterieur" | "lumiere", string> = {
   prise_16: "Prises",
   cuisine_prises: "Prises cuisine",
   exterieur: "Prises extérieur / garage",
@@ -197,15 +210,17 @@ export const FAMILLES_CIRCUIT_MANUEL: Record<FamilleCircuitManuel, string> = {
 export interface CircuitManuel {
   id: number;
   nom: string;
-  famille: FamilleCircuitManuel;
+  famille: FamilleCircuitManuel; // clé CIRCUITS — voir commentaire du type ci-dessus
   couleur?: string; // couleur imposée sur le plan/l'impression/la vue 3D — sinon couleur procédurale
 }
 
-// Détermine à quelle famille de circuit manuel un appareillage donné (dans une pièce
-// donnée) est éligible, ou null s'il n'est jamais regroupable à la main (interrupteurs —
-// rattachés automatiquement au circuit de leur(s) point(s) lumineux commandé(s) —,
-// appareils dédiés, qui ont toujours leur propre circuit individuel, et le chauffage, qui
-// est regroupé automatiquement par puissance — voir genererBreakersChauffage).
+// Classe un appareillage (dans une pièce donnée) dans l'une des 4 familles "groupables"
+// automatiquement par genererCircuits() (prises/cuisine/extérieur/éclairage), ou null s'il
+// suit une autre logique : interrupteurs (rattachés au circuit de leur(s) point(s) lumineux
+// commandé(s)), chauffage (regroupé par puissance, voir genererBreakersChauffage) et appareils
+// dédiés (four, chauffe-eau… un circuit par instance). Sert UNIQUEMENT à la classification
+// automatique — un circuit MANUEL, lui, accepte n'importe quel appareillage quel que soit son
+// type (voir CircuitManuelForm, page.tsx) : cette fonction n'intervient plus dans son éligibilité.
 export function familleCircuitManuelAppareillage(type: AppareillageType, pieceType: PieceType): FamilleCircuitManuel | null {
   if (type === "prise" || type === "prise_commandee") {
     if (pieceType === "cuisine") return "cuisine_prises";

@@ -14,7 +14,7 @@ import {
 } from "./electrical-constants";
 import {
   Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone,
-  CircuitManuel, FamilleCircuitManuel, familleCircuitManuelAppareillage, couleurCircuit,
+  CircuitManuel, familleCircuitManuelAppareillage, couleurCircuit,
   SegmentCircuit, sequenceAncresCircuit, construireBranchesCircuitEclairage, centroidePoints,
 } from "./maison-types";
 
@@ -172,44 +172,10 @@ function genererBreakersChauffage(items: Item[], niveauNom: string, breakers: Br
 // famille (circuitManuelId) et le reste, qui repart dans le clustering spatial
 // automatique habituel. Un circuitManuelId pointant vers un circuit manuel
 // supprimé ou d'une autre famille retombe silencieusement dans l'automatique.
-function partitionnerManuelAuto<T extends { base: AppareillagePlace }>(
-  items: T[], manuels: CircuitManuel[], famille: FamilleCircuitManuel,
-): { manuelGroupes: Map<number, T[]>; auto: T[] } {
-  const idsValides = new Set(manuels.filter(m => m.famille === famille).map(m => m.id));
-  const manuelGroupes = new Map<number, T[]>();
-  const auto: T[] = [];
-  items.forEach(item => {
-    const mid = item.base.circuitManuelId;
-    if (mid != null && idsValides.has(mid)) {
-      const arr = manuelGroupes.get(mid) ?? [];
-      arr.push(item);
-      manuelGroupes.set(mid, arr);
-    } else {
-      auto.push(item);
-    }
-  });
-  return { manuelGroupes, auto };
-}
-
-function genererBreakersPrises(
-  items: Item[], circuitKey: string, niveauNom: string, manuels: CircuitManuel[], breakers: Breaker[],
-): void {
+function genererBreakersPrises(items: Item[], circuitKey: string, niveauNom: string, breakers: Breaker[]): void {
   const max = MAX_PAR_CIRCUIT[circuitKey] ?? 8;
-  const { manuelGroupes, auto } = partitionnerManuelAuto(items, manuels, circuitKey as FamilleCircuitManuel);
-  manuelGroupes.forEach((groupe, manuelId) => {
-    const manuel = manuels.find(m => m.id === manuelId);
-    if (!manuel) return;
-    const chunks = clusteriser(groupe, max);
-    chunks.forEach((chunk, ci) => {
-      const b = breakerFromClusterPrises(chunk, circuitKey, niveauNom, ci + 1);
-      b.label = chunks.length > 1 ? `${manuel.nom} ${ci + 1}` : manuel.nom;
-      b.manuelId = manuel.id;
-      breakers.push(b);
-      chunk.forEach(item => { item.base.circuitId = b.id; });
-    });
-  });
   let idx = 1;
-  for (const cluster of clusteriser(auto, max)) {
+  for (const cluster of clusteriser(items, max)) {
     const b = breakerFromClusterPrises(cluster, circuitKey, niveauNom, idx++);
     breakers.push(b);
     cluster.forEach(item => { item.base.circuitId = b.id; });
@@ -218,36 +184,41 @@ function genererBreakersPrises(
 
 // Rattache au même circuit que le(s) point(s) lumineux le(s) interrupteur / va-et-vient /
 // télérupteur qui le(s) commande(nt) ("retour lampe") — sans quoi ces commandes restent
-// hors de tout circuit et n'apparaissent jamais dans le tracé (2D et 3D).
+// hors de tout circuit et n'apparaissent jamais dans le tracé (2D et 3D). Une commande déjà
+// rattachée à un circuit MANUEL (circuitManuelId défini) n'est jamais réécrite ici : son
+// circuit vient de sa propre appartenance manuelle, jamais d'une lampe qu'elle commande par
+// ailleurs — sinon la génération d'un autre circuit (manuel ou automatique) pourrait écraser
+// silencieusement un choix explicite de l'utilisateur.
 function rattacherRetoursLampe(tousItems: Item[], cluster: { base: AppareillagePlace }[], circuitId: number): void {
   cluster.forEach(item => {
     tousItems
-      .filter(cmd => cmd.base.commandePourIds?.includes(item.base.id))
+      .filter(cmd => cmd.base.commandePourIds?.includes(item.base.id) && cmd.base.circuitManuelId == null)
       .forEach(cmd => { cmd.base.circuitId = circuitId; });
   });
 }
 
+// Déduit le type de commande (simple allumage / va-et-vient / télérupteur) d'un point
+// lumineux à partir des interrupteurs/va-et-vient/télérupteurs placés et liés via
+// commandePourIds — partagé par la génération automatique et par un circuit manuel de
+// type "lumiere" (voir genererCircuits et breakerFromClusterManuel).
+function deduireCommandeLumiere(tousItems: Item[], pointLumineuxId: number): { typeCommande: CommandeType; nbCommandes: number } {
+  const commandes = tousItems.filter(a => a.base.commandePourIds?.includes(pointLumineuxId));
+  if (commandes.some(c => c.base.type === "telerupteur")) {
+    return { typeCommande: "telerupteur", nbCommandes: commandes.filter(c => c.base.type === "telerupteur").length || 1 };
+  }
+  if (commandes.some(c => c.base.type === "va_et_vient")) {
+    return { typeCommande: "vav", nbCommandes: 2 };
+  }
+  return { typeCommande: "simple", nbCommandes: 1 };
+}
+
 function genererBreakersLumiere(
   lumItems: (Item & { typeCommande: CommandeType; nbCommandes: number })[],
-  niveauNom: string, manuels: CircuitManuel[], breakers: Breaker[], tousItems: Item[],
+  niveauNom: string, breakers: Breaker[], tousItems: Item[],
 ): void {
   const max = MAX_PAR_CIRCUIT.lumiere ?? 8;
-  const { manuelGroupes, auto } = partitionnerManuelAuto(lumItems, manuels, "lumiere");
-  manuelGroupes.forEach((groupe, manuelId) => {
-    const manuel = manuels.find(m => m.id === manuelId);
-    if (!manuel) return;
-    const chunks = clusteriser(groupe, max);
-    chunks.forEach((chunk, ci) => {
-      const b = breakerFromClusterLumiere(chunk, niveauNom, ci + 1);
-      b.label = chunks.length > 1 ? `${manuel.nom} ${ci + 1}` : manuel.nom;
-      b.manuelId = manuel.id;
-      breakers.push(b);
-      chunk.forEach(item => { item.base.circuitId = b.id; });
-      rattacherRetoursLampe(tousItems, chunk, b.id);
-    });
-  });
   let idx = 1;
-  for (const cluster of clusteriser(auto, max)) {
+  for (const cluster of clusteriser(lumItems, max)) {
     const b = breakerFromClusterLumiere(cluster, niveauNom, idx++);
     breakers.push(b);
     cluster.forEach(item => { item.base.circuitId = b.id; });
@@ -255,20 +226,73 @@ function genererBreakersLumiere(
   }
 }
 
+// ─── CIRCUITS MANUELS — N'IMPORTE QUEL TYPE, COMPOSITION LIBRE ─────────────────
+// Un circuit manuel (CircuitManuel, maison-types.ts) porte lui-même son type électrique
+// (`famille`, une clé CIRCUITS quelconque — pas seulement prises/éclairage) et sa liste de
+// membres est celle que l'utilisateur a explicitement cochée dans CircuitManuelForm
+// (page.tsx), via AppareillagePlace.circuitManuelId. Contrairement aux pools automatiques,
+// un circuit manuel n'est JAMAIS scindé ni recomposé ici : un circuit manuel = un Breaker,
+// tel quel — l'utilisateur a la main libre, y compris pour dépasser volontairement les
+// seuils NF C 15-100 habituels si c'est un choix assumé.
+function breakerFromClusterManuel(cluster: Item[], manuel: CircuitManuel, niveauNom: string, tousItems: Item[]): Breaker {
+  const spec = CIRCUITS[manuel.famille] ?? CIRCUITS.autre;
+  let pieces: PieceConfig[];
+  if (spec.category === "lumiere") {
+    const parPiece = new Map<string, GroupeLumineux[]>();
+    cluster.forEach(item => {
+      const { typeCommande, nbCommandes } = deduireCommandeLumiere(tousItems, item.base.id);
+      const arr = parPiece.get(item.pieceNom) ?? [];
+      arr.push({ nbPoints: 1, typeCommande, nbCommandes });
+      parPiece.set(item.pieceNom, arr);
+    });
+    pieces = Array.from(parPiece.entries()).map(([nom, groupes]) => ({ nom, nbPrises: 0, groupes }));
+  } else {
+    const parPiece = new Map<string, number>();
+    cluster.forEach(item => parPiece.set(item.pieceNom, (parPiece.get(item.pieceNom) ?? 0) + 1));
+    pieces = Array.from(parPiece.entries()).map(([nom, n]) => ({
+      nom, nbPrises: n, groupes: [{ nbPoints: 1, typeCommande: "simple", nbCommandes: 1 }],
+    }));
+  }
+  let label = manuel.nom;
+  if (spec.category === "chauffage") {
+    const totalW = cluster.reduce((s, item) => s + (item.base.puissanceW ?? PUISSANCE_CHAUFFAGE_DEFAUT_W), 0);
+    label += ` (${(totalW / 1000).toFixed(2).replace(/\.?0+$/, "")} kW)`;
+  }
+  return {
+    id: uid(), label, circuit: manuel.famille,
+    amperes: spec.ampMax, type: "1P", customSection: spec.section ?? "2.5", pieces, manuelId: manuel.id,
+  };
+}
+
+function genererBreakersManuels(itemsParManuel: Map<number, Item[]>, manuels: CircuitManuel[], niveauNom: string, breakers: Breaker[], tousItems: Item[]): void {
+  itemsParManuel.forEach((cluster, manuelId) => {
+    const manuel = manuels.find(m => m.id === manuelId);
+    if (!manuel || cluster.length === 0) return;
+    const b = breakerFromClusterManuel(cluster, manuel, niveauNom, tousItems);
+    breakers.push(b);
+    cluster.forEach(item => { item.base.circuitId = b.id; });
+    rattacherRetoursLampe(tousItems, cluster, b.id);
+  });
+}
+
 /**
  * Génère les circuits (Breaker[]) d'un logement complet à partir des positions
  * réelles des appareillages placés sur le plan. Règles :
  *  - Un circuit ne mélange jamais deux niveaux (frontière naturelle de
  *    regroupement — hypothèse de conception, pas une règle NFC).
- *  - Chaque appareil dédié (four, chauffe-eau…) reçoit son propre circuit
- *    (CIRCUITS[...].dedié) ; le chauffage fait exception et se regroupe par
- *    puissance cumulée (voir genererBreakersChauffage).
+ *  - Les circuits MANUELS sont traités en premier : un appareillage rattaché à un
+ *    circuit manuel (n'importe quel type — voir CircuitManuelForm, page.tsx) forme
+ *    UN breaker avec exactement ses membres choisis, jamais scindé ni recomposé, et
+ *    n'entre dans AUCUNE classification automatique ci-dessous (voir breakerFromClusterManuel).
+ *  - Parmi le reste (non assigné manuellement) : chaque appareil dédié (four,
+ *    chauffe-eau…) reçoit son propre circuit (CIRCUITS[...].dedié) ; le chauffage
+ *    fait exception et se regroupe par puissance cumulée (voir genererBreakersChauffage).
  *  - Prises et éclairage sont regroupés par clustering spatial jusqu'aux
  *    seuils MAX_PAR_CIRCUIT (mêmes seuils que le compliance checker du
  *    module Tableau, pour un score NFC cohérent une fois généré).
  *  - La commande d'un point lumineux (simple/va-et-vient/télérupteur) est
  *    déduite des interrupteurs/va-et-vient/télérupteurs placés et liés via
- *    commandePourId.
+ *    commandePourId, qu'il s'agisse d'un circuit manuel ou automatique.
  */
 export function genererCircuits(maisonIn: Maison): ResultatGeneration {
   const breakers: Breaker[] = [];
@@ -292,34 +316,46 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
       }
     });
 
-    const prisesStandard = tousItems.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "prise_16");
-    const prisesCuisine = tousItems.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "cuisine_prises");
-    const prisesExtGarage = tousItems.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "exterieur");
-    const pointsLumineux = tousItems.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "lumiere");
-    const chauffages = tousItems.filter(a => a.base.type === "chauffage");
-    const dedies = tousItems.filter(a => !!CIRCUIT_DEDIE[a.base.type]);
-
+    // ─── Circuits manuels d'abord : ils retirent leurs membres du pool automatique ────
+    // Un appareillage rattaché à un circuit manuel EXISTANT (circuitManuelId valide sur ce
+    // niveau) n'entre dans AUCUNE classification automatique ci-dessous, quel que soit son
+    // type — c'est tout le sens de "la main libre" : l'utilisateur décide, la génération
+    // automatique ne revient jamais dessus. Un circuitManuelId pointant vers un circuit
+    // supprimé retombe silencieusement dans l'automatique (comportement inchangé).
     const manuels = niveau.circuitsManuels ?? [];
-    genererBreakersPrises(prisesStandard, "prise_16", niveau.nom, manuels, breakers);
-    genererBreakersPrises(prisesCuisine, "cuisine_prises", niveau.nom, manuels, breakers);
-    genererBreakersPrises(prisesExtGarage, "exterieur", niveau.nom, manuels, breakers);
+    const idsManuelsValides = new Set(manuels.map(m => m.id));
+    const itemsParManuel = new Map<number, Item[]>();
+    const reste: Item[] = [];
+    tousItems.forEach(item => {
+      const mid = item.base.circuitManuelId;
+      if (mid != null && idsManuelsValides.has(mid)) {
+        const arr = itemsParManuel.get(mid) ?? [];
+        arr.push(item);
+        itemsParManuel.set(mid, arr);
+      } else {
+        reste.push(item);
+      }
+    });
+    genererBreakersManuels(itemsParManuel, manuels, niveau.nom, breakers, tousItems);
+
+    // ─── Reste : classification automatique habituelle (prises/cuisine/extérieur/────
+    // éclairage/chauffage/dédiés), inchangée à ceci près qu'elle ne porte plus que sur les
+    // appareillages qu'aucun circuit manuel n'a déjà pris en charge.
+    const prisesStandard = reste.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "prise_16");
+    const prisesCuisine = reste.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "cuisine_prises");
+    const prisesExtGarage = reste.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "exterieur");
+    const pointsLumineux = reste.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "lumiere");
+    const chauffages = reste.filter(a => a.base.type === "chauffage");
+    const dedies = reste.filter(a => !!CIRCUIT_DEDIE[a.base.type]);
+
+    genererBreakersPrises(prisesStandard, "prise_16", niveau.nom, breakers);
+    genererBreakersPrises(prisesCuisine, "cuisine_prises", niveau.nom, breakers);
+    genererBreakersPrises(prisesExtGarage, "exterieur", niveau.nom, breakers);
     genererBreakersChauffage(chauffages, niveau.nom, breakers);
 
     // Éclairage : déduction de la commande depuis les interrupteurs/va-et-vient/télérupteurs liés
-    const lumItems = pointsLumineux.map(pl => {
-      const commandes = tousItems.filter(a => a.base.commandePourIds?.includes(pl.base.id));
-      let typeCommande: CommandeType = "simple";
-      let nbCommandes = 1;
-      if (commandes.some(c => c.base.type === "telerupteur")) {
-        typeCommande = "telerupteur";
-        nbCommandes = commandes.filter(c => c.base.type === "telerupteur").length || 1;
-      } else if (commandes.some(c => c.base.type === "va_et_vient")) {
-        typeCommande = "vav";
-        nbCommandes = 2;
-      }
-      return { ...pl, typeCommande, nbCommandes };
-    });
-    genererBreakersLumiere(lumItems, niveau.nom, manuels, breakers, tousItems);
+    const lumItems = pointsLumineux.map(pl => ({ ...pl, ...deduireCommandeLumiere(tousItems, pl.base.id) }));
+    genererBreakersLumiere(lumItems, niveau.nom, breakers, tousItems);
 
     // Appareils dédiés : un circuit par instance
     dedies.forEach(item => {
