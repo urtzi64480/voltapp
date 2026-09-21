@@ -16,7 +16,7 @@ import {
   Ouverture, OuvertureType, nouvelleOuverture, positionSurSegment, OuvertureEffective, ouverturesEffectivesMur,
   NIVEAU_TYPES, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, ajusterLongueurContour,
   distanceAuSegment, positionnerADistanceDuSegment,
-  CircuitManuel, FamilleCircuitManuel, FAMILLES_CIRCUIT_MANUEL, familleCircuitManuelAppareillage,
+  CircuitManuel, FamilleCircuitManuel,
   nouveauNiveau, nouvellePiece, nouvelAppareillage, uidMaison, reamorcerCompteurId, dedupliquerIds,
   LiaisonWaypoint, cleSegmentLiaison,
   cheminSegment, longueurBranchesEclairage, centroidePoints,
@@ -39,6 +39,11 @@ const ALIGN_THRESHOLD_PX = 8;
 // Distance de détection (px écran) pour "clique près d'un mur" lors du placement
 // d'une porte/fenêtre — plus généreux que l'accroche fine, un mur est fin à l'écran.
 const SEUIL_MUR_PX = 18;
+
+// Types de circuit proposés pour un circuit manuel — tout CIRCUITS sauf les entrées qui ne
+// correspondent pas à un vrai circuit posé sur le plan (arrivée générale, parafoudre) et
+// l'ancienne clé "chauffage" (un seul radiateur, historique) remplacée par chauffage_16/20.
+const CIRCUIT_KEYS_MANUELS = Object.keys(CIRCUITS).filter(k => !["general", "parafoudre", "chauffage"].includes(k));
 
 function arrondiGrille(v: number, pas: number = SNAP_GRID_M): number {
   return Math.round(v / pas) * pas;
@@ -469,6 +474,81 @@ function CommandeLinkForm({ niveau, item, onValidate, onCancel }: {
   );
 }
 
+function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }: {
+  niveau: Niveau;
+  existing: CircuitManuel | null; // null = création, sinon édition de ce circuit
+  onValidate: (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[]) => void;
+  onCancel: () => void;
+  onDelete?: () => void;
+}) {
+  const [nom, setNom] = useState(existing?.nom ?? "");
+  const [famille, setFamille] = useState<FamilleCircuitManuel>(existing?.famille ?? "prise_16");
+  const [couleur, setCouleur] = useState(existing?.couleur ?? "");
+  const tousAppareils = niveau.pieces.flatMap(p => p.appareillages.map(a => ({ a, pieceNom: p.nom })));
+  const [membres, setMembres] = useState<Set<number>>(
+    () => new Set(existing ? tousAppareils.filter(({ a }) => a.circuitManuelId === existing.id).map(({ a }) => a.id) : []),
+  );
+  const toggleMembre = (id: number) => setMembres(s => {
+    const n = new Set(s);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+  const nomValide = nom.trim() !== "";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+      <div className="card w-full max-w-md max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-ink-200">
+          <p className="font-semibold text-ink-900">{existing ? "Modifier le circuit manuel" : "Nouveau circuit manuel"}</p>
+          <button onClick={onCancel} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={16} /></button>
+        </div>
+        <div className="p-4 flex flex-col gap-3 overflow-y-auto flex-1">
+          <div>
+            <label className="label">Nom</label>
+            <input autoFocus className="input" placeholder="Ex: Prises salon nord" value={nom} onChange={e => setNom(e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Type de circuit</label>
+            <select className="input" value={famille} onChange={e => setFamille(e.target.value)}>
+              {CIRCUIT_KEYS_MANUELS.map(k => <option key={k} value={k}>{CIRCUITS[k].icon} {CIRCUITS[k].label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Couleur — vide = couleur automatique</label>
+            <div className="flex items-center gap-2">
+              <input type="color" className="w-10 h-8 rounded-lg border border-ink-200 cursor-pointer p-0"
+                value={couleur || "#78716c"} onChange={e => setCouleur(e.target.value)} />
+              {couleur && <button onClick={() => setCouleur("")} className="text-xs text-ink-400 underline">Réinitialiser</button>}
+            </div>
+          </div>
+          <div>
+            <label className="label">Appareillages sur ce circuit ({membres.size})</label>
+            <div className="flex flex-col gap-0.5 max-h-56 overflow-y-auto border border-ink-100 rounded-lg p-1.5">
+              {tousAppareils.length === 0 ? (
+                <p className="text-xs text-ink-400 px-1 py-1">Aucun appareillage sur ce niveau.</p>
+              ) : tousAppareils.map(({ a, pieceNom }) => (
+                <label key={a.id} className="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-ink-50 cursor-pointer text-xs">
+                  <input type="checkbox" checked={membres.has(a.id)} onChange={() => toggleMembre(a.id)} />
+                  <AppareillageSymbol type={a.type} size={14} />
+                  <span className="text-ink-700 truncate flex-1">{pieceNom || "Pièce"} — {a.nom || labelAppareillage(a.type)}</span>
+                  {a.circuitManuelId != null && a.circuitManuelId !== existing?.id && (
+                    <span className="text-[10px] text-amber-600 shrink-0 whitespace-nowrap">déjà sur un autre circuit</span>
+                  )}
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
+          <button disabled={!nomValide} onClick={() => onValidate(nom.trim(), famille, couleur || undefined, Array.from(membres))}
+            className="btn-volt flex-1 disabled:opacity-40"><Save size={14} /> {existing ? "Enregistrer" : "Créer"}</button>
+          {onDelete && <button onClick={onDelete} className="btn-danger !px-3"><Trash2 size={14} /></button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── PALETTE ────────────────────────────────────────────────────────────────────
 
 // Icône simple porte/fenêtre — pas de symbole normalisé dédié, juste de quoi
@@ -683,6 +763,8 @@ export default function PlanPage() {
   const [selectedOuvertureId, setSelectedOuvertureId] = useState<number | null>(null);
   const [selectedBoite, setSelectedBoite] = useState<string | null>(null);
   const [circuitsManuelsOpen, setCircuitsManuelsOpen] = useState(false);
+  // null = fermé ; { existing: null } = création ; { existing: <manuel> } = édition de ce circuit.
+  const [circuitManuelForm, setCircuitManuelForm] = useState<{ existing: CircuitManuel | null } | null>(null);
   const [selectedWaypoint, setSelectedWaypoint] = useState<{ cle: string; waypointId: number } | null>(null);
   const [placementError, setPlacementError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -690,6 +772,11 @@ export default function PlanPage() {
   const [resultat, setResultat] = useState<ResultatGeneration | null>(null);
   const [showCircuits, setShowCircuits] = useState(false);
   const [showLongueurs, setShowLongueurs] = useState(false);
+  // Ids de breakers actuellement affichés sur le plan (sous-ensemble de resultat.breakers) —
+  // permet d'isoler un ou plusieurs circuits à l'écran pour vérifier leur tracé avant de les
+  // retoucher à la main. Réinitialisé à "tous visibles" à chaque nouvelle génération
+  // (voir handleGenerer) ; n'affecte jamais l'impression, qui inclut toujours tous les circuits.
+  const [circuitsVisibles, setCircuitsVisibles] = useState<Set<number>>(new Set());
   const [showPrintForm, setShowPrintForm] = useState(false);
   const [show3DPrintForm, setShow3DPrintForm] = useState(false);
   const [vue3D, setVue3D] = useState(false);
@@ -1038,6 +1125,30 @@ export default function PlanPage() {
     }));
   };
 
+  // Rattache un appareillage à la pièce de son choix, indépendamment de sa position réelle
+  // sur le plan (x/y inchangés — seule l'appartenance "pièce" change) : corrige un placement
+  // automatique erroné (détection de pièce imprécise près d'un mur/coin) sans avoir à
+  // redessiner ou redéplacer l'appareillage. Affecte le comptage des prises minimum par
+  // pièce et le regroupement des circuits (le nom de pièce affiché vient de cette
+  // appartenance, pas de la position), d'où l'invalidation du résultat déjà généré.
+  const deplacerAppareillageVersPiece = (appareillageId: number, cibleId: number) => {
+    updateNiveauActif(n => {
+      let trouve: AppareillagePlace | null = null;
+      const sansAppareil = n.pieces.map(p => {
+        const idx = p.appareillages.findIndex(a => a.id === appareillageId);
+        if (idx === -1) return p;
+        trouve = p.appareillages[idx];
+        return { ...p, appareillages: p.appareillages.filter(a => a.id !== appareillageId) };
+      });
+      if (!trouve) return n;
+      return {
+        ...n,
+        pieces: sansAppareil.map(p => p.id === cibleId ? { ...p, appareillages: [...p.appareillages, trouve!] } : p),
+      };
+    });
+    invalidateResultat();
+  };
+
   const modifierHauteur = (appareillageId: number, hauteur: number | undefined) => {
     updateNiveauActif(n => ({
       ...n,
@@ -1109,20 +1220,38 @@ export default function PlanPage() {
 
   // ─── CIRCUITS MANUELS ────────────────────────────────────────────────────────
 
-  const ajouterCircuitManuel = (famille: FamilleCircuitManuel) => {
-    const nouveau: CircuitManuel = { id: uidMaison(), nom: `${FAMILLES_CIRCUIT_MANUEL[famille]} — nouveau`, famille };
-    updateNiveauActif(n => ({ ...n, circuitsManuels: [...(n.circuitsManuels ?? []), nouveau] }));
+  // Ouvre le formulaire de création (existing: null) ou d'édition (existing: le circuit
+  // cliqué) — même composant pour les deux, voir CircuitManuelForm.
+  const ouvrirNouveauCircuitManuel = () => setCircuitManuelForm({ existing: null });
+  const ouvrirEditionCircuitManuel = (m: CircuitManuel) => setCircuitManuelForm({ existing: m });
+
+  // Création OU mise à jour d'un circuit manuel EN UN SEUL GESTE, membres compris : plus
+  // besoin d'aller assigner appareillage par appareillage après coup. membreIds est l'état
+  // complet souhaité (coché/décoché dans le formulaire) — les appareillages retirés de la
+  // liste sont détachés, ceux ajoutés sont rattachés, en une seule mise à jour.
+  const validerCircuitManuel = (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[]) => {
+    const existing = circuitManuelForm?.existing ?? null;
+    const id = existing ? existing.id : uidMaison();
+    updateNiveauActif(n => ({
+      ...n,
+      circuitsManuels: existing
+        ? (n.circuitsManuels ?? []).map(m => m.id === id ? { ...m, nom, famille, couleur } : m)
+        : [...(n.circuitsManuels ?? []), { id, nom, famille, couleur }],
+      pieces: n.pieces.map(p => ({
+        ...p,
+        appareillages: p.appareillages.map(a => {
+          const appartient = membreIds.includes(a.id);
+          if (appartient) return a.circuitManuelId === id ? a : { ...a, circuitManuelId: id };
+          return a.circuitManuelId === id ? { ...a, circuitManuelId: undefined } : a;
+        }),
+      })),
+    }));
+    setCircuitManuelForm(null);
     invalidateResultat();
   };
-  const renommerCircuitManuel = (manuelId: number, nom: string) => {
-    updateNiveauActif(n => ({
-      ...n, circuitsManuels: (n.circuitsManuels ?? []).map(m => m.id === manuelId ? { ...m, nom } : m),
-    }));
-  };
-  const changerCouleurCircuitManuel = (manuelId: number, couleur: string) => {
-    updateNiveauActif(n => ({
-      ...n, circuitsManuels: (n.circuitsManuels ?? []).map(m => m.id === manuelId ? { ...m, couleur } : m),
-    }));
+  const supprimerCircuitManuelEtFermer = (manuelId: number) => {
+    supprimerCircuitManuel(manuelId);
+    setCircuitManuelForm(null);
   };
   const supprimerCircuitManuel = (manuelId: number) => {
     updateNiveauActif(n => ({
@@ -1150,7 +1279,9 @@ export default function PlanPage() {
   // (maison-engine.ts) pour la logique de résolution symétrique.
   const definirCouleurCircuit = (b: Breaker, couleur: string) => {
     if (b.manuelId != null) {
-      changerCouleurCircuitManuel(b.manuelId, couleur);
+      updateNiveauActif(n => ({
+        ...n, circuitsManuels: (n.circuitsManuels ?? []).map(m => m.id === b.manuelId ? { ...m, couleur } : m),
+      }));
     } else {
       updateNiveauActif(n => ({ ...n, couleursCircuits: { ...(n.couleursCircuits ?? {}), [b.label]: couleur } }));
     }
@@ -1373,6 +1504,15 @@ export default function PlanPage() {
     setResultat(res);
     setNiveaux(res.maison.niveaux);
     setShowCircuits(true);
+    setCircuitsVisibles(new Set(res.breakers.map(b => b.id)));
+  };
+
+  const toggleCircuitVisible = (breakerId: number) => {
+    setCircuitsVisibles(prev => {
+      const next = new Set(prev);
+      if (next.has(breakerId)) next.delete(breakerId); else next.add(breakerId);
+      return next;
+    });
   };
 
   const capturerEtImprimer3D = () => {
@@ -1769,7 +1909,7 @@ export default function PlanPage() {
                 const tousAppareils = niveauActif.pieces.flatMap(p => p.appareillages);
                 const parCircuit = new Map<number, AppareillagePlace[]>();
                 tousAppareils.forEach(a => {
-                  if (a.circuitId == null) return;
+                  if (a.circuitId == null || !circuitsVisibles.has(a.circuitId)) return;
                   const arr = parCircuit.get(a.circuitId) ?? [];
                   arr.push(a);
                   parCircuit.set(a.circuitId, arr);
@@ -1856,7 +1996,7 @@ export default function PlanPage() {
               {niveauActif?.pieces.flatMap(piece => piece.appareillages.map(a => ({ piece, a }))).map(({ piece, a }) => {
                 const p = toScreen({ x: a.x, y: a.y });
                 const isSel = a.id === selectedAppareillageId;
-                const color = showCircuits && a.circuitId != null ? (colorMap.get(a.circuitId) ?? "#1c1917") : (isSel ? "#F59E0B" : "#1c1917");
+                const color = showCircuits && a.circuitId != null && circuitsVisibles.has(a.circuitId) ? (colorMap.get(a.circuitId) ?? "#1c1917") : (isSel ? "#F59E0B" : "#1c1917");
                 // Cible de clic généreuse et indépendante du zoom (invisible, sous l'icône) :
                 // l'icône réelle peut être fine, la zone cliquable reste toujours confortable.
                 const rZoneClic = Math.max(16, symSize / 2 + 7);
@@ -1957,6 +2097,16 @@ export default function PlanPage() {
                     onChange={e => renommerAppareillage(selectedAppareillage.id, e.target.value)} />
                   <button onClick={() => removerAppareillage(selectedAppareillage.id)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
                 </div>
+                {niveauActif && niveauActif.pieces.length > 1 && (
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0">Pièce</span>
+                    <select className="input !py-1 !text-xs flex-1"
+                      value={pieceDeSelectedAppareillage?.id ?? ""}
+                      onChange={e => deplacerAppareillageVersPiece(selectedAppareillage.id, Number(e.target.value))}>
+                      {niveauActif.pieces.map(p => <option key={p.id} value={p.id}>{p.nom || PIECE_TYPES[p.type].label}</option>)}
+                    </select>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 text-xs text-ink-500">
                   <span className="shrink-0">Hauteur (cm)</span>
                   <input type="number" className="input !py-1 !text-xs !w-20" placeholder="—"
@@ -2010,22 +2160,17 @@ export default function PlanPage() {
                     </div>
                   </div>
                 )}
-                {pieceDeSelectedAppareillage && (() => {
-                  const famille = familleCircuitManuelAppareillage(selectedAppareillage.type, pieceDeSelectedAppareillage.type);
-                  if (!famille) return null;
-                  const options = (niveauActif?.circuitsManuels ?? []).filter(m => m.famille === famille);
-                  return (
-                    <div className="flex items-center gap-2 text-xs text-ink-500 border-t border-ink-100 pt-2">
-                      <span className="shrink-0">Circuit</span>
-                      <select className="input !py-1 !text-xs flex-1"
-                        value={selectedAppareillage.circuitManuelId ?? ""}
-                        onChange={e => assignerCircuitManuel(selectedAppareillage.id, e.target.value ? Number(e.target.value) : undefined)}>
-                        <option value="">Automatique</option>
-                        {options.map(m => <option key={m.id} value={m.id}>{m.nom}</option>)}
-                      </select>
-                    </div>
-                  );
-                })()}
+                {(niveauActif?.circuitsManuels?.length ?? 0) > 0 && (
+                  <div className="flex items-center gap-2 text-xs text-ink-500 border-t border-ink-100 pt-2">
+                    <span className="shrink-0">Circuit</span>
+                    <select className="input !py-1 !text-xs flex-1"
+                      value={selectedAppareillage.circuitManuelId ?? ""}
+                      onChange={e => assignerCircuitManuel(selectedAppareillage.id, e.target.value ? Number(e.target.value) : undefined)}>
+                      <option value="">Automatique</option>
+                      {(niveauActif?.circuitsManuels ?? []).map(m => <option key={m.id} value={m.id}>{m.nom}</option>)}
+                    </select>
+                  </div>
+                )}
                 {(["interrupteur", "va_et_vient", "telerupteur"] as AppareillageType[]).includes(selectedAppareillage.type) && (
                   <button onClick={() => setPendingCommande({ item: selectedAppareillage, estNouveau: false })}
                     className="btn-ghost !text-xs justify-center">
@@ -2208,31 +2353,26 @@ export default function PlanPage() {
                   <button onClick={() => setCircuitsManuelsOpen(false)} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={14} /></button>
                 </div>
                 <p className="text-[11px] text-ink-400">
-                  Crée un circuit nommé et coloré à la main, puis rattache-lui des appareillages depuis leur panneau (menu "Circuit"). Prioritaire sur le clustering automatique à la prochaine génération.
+                  Crée un circuit de n'importe quel type (prises, éclairage, chauffage, appareil dédié…) et choisis toi-même ses appareillages — prioritaire sur la génération automatique. Clique sur un circuit existant pour le modifier.
                 </p>
-                {(Object.keys(FAMILLES_CIRCUIT_MANUEL) as FamilleCircuitManuel[]).map(famille => {
-                  const items = (niveauActif.circuitsManuels ?? []).filter(m => m.famille === famille);
-                  return (
-                    <div key={famille} className="flex flex-col gap-1.5 border-t border-ink-100 pt-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">{FAMILLES_CIRCUIT_MANUEL[famille]}</span>
-                        <button onClick={() => ajouterCircuitManuel(famille)} className="btn-ghost !px-1.5 !py-0.5 !text-[11px]"><Plus size={11} /> Ajouter</button>
-                      </div>
-                      {items.length === 0 && <p className="text-[11px] text-ink-300 italic">Aucun circuit manuel</p>}
-                      {items.map(m => (
-                        <div key={m.id} className="flex items-center gap-1.5">
-                          <input type="color" title="Couleur du circuit"
-                            className="w-5 h-5 shrink-0 rounded-full border-0 p-0 cursor-pointer overflow-hidden"
-                            value={m.couleur ?? "#78716c"}
-                            onChange={e => changerCouleurCircuitManuel(m.id, e.target.value)} />
-                          <input className="input !py-1 !text-xs flex-1 min-w-0" value={m.nom}
-                            onChange={e => renommerCircuitManuel(m.id, e.target.value)} />
-                          <button onClick={() => supprimerCircuitManuel(m.id)} className="btn-danger !px-1.5 !py-1 shrink-0"><Trash2 size={11} /></button>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })}
+                <button onClick={ouvrirNouveauCircuitManuel} className="btn-volt !text-xs justify-center"><Plus size={13} /> Nouveau circuit manuel</button>
+                <div className="flex flex-col gap-1 pt-1">
+                  {(niveauActif.circuitsManuels ?? []).length === 0 && (
+                    <p className="text-[11px] text-ink-300 italic">Aucun circuit manuel sur ce niveau</p>
+                  )}
+                  {(niveauActif.circuitsManuels ?? []).map(m => {
+                    const nbMembres = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitManuelId === m.id).length;
+                    const spec = CIRCUITS[m.famille] ?? CIRCUITS.autre;
+                    return (
+                      <button key={m.id} onClick={() => ouvrirEditionCircuitManuel(m)}
+                        className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-ink-200 hover:border-ink-400 text-left">
+                        <span className="w-3 h-3 rounded-full shrink-0" style={{ background: m.couleur ?? "#78716c" }} />
+                        <span className="text-xs text-ink-700 truncate flex-1">{m.nom}</span>
+                        <span className="text-[10px] text-ink-400 shrink-0">{spec.icon} {nbMembres}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
@@ -2255,22 +2395,40 @@ export default function PlanPage() {
 
             {showCircuits && resultat && circuitsNiveauActif.length > 0 && (
               <div className="absolute bottom-4 right-4 card card-inner !p-3 max-w-[260px] max-h-56 overflow-y-auto shadow-lg">
-                <p className="text-[10px] font-semibold text-ink-400 uppercase tracking-wide mb-1.5">Circuits</p>
+                <div className="flex items-center justify-between mb-1.5 gap-2">
+                  <p className="text-[10px] font-semibold text-ink-400 uppercase tracking-wide">Circuits</p>
+                  <button className="text-[10px] text-volt-600 font-semibold shrink-0"
+                    onClick={() => {
+                      const idsNiveau = circuitsNiveauActif.map(b => b.id);
+                      const tousVisibles = idsNiveau.every(id => circuitsVisibles.has(id));
+                      setCircuitsVisibles(prev => {
+                        const next = new Set(prev);
+                        idsNiveau.forEach(id => (tousVisibles ? next.delete(id) : next.add(id)));
+                        return next;
+                      });
+                    }}>
+                    {circuitsNiveauActif.every(b => circuitsVisibles.has(b.id)) ? "Tout masquer" : "Tout afficher"}
+                  </button>
+                </div>
                 <div className="flex flex-col gap-1">
                   {circuitsNiveauActif.map(b => {
                     const pointsCircuit = niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id) ?? [];
                     const lg = showLongueurs && niveauActif?.tableauPos && pointsCircuit.length > 0
                       ? longueurBranchesEclairage(segmentsPourCircuit(b, pointsCircuit, niveauActif, niveauActif.tableauPos), niveauActif.liaisonWaypoints)
                       : null;
+                    const visible = circuitsVisibles.has(b.id);
                     return (
-                      <div key={b.id} className="flex items-center gap-1.5 text-[11px] text-ink-600">
+                      <label key={b.id} className={`flex items-center gap-1.5 text-[11px] cursor-pointer ${visible ? "text-ink-600" : "text-ink-300"}`}>
+                        <input type="checkbox" checked={visible} onChange={() => toggleCircuitVisible(b.id)}
+                          title={visible ? "Masquer ce circuit" : "Afficher ce circuit"} />
                         <input type="color" title="Choisir la couleur de ce circuit"
                           className="w-4 h-4 shrink-0 rounded-full border-0 p-0 cursor-pointer overflow-hidden"
                           value={colorMap.get(b.id) ?? "#666666"}
+                          onClick={e => e.stopPropagation()}
                           onChange={e => definirCouleurCircuit(b, e.target.value)} />
                         <span className="truncate flex-1">{b.label}</span>
                         {lg !== null && <span className="font-mono text-ink-400 shrink-0">{lg.toFixed(1)}m</span>}
-                      </div>
+                      </label>
                     );
                   })}
                 </div>
@@ -2401,6 +2559,16 @@ export default function PlanPage() {
           niveaux={niveaux} niveauActifId={niveauActifId}
           onValider={handleImprimer3D}
           onCancel={() => setShow3DPrintForm(false)}
+        />
+      )}
+
+      {circuitManuelForm && niveauActif && (
+        <CircuitManuelForm
+          niveau={niveauActif}
+          existing={circuitManuelForm.existing}
+          onValidate={validerCircuitManuel}
+          onCancel={() => setCircuitManuelForm(null)}
+          onDelete={circuitManuelForm.existing ? () => supprimerCircuitManuelEtFermer(circuitManuelForm.existing!.id) : undefined}
         />
       )}
     </Shell>
