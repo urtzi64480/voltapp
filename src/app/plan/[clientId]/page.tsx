@@ -191,7 +191,10 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
               const distM = distance(cheminM[j], cheminM[j + 1]);
               const aPx = chemin[j], bPx = chemin[j + 1];
               const mx = (aPx.x + bPx.x) / 2, my = (aPx.y + bPx.y) / 2;
-              s += `<text x="${mx.toFixed(1)}" y="${(my - 3).toFixed(1)}" font-size="6" text-anchor="middle" font-family="monospace" fill="${couleurSegment}">${distM.toFixed(2)}m</text>`;
+              // Longueur toujours en noir, quelle que soit la couleur du circuit — lisible sur
+              // n'importe quelle teinte de tracé, contrairement au trait lui-même (couleurSegment).
+              s += `<rect x="${(mx - (distM.toFixed(2).length + 1) * 2.1).toFixed(1)}" y="${(my - 8).toFixed(1)}" width="${((distM.toFixed(2).length + 1) * 4.2).toFixed(1)}" height="7" fill="#fff" opacity="0.85"/>`;
+              s += `<text x="${mx.toFixed(1)}" y="${(my - 3).toFixed(1)}" font-size="6" text-anchor="middle" font-family="monospace" fill="#111">${distM.toFixed(2)}m</text>`;
             }
           }
         }
