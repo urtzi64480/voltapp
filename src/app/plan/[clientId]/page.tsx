@@ -2666,16 +2666,21 @@ export default function PlanPage() {
 
               {cheminementDessin && niveauActif?.tableauPos && (() => {
                 const membres = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === cheminementDessin.breaker.id);
-                const depart = toScreen(niveauActif.tableauPos);
+                // Un circuit manuel "déjà existant" (non relié au tableau) ne part jamais du
+                // tableau — même pendant l'aperçu du dessin de cheminement, avant de valider.
+                const manuelDuCircuit = cheminementDessin.breaker.manuelId != null
+                  ? (niveauActif.circuitsManuels ?? []).find(m => m.id === cheminementDessin.breaker.manuelId)
+                  : undefined;
+                const relieAuTableau = !manuelDuCircuit?.nonRelieTableau;
                 const placesPx = cheminementDessin.ordre
                   .map(id => membres.find(m => m.id === id))
                   .filter((m): m is AppareillagePlace => !!m)
                   .map(a => toScreen({ x: a.x, y: a.y }));
-                const chemin = [depart, ...placesPx];
+                const chemin = relieAuTableau ? [toScreen(niveauActif.tableauPos), ...placesPx] : placesPx;
                 const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
                 return (
                   <>
-                    {placesPx.length > 0 && <path d={d} fill="none" stroke="#F59E0B" strokeWidth={2.5} strokeDasharray="6,4" opacity={0.9} style={{ pointerEvents: "none" }} />}
+                    {chemin.length > 1 && <path d={d} fill="none" stroke="#F59E0B" strokeWidth={2.5} strokeDasharray="6,4" opacity={0.9} style={{ pointerEvents: "none" }} />}
                     {membres.map(a => {
                       const p = toScreen({ x: a.x, y: a.y });
                       const idx = cheminementDessin.ordre.indexOf(a.id);
