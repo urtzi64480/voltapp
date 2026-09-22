@@ -574,7 +574,7 @@ function CommandeLinkForm({ niveau, item, onValidate, onCancel }: {
 function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }: {
   niveau: Niveau;
   existing: CircuitManuel | null; // null = création, sinon édition de ce circuit
-  onValidate: (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[], creerBoite: boolean) => void;
+  onValidate: (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[], creerBoite: boolean, nonRelieTableau: boolean) => void;
   onCancel: () => void;
   onDelete?: () => void;
 }) {
@@ -582,6 +582,7 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
   const [famille, setFamille] = useState<FamilleCircuitManuel>(existing?.famille ?? "prise_16");
   const [couleur, setCouleur] = useState(existing?.couleur ?? "");
   const [creerBoite, setCreerBoite] = useState(false);
+  const [nonRelieTableau, setNonRelieTableau] = useState(existing?.nonRelieTableau ?? false);
   const tousAppareils = niveau.pieces.flatMap(p => p.appareillages.map(a => ({ a, pieceNom: p.nom })));
   const [membres, setMembres] = useState<Set<number>>(
     () => new Set(existing ? tousAppareils.filter(({ a }) => a.circuitManuelId === existing.id).map(({ a }) => a.id) : []),
@@ -625,6 +626,13 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
               <span className="text-sm text-ink-700">Créer une boîte de dérivation pour ce circuit</span>
             </label>
           )}
+          <label className="flex items-center gap-2 cursor-pointer border-t border-ink-100 pt-2">
+            <input type="checkbox" checked={nonRelieTableau} onChange={e => setNonRelieTableau(e.target.checked)} />
+            <span className="text-sm text-ink-700">Circuit déjà existant — non relié au tableau (piquage sur une installation en place)</span>
+          </label>
+          {nonRelieTableau && (
+            <p className="text-xs text-ink-400 -mt-1.5">Aucun disjoncteur n'est ajouté au tableau pour ce circuit, et le câblage n'est tracé qu'entre ses appareillages — jamais jusqu'au tableau.</p>
+          )}
           <div>
             <label className="label">Appareillages sur ce circuit ({membres.size})</label>
             <div className="flex flex-col gap-0.5 max-h-56 overflow-y-auto border border-ink-100 rounded-lg p-1.5">
@@ -644,7 +652,7 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
           </div>
         </div>
         <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
-          <button disabled={!nomValide} onClick={() => onValidate(nom.trim(), famille, couleur || undefined, Array.from(membres), creerBoite)}
+          <button disabled={!nomValide} onClick={() => onValidate(nom.trim(), famille, couleur || undefined, Array.from(membres), creerBoite, nonRelieTableau)}
             className="btn-volt flex-1 disabled:opacity-40"><Save size={14} /> {existing ? "Enregistrer" : "Créer"}</button>
           {onDelete && <button onClick={onDelete} className="btn-danger !px-3"><Trash2 size={14} /></button>}
         </div>
@@ -1302,6 +1310,20 @@ export default function PlanPage() {
     }));
   };
 
+  // Bascule le flag "déjà existant" — l'appareillage reste un membre à part entière du
+  // circuit (tracé, génération), mais sort de la facturation du pré-devis (lui et sa boîte
+  // d'encastrement) : voir predevis-engine.ts. Purement une question de facturation, aucun
+  // impact électrique : aucune régénération nécessaire.
+  const modifierDejaExistant = (appareillageId: number, dejaExistant: boolean) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({
+        ...p,
+        appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, dejaExistant } : a),
+      })),
+    }));
+  };
+
   // Rattache un appareillage à la pièce de son choix, indépendamment de sa position réelle
   // sur le plan (x/y inchangés — seule l'appartenance "pièce" change) : corrige un placement
   // automatique erroné (détection de pièce imprécise près d'un mur/coin) sans avoir à
@@ -1424,7 +1446,7 @@ export default function PlanPage() {
   // liste sont détachés, ceux ajoutés sont rattachés, en une seule mise à jour. creerBoite
   // (uniquement à la création d'un circuit lumière) crée aussi une première boîte de
   // dérivation, positionnée au tableau (ou à l'origine) faute de membres à ce stade.
-  const validerCircuitManuel = (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[], creerBoite: boolean) => {
+  const validerCircuitManuel = (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[], creerBoite: boolean, nonRelieTableau: boolean) => {
     const existing = circuitManuelForm?.existing ?? null;
     const id = existing ? existing.id : uidMaison();
     updateNiveauActif(n => ({
@@ -1433,8 +1455,8 @@ export default function PlanPage() {
         ? { ...(n.boitesDerivation ?? {}), [nom]: [{ id: uidMaison(), nom: "Boîte 1", point: n.tableauPos ?? { x: 0, y: 0 } }] }
         : n.boitesDerivation,
       circuitsManuels: existing
-        ? (n.circuitsManuels ?? []).map(m => m.id === id ? { ...m, nom, famille, couleur } : m)
-        : [...(n.circuitsManuels ?? []), { id, nom, famille, couleur }],
+        ? (n.circuitsManuels ?? []).map(m => m.id === id ? { ...m, nom, famille, couleur, nonRelieTableau } : m)
+        : [...(n.circuitsManuels ?? []), { id, nom, famille, couleur, nonRelieTableau }],
       pieces: n.pieces.map(p => ({
         ...p,
         appareillages: p.appareillages.map(a => {
@@ -2019,6 +2041,14 @@ export default function PlanPage() {
   const handlePousserVersTableau = async () => {
     if (!resultat || resultat.breakers.length === 0) return;
     setPushing(true);
+    // Circuits manuels "déjà existants" (CircuitManuel.nonRelieTableau) : jamais poussés
+    // au tableau — ils restent protégés par le disjoncteur déjà en place sur l'installation
+    // existante, hors de ce plan.
+    const idsManuelsNonRelies = new Set(
+      niveaux.flatMap(n => (n.circuitsManuels ?? []).filter(m => m.nonRelieTableau).map(m => m.id)),
+    );
+    const breakersAPousser = resultat.breakers.filter(b => b.manuelId == null || !idsManuelsNonRelies.has(b.manuelId));
+    const nbExclus = resultat.breakers.length - breakersAPousser.length;
     // Renommer un circuit automatique (Niveau.nomsCircuits) ne modifie jamais resultat.breakers
     // (label "naturel", utilisé comme clé stable par couleursCircuits/ordresCircuits) — on
     // résout donc le nom affiché ici, juste avant de pousser vers le tableau, en fusionnant
@@ -2026,7 +2056,7 @@ export default function PlanPage() {
     // donc pas de collision entre niveaux en pratique).
     const tousNomsCircuits: Record<string, string> = {};
     niveaux.forEach(n => Object.assign(tousNomsCircuits, n.nomsCircuits ?? {}));
-    const breakersAvecNoms = resultat.breakers.map(b => ({ ...b, label: tousNomsCircuits[b.label] ?? b.label }));
+    const breakersAvecNoms = breakersAPousser.map(b => ({ ...b, label: tousNomsCircuits[b.label] ?? b.label }));
     const nouvellesRows = assemblerTableau(breakersAvecNoms);
     const { data: c } = await supabase.from("clients").select("tableau_config").eq("id", clientId).single();
     let rows: BreakerRow[] = [];
@@ -2042,7 +2072,7 @@ export default function PlanPage() {
     const rowsFinal = [...rowsConservees, ...remap];
     await supabase.from("clients").update({ tableau_config: JSON.stringify(rowsFinal) }).eq("id", clientId);
     setPushing(false);
-    setPushMsg(`${remap.length} rangée(s) et ${resultat.breakers.length} circuit(s) mis à jour dans le tableau.`);
+    setPushMsg(`${remap.length} rangée(s) et ${breakersAPousser.length} circuit(s) mis à jour dans le tableau.${nbExclus > 0 ? ` ${nbExclus} circuit(s) déjà existant(s) non poussé(s).` : ""}`);
     setTimeout(() => setPushMsg(null), 5000);
   };
 
@@ -2564,6 +2594,9 @@ export default function PlanPage() {
                     onPointerDown={e => onAppareillagePointerDown(piece, a, e)}
                     style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture ? (isSel ? "grab" : "pointer") : "default" }}>
                     <circle cx={p.x} cy={p.y} r={rZoneClic} fill={isSel ? "#FEF3C7" : "transparent"} stroke="none" />
+                    {a.dejaExistant && (
+                      <circle cx={p.x} cy={p.y} r={symSize / 2 + 3} fill="none" stroke="#0EA5E9" strokeWidth={1.2} strokeDasharray="2,2" style={{ pointerEvents: "none" }} />
+                    )}
                     <g transform={`translate(${p.x - symSize / 2}, ${p.y - symSize / 2})`} style={{ pointerEvents: "none" }}>
                       <AppareillageSymbol type={a.type} size={symSize} color={color} />
                     </g>
@@ -2810,6 +2843,11 @@ export default function PlanPage() {
                     </label>
                   </>
                 )}
+                <label className="flex items-center gap-2 text-xs text-ink-500 cursor-pointer border-t border-ink-100 pt-2">
+                  <input type="checkbox" checked={selectedAppareillage.dejaExistant ?? false}
+                    onChange={e => modifierDejaExistant(selectedAppareillage.id, e.target.checked)} />
+                  <span>🏚️ Déjà existant — ne pas facturer (sert quand même de point de départ pour le circuit)</span>
+                </label>
                 {selectedAppareillage.circuitId != null ? (
                   <p className="text-xs text-ink-400">Circuit : {resultat?.breakers.find(b => b.id === selectedAppareillage.circuitId)?.label}</p>
                 ) : niveauActif?.appareillagesExclus?.includes(selectedAppareillage.id) ? (
@@ -3066,6 +3104,7 @@ export default function PlanPage() {
                         className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-ink-200 hover:border-ink-400 text-left">
                         <span className="w-3 h-3 rounded-full shrink-0" style={{ background: m.couleur ?? "#78716c" }} />
                         <span className="text-xs text-ink-700 truncate flex-1">{m.nom}</span>
+                        {m.nonRelieTableau && <span className="text-[9px] text-sky-600 shrink-0 whitespace-nowrap" title="Circuit déjà existant, non relié au tableau">🔗✕</span>}
                         <span className="text-[10px] text-ink-400 shrink-0">{spec.icon} {nbMembres}</span>
                       </button>
                     );
@@ -3168,6 +3207,7 @@ export default function PlanPage() {
                           onChange={e => b ? renommerCircuit(b, e.target.value) : renommerCircuitManuelDirect(manuel!.id, e.target.value)} />
                         {lg !== null && <span className="font-mono text-ink-400 shrink-0">{lg.toFixed(1)}m</span>}
                         {!b && <span className="text-[9px] text-ink-400 shrink-0 italic whitespace-nowrap">à générer</span>}
+                        {manuel?.nonRelieTableau && <span className="text-[9px] text-sky-600 shrink-0" title="Circuit déjà existant, non relié au tableau">🔗✕</span>}
                         {b && CIRCUITS[b.circuit]?.category !== "lumiere" && (
                           <button onClick={e => { e.preventDefault(); e.stopPropagation(); demarrerDessinCheminement(b); }}
                             className="btn-ghost !p-0.5 shrink-0" title="Dessiner le cheminement">
