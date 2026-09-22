@@ -333,7 +333,7 @@ export default function PreDevisPage() {
 
       const { data: devis, error } = await supabase.from("devis").insert({
         user_id: session.user.id, client_id: clientId, numero,
-        objet: "Pré-devis électrique", date_emission: new Date().toISOString().split("T")[0],
+        objet: "Pré-devis électrique",
         statut: "brouillon", total_service: totalService, total_materiau: totalMateriau,
         total_ttc: totalService + totalMateriau,
       }).select().single();
