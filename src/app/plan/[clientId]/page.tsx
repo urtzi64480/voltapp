@@ -10,7 +10,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
-  GripHorizontal, ChevronUp, ChevronDown,
+  GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -20,7 +20,7 @@ import {
   CircuitManuel, FamilleCircuitManuel,
   nouveauNiveau, nouvellePiece, nouvelAppareillage, uidMaison, reamorcerCompteurId, dedupliquerIds,
   LiaisonWaypoint, cleSegmentLiaison,
-  cheminSegment, longueurBranchesEclairage, centroidePoints, assombrirCouleur,
+  cheminSegment, longueurBranchesEclairage, centroidePoints, assombrirCouleur, pointsOndulesEntre,
   BoiteDerivation, migrerBoitesDerivation,
 } from "@/lib/maison-types";
 import { AppareillageSymbol, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
@@ -117,7 +117,7 @@ function escapeXml(str: string): string {
 
 // ─── IMPRESSION ─────────────────────────────────────────────────────────────────
 
-function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, showCircuits: boolean, showHauteurs: boolean, piecesSelectionnees: Set<number> | null): string {
+function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, showCircuits: boolean, showHauteurs: boolean, showLongueurs: boolean, piecesSelectionnees: Set<number> | null): string {
   const pieces = piecesSelectionnees ? n.pieces.filter(p => piecesSelectionnees.has(p.id)) : n.pieces;
   const allPts = [
     ...pieces.flatMap(p => p.contour),
@@ -165,7 +165,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
     });
   });
 
-  if (showCircuits && resultat && n.tableauPos) {
+  if ((showCircuits || showHauteurs) && resultat && n.tableauPos) {
     const tousAppareils = niveauResultat.pieces.flatMap(p => p.appareillages);
     const parCircuit = new Map<number, AppareillagePlace[]>();
     tousAppareils.forEach(a => {
@@ -180,13 +180,26 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       const color = colorMap.get(circuitId) ?? "#666";
       const segments = segmentsPourCircuit(breaker, points, n, n.tableauPos!);
       segments.forEach(seg => {
-        const chemin = cheminSegment(seg, n.liaisonWaypoints).map(toPx);
-        const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+        const cheminM = cheminSegment(seg, n.liaisonWaypoints);
+        const chemin = cheminM.map(toPx);
         const couleurSegment = seg.type === "navette" ? assombrirCouleur(color) : color;
-        s += `<path d="${d}" fill="none" stroke="${couleurSegment}" stroke-width="1.2" stroke-dasharray="3,2" opacity="0.85"/>`;
+        if (showCircuits) {
+          const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+          s += `<path d="${d}" fill="none" stroke="${couleurSegment}" stroke-width="1.2" stroke-dasharray="3,2" opacity="0.85"/>`;
+          if (showLongueurs) {
+            for (let j = 0; j < cheminM.length - 1; j++) {
+              const distM = distance(cheminM[j], cheminM[j + 1]);
+              const aPx = chemin[j], bPx = chemin[j + 1];
+              const mx = (aPx.x + bPx.x) / 2, my = (aPx.y + bPx.y) / 2;
+              s += `<text x="${mx.toFixed(1)}" y="${(my - 3).toFixed(1)}" font-size="6" text-anchor="middle" font-family="monospace" fill="${couleurSegment}">${distM.toFixed(2)}m</text>`;
+            }
+          }
+        }
         // Hauteur/pose de chaque coude (passage de gaine dans le mur, ou en apparent) —
-        // uniquement les coudes qui portent une info à afficher, pour ne pas polluer un
-        // tracé simple sans coude renseigné.
+        // indépendant de l'inclusion des circuits : le libellé de la case à cocher promet
+        // "hauteurs d'implantation (appareillages + gaines)" quel que soit l'état de
+        // "Inclure les circuits", donc ces annotations s'affichent dès que showHauteurs est
+        // coché, même si showCircuits est décoché (dans ce cas, sans le tracé coloré).
         if (showHauteurs) {
           const cle = cleSegmentLiaison(seg.aId, seg.bId);
           const coudes = n.liaisonWaypoints?.[cle] ?? [];
@@ -195,12 +208,13 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
             const pC = toPx(c.point);
             const pose = c.poseType === "apparent" ? "apparent" : "encastré";
             const txt = c.hauteur != null ? `${c.hauteur}cm (${pose})` : `(${pose})`;
-            s += `<circle cx="${pC.x.toFixed(1)}" cy="${pC.y.toFixed(1)}" r="2" fill="${color}"/>`;
+            const couleurPoint = showCircuits ? couleurSegment : "#78716c";
+            s += `<circle cx="${pC.x.toFixed(1)}" cy="${pC.y.toFixed(1)}" r="2" fill="${couleurPoint}"/>`;
             s += `<text x="${(pC.x + 4).toFixed(1)}" y="${(pC.y - 4).toFixed(1)}" font-size="6" font-family="monospace" fill="#333">${escapeXml(txt)}</text>`;
           });
         }
       });
-      if (breaker.circuit === "lumiere") {
+      if (showCircuits && breaker.circuit === "lumiere") {
         const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
         const boitesExistantes = n.boitesDerivation?.[breaker.label] ?? [];
         const dessinerBoiteImprimee = (pt: Point, nom?: string) => {
@@ -239,6 +253,15 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
     }
   }
 
+  if (n.pointArriveeGaines) {
+    const pos = toPx(n.pointArriveeGaines);
+    s += `<circle cx="${pos.x.toFixed(1)}" cy="${pos.y.toFixed(1)}" r="6" fill="#0EA5E9" stroke="#fff" stroke-width="1.2"/>`;
+    s += `<text x="${pos.x.toFixed(1)}" y="${(pos.y + 3).toFixed(1)}" font-size="7" text-anchor="middle" fill="#fff">⬇</text>`;
+    if (n.distanceArriveeGainesTableau != null) {
+      s += `<text x="${pos.x.toFixed(1)}" y="${(pos.y + 16).toFixed(1)}" font-size="6" text-anchor="middle" font-family="monospace" fill="#0369A1">${n.distanceArriveeGainesTableau}m → tableau</text>`;
+    }
+  }
+
   s += `</svg>`;
   return s;
 }
@@ -247,13 +270,18 @@ function couleurTaux(tauxPct: number): string {
   return tauxPct <= 20 ? "#059669" : tauxPct <= 33 ? "#D97706" : "#DC2626";
 }
 
-function gaineNiveauHtml(troncon: TronconGaine | undefined): string {
-  if (!troncon) return "";
-  return `<div style="margin:0 6mm 6mm;font-size:8pt;font-family:monospace;color:#333;display:flex;align-items:center;gap:6px;">
-    <span>🔀 Gaine principale : <strong>${escapeXml(troncon.gaine)}</strong></span>
-    <span style="color:${couleurTaux(troncon.tauxPct)};font-weight:bold;">${troncon.tauxPct}% de remplissage</span>
-    <span style="color:#888;">(${troncon.circuits.length} circuit${troncon.circuits.length > 1 ? "s" : ""} regroupés Tableau → niveau)</span>
-  </div>`;
+function gaineNiveauHtml(troncon: TronconGaine | undefined, niveau: Niveau): string {
+  const lignes: string[] = [];
+  if (troncon) {
+    lignes.push(`<span>🔀 Gaine principale : <strong>${escapeXml(troncon.gaine)}</strong></span>` +
+      `<span style="color:${couleurTaux(troncon.tauxPct)};font-weight:bold;">${troncon.tauxPct}% de remplissage</span>` +
+      `<span style="color:#888;">(${troncon.circuits.length} circuit${troncon.circuits.length > 1 ? "s" : ""} regroupés Tableau → niveau)</span>`);
+  }
+  if (niveau.pointArriveeGaines && niveau.distanceArriveeGainesTableau != null) {
+    lignes.push(`<span>⬇ Point d'arrivée des gaines — distance au tableau électrique : <strong>${niveau.distanceArriveeGainesTableau}m</strong> (liaison verticale non représentée sur le plan)</span>`);
+  }
+  if (lignes.length === 0) return "";
+  return `<div style="margin:0 6mm 6mm;font-size:8pt;font-family:monospace;color:#333;display:flex;flex-wrap:wrap;align-items:center;gap:6px;">${lignes.join("")}</div>`;
 }
 
 function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau, showLongueurs: boolean, niveauVivant: Niveau): string {
@@ -302,11 +330,13 @@ function imprimerPlan(
     const niveauResultatComplet = resultat?.maison.niveaux.find(rn => rn.id === n.id) ?? n;
     const niveauResultat: Niveau = { ...niveauResultatComplet, pieces: niveauResultatComplet.pieces.filter(p => piecesFiltrees.some(pf => pf.id === p.id)) };
     html += `<h2>${escapeXml(n.nom || NIVEAU_TYPES[n.type])}</h2><div class="meta">${piecesFiltrees.length} pièce${piecesFiltrees.length > 1 ? "s" : ""}</div>`;
-    html += rendreSVGImprimable(n, resultat, showCircuits, showHauteurs, piecesSelectionnees);
+    html += rendreSVGImprimable(n, resultat, showCircuits, showHauteurs, showLongueurs, piecesSelectionnees);
     if (showCircuits) {
       html += legendeCircuitsHtml(resultat, niveauResultat, showLongueurs, n);
-      const troncon = gainesNiveaux.find(g => g.niveau === (n.nom || n.type));
-      html += gaineNiveauHtml(troncon);
+    }
+    const troncon = gainesNiveaux.find(g => g.niveau === (n.nom || n.type));
+    if (showCircuits || (n.pointArriveeGaines && n.distanceArriveeGainesTableau != null)) {
+      html += gaineNiveauHtml(showCircuits ? troncon : undefined, n);
     }
   });
   html += `</body></html>`;
@@ -325,6 +355,7 @@ type DragMode =
   | { kind: "appareillage"; pieceId: number; appareillageId: number }
   | { kind: "ouverture"; pieceId: number; ouvertureId: number }
   | { kind: "tableau" }
+  | { kind: "pointArrivee" }
   | { kind: "boite"; label: string; boiteId: number }
   | { kind: "liaison"; cle: string; waypointId: number };
 
@@ -371,12 +402,6 @@ function PieceForm({ initialNom, initialType, initialHauteurPlafond, onValidate,
   );
 }
 
-// Enveloppe déplaçable pour les panneaux flottants (info pièce/appareillage/tableau/
-// ouverture/coude, circuits manuels, légende des circuits) — une poignée fine en haut
-// (grip) permet de les glisser n'importe où sur l'écran pour ne plus gêner la vue du plan.
-// Position de départ = son coin d'origine (corner) ; le déplacement est un simple offset
-// (translate) appliqué par-dessus, remis à zéro à chaque réouverture du panneau (le
-// composant est démonté/remonté avec la sélection qu'il représente).
 // Enveloppe déplaçable pour les panneaux flottants (info pièce/appareillage/tableau/
 // ouverture/coude, circuits manuels, légende des circuits, dessin de cheminement) — une
 // poignée fine en haut (grip) permet de les glisser n'importe où sur l'écran pour ne plus
@@ -747,12 +772,13 @@ function PrintForm({ niveaux, resultatDisponible, onValider, onCancel }: {
             {resultatDisponible && (
               <>
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={avecCircuits} onChange={e => setAvecCircuits(e.target.checked)} />
+                  <input type="checkbox" checked={avecCircuits}
+                    onChange={e => { const v = e.target.checked; setAvecCircuits(v); if (!v) setAvecLongueurs(false); }} />
                   <span className="text-sm text-ink-700">Inclure les circuits (couleurs + gaines)</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={avecLongueurs} disabled={!avecCircuits} onChange={e => setAvecLongueurs(e.target.checked)} />
-                  <span className={`text-sm ${avecCircuits ? "text-ink-700" : "text-ink-300"}`}>Afficher la longueur de chaque circuit</span>
+                  <span className={`text-sm ${avecCircuits ? "text-ink-700" : "text-ink-300"}`}>Afficher la longueur de chaque segment de circuit</span>
                 </label>
               </>
             )}
@@ -827,6 +853,7 @@ export default function PlanPage() {
 
   const [placementType, setPlacementType] = useState<AppareillageType | null>(null);
   const [placingTableau, setPlacingTableau] = useState(false);
+  const [placingPointArrivee, setPlacingPointArrivee] = useState(false);
   const [pendingCommande, setPendingCommande] = useState<{ item: AppareillagePlace; estNouveau: boolean } | null>(null);
   const [selectedAppareillageId, setSelectedAppareillageId] = useState<number | null>(null);
   // Incrémenté à chaque fin de geste de déplacement — sert uniquement de "key" pour forcer
@@ -834,6 +861,7 @@ export default function PlanPage() {
   // sans jamais les resynchroniser pendant la frappe (ce qui bloquait l'effacement).
   const [dragEndTick, setDragEndTick] = useState(0);
   const [selectedTableau, setSelectedTableau] = useState(false);
+  const [selectedPointArrivee, setSelectedPointArrivee] = useState(false);
   const [placingOuverture, setPlacingOuverture] = useState<OuvertureType | null>(null);
   const [ouvertureMenuOpen, setOuvertureMenuOpen] = useState(false);
   const [selectedOuvertureId, setSelectedOuvertureId] = useState<number | null>(null);
@@ -845,6 +873,10 @@ export default function PlanPage() {
   // appareillages, dans l'ordre) — null = pas de dessin en cours. ordre est l'état de
   // travail local, appliqué (appliquerOrdreCircuit) seulement à la validation.
   const [cheminementDessin, setCheminementDessin] = useState<{ breaker: Breaker; ordre: number[] } | null>(null);
+  // Liaison directe entre deux points lumineux (sans boîte de dérivation) : null = pas en
+  // cours ; sinon le label du circuit concerné + le premier point lumineux déjà cliqué
+  // (null tant qu'aucun n'a été choisi pour cette paire).
+  const [liaisonLumiereMode, setLiaisonLumiereMode] = useState<{ label: string; premierId: number | null } | null>(null);
   const [selectedWaypoint, setSelectedWaypoint] = useState<{ cle: string; waypointId: number } | null>(null);
   const [placementError, setPlacementError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -981,6 +1013,16 @@ export default function PlanPage() {
         const { point: m, guideX, guideY } = snapAvecAlignement(raw, candidats, seuilM);
         setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
         updateNiveauActif(n => ({ ...n, tableauPos: m }));
+      } else if (dragMode.kind === "pointArrivee") {
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const raw = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        const niveauCourant = niveaux.find(n => n.id === niveauActifId) ?? null;
+        const candidats = pointsReferenceNiveau(niveauCourant);
+        const seuilM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
+        const { point: m, guideX, guideY } = snapAvecAlignement(raw, candidats, seuilM);
+        setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
+        updateNiveauActif(n => ({ ...n, pointArriveeGaines: m }));
       } else if (dragMode.kind === "ouverture") {
         const rect = svgRef.current?.getBoundingClientRect();
         if (!rect) return;
@@ -1035,10 +1077,10 @@ export default function PlanPage() {
     };
     const onUp = () => {
       // "pan" (clic dans le vide / déplacement de la vue), "liaison" (coude), "ouverture"
-      // (porte/fenêtre) et "boite" (boîte de dérivation, purement cosmétique) ne changent
-      // jamais la composition électrique du plan — les exclure évite de réinitialiser les
-      // circuits générés à chaque simple clic ou déplacement de ces éléments.
-      if (!["liaison", "pan", "ouverture", "boite"].includes(dragMode.kind)) invalidateResultat();
+      // (porte/fenêtre), "boite" et "pointArrivee" (purement cosmétiques/informatifs) ne
+      // changent jamais la composition électrique du plan — les exclure évite de
+      // réinitialiser les circuits générés à chaque simple clic ou déplacement de ces éléments.
+      if (!["liaison", "pan", "ouverture", "boite", "pointArrivee"].includes(dragMode.kind)) invalidateResultat();
       setDragEndTick(t => t + 1);
       setDragMode({ kind: "none" });
       setSnapGuide(null);
@@ -1104,7 +1146,8 @@ export default function PlanPage() {
       if (o) {
         setMode("select"); setDrawingPoints([]);
         setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null);
-        setCheminementDessin(null);
+        setPlacingPointArrivee(false); setSelectedPointArrivee(false);
+        setCheminementDessin(null); setLiaisonLumiereMode(null);
       }
       return !o;
     });
@@ -1113,17 +1156,26 @@ export default function PlanPage() {
   const entrerModeDessiner = () => {
     setMode("dessiner"); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
     setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null);
+    setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
   };
   const armerPlacement = (t: AppareillageType | null) => {
     setPlacementType(t); setMode("select"); setPlacingTableau(false); setPlacingOuverture(null); setDrawingPoints([]);
+    setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
   };
   const armerPlacementTableau = () => {
     setPlacingTableau(true); setMode("select"); setPlacementType(null); setPlacingOuverture(null); setDrawingPoints([]);
+    setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
+  };
+  const armerPlacementPointArrivee = () => {
+    setPlacingPointArrivee(true); setMode("select"); setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setDrawingPoints([]);
+    setLiaisonLumiereMode(null);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedPointArrivee(false);
   };
   const armerPlacementOuverture = (t: OuvertureType | null) => {
     setPlacingOuverture(t); setMode("select"); setPlacementType(null); setPlacingTableau(false); setDrawingPoints([]);
+    setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
   };
 
@@ -1233,6 +1285,20 @@ export default function PlanPage() {
     }));
   };
 
+  // Bascule le flag "domotique" (liaison sans fil) d'un interrupteur/va-et-vient/
+  // télérupteur — n'affecte que la visualisation du cheminement (symbole d'onde à la place
+  // du trait plein retour/navette), jamais la composition électrique du circuit : aucune
+  // régénération nécessaire.
+  const modifierDomotique = (appareillageId: number, domotique: boolean) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({
+        ...p,
+        appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, domotique } : a),
+      })),
+    }));
+  };
+
   // Rattache un appareillage à la pièce de son choix, indépendamment de sa position réelle
   // sur le plan (x/y inchangés — seule l'appartenance "pièce" change) : corrige un placement
   // automatique erroné (détection de pièce imprécise près d'un mur/coin) sans avoir à
@@ -1324,6 +1390,22 @@ export default function PlanPage() {
     if (!mur) return;
     const a = mur.piece.contour[mur.segIndex], b = mur.piece.contour[(mur.segIndex + 1) % mur.piece.contour.length];
     modifierTableauRotation(Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI);
+  };
+
+  // ─── POINT D'ARRIVÉE DES GAINES (par étage) ────────────────────────────────────
+  // Purement informatif — ne déclenche jamais invalidateResultat() (aucun impact sur la
+  // composition électrique des circuits).
+
+  const modifierPositionArriveeExacte = (x: number, y: number) => {
+    if (Number.isNaN(x) || Number.isNaN(y)) return;
+    updateNiveauActif(n => ({ ...n, pointArriveeGaines: { x, y } }));
+  };
+  const modifierDistanceArriveeGaines = (distanceM: number | undefined) => {
+    updateNiveauActif(n => ({ ...n, distanceArriveeGainesTableau: distanceM }));
+  };
+  const supprimerPointArrivee = () => {
+    updateNiveauActif(n => ({ ...n, pointArriveeGaines: undefined, distanceArriveeGainesTableau: undefined }));
+    setSelectedPointArrivee(false);
   };
 
   // ─── CIRCUITS MANUELS ────────────────────────────────────────────────────────
@@ -1495,6 +1577,7 @@ export default function PlanPage() {
   // ─── DESSIN DU CHEMINEMENT (clic sur les appareillages du circuit, dans l'ordre) ───────
   const demarrerDessinCheminement = (b: Breaker) => {
     setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null);
+    setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setMode("select"); setDrawingPoints([]);
     setSelectedAppareillageId(null); setSelectedPieceId(null); setSelectedTableau(false);
     setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedWaypoint(null);
@@ -1543,6 +1626,37 @@ export default function PlanPage() {
     reinitialiserOrdreCircuit(cheminementDessin.breaker.label);
     setCheminementDessin(null);
   };
+
+  // ─── LIAISON DIRECTE ENTRE POINTS LUMINEUX (sans boîte de dérivation) ──────────────
+  const demarrerLiaisonDirecteLumiere = (label: string) => {
+    setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingPointArrivee(false);
+    setMode("select"); setDrawingPoints([]); setCheminementDessin(null);
+    setSelectedAppareillageId(null); setSelectedPieceId(null); setSelectedTableau(false);
+    setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedWaypoint(null); setSelectedPointArrivee(false);
+    setLiaisonLumiereMode({ label, premierId: null });
+  };
+  // Ajoute ou retire (toggle) une liaison directe entre deux points lumineux d'un même
+  // circuit — purement une décision de routage du câblage, sans impact sur la composition
+  // électrique du circuit : aucune régénération nécessaire.
+  const toggleLiaisonDirecteLumiere = (label: string, id1: number, id2: number) => {
+    const paire: [number, number] = id1 < id2 ? [id1, id2] : [id2, id1];
+    updateNiveauActif(n => {
+      const existantes = n.liaisonsDirectesLumiere?.[label] ?? [];
+      const idx = existantes.findIndex(([a, b]) => a === paire[0] && b === paire[1]);
+      const maj = idx >= 0 ? existantes.filter((_, i) => i !== idx) : [...existantes, paire];
+      return { ...n, liaisonsDirectesLumiere: { ...(n.liaisonsDirectesLumiere ?? {}), [label]: maj } };
+    });
+  };
+  const handleClicLumierePourLiaison = (id: number) => {
+    setLiaisonLumiereMode(m => {
+      if (!m) return m;
+      if (m.premierId == null) return { ...m, premierId: id };
+      if (m.premierId === id) return { ...m, premierId: null };
+      toggleLiaisonDirecteLumiere(m.label, m.premierId, id);
+      return { ...m, premierId: null };
+    });
+  };
+  const annulerLiaisonLumiere = () => setLiaisonLumiereMode(null);
 
   // apresIndex = position dans la liste existante des coudes après laquelle insérer
   // (0 = avant le premier coude existant, longueur actuelle = après le dernier).
@@ -1607,7 +1721,7 @@ export default function PlanPage() {
   };
 
   const onBackgroundPointerDown = (e: React.PointerEvent) => {
-    if (cheminementDessin) return; // dessin de cheminement : seuls les appareillages du circuit réagissent
+    if (cheminementDessin || liaisonLumiereMode) return; // dessin de cheminement / liaison directe : seuls les appareillages ciblés réagissent
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
     const px = e.clientX - rect.left, py = e.clientY - rect.top;
@@ -1629,6 +1743,12 @@ export default function PlanPage() {
       updateNiveauActif(n => ({ ...n, tableauPos: m }));
       setPlacingTableau(false);
       invalidateResultat();
+      return;
+    }
+
+    if (placingPointArrivee) {
+      updateNiveauActif(n => ({ ...n, pointArriveeGaines: m }));
+      setPlacingPointArrivee(false);
       return;
     }
 
@@ -1672,6 +1792,7 @@ export default function PlanPage() {
     setSelectedTableau(false);
     setSelectedOuvertureId(null); setSelectedBoite(null);
     setSelectedWaypoint(null);
+    setSelectedPointArrivee(false);
     setDragMode({ kind: "pan", startX: e.clientX, startY: e.clientY, startPan: pan });
   };
 
@@ -1683,7 +1804,7 @@ export default function PlanPage() {
   };
 
   const onPieceDown = (piece: Piece, e: React.PointerEvent) => {
-    if (cheminementDessin || mode === "dessiner" || placementType || placingTableau || placingOuverture) return;
+    if (cheminementDessin || liaisonLumiereMode || mode === "dessiner" || placementType || placingTableau || placingOuverture || placingPointArrivee) return;
     e.stopPropagation();
     if (selectedPieceId === piece.id) {
       setDragMode({ kind: "piece", pieceId: piece.id, startX: e.clientX, startY: e.clientY, startContour: piece.contour });
@@ -1697,12 +1818,22 @@ export default function PlanPage() {
   };
 
   const onVertexDown = (pieceId: number, index: number, e: React.PointerEvent) => {
-    if (cheminementDessin) return;
+    if (cheminementDessin || liaisonLumiereMode) return;
     e.stopPropagation();
     setDragMode({ kind: "vertex", pieceId, vertexIndex: index });
   };
 
   const onAppareillagePointerDown = (piece: Piece, a: AppareillagePlace, e: React.PointerEvent) => {
+    if (liaisonLumiereMode) {
+      e.stopPropagation();
+      if (a.type === "point_lumineux" || a.type === "applique") {
+        handleClicLumierePourLiaison(a.id);
+      } else {
+        setPlacementError("Sélectionne un point lumineux pour créer une liaison directe.");
+        setTimeout(() => setPlacementError(null), 2000);
+      }
+      return;
+    }
     if (cheminementDessin) {
       e.stopPropagation();
       if (a.circuitId === cheminementDessin.breaker.id) {
@@ -1713,7 +1844,7 @@ export default function PlanPage() {
       }
       return;
     }
-    if (mode !== "select" || placementType || placingTableau || placingOuverture) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) return;
     e.stopPropagation();
     // Sélectionne ET arme le déplacement dès le premier appui (comme un vrai
     // glisser-déposer) : un simple clic sans bouger équivaut juste à une sélection,
@@ -1723,24 +1854,39 @@ export default function PlanPage() {
     setSelectedPieceId(null);
     setSelectedOuvertureId(null); setSelectedBoite(null);
     setSelectedWaypoint(null);
+    setSelectedPointArrivee(false);
     setDragMode({ kind: "appareillage", pieceId: piece.id, appareillageId: a.id });
   };
 
   const onTableauPointerDown = (e: React.PointerEvent) => {
-    if (cheminementDessin) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture) return;
+    if (cheminementDessin || liaisonLumiereMode) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) return;
     e.stopPropagation();
     setSelectedTableau(true);
     setSelectedPieceId(null);
     setSelectedAppareillageId(null);
     setSelectedOuvertureId(null); setSelectedBoite(null);
     setSelectedWaypoint(null);
+    setSelectedPointArrivee(false);
     setDragMode({ kind: "tableau" });
   };
 
+  const onPointArriveePointerDown = (e: React.PointerEvent) => {
+    if (cheminementDessin || liaisonLumiereMode) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) return;
+    e.stopPropagation();
+    setSelectedPointArrivee(true);
+    setSelectedPieceId(null);
+    setSelectedAppareillageId(null);
+    setSelectedTableau(false);
+    setSelectedOuvertureId(null); setSelectedBoite(null);
+    setSelectedWaypoint(null);
+    setDragMode({ kind: "pointArrivee" });
+  };
+
   const onOuverturePointerDown = (piece: Piece, o: Ouverture, e: React.PointerEvent) => {
-    if (cheminementDessin) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture) return;
+    if (cheminementDessin || liaisonLumiereMode) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) return;
     e.stopPropagation();
     setSelectedOuvertureId(o.id);
     setSelectedPieceId(null);
@@ -1748,12 +1894,13 @@ export default function PlanPage() {
     setSelectedTableau(false);
     setSelectedBoite(null);
     setSelectedWaypoint(null);
+    setSelectedPointArrivee(false);
     setDragMode({ kind: "ouverture", pieceId: piece.id, ouvertureId: o.id });
   };
 
   const onBoitePointerDown = (label: string, boite: BoiteDerivation | null, positionActuelle: Point, e: React.PointerEvent) => {
-    if (cheminementDessin) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture) return;
+    if (cheminementDessin || liaisonLumiereMode) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) return;
     e.stopPropagation();
     let boiteId = boite?.id;
     if (boiteId == null) {
@@ -1776,6 +1923,7 @@ export default function PlanPage() {
     setSelectedTableau(false);
     setSelectedOuvertureId(null);
     setSelectedWaypoint(null);
+    setSelectedPointArrivee(false);
     setDragMode({ kind: "boite", label, boiteId });
   };
   // Ajoute une nouvelle boîte de dérivation nommée à un circuit d'éclairage — proposée pour
@@ -1799,6 +1947,18 @@ export default function PlanPage() {
     updateNiveauActif(n => ({
       ...n,
       boitesDerivation: { ...(n.boitesDerivation ?? {}), [label]: (n.boitesDerivation?.[label] ?? []).map(b => b.id === boiteId ? { ...b, nom } : b) },
+    }));
+  };
+  // Position exacte (mètres) d'une boîte de dérivation — pour un placement au centimètre
+  // près sans passer par le drag, même logique que modifierPositionExacte (appareillage).
+  const modifierPositionBoite = (label: string, boiteId: number, x: number, y: number) => {
+    if (Number.isNaN(x) || Number.isNaN(y)) return;
+    updateNiveauActif(n => ({
+      ...n,
+      boitesDerivation: {
+        ...(n.boitesDerivation ?? {}),
+        [label]: (n.boitesDerivation?.[label] ?? []).map(b => b.id === boiteId ? { ...b, point: { x, y } } : b),
+      },
     }));
   };
   const supprimerBoiteDerivation = (label: string, boiteId: number) => {
@@ -1981,7 +2141,7 @@ export default function PlanPage() {
 
         <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 bg-ink-50 overflow-x-auto shrink-0">
           {[...niveaux].sort((a, b) => a.ordre - b.ordre).map(n => (
-            <button key={n.id} onClick={() => { setNiveauActifId(n.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setCheminementDessin(null); }}
+            <button key={n.id} onClick={() => { setNiveauActifId(n.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedPointArrivee(false); setCheminementDessin(null); setLiaisonLumiereMode(null); }}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
                 n.id === niveauActifId ? "bg-ink-900 text-volt-400" : "bg-white border border-ink-200 text-ink-500 hover:border-ink-400"
               }`}>
@@ -2002,8 +2162,8 @@ export default function PlanPage() {
 
         {!vue3D && toolbarOuvert && (
         <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 shrink-0 flex-wrap bg-ink-50">
-          <button onClick={() => { setMode("select"); setDrawingPoints([]); setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); }}
-            className={`btn-ghost !text-xs ${mode === "select" && !placementType && !placingTableau && !placingOuverture ? "!bg-ink-900 !text-volt-400" : ""}`}>
+          <button onClick={() => { setMode("select"); setDrawingPoints([]); setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingPointArrivee(false); }}
+            className={`btn-ghost !text-xs ${mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingPointArrivee ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <MousePointer2 size={13} /> Sélection
           </button>
           <button onClick={entrerModeDessiner} className={`btn-ghost !text-xs ${mode === "dessiner" ? "!bg-ink-900 !text-volt-400" : ""}`}>
@@ -2011,6 +2171,9 @@ export default function PlanPage() {
           </button>
           <button onClick={armerPlacementTableau} className={`btn-ghost !text-xs ${placingTableau ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <Zap size={13} /> Position tableau
+          </button>
+          <button onClick={armerPlacementPointArrivee} className={`btn-ghost !text-xs ${placingPointArrivee ? "!bg-ink-900 !text-volt-400" : ""}`}>
+            <ArrowDownToLine size={13} /> Arrivée gaines
           </button>
           <div className="relative">
             <button onClick={() => setOuvertureMenuOpen(o => !o)}
@@ -2103,7 +2266,7 @@ export default function PlanPage() {
             <svg
               ref={svgRef}
               className="w-full h-full block"
-              style={{ touchAction: "none", cursor: mode === "dessiner" || placementType || placingTableau ? "crosshair" : "grab" }}
+              style={{ touchAction: "none", cursor: mode === "dessiner" || placementType || placingTableau || placingPointArrivee ? "crosshair" : "grab" }}
               onPointerDown={onBackgroundPointerDown}
               onPointerMove={onCanvasPointerMove}
               onWheel={handleWheel}
@@ -2278,12 +2441,25 @@ export default function PlanPage() {
                     const coudes = waypointsNiveau?.[cle] ?? [];
                     // Liaison (navette) entre deux va-et-vient : couleur du circuit assombrie,
                     // pour rester rattachée au circuit tout en se distinguant du reste du tracé.
+                    const estDomotique = seg.type === "domotique";
                     const couleurSegment = seg.type === "navette" ? assombrirCouleur(color) : color;
                     // Sous-chaîne du segment : point de départ, coudes existants, point d'arrivée.
                     const sousChaine = [seg.aPoint, ...coudes.map(c => c.point), seg.bPoint];
                     for (let j = 0; j < sousChaine.length - 1; j++) {
-                      const aPx = toScreen(sousChaine[j]), bPx = toScreen(sousChaine[j + 1]);
-                      elements.push(<line key={`${cle}-${j}`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={couleurSegment} strokeWidth={2} strokeDasharray="6,4" opacity={0.8} />);
+                      const ptA = sousChaine[j], ptB = sousChaine[j + 1];
+                      const aPx = toScreen(ptA), bPx = toScreen(ptB);
+                      if (estDomotique) {
+                        // Liaison "particulière" (domotique/sans fil) : symbole d'onde plutôt
+                        // qu'un trait plein, pour tous les types d'interrupteur.
+                        const wavePts = pointsOndulesEntre(ptA, ptB).map(toScreen);
+                        const dOnde = wavePts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                        elements.push(<polyline key={`${cle}-${j}`} points={dOnde} fill="none" stroke={couleurSegment} strokeWidth={1.8} opacity={0.85} />);
+                      } else {
+                        elements.push(<line key={`${cle}-${j}`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={couleurSegment} strokeWidth={2} strokeDasharray="6,4" opacity={0.8} />);
+                      }
+                      if (showLongueurs) {
+                        elements.push(<EtiquetteLongueur key={`${cle}-${j}-lg`} aPx={aPx} bPx={bPx} texte={`${distance(ptA, ptB).toFixed(2)}m`} />);
+                      }
                       if (mode === "select" && !cheminementDessin) {
                         elements.push(
                           <line key={`${cle}-${j}-hit`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="transparent" strokeWidth={14}
@@ -2432,6 +2608,25 @@ export default function PlanPage() {
                 );
               })()}
 
+              {niveauActif?.pointArriveeGaines && (() => {
+                const p = toScreen(niveauActif.pointArriveeGaines);
+                const rZoneClic = 16;
+                return (
+                  <g onPointerDown={onPointArriveePointerDown}
+                    style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingPointArrivee ? (selectedPointArrivee ? "grab" : "pointer") : "default" }}>
+                    <circle cx={p.x} cy={p.y} r={rZoneClic} fill={selectedPointArrivee ? "#FEF3C7" : "transparent"} stroke="none" />
+                    <circle cx={p.x} cy={p.y} r={10} fill="#0EA5E9" stroke="#fff" strokeWidth={2} />
+                    <text x={p.x} y={p.y + 3.5} textAnchor="middle" fontSize="11" fill="#fff" style={{ pointerEvents: "none" }}>⬇</text>
+                    {niveauActif.distanceArriveeGainesTableau != null && (
+                      <text x={p.x} y={p.y + 24} textAnchor="middle" fontSize="9" fontFamily="monospace" fill="#0369A1" style={{ pointerEvents: "none" }}>
+                        {niveauActif.distanceArriveeGainesTableau}m → tableau
+                      </text>
+                    )}
+                    {selectedPointArrivee && <circle cx={p.x} cy={p.y} r={rZoneClic} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
+                  </g>
+                );
+              })()}
+
               {cheminementDessin && niveauActif?.tableauPos && (() => {
                 const membres = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === cheminementDessin.breaker.id);
                 const depart = toScreen(niveauActif.tableauPos);
@@ -2459,6 +2654,19 @@ export default function PlanPage() {
                     })}
                   </>
                 );
+              })()}
+
+              {liaisonLumiereMode && niveauActif && (() => {
+                const points = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.type === "point_lumineux" || a.type === "applique");
+                return points.map(a => {
+                  const p = toScreen({ x: a.x, y: a.y });
+                  const estPremier = liaisonLumiereMode.premierId === a.id;
+                  return (
+                    <g key={`liaison-badge-${a.id}`} style={{ pointerEvents: "none" }}>
+                      <circle cx={p.x} cy={p.y} r={11} fill={estPremier ? "#0EA5E9" : "none"} stroke="#0EA5E9" strokeWidth={2} />
+                    </g>
+                  );
+                });
               })()}
 
               {guideActif?.x !== undefined && (() => {
@@ -2586,10 +2794,17 @@ export default function PlanPage() {
                   </div>
                 )}
                 {(["interrupteur", "va_et_vient", "telerupteur"] as AppareillageType[]).includes(selectedAppareillage.type) && (
-                  <button onClick={() => setPendingCommande({ item: selectedAppareillage, estNouveau: false })}
-                    className="btn-ghost !text-xs justify-center">
-                    Commande : {selectedAppareillage.commandePourIds?.length ?? 0} point(s) lumineux — modifier
-                  </button>
+                  <>
+                    <button onClick={() => setPendingCommande({ item: selectedAppareillage, estNouveau: false })}
+                      className="btn-ghost !text-xs justify-center">
+                      Commande : {selectedAppareillage.commandePourIds?.length ?? 0} point(s) lumineux — modifier
+                    </button>
+                    <label className="flex items-center gap-2 text-xs text-ink-500 cursor-pointer border-t border-ink-100 pt-2">
+                      <input type="checkbox" checked={selectedAppareillage.domotique ?? false}
+                        onChange={e => modifierDomotique(selectedAppareillage.id, e.target.checked)} />
+                      <span>📶 Domotique (liaison sans fil — tracé en onde, pas de câble physique)</span>
+                    </label>
+                  </>
                 )}
                 {selectedAppareillage.circuitId != null ? (
                   <p className="text-xs text-ink-400">Circuit : {resultat?.breakers.find(b => b.id === selectedAppareillage.circuitId)?.label}</p>
@@ -2627,6 +2842,35 @@ export default function PlanPage() {
                   </button>
                 </div>
                 <p className="text-[11px] text-ink-400">Glisse-le directement sur le plan pour le repositionner.</p>
+              </DraggablePanel>
+            )}
+
+            {selectedPointArrivee && niveauActif?.pointArriveeGaines && mode === "select" && (
+              <DraggablePanel corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-72">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg leading-none">⬇</span>
+                  <p className="text-sm font-semibold text-ink-900 flex-1">Point d'arrivée des gaines</p>
+                  <button onClick={supprimerPointArrivee} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-ink-500">
+                  <span className="shrink-0 w-16">Position X/Y</span>
+                  <input type="number" step="0.01" className="input !py-1 !text-xs !w-20"
+                    key={`arrivee-x-${dragEndTick}`}
+                    defaultValue={niveauActif.pointArriveeGaines.x.toFixed(2)}
+                    onChange={e => { if (e.target.value !== "") modifierPositionArriveeExacte(Number(e.target.value), niveauActif.pointArriveeGaines!.y); }} />
+                  <input type="number" step="0.01" className="input !py-1 !text-xs !w-20"
+                    key={`arrivee-y-${dragEndTick}`}
+                    defaultValue={niveauActif.pointArriveeGaines.y.toFixed(2)}
+                    onChange={e => { if (e.target.value !== "") modifierPositionArriveeExacte(niveauActif.pointArriveeGaines!.x, Number(e.target.value)); }} />
+                  <span className="text-ink-400">m</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-ink-500">
+                  <span className="shrink-0">Distance au tableau (m)</span>
+                  <input type="number" min={0} step="0.1" className="input !py-1 !text-xs !w-20" placeholder="—"
+                    value={niveauActif.distanceArriveeGainesTableau ?? ""}
+                    onChange={e => modifierDistanceArriveeGaines(e.target.value ? Number(e.target.value) : undefined)} />
+                </div>
+                <p className="text-[11px] text-ink-400">Liaison verticale (gaine technique, autre niveau…) non dessinée sur le plan — distance paramétrable indépendamment sur chaque étage. Glisse le point directement sur le plan pour le repositionner.</p>
               </DraggablePanel>
             )}
 
@@ -2779,6 +3023,18 @@ export default function PlanPage() {
                       onChange={e => renommerBoiteDerivation(selectedBoite.label, selectedBoite.boiteId, e.target.value)} />
                     <button onClick={() => supprimerBoiteDerivation(selectedBoite.label, selectedBoite.boiteId)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
                   </div>
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0 w-16">Position X/Y</span>
+                    <input type="number" step="0.01" className="input !py-1 !text-xs !w-20"
+                      key={`${selectedBoite.boiteId}-x-${dragEndTick}`}
+                      defaultValue={boite.point.x.toFixed(2)}
+                      onChange={e => { if (e.target.value !== "") modifierPositionBoite(selectedBoite.label, selectedBoite.boiteId, Number(e.target.value), boite.point.y); }} />
+                    <input type="number" step="0.01" className="input !py-1 !text-xs !w-20"
+                      key={`${selectedBoite.boiteId}-y-${dragEndTick}`}
+                      defaultValue={boite.point.y.toFixed(2)}
+                      onChange={e => { if (e.target.value !== "") modifierPositionBoite(selectedBoite.label, selectedBoite.boiteId, boite.point.x, Number(e.target.value)); }} />
+                    <span className="text-ink-400">m</span>
+                  </div>
                   <p className="text-[11px] text-ink-400">Glisse-la directement sur le plan pour la repositionner.</p>
                 </DraggablePanel>
               );
@@ -2830,6 +3086,11 @@ export default function PlanPage() {
                 Clique pour positionner le tableau électrique
               </div>
             )}
+            {placingPointArrivee && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-lg">
+                Clique pour positionner le point d'arrivée des gaines
+              </div>
+            )}
             {cheminementDessin && (
               <DraggablePanel corner="tc" dark
                 className="bg-ink-900 text-volt-400 text-xs font-semibold p-3 rounded-lg shadow-lg flex items-center gap-3 flex-wrap justify-center max-w-[92vw]">
@@ -2839,6 +3100,17 @@ export default function PlanPage() {
                   <button onClick={reinitialiserDessinCheminement} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">Auto</button>
                   <button onClick={annulerDessinCheminement} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">Annuler</button>
                 </div>
+              </DraggablePanel>
+            )}
+
+            {liaisonLumiereMode && (
+              <DraggablePanel corner="tc" dark
+                className="bg-ink-900 text-volt-400 text-xs font-semibold p-3 rounded-lg shadow-lg flex items-center gap-3 flex-wrap justify-center max-w-[92vw]">
+                <span>
+                  Liaison directe « {liaisonLumiereMode.label} » : clique deux points lumineux pour les relier sans boîte — re-clique la même paire pour délier
+                  {liaisonLumiereMode.premierId != null ? " · 1er point choisi, clique le second" : ""}
+                </span>
+                <button onClick={annulerLiaisonLumiere} className="btn-volt !text-[11px] !px-2 !py-1"><Save size={11} /> Terminer</button>
               </DraggablePanel>
             )}
 
@@ -2899,10 +3171,16 @@ export default function PlanPage() {
                           </button>
                         )}
                         {estLumiere && (
-                          <button onClick={e => { e.preventDefault(); e.stopPropagation(); ajouterBoiteDerivation(labelStockage); }}
-                            className="btn-ghost !p-0.5 shrink-0" title="Ajouter une boîte de dérivation">
-                            <Plus size={12} />
-                          </button>
+                          <>
+                            <button onClick={e => { e.preventDefault(); e.stopPropagation(); ajouterBoiteDerivation(labelStockage); }}
+                              className="btn-ghost !p-0.5 shrink-0" title="Ajouter une boîte de dérivation">
+                              <Plus size={12} />
+                            </button>
+                            <button onClick={e => { e.preventDefault(); e.stopPropagation(); demarrerLiaisonDirecteLumiere(labelStockage); }}
+                              className="btn-ghost !p-0.5 shrink-0" title="Lier des points lumineux directement, sans boîte">
+                              <Link2 size={12} />
+                            </button>
+                          </>
                         )}
                         <button onClick={e => { e.preventDefault(); e.stopPropagation(); b ? supprimerCircuit(b) : supprimerCircuitManuel(manuel!.id); }}
                           className="btn-ghost !p-0.5 shrink-0 !text-red-500" title="Supprimer ce circuit">
