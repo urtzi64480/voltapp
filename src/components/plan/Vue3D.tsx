@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { Niveau, PIECE_TYPES, centroide, AppareillageType, OuvertureEffective, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, centroide, AppareillageType, OuvertureEffective, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 
@@ -316,6 +316,20 @@ const Vue3D = forwardRef<Vue3DHandle, {
         const color = colorMap.get(circuitId) ?? "#666666";
         const segments = segmentsPourCircuit(breaker, points, niveau, tableauPos);
         segments.forEach(seg => {
+          if (seg.type === "domotique") {
+            // Liaison sans fil (domotique) — pas de coudes de gaine à représenter (aucun
+            // câble physique à faire cheminer) : tracé en onde entre les deux ancres,
+            // pointillé, pour se distinguer visuellement du reste du câblage.
+            const hA = hauteurAncre(seg.aId), hB = hauteurAncre(seg.bId);
+            const waveXZ = pointsOndulesEntre(seg.aPoint, seg.bPoint);
+            const pts3D = waveXZ.map((p, i) => new THREE.Vector3(p.x, hA + (hB - hA) * (i / Math.max(1, waveXZ.length - 1)), p.y));
+            const geo = new THREE.BufferGeometry().setFromPoints(pts3D);
+            const mat = new THREE.LineDashedMaterial({ color, dashSize: 0.05, gapSize: 0.04 });
+            const ligne = new THREE.Line(geo, mat);
+            ligne.computeLineDistances();
+            scene.add(ligne);
+            return;
+          }
           const cle = cleSegmentLiaison(seg.aId, seg.bId);
           const coudes = niveau.liaisonWaypoints?.[cle] ?? [];
           const pts3D: THREE.Vector3[] = [new THREE.Vector3(seg.aPoint.x, hauteurAncre(seg.aId), seg.aPoint.y)];
