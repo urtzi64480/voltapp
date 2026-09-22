@@ -22,7 +22,7 @@ function fmt(n: number): string {
 
 // ─── État de choix par besoin ───────────────────────────────────────────────
 
-type ModeChoix = "option" | "autre" | "libre";
+type ModeChoix = "option" | "autre" | "libre" | "exclu";
 interface EtatChoix {
   mode: ModeChoix;
   optionIndex: number;
@@ -81,7 +81,13 @@ function BesoinRow({ besoin, etat, onChange, prestations }: {
         )}
       </div>
 
-      <div className="flex flex-col gap-1.5">
+      <label className="flex items-center gap-2 text-sm cursor-pointer border-b border-ink-100 pb-2">
+        <input type="checkbox" checked={etat.mode === "exclu"}
+          onChange={e => onChange({ ...etat, mode: e.target.checked ? "exclu" : (besoin.options.length > 0 ? "option" : "libre") })} />
+        <span className="text-red-600 font-medium">Ne pas inclure cette ligne dans le devis</span>
+      </label>
+
+      <div className={`flex flex-col gap-1.5 ${etat.mode === "exclu" ? "opacity-40 pointer-events-none" : ""}`}>
         {besoin.options.map((opt, i) => (
           <label key={i} className="flex items-center gap-2 text-sm cursor-pointer">
             <input type="radio" checked={etat.mode === "option" && etat.optionIndex === i}
@@ -250,6 +256,7 @@ export default function PreDevisPage() {
   // Total HT approximatif affiché en direct — le total exact (avec décomposition en
   // bobines) est recalculé à la génération finale.
   function totalLigneApprox(besoin: BesoinApparie, etat: EtatChoix): number {
+    if (etat.mode === "exclu") return 0;
     if (etat.mode === "option") {
       const opt = besoin.options[etat.optionIndex];
       if (!opt) return 0;
@@ -285,6 +292,7 @@ export default function PreDevisPage() {
       const tousLesBesoins = Object.values(resultat.parPiece).flat();
       const choixLignes: ChoixLigne[] = tousLesBesoins.map(besoin => {
         const etat = choix[besoin.cle] ?? etatParDefaut(besoin);
+        if (etat.mode === "exclu") return { besoin };
         if (etat.mode === "option") {
           return { besoin, optionCatalogue: besoin.options[etat.optionIndex] };
         }
