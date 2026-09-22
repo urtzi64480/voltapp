@@ -33,7 +33,7 @@
 //  - Boîte d'encastrement : posée uniquement pour les appareillages muraux usuels (prise,
 //    prise commandée, interrupteur, va-et-vient, télérupteur) — pas pour point lumineux/
 //    applique (rosette DCL, produit différent). Regroupées par pièce si à moins de 20cm
-//    les unes des autres, jusqu'à 3 postes par boîte.
+//    les unes des autres, jusqu'à 4 postes par boîte.
 //  - Les appareils "dédiés" (four, plaque, lave-linge…, y compris chauffage) ne sont
 //    jamais chiffrés en tant qu'appareil — uniquement leur prise/sortie de câble
 //    spécialisée (sous_categorie "prise_specialisee").
@@ -94,6 +94,13 @@ const LABEL_APPAREILLAGE: Record<string, string> = {
   prise: "Prise de courant", prise_commandee: "Prise commandée",
   interrupteur: "Interrupteur simple", va_et_vient: "Va-et-vient", telerupteur: "Bouton télérupteur",
   point_lumineux: "Point lumineux (DCL)", applique: "Sortie applique",
+};
+// Une commande (interrupteur/va-et-vient/télérupteur) posée en domotique (AppareillagePlace.
+// domotique) est un produit différent d'un mécanisme filaire classique — module radio/wifi
+// au lieu d'un mécanisme + câblage retour/navette — donc une sous_categorie dédiée, pour
+// pouvoir lui associer un prix catalogue propre.
+const LABEL_APPAREILLAGE_DOMOTIQUE: Record<string, string> = {
+  interrupteur: "Interrupteur domotique", va_et_vient: "Va-et-vient domotique", telerupteur: "Bouton télérupteur domotique",
 };
 
 const PSEUDO_TABLEAU = "Tableau électrique";
@@ -175,7 +182,11 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
     niveau.pieces.forEach(piece => {
       const clustersEncastrement: { id: number; x: number; y: number }[] = [];
       piece.appareillages.forEach(a => {
-        if (LABEL_APPAREILLAGE[a.type]) {
+        const estCommande = a.type === "interrupteur" || a.type === "va_et_vient" || a.type === "telerupteur";
+        if (estCommande && a.domotique && LABEL_APPAREILLAGE_DOMOTIQUE[a.type]) {
+          const sousCat = `${a.type}_domotique`;
+          ajouter(`${sousCat}@${piece.id}`, sousCat, LABEL_APPAREILLAGE_DOMOTIQUE[a.type], piece.nom || "Pièce", 1, "u");
+        } else if (LABEL_APPAREILLAGE[a.type]) {
           ajouter(`${a.type}@${piece.id}`, a.type, LABEL_APPAREILLAGE[a.type], piece.nom || "Pièce", 1, "u");
         } else if (CIRCUIT_DEDIE[a.type] || a.type === "chauffage") {
           ajouter(`prise_specialisee@${piece.id}`, "prise_specialisee", "Prise / sortie de câble spécialisée",
@@ -184,13 +195,13 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         if (TYPES_ENCASTRABLES.includes(a.type)) clustersEncastrement.push({ id: a.id, x: a.x, y: a.y });
       });
       if (clustersEncastrement.length > 0) {
-        const groupes = grouperParProximite(clustersEncastrement, 0.20, 3);
+        const groupes = grouperParProximite(clustersEncastrement, 0.20, 4);
         const parTaille = new Map<number, number>();
         groupes.forEach(g => parTaille.set(g.length, (parTaille.get(g.length) ?? 0) + 1));
         parTaille.forEach((nb, taille) => {
-          const suffixe = taille === 1 ? "1poste" : taille === 2 ? "2postes" : "3postes";
+          const suffixe = taille === 1 ? "1poste" : taille === 2 ? "2postes" : taille === 3 ? "3postes" : "4postes";
           ajouter(`boite_encastrement_${suffixe}@${piece.id}`, `boite_encastrement_${suffixe}`,
-            `Boîte d'encastrement ${taille === 1 ? "simple" : taille === 2 ? "double" : "triple"}`,
+            `Boîte d'encastrement ${taille === 1 ? "simple" : taille === 2 ? "double" : taille === 3 ? "triple" : "quadruple"}`,
             piece.nom || "Pièce", nb, "u");
         });
       }
