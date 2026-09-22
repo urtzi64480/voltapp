@@ -5,6 +5,11 @@ export type StatutTransmission = "en_attente" | "transmise" | "acceptee" | "reje
 export type StatutIntervention = "planifie" | "en_cours" | "termine" | "annule";
 export type StatutDemande = "nouveau" | "vu" | "converti";
 export type TypeClient = "particulier" | "professionnel";
+// Niveau de gamme d'un article catalogue — permet de proposer jusqu'à 3 prix différents
+// (entrée/moyenne/haut de gamme) pour un même besoin identifié sur le plan (voir
+// predevis-engine.ts). Optionnel : un article sans gamme reste utilisable comme option
+// unique si aucun article "gammé" n'existe pour sa sous_categorie.
+export type Gamme = "entree" | "moyenne" | "haut";
 
 export interface Profil {
   id: string;
@@ -59,6 +64,13 @@ export interface Client {
   statut?: string;
   source?: string;
   photos?: string[];
+  // Contient un JSON { niveaux: Niveau[] } — le plan de circuits (maison-types.ts). Utilisé
+  // par le module pré-devis pour retrouver la géométrie (câbles, boîtes, appareillages).
+  maison_config?: string;
+  // Brouillon du pré-devis en cours (choix de gamme/article/champ libre par besoin, heures
+  // de main d'œuvre, frais généraux, déplacement) — JSON, voir predevis/[clientId]/page.tsx.
+  // Écrasé à chaque sauvegarde du brouillon ; sans lien avec un devis déjà validé.
+  predevis_config?: string;
   created_at: string;
   updated_at: string;
 }
@@ -78,6 +90,15 @@ export interface Prestation {
   liens_fournisseurs?: string[];
   prix_achat?: number | null;
   actif: boolean;
+  // Niveau de gamme (voir type Gamme ci-dessus) — pour le pré-devis, non requis ailleurs.
+  gamme?: Gamme | null;
+  // Longueur (mètres) d'une bobine/barre de longueur fixe (câble, gaine, moulure) —
+  // absent/null = article vendu au mètre linéaire (utilisé pour compléter un reliquat).
+  longueur_unitaire?: number | null;
+  // Rempli côté client uniquement pour les kits (voir catalogue/page.tsx PrestationExt) —
+  // n'existe pas réellement dans la table `prestations` mais évite de dupliquer le type
+  // localement dans le module pré-devis.
+  est_kit?: boolean;
   created_at: string;
 }
 
