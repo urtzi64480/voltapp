@@ -506,7 +506,7 @@ function KitModal({
 
 const CSV_HEADERS = [
   "nom", "description", "type_branche", "categorie", "sous_categorie",
-  "marque", "unite", "prix_achat", "prix_unitaire", "image_url", "liens_fournisseurs"
+  "marque", "unite", "prix_achat", "prix_unitaire", "gamme", "longueur_unitaire", "image_url", "liens_fournisseurs"
 ];
 
 function exportCSV(prestations: PrestationExt[]) {
@@ -515,7 +515,7 @@ function exportCSV(prestations: PrestationExt[]) {
     ...prestations.filter(p => !p.est_kit).map(p => [
       p.nom, p.description ?? "", p.type_branche, p.categorie,
       p.sous_categorie ?? "", p.marque ?? "", p.unite,
-      p.prix_achat ?? "", p.prix_unitaire, p.image_url ?? "",
+      p.prix_achat ?? "", p.prix_unitaire, (p as any).gamme ?? "", (p as any).longueur_unitaire ?? "", p.image_url ?? "",
       (p.liens_fournisseurs ?? []).join("|"),
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(";"))
   ];
@@ -529,7 +529,8 @@ function exportCSV(prestations: PrestationExt[]) {
 type ImportRow = {
   nom: string; description: string; type_branche: string; categorie: string;
   sous_categorie: string; marque: string; unite: string;
-  prix_achat: string; prix_unitaire: string; image_url: string; liens_fournisseurs: string;
+  prix_achat: string; prix_unitaire: string; gamme: string; longueur_unitaire: string;
+  image_url: string; liens_fournisseurs: string;
   _valid: boolean; _errors: string[];
 };
 
@@ -553,12 +554,14 @@ function parseCSV(text: string): ImportRow[] {
     if (!row.nom?.trim()) errors.push("Nom manquant");
     if (!row.prix_unitaire || isNaN(parseFloat(row.prix_unitaire))) errors.push("Prix de vente invalide");
     if (!["service", "materiau"].includes(row.type_branche)) errors.push("Branche invalide (service/materiau)");
+    if (row.gamme && !["entree", "moyenne", "haut"].includes(row.gamme)) errors.push("Gamme invalide (entree/moyenne/haut)");
     return {
       nom: row.nom ?? "", description: row.description ?? "",
       type_branche: row.type_branche ?? "service",
       categorie: row.categorie || "Divers", sous_categorie: row.sous_categorie ?? "",
       marque: row.marque ?? "", unite: row.unite || "forfait",
       prix_achat: row.prix_achat ?? "", prix_unitaire: row.prix_unitaire ?? "",
+      gamme: row.gamme ?? "", longueur_unitaire: row.longueur_unitaire ?? "",
       image_url: row.image_url ?? "", liens_fournisseurs: row.liens_fournisseurs ?? "",
       _valid: errors.length === 0, _errors: errors,
     };
@@ -813,6 +816,18 @@ function CategorieBlock({
                                 <input className="input text-sm" placeholder="Ex : Prises, Câblage…"
                                   value={(editData as any).sous_categorie ?? sousCat}
                                   onChange={e => setEditData((d: any) => ({ ...d, sous_categorie: e.target.value }))} /></div>
+                              <div><label className="label">Gamme (pré-devis)</label>
+                                <select className="input text-sm" value={(editData as any).gamme ?? p.gamme ?? ""}
+                                  onChange={e => setEditData((d: any) => ({ ...d, gamme: e.target.value || null }))}>
+                                  <option value="">— Aucune —</option>
+                                  <option value="entree">Entrée de gamme</option>
+                                  <option value="moyenne">Moyenne gamme</option>
+                                  <option value="haut">Haut de gamme</option>
+                                </select></div>
+                              <div><label className="label">Longueur bobine (m) — vide = vendu au mètre</label>
+                                <input className="input text-sm" type="number" step="1" placeholder="Ex : 25"
+                                  value={(editData as any).longueur_unitaire ?? p.longueur_unitaire ?? ""}
+                                  onChange={e => setEditData((d: any) => ({ ...d, longueur_unitaire: e.target.value ? parseFloat(e.target.value) : null }))} /></div>
                             </div>
                             <MargeFields prixAchat={editPrixAchat} prixVente={editPrixVente}
                               onPrixAchatChange={setEditPrixAchat}
@@ -928,6 +943,14 @@ function CategorieBlock({
                         <input className="input text-sm" placeholder="Ex : Prises, Câblage…"
                           value={(editData as any).sous_categorie ?? sousCat}
                           onChange={e => setEditData((d: any) => ({ ...d, sous_categorie: e.target.value }))} /></div>
+                      <div><label className="label">Gamme (pré-devis)</label>
+                        <select className="input text-sm" value={(editData as any).gamme ?? p.gamme ?? ""}
+                          onChange={e => setEditData((d: any) => ({ ...d, gamme: e.target.value || null }))}>
+                          <option value="">— Aucune —</option>
+                          <option value="entree">Entrée de gamme</option>
+                          <option value="moyenne">Moyenne gamme</option>
+                          <option value="haut">Haut de gamme</option>
+                        </select></div>
                     </div>
                     <div className="flex gap-2 justify-end">
                       <button onClick={() => saveEdit(p.id)} className="btn-volt text-xs"><Save size={13} /> Sauvegarder</button>
@@ -978,10 +1001,11 @@ export default function CataloguePage() {
   const [formLiens, setFormLiens] = useState<string[]>([]);
   const [formPrixAchat, setFormPrixAchat] = useState("");
   const [formPrixVente, setFormPrixVente] = useState("");
+  const [formLongueurUnitaire, setFormLongueurUnitaire] = useState("");
   const [form, setForm] = useState({
     nom: "", description: "", unite: "forfait",
     type_branche: "service", categorie: "",
-    sous_categorie: "", marque: "", image_url: "",
+    sous_categorie: "", marque: "", image_url: "", gamme: "",
   });
 
   const [collapsedServices, setCollapsedServices] = useState<Record<string, boolean>>({});
@@ -1027,7 +1051,8 @@ export default function CataloguePage() {
       prix_achat: prixAchatNum, unite: form.unite, type_branche: form.type_branche,
       categorie: cat, actif: true, sous_categorie: form.sous_categorie || null,
       marque: form.marque || null, liens_fournisseurs: formLiens.filter(l => l.trim()),
-      image_url: form.image_url || null,
+      image_url: form.image_url || null, gamme: form.gamme || null,
+      longueur_unitaire: formLongueurUnitaire !== "" ? parseFloat(formLongueurUnitaire) : null,
     }).select().single();
     if (error) { alert("Erreur : " + error.message); return; }
     if (data) {
@@ -1035,8 +1060,8 @@ export default function CataloguePage() {
       if (!categories.includes(cat)) setCategories(c => [...c, cat].sort());
     }
     if (form.marque && !marques.includes(form.marque)) setMarques(m => [...m, form.marque].sort());
-    setForm({ nom: "", description: "", unite: "forfait", type_branche: "service", categorie: "", sous_categorie: "", marque: "", image_url: "" });
-    setNewCat(""); setFormLiens([]); setFormPrixAchat(""); setFormPrixVente(""); setShowForm(false);
+    setForm({ nom: "", description: "", unite: "forfait", type_branche: "service", categorie: "", sous_categorie: "", marque: "", image_url: "", gamme: "" });
+    setNewCat(""); setFormLiens([]); setFormPrixAchat(""); setFormPrixVente(""); setFormLongueurUnitaire(""); setShowForm(false);
   }
 
   async function del(id: string) {
@@ -1059,6 +1084,8 @@ export default function CataloguePage() {
       liens_fournisseurs: editLiens.filter(l => l.trim()),
       prix_unitaire: isNaN(prixVenteNum) ? editData.prix_unitaire : prixVenteNum,
       prix_achat: prixAchatNum,
+      gamme: (editData as any).gamme || null,
+      longueur_unitaire: (editData as any).longueur_unitaire ?? null,
     };
     await supabase.from("prestations").update(dataToSave as any).eq("id", id);
     setPrestations(p => p.map(x => x.id === id ? { ...x, ...dataToSave } as PrestationExt : x));
@@ -1076,7 +1103,8 @@ export default function CataloguePage() {
       unite: p.unite, type_branche: p.type_branche, categorie: p.categorie,
       sous_categorie: p.sous_categorie ?? undefined, marque: p.marque ?? undefined,
       image_url: p.image_url ?? undefined,
-    });
+      gamme: (p as any).gamme ?? undefined, longueur_unitaire: (p as any).longueur_unitaire ?? undefined,
+    } as any);
     setEditCatMode("select"); setEditNewCat("");
     setEditLiens(p.liens_fournisseurs ?? []);
     setEditPrixAchat(p.prix_achat != null ? String(p.prix_achat) : "");
@@ -1096,6 +1124,8 @@ export default function CataloguePage() {
         marque: r.marque || null, unite: r.unite || "forfait",
         prix_achat: r.prix_achat !== "" ? parseFloat(r.prix_achat) : null,
         prix_unitaire: parseFloat(r.prix_unitaire), image_url: r.image_url || null,
+        gamme: ["entree", "moyenne", "haut"].includes(r.gamme) ? r.gamme : null,
+        longueur_unitaire: r.longueur_unitaire !== "" && !isNaN(parseFloat(r.longueur_unitaire)) ? parseFloat(r.longueur_unitaire) : null,
         liens_fournisseurs: r.liens_fournisseurs ? r.liens_fournisseurs.split("|").filter(Boolean) : [],
         actif: true,
       };
@@ -1206,6 +1236,18 @@ export default function CataloguePage() {
               <div><label className="label">Sous-catégorie</label>
                 <input className="input" placeholder="Ex : Prises, Câblage, Éclairage…"
                   value={form.sous_categorie} onChange={e => setForm(f => ({ ...f, sous_categorie: e.target.value }))} /></div>
+              <div><label className="label">Gamme (pré-devis)</label>
+                <select className="input" value={form.gamme} onChange={e => setForm(f => ({ ...f, gamme: e.target.value }))}>
+                  <option value="">— Aucune —</option>
+                  <option value="entree">Entrée de gamme</option>
+                  <option value="moyenne">Moyenne gamme</option>
+                  <option value="haut">Haut de gamme</option>
+                </select></div>
+              {form.type_branche === "materiau" && (
+                <div><label className="label">Longueur bobine (m) — vide = vendu au mètre</label>
+                  <input className="input" type="number" step="1" placeholder="Ex : 25"
+                    value={formLongueurUnitaire} onChange={e => setFormLongueurUnitaire(e.target.value)} /></div>
+              )}
               {form.type_branche === "service" ? (
                 <div><label className="label">Prix unitaire (€) *</label>
                   <input className="input" type="number" step="0.5" placeholder="0.00"
@@ -1228,7 +1270,7 @@ export default function CataloguePage() {
               )}
             </div>
             <div className="flex gap-3 mt-4">
-              <button onClick={() => { setShowForm(false); setFormLiens([]); setFormPrixAchat(""); setFormPrixVente(""); }}
+              <button onClick={() => { setShowForm(false); setFormLiens([]); setFormPrixAchat(""); setFormPrixVente(""); setFormLongueurUnitaire(""); }}
                 className="btn-ghost flex-1 justify-center">Annuler</button>
               <button onClick={add} className="btn-volt flex-1 justify-center"><Save size={15} /> Enregistrer</button>
             </div>
