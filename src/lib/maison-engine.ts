@@ -23,7 +23,10 @@ import {
 // Le chauffage n'en fait PAS partie : plusieurs radiateurs peuvent partager un circuit
 // tant que leur puissance cumulée reste dans le calibre du disjoncteur (NF C 15-100,
 // amendement A5) — voir genererBreakersChauffage, regroupement spatial + puissance.
-const CIRCUIT_DEDIE: Record<string, string> = {
+// Exporté pour le module pré-devis (predevis-engine.ts) — sert à identifier les
+// appareillages "appareil dédié" (four, chauffe-eau…) pour lesquels on chiffre une prise/
+// sortie de câble spécialisée, jamais l'appareil lui-même.
+export const CIRCUIT_DEDIE: Record<string, string> = {
   four: "four", plaque: "plaque", lave_linge: "lave_linge", lave_vaisselle: "lave_vaisselle",
   seche_linge: "seche_linge", chauffe_eau: "chauffe_eau", clim: "clim",
   seche_serviette: "seche_serviette", congelateur: "congelateur", irve: "irve",
