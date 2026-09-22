@@ -182,6 +182,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
     niveau.pieces.forEach(piece => {
       const clustersEncastrement: { id: number; x: number; y: number }[] = [];
       piece.appareillages.forEach(a => {
+        if (a.dejaExistant) return; // déjà installé chez le client — jamais facturé, ni lui ni sa boîte
         const estCommande = a.type === "interrupteur" || a.type === "va_et_vient" || a.type === "telerupteur";
         if (estCommande && a.domotique && LABEL_APPAREILLAGE_DOMOTIQUE[a.type]) {
           const sousCat = `${a.type}_domotique`;
@@ -234,12 +235,21 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       }
 
       // ─── Câbles / gaines / moulures pour ce circuit ──────────────────────
-      const labelResolu = resoudreLabelCircuit(b, niveau);
-      const breakerTableau = indexTableau.parLabel.get(labelResolu);
-      if (!breakerTableau) {
-        alertes.push(`Pré-devis : circuit "${labelResolu}" (${niveau.nom}) introuvable dans le tableau électrique — section par défaut (${effectiveSection(b)}mm²) utilisée, à vérifier.`);
+      // Circuit manuel "déjà existant" (CircuitManuel.nonRelieTableau) : jamais poussé
+      // au tableau sur ce plan (protégé par l'installation en place) — on ne cherche donc
+      // pas de correspondance côté tableau_config (ce serait une fausse alerte), et la
+      // distance verticale vers le tableau ne s'applique pas non plus à lui.
+      const manuelDuCircuit = b.manuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === b.manuelId) : undefined;
+      const nonRelie = !!manuelDuCircuit?.nonRelieTableau;
+      let sectionCircuit = effectiveSection(b);
+      if (!nonRelie) {
+        const labelResolu = resoudreLabelCircuit(b, niveau);
+        const breakerTableau = indexTableau.parLabel.get(labelResolu);
+        if (!breakerTableau) {
+          alertes.push(`Pré-devis : circuit "${labelResolu}" (${niveau.nom}) introuvable dans le tableau électrique — section par défaut (${effectiveSection(b)}mm²) utilisée, à vérifier.`);
+        }
+        sectionCircuit = breakerTableau ? effectiveSection(breakerTableau) : effectiveSection(b);
       }
-      const sectionCircuit = breakerTableau ? effectiveSection(breakerTableau) : effectiveSection(b);
 
       const segments: SegmentCircuit[] = segmentsPourCircuit(b, points, niveau, tableauPos);
       segments.forEach(seg => {
@@ -277,8 +287,9 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       });
 
       // Distance verticale "point d'arrivée des gaines → tableau" — ajoutée une fois par
-      // circuit de ce niveau, à sa section propre, en pose encastrée (choix confirmé).
-      if (niveau.distanceArriveeGainesTableau != null && niveau.distanceArriveeGainesTableau > 0) {
+      // circuit RELIÉ AU TABLEAU de ce niveau (jamais pour un circuit "déjà existant"), à
+      // sa section propre, en pose encastrée (choix confirmé).
+      if (!nonRelie && niveau.distanceArriveeGainesTableau != null && niveau.distanceArriveeGainesTableau > 0) {
         const d = niveau.distanceArriveeGainesTableau;
         const nomPiece = pseudoCommun(niveau.nom || niveau.type);
         ajouter(`cable_${sectionCircuit}@${nomPiece}`, `cable_${sectionCircuit}`,

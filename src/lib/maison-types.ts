@@ -43,6 +43,13 @@ export interface AppareillagePlace {
   // clustering automatique de genererCircuits() pour ce point, tant que le CircuitManuel visé
   // existe toujours et correspond à la bonne famille (prises/cuisine/extérieur/éclairage).
   circuitManuelId?: number;
+  // Appareillage déjà existant chez le client (ex : la dernière prise d'un circuit
+  // existant, servant de point de départ pour en ajouter d'autres) — reste un membre à
+  // part entière du circuit pour le tracé et la génération (segmentsPourCircuit,
+  // genererCircuits), mais exclu de la facturation du pré-devis (predevis-engine.ts) :
+  // ni l'appareillage ni sa boîte d'encastrement ne sont chiffrés. Seul le câblage qui
+  // part réellement de lui (vers de nouveaux appareillages) reste facturé normalement.
+  dejaExistant?: boolean;
 }
 
 // Porte, porte coulissante, fenêtre, ou simple ouverture murale (sans porte, entièrement
@@ -225,6 +232,12 @@ export interface CircuitManuel {
   nom: string;
   famille: FamilleCircuitManuel; // clé CIRCUITS — voir commentaire du type ci-dessus
   couleur?: string; // couleur imposée sur le plan/l'impression/la vue 3D — sinon couleur procédurale
+  // Circuit déjà existant sur l'installation en place (piquage sur une prise/un point déjà
+  // câblé), jamais relié au tableau sur ce plan : aucun segment n'est tracé vers le tableau
+  // (voir sequenceAncresCircuit / construireBranchesCircuitEclairage, paramètre
+  // relieAuTableau) et le circuit n'est jamais poussé vers le module Tableau (voir
+  // handlePousserVersTableau, page.tsx) — il reste protégé par le disjoncteur déjà en place.
+  nonRelieTableau?: boolean;
 }
 
 // Classe un appareillage (dans une pièce donnée) dans l'une des 4 familles "groupables"
@@ -617,8 +630,13 @@ export function cleSegmentLiaison(idA: string, idB: string): string {
 }
 
 // Suite ordonnée des ancres d'un circuit : tableau puis chaque appareillage, par proximité.
-export function sequenceAncresCircuit(depart: Point, points: AppareillagePlace[]): AncrePoint[] {
+// relieAuTableau=false (circuit manuel "déjà existant", voir CircuitManuel.nonRelieTableau) :
+// aucune ancre "tableau" n'est ajoutée — la chaîne part directement du premier membre (le
+// plus proche de `depart`, simple repère pour un point de départ cohérent), sans segment
+// tracé vers l'extérieur pour l'atteindre.
+export function sequenceAncresCircuit(depart: Point, points: AppareillagePlace[], relieAuTableau: boolean = true): AncrePoint[] {
   const ancres: AncrePoint[] = points.map(a => ({ id: String(a.id), point: { x: a.x, y: a.y } }));
+  if (!relieAuTableau) return ordonnerAncresParProximite(depart, ancres);
   return [{ id: "tableau", point: depart }, ...ordonnerAncresParProximite(depart, ancres)];
 }
 
@@ -627,8 +645,9 @@ export function sequenceAncresCircuit(depart: Point, points: AppareillagePlace[]
 // automatique — pour un cheminement de câble plus logique (moins d'allers-retours, contourne
 // un obstacle…) sur un circuit en chaîne. Tout appareillage du circuit absent de `ordre`
 // (ajouté au plan après l'enregistrement de l'ordre) est ajouté à la suite, par proximité à
-// partir du dernier point ordonné — jamais perdu du tracé.
-export function sequenceAncresCircuitOrdonnee(depart: Point, points: AppareillagePlace[], ordre: number[]): AncrePoint[] {
+// partir du dernier point ordonné — jamais perdu du tracé. relieAuTableau : voir
+// sequenceAncresCircuit ci-dessus.
+export function sequenceAncresCircuitOrdonnee(depart: Point, points: AppareillagePlace[], ordre: number[], relieAuTableau: boolean = true): AncrePoint[] {
   const parId = new Map(points.map(a => [a.id, a]));
   const vus = new Set<number>();
   const ancres: AncrePoint[] = [];
@@ -641,7 +660,8 @@ export function sequenceAncresCircuitOrdonnee(depart: Point, points: Appareillag
   });
   const restants = points.filter(a => !vus.has(a.id)).map(a => ({ id: String(a.id), point: { x: a.x, y: a.y } }));
   const dernierPoint = ancres.length > 0 ? ancres[ancres.length - 1].point : depart;
-  return [{ id: "tableau", point: depart }, ...ancres, ...ordonnerAncresParProximite(dernierPoint, restants)];
+  const suite = [...ancres, ...ordonnerAncresParProximite(dernierPoint, restants)];
+  return relieAuTableau ? [{ id: "tableau", point: depart }, ...suite] : suite;
 }
 
 // Chemin complet (mètres) en insérant les points de coude manuels présents dans waypoints.
@@ -732,7 +752,7 @@ export function centroidePoints(points: Point[]): Point {
 // marqué (type: "domotique") pour être tracé sous forme d'onde plutôt qu'un trait plein.
 export function construireBranchesCircuitEclairage(
   depart: Point, boites: BoiteDerivation[], lumieres: AppareillagePlace[], commandes: AppareillagePlace[],
-  liaisonsDirectes: [number, number][] = [],
+  liaisonsDirectes: [number, number][] = [], relieAuTableau: boolean = true,
 ): SegmentCircuit[] {
   const segments: SegmentCircuit[] = [];
   const idsLumieres = new Set(lumieres.map(l => l.id));
@@ -766,9 +786,11 @@ export function construireBranchesCircuitEclairage(
   const lumieresLibres = lumieres.filter(l => !idsDansComposante.has(l.id));
 
   // Ancre (boîte la plus proche si des boîtes existent, sinon le tableau directement) vers
-  // laquelle raccorder l'entrée d'un groupe de lampes chaînées.
-  const ancrerVersBoiteOuTableau = (cible: Point): { id: string; point: Point } => {
-    if (boites.length === 0) return { id: "tableau", point: depart };
+  // laquelle raccorder l'entrée d'un groupe de lampes chaînées. null = aucune ancre externe
+  // à tracer — cas d'un circuit "déjà existant" (relieAuTableau=false, voir
+  // CircuitManuel.nonRelieTableau) sans boîte : rien ne part vers l'extérieur.
+  const ancrerVersBoiteOuTableau = (cible: Point): { id: string; point: Point } | null => {
+    if (boites.length === 0) return relieAuTableau ? { id: "tableau", point: depart } : null;
     let plusProche = boites[0];
     let meilleureDistance = distance(boites[0].point, cible);
     boites.forEach(b => { const d = distance(b.point, cible); if (d < meilleureDistance) { meilleureDistance = d; plusProche = b; } });
@@ -776,17 +798,29 @@ export function construireBranchesCircuitEclairage(
   };
 
   if (boites.length === 0) {
-    if (lumieresLibres.length <= 1) {
-      lumieresLibres.forEach(l => segments.push({ aId: "tableau", aPoint: depart, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
-    } else {
+    if (relieAuTableau) {
+      if (lumieresLibres.length <= 1) {
+        lumieresLibres.forEach(l => segments.push({ aId: "tableau", aPoint: depart, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
+      } else {
+        const centre = centroidePoints(lumieresLibres.map(l => ({ x: l.x, y: l.y })));
+        segments.push({ aId: "tableau", aPoint: depart, bId: "boite", bPoint: centre });
+        lumieresLibres.forEach(l => segments.push({ aId: "boite", aPoint: centre, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
+      }
+    } else if (lumieresLibres.length > 1) {
+      // Non relié au tableau : les lampes libres se maillent quand même entre elles via
+      // une boîte implicite, mais aucun segment ne part vers l'extérieur (déjà alimenté
+      // par l'installation existante). Avec 0 ou 1 lampe libre : rien à tracer.
       const centre = centroidePoints(lumieresLibres.map(l => ({ x: l.x, y: l.y })));
-      segments.push({ aId: "tableau", aPoint: depart, bId: "boite", bPoint: centre });
       lumieresLibres.forEach(l => segments.push({ aId: "boite", aPoint: centre, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
     }
   } else {
-    let precedentId = "tableau";
-    let precedentPoint = depart;
-    boites.forEach(boite => {
+    // Relié : chaîne complète tableau -> boîte 1 -> boîte 2 -> …
+    // Non relié : la première boîte devient elle-même l'origine, aucun segment vers
+    // l'extérieur pour l'atteindre — seul le chaînage boîte à boîte suivant reste tracé.
+    let precedentId = relieAuTableau ? "tableau" : `boite-${boites[0].id}`;
+    let precedentPoint = relieAuTableau ? depart : boites[0].point;
+    const boitesAChainer = relieAuTableau ? boites : boites.slice(1);
+    boitesAChainer.forEach(boite => {
       const id = `boite-${boite.id}`;
       segments.push({ aId: precedentId, aPoint: precedentPoint, bId: id, bPoint: boite.point });
       precedentId = id;
@@ -804,17 +838,21 @@ export function construireBranchesCircuitEclairage(
   }
 
   // Composantes de lampes chaînées directement entre elles : une seule entrée depuis la
-  // boîte la plus proche (ou le tableau) vers la lampe d'entrée du groupe, puis chaînage
-  // point à point entre les lampes reliées — aucune boîte de dérivation nécessaire ici.
+  // boîte la plus proche (ou le tableau, si relié) vers la lampe d'entrée du groupe, puis
+  // chaînage point à point entre les lampes reliées — aucune boîte de dérivation nécessaire
+  // ici. Si aucune ancre externe n'existe (non relié, sans boîte), seul le chaînage interne
+  // est tracé, sans entrée.
   composantes.forEach(idsGroupe => {
     const lampesGroupe = idsGroupe.map(id => lumiereParId.get(id)).filter((l): l is AppareillagePlace => !!l);
     if (lampesGroupe.length === 0) return;
     const centreGroupe = centroidePoints(lampesGroupe.map(l => ({ x: l.x, y: l.y })));
     const ancre = ancrerVersBoiteOuTableau(centreGroupe);
-    let entree = lampesGroupe[0];
-    let meilleureDistance = distance(ancre.point, entree);
-    lampesGroupe.forEach(l => { const d = distance(ancre.point, l); if (d < meilleureDistance) { meilleureDistance = d; entree = l; } });
-    segments.push({ aId: ancre.id, aPoint: ancre.point, bId: String(entree.id), bPoint: { x: entree.x, y: entree.y } });
+    if (ancre) {
+      let entree = lampesGroupe[0];
+      let meilleureDistance = distance(ancre.point, entree);
+      lampesGroupe.forEach(l => { const d = distance(ancre.point, l); if (d < meilleureDistance) { meilleureDistance = d; entree = l; } });
+      segments.push({ aId: ancre.id, aPoint: ancre.point, bId: String(entree.id), bPoint: { x: entree.x, y: entree.y } });
+    }
     liaisonsValides
       .filter(([a, b]) => idsGroupe.includes(a) && idsGroupe.includes(b))
       .forEach(([a, b]) => {

@@ -485,15 +485,22 @@ export function construireColorMap(resultat: ResultatGeneration, niveauxVivants?
 // sequenceAncresCircuitOrdonnee) pour tout le reste (prises, chauffage, appareils dédiés,
 // manuels non-éclairage). Partagé par le rendu 2D et la vue 3D.
 export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[], niveau: Niveau, tableauPos: Point): SegmentCircuit[] {
+  // Circuit manuel marqué "déjà existant" (CircuitManuel.nonRelieTableau) : aucun segment
+  // n'est tracé vers le tableau, quel que soit le type de circuit — voir
+  // relieAuTableau dans sequenceAncresCircuit(Ordonnee) / construireBranchesCircuitEclairage.
+  const manuel = breaker.manuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === breaker.manuelId) : undefined;
+  const relieAuTableau = !manuel?.nonRelieTableau;
   if (breaker.circuit === "lumiere") {
     const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
     const commandes = points.filter(a => a.type === "interrupteur" || a.type === "va_et_vient" || a.type === "telerupteur");
     const boites = niveau.boitesDerivation?.[breaker.label] ?? [];
     const liaisonsDirectes = niveau.liaisonsDirectesLumiere?.[breaker.label] ?? [];
-    return construireBranchesCircuitEclairage(tableauPos, boites, lumieres, commandes, liaisonsDirectes);
+    return construireBranchesCircuitEclairage(tableauPos, boites, lumieres, commandes, liaisonsDirectes, relieAuTableau);
   }
   const ordre = niveau.ordresCircuits?.[breaker.label];
-  const sequence = ordre ? sequenceAncresCircuitOrdonnee(tableauPos, points, ordre) : sequenceAncresCircuit(tableauPos, points);
+  const sequence = ordre
+    ? sequenceAncresCircuitOrdonnee(tableauPos, points, ordre, relieAuTableau)
+    : sequenceAncresCircuit(tableauPos, points, relieAuTableau);
   const segments: SegmentCircuit[] = [];
   for (let i = 0; i < sequence.length - 1; i++) {
     segments.push({ aId: sequence[i].id, aPoint: sequence[i].point, bId: sequence[i + 1].id, bPoint: sequence[i + 1].point });
@@ -640,7 +647,13 @@ export function genererGainesNiveaux(resultat: ResultatGeneration): TronconGaine
 
   for (const niveau of niveauxTries) {
     const nomsPieces = new Set(niveau.pieces.map(p => p.nom));
-    const circuitsNiveau = resultat.breakers.filter(b => b.pieces.some(p => nomsPieces.has(p.nom)));
+    // Un circuit manuel "déjà existant" (CircuitManuel.nonRelieTableau) ne remonte jamais
+    // au tableau — il ne consomme donc aucune place dans la gaine principale tableau→niveau.
+    const circuitsNiveau = resultat.breakers.filter(b => {
+      if (!b.pieces.some(p => nomsPieces.has(p.nom))) return false;
+      const manuel = b.manuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === b.manuelId) : undefined;
+      return !manuel?.nonRelieTableau;
+    });
     if (circuitsNiveau.length === 0) continue;
 
     const cables: string[] = [];
