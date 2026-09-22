@@ -104,12 +104,40 @@ function MargeFields({ prixAchat, prixVente, onPrixAchatChange, onPrixVenteChang
   onPrixVenteChange: (v: string) => void;
 }) {
   const [margePct, setMargePct] = useState("");
-  function handlePrixAchat(v: string) {
-    onPrixAchatChange(v);
-    if (margePct !== "" && parseFloat(v) > 0) {
-      const pv = prixVenteFromMarge(parseFloat(v), parseFloat(margePct) || 0);
+  // Mode de saisie du prix d'achat : "ttc" (par défaut — la plupart des fournisseurs
+  // donnent un prix tout compris, ou Ben n'a pas le détail HT) ou "ht" (Ben tape le HT
+  // depuis une facture fournisseur, la TVA à 20% est ajoutée automatiquement). Dans les
+  // deux cas, ce qui remonte via onPrixAchatChange (donc ce qui est stocké en base et
+  // utilisé partout ailleurs — marge ici, rentabilité dans le devis) est TOUJOURS le TTC :
+  // en franchise en base de TVA, cette TVA n'est jamais récupérable, c'est la vraie
+  // dépense de Ben. Aucune autre logique de calcul n'a besoin de changer.
+  const [modeAchat, setModeAchat] = useState<"ttc" | "ht">("ttc");
+  const [achatHtSaisi, setAchatHtSaisi] = useState("");
+
+  function recalculerDepuisAchatTTC(nouveauTTC: string) {
+    onPrixAchatChange(nouveauTTC);
+    if (margePct !== "" && parseFloat(nouveauTTC) > 0) {
+      const pv = prixVenteFromMarge(parseFloat(nouveauTTC), parseFloat(margePct) || 0);
       onPrixVenteChange(String(pv));
     }
+  }
+  function handleAchatTTC(v: string) {
+    recalculerDepuisAchatTTC(v);
+  }
+  function handleAchatHT(v: string) {
+    setAchatHtSaisi(v);
+    const ht = parseFloat(v);
+    const ttc = !isNaN(ht) && ht > 0 ? Math.round(ht * 1.2 * 100) / 100 : 0;
+    recalculerDepuisAchatTTC(ttc > 0 ? String(ttc) : "");
+  }
+  function toggleModeAchat(m: "ttc" | "ht") {
+    if (m === "ht" && modeAchat === "ttc") {
+      // Bascule TTC -> HT : reconstruit le HT saisi depuis le TTC déjà en mémoire, pour
+      // ne rien perdre en changeant simplement de vue (utile en édition d'un article existant).
+      const pa = parseFloat(prixAchat);
+      setAchatHtSaisi(pa > 0 ? String(Math.round((pa / 1.2) * 100) / 100) : "");
+    }
+    setModeAchat(m);
   }
   function handleMarge(v: string) {
     setMargePct(v);
@@ -131,9 +159,27 @@ function MargeFields({ prixAchat, prixVente, onPrixAchatChange, onPrixVenteChang
   return (
     <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3 p-3 bg-emerald-50 rounded-xl border border-emerald-100">
       <div>
-        <label className="label text-emerald-800">Prix d'achat HT (€)</label>
-        <input className="input text-sm text-right" type="number" step="0.01" placeholder="0.00"
-          value={prixAchat} onChange={e => handlePrixAchat(e.target.value)} />
+        <div className="flex items-center justify-between mb-1">
+          <label className="label text-emerald-800 mb-0">Prix d'achat</label>
+          <div className="flex rounded-lg border border-emerald-300 overflow-hidden shrink-0">
+            <button type="button" onClick={() => toggleModeAchat("ttc")}
+              className={cn("px-2 py-0.5 text-xs font-medium transition-colors", modeAchat === "ttc" ? "bg-emerald-700 text-white" : "bg-white text-emerald-700")}>TTC</button>
+            <button type="button" onClick={() => toggleModeAchat("ht")}
+              className={cn("px-2 py-0.5 text-xs font-medium transition-colors border-l border-emerald-300", modeAchat === "ht" ? "bg-emerald-700 text-white" : "bg-white text-emerald-700")}>HT</button>
+          </div>
+        </div>
+        {modeAchat === "ttc" ? (
+          <input className="input text-sm text-right" type="number" step="0.01" placeholder="0.00"
+            value={prixAchat} onChange={e => handleAchatTTC(e.target.value)} />
+        ) : (
+          <input className="input text-sm text-right" type="number" step="0.01" placeholder="0.00"
+            value={achatHtSaisi} onChange={e => handleAchatHT(e.target.value)} />
+        )}
+        <p className="text-xs text-emerald-600 mt-1">
+          {modeAchat === "ttc"
+            ? "Prix payé au fournisseur, TVA incluse — laisser en TTC si le fournisseur ne détaille pas le HT"
+            : `TVA 20% ajoutée automatiquement → ${fmt((parseFloat(achatHtSaisi) || 0) * 1.2)} TTC, non récupérable en franchise de TVA`}
+        </p>
       </div>
       <div>
         <label className="label text-emerald-800">Marge (%)</label>
@@ -210,6 +256,83 @@ function FormMarque({ value, onChange, marques }: { value: string; onChange: (v:
           {marques.length > 0 && (
             <button onClick={() => setMode("select")} className="btn-ghost !px-3 text-xs shrink-0">Existante</button>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Sous-catégories connues (référence du moteur pré-devis, predevis-engine.ts) ───
+// Autocomplétion pour le champ "Sous-catégorie" — évite les fautes de frappe/copié-collé
+// qui rendraient un article invisible au pré-devis sans qu'on s'en aperçoive. Cette liste
+// doit rester synchronisée avec les sous_categorie recherchées par calculerBesoinsBruts()
+// dans src/lib/predevis-engine.ts — la mettre à jour si de nouveaux besoins y sont ajoutés.
+const SOUS_CATEGORIES_CONNUES: { code: string; label: string }[] = [
+  { code: "cable_1.5", label: "Câble 1.5mm²" },
+  { code: "cable_2.5", label: "Câble 2.5mm²" },
+  { code: "cable_4.0", label: "Câble 4mm²" },
+  { code: "cable_6.0", label: "Câble 6mm²" },
+  { code: "cable_10.0", label: "Câble 10mm²" },
+  { code: "gaine_irl16", label: "Gaine IRL 16" },
+  { code: "gaine_irl20", label: "Gaine IRL 20" },
+  { code: "gaine_irl25", label: "Gaine IRL 25" },
+  { code: "gaine_irl32", label: "Gaine IRL 32" },
+  { code: "gaine_irl40", label: "Gaine IRL 40" },
+  { code: "moulure", label: "Moulure" },
+  { code: "boite_derivation", label: "Boîte de dérivation" },
+  { code: "boite_encastrement_1poste", label: "Boîte d'encastrement simple" },
+  { code: "boite_encastrement_2postes", label: "Boîte d'encastrement double" },
+  { code: "boite_encastrement_3postes", label: "Boîte d'encastrement triple" },
+  { code: "boite_encastrement_4postes", label: "Boîte d'encastrement quadruple" },
+  { code: "disjoncteur_2A", label: "Disjoncteur 2A" },
+  { code: "disjoncteur_6A", label: "Disjoncteur 6A" },
+  { code: "disjoncteur_10A", label: "Disjoncteur 10A" },
+  { code: "disjoncteur_16A", label: "Disjoncteur 16A" },
+  { code: "disjoncteur_20A", label: "Disjoncteur 20A" },
+  { code: "disjoncteur_25A", label: "Disjoncteur 25A" },
+  { code: "disjoncteur_32A", label: "Disjoncteur 32A" },
+  { code: "disjoncteur_40A", label: "Disjoncteur 40A" },
+  { code: "disjoncteur_63A", label: "Disjoncteur 63A" },
+  ...[25, 40, 63, 80, 100, 125].flatMap(cal =>
+    (["AC", "A", "F"] as const).map(t => ({ code: `differentiel_${cal}A_${t}`, label: `Différentiel ${cal}A Type ${t}` }))),
+  { code: "prise", label: "Prise de courant" },
+  { code: "prise_commandee", label: "Prise commandée" },
+  { code: "interrupteur", label: "Interrupteur simple" },
+  { code: "va_et_vient", label: "Va-et-vient" },
+  { code: "telerupteur", label: "Bouton télérupteur" },
+  { code: "point_lumineux", label: "Point lumineux (DCL)" },
+  { code: "applique", label: "Sortie applique" },
+  { code: "interrupteur_domotique", label: "Interrupteur domotique" },
+  { code: "va_et_vient_domotique", label: "Va-et-vient domotique" },
+  { code: "telerupteur_domotique", label: "Bouton télérupteur domotique" },
+  { code: "prise_specialisee", label: "Prise / sortie de câble spécialisée" },
+  { code: "main_oeuvre", label: "Main d'œuvre" },
+];
+
+function SousCategorieInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const q = value.trim().toLowerCase();
+  const suggestions = q.length > 0
+    ? SOUS_CATEGORIES_CONNUES.filter(c => c.code.toLowerCase().includes(q) || c.label.toLowerCase().includes(q))
+    : SOUS_CATEGORIES_CONNUES;
+  return (
+    <div className="relative">
+      <input className="input text-sm" placeholder="Ex : cable_2.5, prise, disjoncteur_16A…"
+        value={value}
+        onChange={e => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)} />
+      {open && suggestions.length > 0 && (
+        <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-ink-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+          {suggestions.map(s => (
+            <button key={s.code} type="button"
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => { onChange(s.code); setOpen(false); }}
+              className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs text-left hover:bg-volt-50">
+              <span className="font-mono font-semibold text-volt-600 shrink-0">{s.code}</span>
+              <span className="text-ink-400 truncate">{s.label}</span>
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -607,6 +730,7 @@ function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (ro
                 <p>Colonnes : <code className="text-xs bg-ink-200 px-1 rounded">{CSV_HEADERS.join(" · ")}</code></p>
                 <p>• <code>type_branche</code> : <strong>service</strong> ou <strong>materiau</strong></p>
                 <p>• <code>liens_fournisseurs</code> : URLs séparées par <strong>|</strong></p>
+                <p>• <code>prix_achat</code> : toujours en TTC (ajoute la TVA à 20% avant d'exporter si tu pars d'un prix HT)</p>
               </div>
               <div>
                 <input ref={fileRef} type="file" accept=".csv" onChange={handleFile} className="hidden" />
@@ -813,9 +937,8 @@ function CategorieBlock({
                                   </div>
                                 )}</div>
                               <div><label className="label">Sous-catégorie</label>
-                                <input className="input text-sm" placeholder="Ex : Prises, Câblage…"
-                                  value={(editData as any).sous_categorie ?? sousCat}
-                                  onChange={e => setEditData((d: any) => ({ ...d, sous_categorie: e.target.value }))} /></div>
+                                <SousCategorieInput value={(editData as any).sous_categorie ?? sousCat}
+                                  onChange={v => setEditData((d: any) => ({ ...d, sous_categorie: v }))} /></div>
                               <div><label className="label">Gamme (pré-devis)</label>
                                 <select className="input text-sm" value={(editData as any).gamme ?? p.gamme ?? ""}
                                   onChange={e => setEditData((d: any) => ({ ...d, gamme: e.target.value || null }))}>
@@ -940,9 +1063,8 @@ function CategorieBlock({
                           </div>
                         )}</div>
                       <div><label className="label">Sous-catégorie</label>
-                        <input className="input text-sm" placeholder="Ex : Prises, Câblage…"
-                          value={(editData as any).sous_categorie ?? sousCat}
-                          onChange={e => setEditData((d: any) => ({ ...d, sous_categorie: e.target.value }))} /></div>
+                        <SousCategorieInput value={(editData as any).sous_categorie ?? sousCat}
+                          onChange={v => setEditData((d: any) => ({ ...d, sous_categorie: v }))} /></div>
                       <div><label className="label">Gamme (pré-devis)</label>
                         <select className="input text-sm" value={(editData as any).gamme ?? p.gamme ?? ""}
                           onChange={e => setEditData((d: any) => ({ ...d, gamme: e.target.value || null }))}>
@@ -1234,8 +1356,7 @@ export default function CataloguePage() {
                   </div>
                 )}</div>
               <div><label className="label">Sous-catégorie</label>
-                <input className="input" placeholder="Ex : Prises, Câblage, Éclairage…"
-                  value={form.sous_categorie} onChange={e => setForm(f => ({ ...f, sous_categorie: e.target.value }))} /></div>
+                <SousCategorieInput value={form.sous_categorie} onChange={v => setForm(f => ({ ...f, sous_categorie: v }))} /></div>
               <div><label className="label">Gamme (pré-devis)</label>
                 <select className="input" value={form.gamme} onChange={e => setForm(f => ({ ...f, gamme: e.target.value }))}>
                   <option value="">— Aucune —</option>
