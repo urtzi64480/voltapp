@@ -32,6 +32,11 @@ export interface AppareillagePlace {
   // Pour interrupteur / va_et_vient / telerupteur : ids des point_lumineux (ou applique)
   // commandés — un interrupteur peut commander plusieurs points lumineux.
   commandePourIds?: number[];
+  // Pour interrupteur / va_et_vient / telerupteur : commande domotique (module radio/wifi),
+  // sans câblage physique retour/navette vers le(s) point(s) lumineux commandé(s). Affecte
+  // uniquement la visualisation du cheminement (voir SegmentCircuit.type "domotique" et
+  // pointsOndulesEntre ci-dessous) — n'affecte pas la composition électrique du circuit.
+  domotique?: boolean;
   // Rempli par genererCircuits() — id du Breaker (electrical-constants.ts) qui dessert ce point.
   circuitId?: number;
   // Rattachement manuel à un CircuitManuel (id stable, voir plus bas) — prioritaire sur le
@@ -257,6 +262,12 @@ export interface Niveau {
   // construireBranchesCircuitEclairage). Liste vide ou absente : comportement historique
   // (une boîte implicite non nommée, positionnée au centroïde des lampes).
   boitesDerivation?: Record<string, BoiteDerivation[]>;
+  // Paires de points lumineux (ids AppareillagePlace) reliés DIRECTEMENT entre eux, sans
+  // passer par une boîte de dérivation — indexé par le label du disjoncteur, même convention
+  // de clé que boitesDerivation. Posé via clic sur un point lumineux puis un second (voir
+  // demarrerLiaisonDirecteLumiere, page.tsx). Un point lumineux impliqué dans au moins une
+  // paire sort de la topologie en étoile "boîte" habituelle : voir construireBranchesCircuitEclairage.
+  liaisonsDirectesLumiere?: Record<string, [number, number][]>;
   hauteurPlafond?: number; // mètres — pour la vue 3D (2.5 par défaut)
   liaisonWaypoints?: LiaisonWaypoints;
   circuitsManuels?: CircuitManuel[];
@@ -287,6 +298,15 @@ export interface Niveau {
   // dans un cheminement). Sans effet sur un appareillage déjà rattaché à un circuit manuel
   // (circuitManuelId prioritaire — voir genererCircuits, maison-engine.ts).
   appareillagesExclus?: number[];
+  // Point d'arrivée des gaines sur ce niveau (ex: percement de dalle depuis le niveau où
+  // se trouve le tableau) — purement informatif, ne participe à aucun calcul de circuit :
+  // sert à noter où la gaine technique remonte sur cet étage, distinct de tableauPos qui
+  // n'existe que sur le niveau où le tableau est physiquement posé.
+  pointArriveeGaines?: Point;
+  // Distance (mètres) entre pointArriveeGaines et le tableau électrique, le long de la
+  // liaison verticale (gaine technique, autre niveau…) qui n'est pas dessinée sur le plan —
+  // paramétrable indépendamment sur chaque étage.
+  distanceArriveeGainesTableau?: number;
 }
 
 export interface Maison {
@@ -647,6 +667,31 @@ export function longueurCircuitAvecWaypoints(depart: Point, points: Appareillage
   return longueurChemin(construireCheminCircuit(depart, points, waypoints));
 }
 
+// ─── ONDULATION D'UN SEGMENT (visualisation "sans fil") ────────────────────────
+// Génère une suite de points en mètres formant une onde sinusoïdale entre a et b —
+// utilisée pour représenter visuellement une liaison "particulière" (domotique/sans fil,
+// voir AppareillagePlace.domotique et SegmentCircuit.type "domotique" ci-dessous) par un
+// symbole d'onde plutôt qu'un trait plein, sur le rendu 2D, l'impression et la vue 3D
+// (chacun mappe ensuite ces points meters vers son propre repère d'affichage).
+export function pointsOndulesEntre(a: Point, b: Point, amplitude = 0.06, longueurOnde = 0.25): Point[] {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const longueur = Math.hypot(dx, dy);
+  if (longueur < 0.001) return [a, b];
+  const ux = dx / longueur, uy = dy / longueur;
+  const nx = -uy, ny = ux;
+  const nbPeriodes = Math.max(1, Math.round(longueur / longueurOnde));
+  const nbPoints = nbPeriodes * 8;
+  const pts: Point[] = [];
+  for (let i = 0; i <= nbPoints; i++) {
+    const t = i / nbPoints;
+    const d = t * longueur;
+    const phase = (d / longueurOnde) * Math.PI * 2;
+    const off = Math.sin(phase) * amplitude;
+    pts.push({ x: a.x + ux * d + nx * off, y: a.y + uy * d + ny * off });
+  }
+  return pts;
+}
+
 // ─── TOPOLOGIE EN ÉTOILE DES CIRCUITS D'ÉCLAIRAGE (boîte de dérivation) ────────
 // Une chaîne série (tableau → lampe1 → lampe2 → …) n'a aucun sens électriquement :
 // en pratique, le câble arrive du tableau à UNE boîte de dérivation, d'où repart une
@@ -655,7 +700,7 @@ export function longueurCircuitAvecWaypoints(depart: Point, points: Appareillage
 // reste du circuit. Ces fonctions construisent cette topologie (utilisées par le
 // rendu 2D et la vue 3D) au lieu de la simple chaîne par plus-proche-voisin.
 
-export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoint: Point; type?: "navette"; }
+export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoint: Point; type?: "navette" | "domotique"; }
 
 export function centroidePoints(points: Point[]): Point {
   if (points.length === 0) return { x: 0, y: 0 };
@@ -670,27 +715,73 @@ export function centroidePoints(points: Point[]): Point {
 // boîte implicite unique (si ≥ 2 lampes) ou lien direct (1 seule lampe).
 // boîte -> chaque lampe qui lui est la plus proche (étoile depuis CETTE boîte, jamais
 // toutes les lampes reliées à toutes les boîtes ni en série entre elles).
+// Un point lumineux impliqué dans au moins une liaison directe (liaisonsDirectes, voir
+// Niveau.liaisonsDirectesLumiere) sort de cette topologie en étoile : les lampes reliées
+// entre elles forment leurs propres composantes connexes, chacune raccordée UNE SEULE FOIS
+// (à sa lampe d'entrée la plus proche) à la boîte la plus proche du groupe — ou au tableau
+// s'il n'y a aucune boîte — puis chaînées de lampe en lampe selon les liaisons posées.
 // point lumineux -> commande(s) : un interrupteur simple ou un télérupteur (par bouton
 // poussoir) se raccorde indépendamment à la lampe, comme avant. Un groupe de va-et-vient
 // commandant la MÊME lampe, en revanche, ne se câble PAS chacun indépendamment vers la
 // lampe : électriquement, seul le premier (le plus proche) reçoit le retour lampe — les
 // suivants sont câblés EN CHAÎNE avec leur voisin précédent via les fils navette. Ces
 // segments navette sont marqués (type: "navette") pour être distingués visuellement
-// (couleur plus sombre) du reste du tracé, voir assombrirCouleur ci-dessous.
+// (couleur plus sombre) du reste du tracé, voir assombrirCouleur ci-dessous. Une commande
+// domotique (AppareillagePlace.domotique) — quel que soit son type (simple, va-et-vient,
+// télérupteur) — n'a pas de câblage physique retour/navette vers sa lampe : le segment est
+// marqué (type: "domotique") pour être tracé sous forme d'onde plutôt qu'un trait plein.
 export function construireBranchesCircuitEclairage(
   depart: Point, boites: BoiteDerivation[], lumieres: AppareillagePlace[], commandes: AppareillagePlace[],
+  liaisonsDirectes: [number, number][] = [],
 ): SegmentCircuit[] {
   const segments: SegmentCircuit[] = [];
+  const idsLumieres = new Set(lumieres.map(l => l.id));
+  const liaisonsValides = liaisonsDirectes.filter(([a, b]) => idsLumieres.has(a) && idsLumieres.has(b));
+  const lumiereParId = new Map(lumieres.map(l => [l.id, l]));
+
+  // Composantes connexes de lampes reliées directement entre elles (sans boîte).
+  const adjacence = new Map<number, number[]>();
+  liaisonsValides.forEach(([a, b]) => {
+    if (!adjacence.has(a)) adjacence.set(a, []);
+    if (!adjacence.has(b)) adjacence.set(b, []);
+    adjacence.get(a)!.push(b);
+    adjacence.get(b)!.push(a);
+  });
+  const visites = new Set<number>();
+  const composantes: number[][] = [];
+  adjacence.forEach((_voisins, id) => {
+    if (visites.has(id)) return;
+    const composante: number[] = [];
+    const pile = [id];
+    while (pile.length > 0) {
+      const cur = pile.pop()!;
+      if (visites.has(cur)) continue;
+      visites.add(cur);
+      composante.push(cur);
+      (adjacence.get(cur) ?? []).forEach(v => { if (!visites.has(v)) pile.push(v); });
+    }
+    composantes.push(composante);
+  });
+  const idsDansComposante = new Set(composantes.flat());
+  const lumieresLibres = lumieres.filter(l => !idsDansComposante.has(l.id));
+
+  // Ancre (boîte la plus proche si des boîtes existent, sinon le tableau directement) vers
+  // laquelle raccorder l'entrée d'un groupe de lampes chaînées.
+  const ancrerVersBoiteOuTableau = (cible: Point): { id: string; point: Point } => {
+    if (boites.length === 0) return { id: "tableau", point: depart };
+    let plusProche = boites[0];
+    let meilleureDistance = distance(boites[0].point, cible);
+    boites.forEach(b => { const d = distance(b.point, cible); if (d < meilleureDistance) { meilleureDistance = d; plusProche = b; } });
+    return { id: `boite-${plusProche.id}`, point: plusProche.point };
+  };
 
   if (boites.length === 0) {
-    // Aucune boîte nommée pour ce circuit — comportement historique : une boîte implicite
-    // (jamais affichée nommée, positionnée au centroïde) si ≥ 2 lampes, sinon lien direct.
-    if (lumieres.length <= 1) {
-      lumieres.forEach(l => segments.push({ aId: "tableau", aPoint: depart, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
+    if (lumieresLibres.length <= 1) {
+      lumieresLibres.forEach(l => segments.push({ aId: "tableau", aPoint: depart, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
     } else {
-      const centre = centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y })));
+      const centre = centroidePoints(lumieresLibres.map(l => ({ x: l.x, y: l.y })));
       segments.push({ aId: "tableau", aPoint: depart, bId: "boite", bPoint: centre });
-      lumieres.forEach(l => segments.push({ aId: "boite", aPoint: centre, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
+      lumieresLibres.forEach(l => segments.push({ aId: "boite", aPoint: centre, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
     }
   } else {
     let precedentId = "tableau";
@@ -701,7 +792,7 @@ export function construireBranchesCircuitEclairage(
       precedentId = id;
       precedentPoint = boite.point;
     });
-    lumieres.forEach(l => {
+    lumieresLibres.forEach(l => {
       let plusProche = boites[0];
       let meilleureDistance = distance(boites[0].point, l);
       boites.forEach(boite => {
@@ -712,6 +803,26 @@ export function construireBranchesCircuitEclairage(
     });
   }
 
+  // Composantes de lampes chaînées directement entre elles : une seule entrée depuis la
+  // boîte la plus proche (ou le tableau) vers la lampe d'entrée du groupe, puis chaînage
+  // point à point entre les lampes reliées — aucune boîte de dérivation nécessaire ici.
+  composantes.forEach(idsGroupe => {
+    const lampesGroupe = idsGroupe.map(id => lumiereParId.get(id)).filter((l): l is AppareillagePlace => !!l);
+    if (lampesGroupe.length === 0) return;
+    const centreGroupe = centroidePoints(lampesGroupe.map(l => ({ x: l.x, y: l.y })));
+    const ancre = ancrerVersBoiteOuTableau(centreGroupe);
+    let entree = lampesGroupe[0];
+    let meilleureDistance = distance(ancre.point, entree);
+    lampesGroupe.forEach(l => { const d = distance(ancre.point, l); if (d < meilleureDistance) { meilleureDistance = d; entree = l; } });
+    segments.push({ aId: ancre.id, aPoint: ancre.point, bId: String(entree.id), bPoint: { x: entree.x, y: entree.y } });
+    liaisonsValides
+      .filter(([a, b]) => idsGroupe.includes(a) && idsGroupe.includes(b))
+      .forEach(([a, b]) => {
+        const la = lumiereParId.get(a), lb = lumiereParId.get(b);
+        if (la && lb) segments.push({ aId: String(a), aPoint: { x: la.x, y: la.y }, bId: String(b), bPoint: { x: lb.x, y: lb.y } });
+      });
+  });
+
   lumieres.forEach(l => {
     const commandesDeCetteLampe = commandes.filter(c => c.commandePourIds?.includes(l.id));
     const vaEtVient = commandesDeCetteLampe
@@ -721,18 +832,24 @@ export function construireBranchesCircuitEclairage(
 
     vaEtVient.forEach((c, i) => {
       if (i === 0) {
-        segments.push({ aId: String(l.id), aPoint: { x: l.x, y: l.y }, bId: String(c.id), bPoint: { x: c.x, y: c.y } });
+        segments.push({
+          aId: String(l.id), aPoint: { x: l.x, y: l.y }, bId: String(c.id), bPoint: { x: c.x, y: c.y },
+          type: c.domotique ? "domotique" : undefined,
+        });
       } else {
         const precedent = vaEtVient[i - 1];
         segments.push({
           aId: String(precedent.id), aPoint: { x: precedent.x, y: precedent.y },
-          bId: String(c.id), bPoint: { x: c.x, y: c.y }, type: "navette",
+          bId: String(c.id), bPoint: { x: c.x, y: c.y }, type: c.domotique ? "domotique" : "navette",
         });
       }
     });
 
     autres.forEach(c => {
-      segments.push({ aId: String(l.id), aPoint: { x: l.x, y: l.y }, bId: String(c.id), bPoint: { x: c.x, y: c.y } });
+      segments.push({
+        aId: String(l.id), aPoint: { x: l.x, y: l.y }, bId: String(c.id), bPoint: { x: c.x, y: c.y },
+        type: c.domotique ? "domotique" : undefined,
+      });
     });
   });
   return segments;

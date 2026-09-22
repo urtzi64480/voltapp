@@ -476,16 +476,18 @@ export function construireColorMap(resultat: ResultatGeneration, niveauxVivants?
 // Segments à tracer pour un circuit donné — étoile depuis une boîte de dérivation pour
 // l'éclairage (un seul câble tableau -> boîte, puis chaque point lumineux en étoile, et
 // chaque interrupteur relié uniquement au(x) point(s) lumineux qu'il commande, jamais en
-// série avec le reste du circuit), chaîne (plus-proche-voisin automatique, ou ordre choisi
-// à la main via Niveau.ordresCircuits — voir sequenceAncresCircuitOrdonnee) pour tout le
-// reste (prises, chauffage, appareils dédiés, manuels non-éclairage). Partagé par le rendu
-// 2D et la vue 3D.
+// série avec le reste du circuit — plus, désormais, les liaisons directes lampe-à-lampe
+// posées à la main, voir Niveau.liaisonsDirectesLumiere), chaîne (plus-proche-voisin
+// automatique, ou ordre choisi à la main via Niveau.ordresCircuits — voir
+// sequenceAncresCircuitOrdonnee) pour tout le reste (prises, chauffage, appareils dédiés,
+// manuels non-éclairage). Partagé par le rendu 2D et la vue 3D.
 export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[], niveau: Niveau, tableauPos: Point): SegmentCircuit[] {
   if (breaker.circuit === "lumiere") {
     const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
     const commandes = points.filter(a => a.type === "interrupteur" || a.type === "va_et_vient" || a.type === "telerupteur");
     const boites = niveau.boitesDerivation?.[breaker.label] ?? [];
-    return construireBranchesCircuitEclairage(tableauPos, boites, lumieres, commandes);
+    const liaisonsDirectes = niveau.liaisonsDirectesLumiere?.[breaker.label] ?? [];
+    return construireBranchesCircuitEclairage(tableauPos, boites, lumieres, commandes, liaisonsDirectes);
   }
   const ordre = niveau.ordresCircuits?.[breaker.label];
   const sequence = ordre ? sequenceAncresCircuitOrdonnee(tableauPos, points, ordre) : sequenceAncresCircuit(tableauPos, points);
