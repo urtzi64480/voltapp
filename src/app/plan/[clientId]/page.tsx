@@ -10,7 +10,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
-  GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2,
+  GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -2136,6 +2136,7 @@ export default function PlanPage() {
             ) : (
               <button onClick={() => setShowPrintForm(true)} className="btn-ghost"><Printer size={15} /> Imprimer</button>
             )}
+            <Link href={`/predevis/${clientId}`} className="btn-ghost"><Receipt size={15} /> Pré-devis</Link>
             <button onClick={handleSave} disabled={saving} className={`btn-volt ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
               <Save size={15} />{saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
             </button>
