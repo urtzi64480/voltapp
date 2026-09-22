@@ -1,5 +1,4 @@
 "use client";
-
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -112,7 +111,7 @@ function checkNFC(rows: BreakerRow[]) {
       // Section câble insuffisante pour le calibre
       const sectionNum = parseFloat(section);
       const maxAmpSection =
-        sectionNum <= 1.5 ? 10 :
+        sectionNum <= 1.5 ? 16 :
         sectionNum <= 2.5 ? 20 :
         sectionNum <= 4.0 ? 25 :
         sectionNum <= 6.0 ? 32 : 63;
@@ -381,7 +380,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
 
   const sectionNum = parseFloat(section);
   const maxAmpSection =
-    sectionNum <= 1.5 ? 10 :
+    sectionNum <= 1.5 ? 16 :
     sectionNum <= 2.5 ? 20 :
     sectionNum <= 4.0 ? 25 :
     sectionNum <= 6.0 ? 32 : 63;
