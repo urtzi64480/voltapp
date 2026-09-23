@@ -1335,7 +1335,7 @@ export default function TableauPage() {
                   pieces,
                 } as Breaker;
               });
-              return { id: row.id ?? uid(), name: row.name ?? "Rangée", slots };
+              return { id: row.id ?? uid(), name: row.name ?? "Rangée", slots, origine: row.origine === "plan" ? "plan" as const : undefined };
             }).filter(Boolean) as BreakerRow[];
             setRows(normalized);
           } catch {}
