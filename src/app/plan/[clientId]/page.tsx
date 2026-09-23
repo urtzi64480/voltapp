@@ -881,6 +881,12 @@ export default function PlanPage() {
   const [cursorPx, setCursorPx] = useState<Point | null>(null);
 
   const [selectedPieceId, setSelectedPieceId] = useState<number | null>(null);
+  // Incrémenté à CHAQUE clic de sélection (même sur un élément déjà sélectionné) — inclus
+  // dans la clé des DraggablePanel de sélection (voir plus bas) pour forcer leur
+  // réinitialisation à la position par défaut à chaque ouverture, y compris en recliquant
+  // sur le même élément sans être passé par une désélection entre-temps (auquel cas React
+  // ne remonterait pas le composant tout seul, puisque rien d'autre n'aurait changé).
+  const [panelResetTick, setPanelResetTick] = useState(0);
   const [editingPiece, setEditingPiece] = useState<Piece | null>(null);
   const [editingSegment, setEditingSegment] = useState<{ pieceId: number; segIndex: number } | null>(null);
   const [snapGuide, setSnapGuide] = useState<{ x?: number; y?: number } | null>(null);
@@ -1863,6 +1869,7 @@ export default function PlanPage() {
       setSelectedTableau(false);
       setSelectedOuvertureId(null); setSelectedBoite(null);
       setSelectedWaypoint(null);
+      setPanelResetTick(t => t + 1);
     }
   };
 
@@ -1904,6 +1911,7 @@ export default function PlanPage() {
     setSelectedOuvertureId(null); setSelectedBoite(null);
     setSelectedWaypoint(null);
     setSelectedPointArrivee(false);
+    setPanelResetTick(t => t + 1);
     setDragMode({ kind: "appareillage", pieceId: piece.id, appareillageId: a.id });
   };
 
@@ -1917,6 +1925,7 @@ export default function PlanPage() {
     setSelectedOuvertureId(null); setSelectedBoite(null);
     setSelectedWaypoint(null);
     setSelectedPointArrivee(false);
+    setPanelResetTick(t => t + 1);
     setDragMode({ kind: "tableau" });
   };
 
@@ -1930,6 +1939,7 @@ export default function PlanPage() {
     setSelectedTableau(false);
     setSelectedOuvertureId(null); setSelectedBoite(null);
     setSelectedWaypoint(null);
+    setPanelResetTick(t => t + 1);
     setDragMode({ kind: "pointArrivee" });
   };
 
@@ -1944,6 +1954,7 @@ export default function PlanPage() {
     setSelectedBoite(null);
     setSelectedWaypoint(null);
     setSelectedPointArrivee(false);
+    setPanelResetTick(t => t + 1);
     setDragMode({ kind: "ouverture", pieceId: piece.id, ouvertureId: o.id });
   };
 
@@ -1973,6 +1984,7 @@ export default function PlanPage() {
     setSelectedOuvertureId(null);
     setSelectedWaypoint(null);
     setSelectedPointArrivee(false);
+    setPanelResetTick(t => t + 1);
     setDragMode({ kind: "boite", label, boiteId });
   };
   // Ajoute une nouvelle boîte de dérivation nommée à un circuit d'éclairage — proposée pour
@@ -2549,6 +2561,7 @@ export default function PlanPage() {
                             setSelectedAppareillageId(null);
                             setSelectedTableau(false);
                             setSelectedBoite(null);
+                            setPanelResetTick(t => t + 1);
                             setDragMode({ kind: "liaison", cle, waypointId: c.id });
                           }}
                           onDoubleClick={e => { e.stopPropagation(); supprimerWaypoint(cle, c.id); }}>
@@ -2766,7 +2779,7 @@ export default function PlanPage() {
             </svg>
 
             {selectedPiece && mode === "select" && (
-              <DraggablePanel key={selectedPiece.id} corner="bl" className="card card-inner !p-3 flex items-center gap-3 shadow-lg">
+              <DraggablePanel key={`${selectedPiece.id}-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex items-center gap-3 shadow-lg">
                 <div>
                   <p className="text-sm font-semibold text-ink-900">{selectedPiece.nom || PIECE_TYPES[selectedPiece.type].label}</p>
                   <p className="text-xs text-ink-400">{PIECE_TYPES[selectedPiece.type].label} · {aireDuPolygone(selectedPiece.contour).toFixed(1)} m² · {selectedPiece.appareillages.length} appareillage(s) · {selectedPiece.contour.length} sommets</p>
@@ -2777,7 +2790,7 @@ export default function PlanPage() {
             )}
 
             {selectedAppareillage && mode === "select" && (
-              <DraggablePanel key={selectedAppareillage.id} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-72 max-h-[80vh] overflow-y-auto">
+              <DraggablePanel key={`${selectedAppareillage.id}-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-72 max-h-[80vh] overflow-y-auto">
                 <div className="flex items-center gap-2">
                   <AppareillageSymbol type={selectedAppareillage.type} size={22} />
                   <input className="input !py-1 !text-sm flex-1 min-w-0" placeholder={labelAppareillage(selectedAppareillage.type)}
@@ -2891,7 +2904,7 @@ export default function PlanPage() {
             )}
 
             {selectedTableau && niveauActif?.tableauPos && mode === "select" && (
-              <DraggablePanel corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+              <DraggablePanel key={`tableau-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
                 <div className="flex items-center gap-2">
                   <span className="text-lg leading-none">⚡</span>
                   <p className="text-sm font-semibold text-ink-900 flex-1">Tableau électrique</p>
@@ -2917,7 +2930,7 @@ export default function PlanPage() {
             )}
 
             {selectedPointArrivee && niveauActif?.pointArriveeGaines && mode === "select" && (
-              <DraggablePanel corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-72">
+              <DraggablePanel key={`arrivee-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-72">
                 <div className="flex items-center gap-2">
                   <span className="text-lg leading-none">⬇</span>
                   <p className="text-sm font-semibold text-ink-900 flex-1">Point d'arrivée des gaines</p>
@@ -2950,7 +2963,7 @@ export default function PlanPage() {
               const o = piece?.ouvertures?.find(o => o.id === selectedOuvertureId);
               if (!piece || !o) return null;
               return (
-                <DraggablePanel key={o.id} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+                <DraggablePanel key={`${o.id}-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
                   <div className="flex items-center gap-2">
                     <OuvertureIcon type={o.type} size={18} color="#1c1917" />
                     <p className="text-sm font-semibold text-ink-900 flex-1">{LABEL_OUVERTURE[o.type]}</p>
@@ -3057,7 +3070,7 @@ export default function PlanPage() {
               const wp = niveauActif.liaisonWaypoints?.[selectedWaypoint.cle]?.find(w => w.id === selectedWaypoint.waypointId);
               if (!wp) return null;
               return (
-                <DraggablePanel key={`${selectedWaypoint.cle}-${selectedWaypoint.waypointId}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+                <DraggablePanel key={`${selectedWaypoint.cle}-${selectedWaypoint.waypointId}-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-ink-500 shrink-0">Coude — hauteur (cm)</span>
                     <input type="number" className="input !py-1 !text-xs !w-20" placeholder="—"
@@ -3086,7 +3099,7 @@ export default function PlanPage() {
               const boite = niveauActif.boitesDerivation?.[selectedBoite.label]?.find(b => b.id === selectedBoite.boiteId);
               if (!boite) return null;
               return (
-                <DraggablePanel key={`${selectedBoite.label}-${selectedBoite.boiteId}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+                <DraggablePanel key={`${selectedBoite.label}-${selectedBoite.boiteId}-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
                   <div className="flex items-center gap-2">
                     <span className="text-lg leading-none">🔀</span>
                     <input className="input !py-1 !text-sm flex-1 min-w-0" placeholder="Boîte de dérivation"
