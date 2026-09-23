@@ -263,6 +263,19 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
     if (n.distanceArriveeGainesTableau != null) {
       s += `<text x="${pos.x.toFixed(1)}" y="${(pos.y + 16).toFixed(1)}" font-size="6" text-anchor="middle" font-family="monospace" fill="#0369A1">${n.distanceArriveeGainesTableau}m → tableau</text>`;
     }
+    {
+      const candidats = n.pieces.flatMap(pc => pc.appareillages).filter(a => {
+        if (a.dejaExistant) return false;
+        const manuel = a.circuitManuelId != null ? (n.circuitsManuels ?? []).find(m => m.id === a.circuitManuelId) : undefined;
+        return !manuel?.nonRelieTableau;
+      });
+      if (candidats.length > 0) {
+        let dMin = Infinity;
+        candidats.forEach(a => { const d = distance(n.pointArriveeGaines!, { x: a.x, y: a.y }); if (d < dMin) dMin = d; });
+        const yDist = pos.y + (n.distanceArriveeGainesTableau != null ? 23 : 16);
+        s += `<text x="${pos.x.toFixed(1)}" y="${yDist.toFixed(1)}" font-size="6" text-anchor="middle" font-family="monospace" fill="#0369A1">${dMin.toFixed(2)}m → 1er appareillage</text>`;
+      }
+    }
   }
 
   s += `</svg>`;
@@ -2700,6 +2713,25 @@ export default function PlanPage() {
                         {niveauActif.distanceArriveeGainesTableau}m → tableau
                       </text>
                     )}
+                    {(() => {
+                      // Distance jusqu'à l'appareillage le plus proche — même calcul que
+                      // celui utilisé par le pré-devis (origineCalcul, predevis-engine.ts),
+                      // affiché ici pour que ce ne soit jamais une longueur invisible/
+                      // uniquement déduite en creusant le pré-devis.
+                      const candidats = niveauActif.pieces.flatMap(pc => pc.appareillages).filter(a => {
+                        if (a.dejaExistant) return false;
+                        const manuel = a.circuitManuelId != null ? (niveauActif.circuitsManuels ?? []).find(m => m.id === a.circuitManuelId) : undefined;
+                        return !manuel?.nonRelieTableau;
+                      });
+                      if (candidats.length === 0) return null;
+                      let dMin = Infinity;
+                      candidats.forEach(a => { const d = distance(niveauActif.pointArriveeGaines!, { x: a.x, y: a.y }); if (d < dMin) dMin = d; });
+                      return (
+                        <text x={p.x} y={p.y + (niveauActif.distanceArriveeGainesTableau != null ? 35 : 24)} textAnchor="middle" fontSize="9" fontFamily="monospace" fill="#0369A1" style={{ pointerEvents: "none" }}>
+                          {dMin.toFixed(2)}m → 1er appareillage
+                        </text>
+                      );
+                    })()}
                     {selectedPointArrivee && <circle cx={p.x} cy={p.y} r={rZoneClic} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
                   </g>
                 );
