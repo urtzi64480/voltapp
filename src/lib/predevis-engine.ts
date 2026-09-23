@@ -120,6 +120,13 @@ const LABEL_APPAREILLAGE_DOMOTIQUE: Record<string, string> = {
 
 const PSEUDO_TABLEAU = "Tableau électrique";
 const pseudoCommun = (niveauNom: string) => `Commun — ${niveauNom}`;
+// Pseudo-pièce séparée pour la distance verticale configurée (point d'arrivée des gaines
+// -> tableau) — jamais mélangée avec pseudoCommun (boîtes de dérivation, tronçons de
+// câble tombant hors de toute pièce dessinée), qui elle EST sensible à la position du
+// tableau. Les deux changeant pour des raisons différentes, les garder séparées évite
+// qu'un total combiné donne l'impression que la distance configurée elle-même varie
+// quand on déplace le tableau sur le plan.
+const pseudoLiaisonVerticale = (niveauNom: string) => `Liaison verticale (configurée) — ${niveauNom}`;
 
 // ─── OUTILS GÉOMÉTRIQUES ────────────────────────────────────────────────────
 
@@ -332,7 +339,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       // câble/fil au niveau des options, comme ci-dessus.
       if (!nonRelie && niveau.distanceArriveeGainesTableau != null && niveau.distanceArriveeGainesTableau > 0) {
         const d = niveau.distanceArriveeGainesTableau;
-        const nomPiece = pseudoCommun(niveau.nom || niveau.type);
+        const nomPiece = pseudoLiaisonVerticale(niveau.nom || niveau.type);
         ajouter(`cablage_${sectionCircuit}@${nomPiece}`, `cablage_${sectionCircuit}`,
           LABEL_CABLAGE[sectionCircuit] ?? `Câblage ${sectionCircuit}mm²`, nomPiece, d, "m");
         const gaineInfo = gaineRecommandee([sectionCircuit, sectionCircuit, sectionCircuit]);
@@ -525,5 +532,5 @@ export function multiplicateurPourArticle(besoinSousCategorie: string, articleSo
 // sélection, car elles ne sont pas rattachables à une seule pièce réelle sans fausser le
 // calcul des longueurs.
 export function estPieceReelle(piece: string): boolean {
-  return piece !== PSEUDO_TABLEAU && !piece.startsWith("Commun — ");
+  return piece !== PSEUDO_TABLEAU && !piece.startsWith("Commun — ") && !piece.startsWith("Liaison verticale (configurée) — ");
 }
