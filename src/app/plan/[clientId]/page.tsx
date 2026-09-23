@@ -445,10 +445,19 @@ function DraggablePanel({ corner, className, dark, children }: {
   // "tc" (top-center) a besoin d'un -50% de centrage en plus de l'offset de glisser-déposer —
   // les deux se composent dans un seul transform (translations pures : l'ordre n'a pas d'importance).
   const transform = `${corner === "tc" ? "translateX(-50%) " : ""}translate(${offset.dx}px, ${offset.dy}px)`;
+  // Un panneau ancré en bas ("bl"/"br") grandit VERS LE HAUT avec son contenu — sur un
+  // écran bas ou un panneau chargé (beaucoup de champs), sa poignée du haut peut se
+  // retrouver nativement derrière la barre d'outils, SANS même avoir été déplacée. On
+  // plafonne sa hauteur et on force un défilement interne pour que ça n'arrive jamais —
+  // en dur ici, plutôt que de compter sur chaque appelant pour le faire dans className
+  // (la plupart ne le faisaient pas).
+  const maxHeightStyle = (corner === "bl" || corner === "br")
+    ? { maxHeight: "calc(100dvh - 88px)", overflowY: "auto" as const }
+    : undefined;
 
   return (
     <div ref={panelRef} className={`absolute ${cornerClass} z-30`} style={{ transform }}>
-      <div className={className}>
+      <div className={className} style={maxHeightStyle}>
         <div
           className={`flex items-center justify-center h-4 -mx-3 -mt-3 mb-2 rounded-t-xl cursor-grab active:cursor-grabbing ${dark ? "bg-white/10 hover:bg-white/20" : "bg-ink-100 hover:bg-ink-200"}`}
           style={{ touchAction: "none" }}
