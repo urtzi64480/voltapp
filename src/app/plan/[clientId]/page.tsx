@@ -2714,22 +2714,27 @@ export default function PlanPage() {
                       </text>
                     )}
                     {(() => {
-                      // Distance jusqu'à l'appareillage le plus proche — même calcul que
-                      // celui utilisé par le pré-devis (origineCalcul, predevis-engine.ts),
-                      // affiché ici pour que ce ne soit jamais une longueur invisible/
-                      // uniquement déduite en creusant le pré-devis.
+                      // Ligne pointillée + étiquette de longueur jusqu'à l'appareillage le
+                      // plus proche — même calcul que celui utilisé par le pré-devis
+                      // (origineCalcul, predevis-engine.ts). Pointillé pour bien la
+                      // distinguer d'un vrai tronçon de circuit dessiné (couleur/gamme
+                      // propre à un circuit) : ceci n'est qu'un repère de distance.
                       const candidats = niveauActif.pieces.flatMap(pc => pc.appareillages).filter(a => {
                         if (a.dejaExistant) return false;
                         const manuel = a.circuitManuelId != null ? (niveauActif.circuitsManuels ?? []).find(m => m.id === a.circuitManuelId) : undefined;
                         return !manuel?.nonRelieTableau;
                       });
                       if (candidats.length === 0) return null;
+                      let plusProche: AppareillagePlace | null = null;
                       let dMin = Infinity;
-                      candidats.forEach(a => { const d = distance(niveauActif.pointArriveeGaines!, { x: a.x, y: a.y }); if (d < dMin) dMin = d; });
+                      candidats.forEach(a => { const d = distance(niveauActif.pointArriveeGaines!, { x: a.x, y: a.y }); if (d < dMin) { dMin = d; plusProche = a; } });
+                      if (!plusProche) return null;
+                      const bPx = toScreen({ x: (plusProche as AppareillagePlace).x, y: (plusProche as AppareillagePlace).y });
                       return (
-                        <text x={p.x} y={p.y + (niveauActif.distanceArriveeGainesTableau != null ? 35 : 24)} textAnchor="middle" fontSize="9" fontFamily="monospace" fill="#0369A1" style={{ pointerEvents: "none" }}>
-                          {dMin.toFixed(2)}m → 1er appareillage
-                        </text>
+                        <>
+                          <line x1={p.x} y1={p.y} x2={bPx.x} y2={bPx.y} stroke="#0EA5E9" strokeWidth={1.5} strokeDasharray="4,3" opacity={0.7} style={{ pointerEvents: "none" }} />
+                          <EtiquetteLongueur aPx={p} bPx={bPx} texte={`${dMin.toFixed(2)}m`} />
+                        </>
                       );
                     })()}
                     {selectedPointArrivee && <circle cx={p.x} cy={p.y} r={rZoneClic} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
