@@ -46,17 +46,42 @@ function etatParDefaut(besoin: BesoinApparie): EtatChoix {
   };
 }
 
-// Quantité approximative facturée pour l'affichage en direct (le calcul exact, avec
-// décomposition en bobines, n'est fait qu'à la génération finale — voir genererLignesDevis).
-function quantiteApprox(besoin: BesoinApparie, option?: { longueur_unitaire?: number | null; quantiteMultiplicateur?: number }): number {
-  const quantiteReelle = besoin.quantite * (option?.quantiteMultiplicateur ?? 1);
-  if (option?.longueur_unitaire && option.longueur_unitaire > 0) {
-    return Math.max(1, Math.round(quantiteReelle / option.longueur_unitaire));
+// Estime le total réellement facturable pour un besoin bobinable, en reproduisant EXACTEMENT
+// la décomposition de genererLignesQuantiteBobinable (predevis-engine.ts) — bobines entières
+// au prix plein + reliquat via un article "au mètre" de même sous-catégorie/gamme si trouvé,
+// sinon une bobine de plus. Un simple Math.round(quantité / longueur bobine) arrondit au plus
+// proche et peut faire disparaître un reliquat important de l'affichage (ex. 29m avec des
+// bobines de 25m arrondissait à "1" au lieu de facturer les 4m restants) — d'où cette version
+// qui ne sous-estime jamais.
+function totalBobinable(besoin: BesoinApparie, option: { longueur_unitaire?: number | null; quantiteMultiplicateur?: number; prix_unitaire: number; gamme?: OptionArticle["gamme"]; sousCategorieArticle?: string }, prestations: Prestation[]): number {
+  const quantiteReelle = besoin.quantite * (option.quantiteMultiplicateur ?? 1);
+  if (!option.longueur_unitaire || option.longueur_unitaire <= 0) {
+    const q = besoin.unite === "m" ? Math.ceil(quantiteReelle) : quantiteReelle;
+    return q * option.prix_unitaire;
   }
-  return besoin.unite === "m" ? Math.ceil(quantiteReelle) : quantiteReelle;
+  const L = option.longueur_unitaire;
+  const nbBobines = Math.floor(quantiteReelle / L + 1e-6);
+  const reliquat = Math.round((quantiteReelle - nbBobines * L) * 100) / 100;
+  let total = nbBobines * option.prix_unitaire;
+  if (reliquat > 0.01) {
+    const auMetre = prestations.find(p => p.sous_categorie === (option.sousCategorieArticle ?? besoin.sousCategorie)
+      && (p.gamme ?? null) === (option.gamme ?? null) && !p.longueur_unitaire);
+    total += auMetre ? Math.ceil(reliquat) * auMetre.prix_unitaire : option.prix_unitaire; // bobine de plus si pas d'article au mètre
+  }
+  return total;
 }
 
 // ─── Ligne d'un besoin ───────────────────────────────────────────────────────
+
+function decompositionLabel(besoin: BesoinApparie, option: { longueur_unitaire?: number | null; quantiteMultiplicateur?: number }): string | null {
+  if (!(besoin.unite === "m" && estBobinable(besoin.sousCategorie) && option.longueur_unitaire && option.longueur_unitaire > 0)) return null;
+  const quantiteReelle = besoin.quantite * (option.quantiteMultiplicateur ?? 1);
+  const L = option.longueur_unitaire;
+  const nb = Math.floor(quantiteReelle / L + 1e-6);
+  const reliquat = Math.round((quantiteReelle - nb * L) * 100) / 100;
+  if (reliquat <= 0.01) return `→ ${nb} bobine${nb > 1 ? "s" : ""} de ${L}m (${quantiteReelle.toFixed(2)}m au total)`;
+  return `→ ${nb > 0 ? `${nb} bobine${nb > 1 ? "s" : ""} de ${L}m + ` : ""}${reliquat.toFixed(2)}m restants (${quantiteReelle.toFixed(2)}m au total) — au mètre si dispo, sinon 1 bobine de plus`;
+}
 
 function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
   besoin: BesoinApparie; etat: EtatChoix; onChange: (e: EtatChoix) => void; prestations: Prestation[]; detail?: string;
@@ -101,6 +126,10 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
             <span className="text-ink-500 shrink-0">{fmt(opt.prix_unitaire)} / {opt.unite}</span>
           </label>
         ))}
+        {etat.mode === "option" && (() => {
+          const label = decompositionLabel(besoin, besoin.options[etat.optionIndex] ?? {});
+          return label ? <p className="text-[11px] text-sky-600 font-mono ml-6">{label}</p> : null;
+        })()}
 
         <label className="flex items-center gap-2 text-sm cursor-pointer">
           <input type="radio" checked={etat.mode === "autre"} onChange={() => { onChange({ ...etat, mode: "autre" }); setRechercheOuverte(true); }} />
@@ -322,13 +351,17 @@ export default function PreDevisPage() {
     if (etat.mode === "option") {
       const opt = besoin.options[etat.optionIndex];
       if (!opt) return 0;
-      return quantiteApprox(besoin, opt) * opt.prix_unitaire;
+      if (besoin.unite === "m" && estBobinable(besoin.sousCategorie)) return totalBobinable(besoin, opt, prestations);
+      return besoin.quantite * (opt.quantiteMultiplicateur ?? 1) * opt.prix_unitaire;
     }
     if (etat.mode === "autre") {
       const p = prestations.find(x => x.id === etat.autrePrestationId);
       if (!p) return 0;
       const mult = multiplicateurPourArticle(besoin.sousCategorie, p.sous_categorie);
-      return quantiteApprox(besoin, { longueur_unitaire: p.longueur_unitaire ?? null, quantiteMultiplicateur: mult }) * p.prix_unitaire;
+      if (besoin.unite === "m" && estBobinable(besoin.sousCategorie)) {
+        return totalBobinable(besoin, { longueur_unitaire: p.longueur_unitaire ?? null, quantiteMultiplicateur: mult, prix_unitaire: p.prix_unitaire, gamme: p.gamme ?? null, sousCategorieArticle: p.sous_categorie ?? undefined }, prestations);
+      }
+      return besoin.quantite * mult * p.prix_unitaire;
     }
     const prix = parseFloat(etat.librePrix) || 0;
     return (besoin.unite === "m" ? Math.ceil(besoin.quantite) : besoin.quantite) * prix;
