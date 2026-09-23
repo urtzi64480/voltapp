@@ -246,6 +246,15 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       return;
     }
     const tableauPos = niveau.tableauPos;
+    // Origine utilisée pour MESURER les câbles (jamais pour le tracé visuel sur le plan,
+    // qui reste inchangé et part toujours du tableau réel) : si un point d'arrivée des
+    // gaines est configuré sur ce niveau, la distance parcourue par le câble commence
+    // réellement là, coordonnées géométriques réelles à l'appui — ce calcul représente à
+    // lui seul le trajet complet et réel jusqu'aux appareillages, sans qu'il faille rien
+    // ajouter d'autre (voir plus bas : distanceArriveeGainesTableau ne s'ajoute plus dans
+    // ce cas, pour ne pas compter deux fois le même trajet). Sans point d'arrivée
+    // configuré : comportement inchangé, mesuré depuis le tableau directement.
+    const origineCalcul = niveau.pointArriveeGaines ?? tableauPos;
     const idToAppareillage = new Map<string, AppareillagePlace>();
     niveau.pieces.forEach(p => p.appareillages.forEach(a => idToAppareillage.set(String(a.id), a)));
 
@@ -280,7 +289,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         sectionCircuit = breakerTableau ? effectiveSection(breakerTableau) : effectiveSection(b);
       }
 
-      const segments: SegmentCircuit[] = segmentsPourCircuit(b, points, niveau, tableauPos);
+      const segments: SegmentCircuit[] = segmentsPourCircuit(b, points, niveau, origineCalcul);
       segments.forEach(seg => {
         if (seg.type === "domotique") return; // sans fil — aucun câble
         const estLiaisonCommande = seg.type === "navette"
@@ -337,7 +346,13 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       // sa section propre, en pose encastrée (choix confirmé). Toujours un tronçon
       // d'alimentation principale (jamais une commande) : besoin "cablage_X", choix
       // câble/fil au niveau des options, comme ci-dessus.
-      if (!nonRelie && niveau.distanceArriveeGainesTableau != null && niveau.distanceArriveeGainesTableau > 0) {
+      // UNIQUEMENT si aucun point d'arrivée n'est configuré sur ce niveau : dès qu'un point
+      // d'arrivée existe, origineCalcul (voir plus haut) mesure DÉJÀ le trajet réel en
+      // entier depuis ce point, coordonnées géométriques réelles à l'appui — ajouter cette
+      // distance manuelle par-dessus la compterait deux fois. Cette distance manuelle ne
+      // sert donc que dans l'ancien cas de figure (aucun point d'arrivée positionné,
+      // uniquement une estimation à la main).
+      if (!nonRelie && !niveau.pointArriveeGaines && niveau.distanceArriveeGainesTableau != null && niveau.distanceArriveeGainesTableau > 0) {
         const d = niveau.distanceArriveeGainesTableau;
         const nomPiece = pseudoLiaisonVerticale(niveau.nom || niveau.type);
         ajouter(`cablage_${sectionCircuit}@${nomPiece}`, `cablage_${sectionCircuit}`,
@@ -348,39 +363,6 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         ajouter(`${sousCatGaine}@${nomPiece}`, sousCatGaine, `Gaine ${gaineInfo.gaine}`, nomPiece, d, "m");
       }
     });
-
-    // ─── Point d'arrivée des gaines → appareillage le plus proche ──────────
-    // Le point d'arrivée a des coordonnées réelles sur le plan (contrairement à
-    // distanceArriveeGainesTableau, purement manuel) : la distance jusqu'à l'appareillage
-    // le plus proche est donc un vrai tronçon géométrique, calculé ici en plus — jamais à
-    // la place — du reste (tableau -> appareillages, distance verticale configurée).
-    if (niveau.pointArriveeGaines) {
-      const candidats = niveau.pieces.flatMap(p => p.appareillages).filter(a => {
-        if (a.dejaExistant) return false;
-        const manuel = a.circuitManuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === a.circuitManuelId) : undefined;
-        return !manuel?.nonRelieTableau;
-      });
-      let plusProche: AppareillagePlace | null = null;
-      let meilleureDistance = Infinity;
-      candidats.forEach(a => {
-        const d = distance(niveau.pointArriveeGaines!, { x: a.x, y: a.y });
-        if (d < meilleureDistance) { meilleureDistance = d; plusProche = a; }
-      });
-      const breakerProche = plusProche ? resultat.breakers.find(b => b.id === (plusProche as AppareillagePlace).circuitId) : undefined;
-      if (plusProche && breakerProche && meilleureDistance > 0) {
-        const pp = plusProche as AppareillagePlace;
-        const section = effectiveSection(breakerProche);
-        const milieu: Point = { x: (niveau.pointArriveeGaines.x + pp.x) / 2, y: (niveau.pointArriveeGaines.y + pp.y) / 2 };
-        const pieceTraversee = trouverPiece(milieu, niveau.pieces);
-        const nomPiece = pieceTraversee?.nom || pseudoLiaisonVerticale(niveau.nom || niveau.type);
-        ajouter(`cablage_${section}@${nomPiece}`, `cablage_${section}`,
-          LABEL_CABLAGE[section] ?? `Câblage ${section}mm²`, nomPiece, meilleureDistance, "m");
-        const gaineInfo = gaineRecommandee([section, section, section]);
-        const chiffres = gaineInfo.gaine.replace(/\D/g, "");
-        const sousCatGaine = `gaine_irl${chiffres}`;
-        ajouter(`${sousCatGaine}@${nomPiece}`, sousCatGaine, `Gaine ${gaineInfo.gaine}`, nomPiece, meilleureDistance, "m");
-      }
-    }
   });
 
   // ─── Disjoncteurs et différentiels (tableau — une seule fois, pas par niveau) ─────
