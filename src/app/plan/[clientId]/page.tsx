@@ -419,25 +419,17 @@ function DraggablePanel({ corner, className, dark, children }: {
   children: ReactNode;
 }) {
   const [offset, setOffset] = useState({ dx: 0, dy: 0 });
-  const dragRef = useRef<{ x: number; y: number; dx: number; dy: number } | null>(null);
+  // minDy calculé UNE SEULE FOIS au moment où on attrape la poignée (pas à chaque
+  // pointermove — relire le DOM et ré-enregistrer les écouteurs à chaque pixel déplacé
+  // rendait le glisser-déposer saccadé, voire bloqué).
+  const dragRef = useRef<{ x: number; y: number; dx: number; dy: number; minDy: number } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Empêche de glisser le panneau hors de l'écran (notamment au-dessus de la barre
-    // d'outils du haut, qui n'a pas de z-index propre — un panneau qui y grimperait
-    // finirait visuellement dessous). Marge de 8px sur les bords.
     const onMove = (e: PointerEvent) => {
       if (!dragRef.current) return;
       const dx = dragRef.current.dx + (e.clientX - dragRef.current.x);
-      let dy = dragRef.current.dy + (e.clientY - dragRef.current.y);
-      const rect = panelRef.current?.getBoundingClientRect();
-      if (rect) {
-        const margeHaut = 72; // hauteur approx. de la barre d'outils du haut
-        // rect.top reflète déjà l'offset EN COURS (offset.dy) — on calcule où le haut du
-        // panneau atterrirait avec le nouveau dy proposé, et on le remonte si besoin.
-        const nouveauTop = rect.top - offset.dy + dy;
-        if (nouveauTop < margeHaut) dy += margeHaut - nouveauTop;
-      }
+      const dy = Math.max(dragRef.current.minDy, dragRef.current.dy + (e.clientY - dragRef.current.y));
       setOffset({ dx, dy });
     };
     const onUp = () => { dragRef.current = null; };
@@ -447,7 +439,7 @@ function DraggablePanel({ corner, className, dark, children }: {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, [offset.dy]);
+  }, []);
 
   const cornerClass = corner === "bl" ? "bottom-4 left-4" : corner === "br" ? "bottom-4 right-4" : corner === "tr" ? "top-4 right-4" : "top-4 left-1/2";
   // "tc" (top-center) a besoin d'un -50% de centrage en plus de l'offset de glisser-déposer —
@@ -460,7 +452,16 @@ function DraggablePanel({ corner, className, dark, children }: {
         <div
           className={`flex items-center justify-center h-4 -mx-3 -mt-3 mb-2 rounded-t-xl cursor-grab active:cursor-grabbing ${dark ? "bg-white/10 hover:bg-white/20" : "bg-ink-100 hover:bg-ink-200"}`}
           style={{ touchAction: "none" }}
-          onPointerDown={e => { e.stopPropagation(); dragRef.current = { x: e.clientX, y: e.clientY, dx: offset.dx, dy: offset.dy }; }}>
+          onPointerDown={e => {
+            e.stopPropagation();
+            const rect = panelRef.current?.getBoundingClientRect();
+            const margeHaut = 72; // hauteur approx. de la barre d'outils du haut
+            // Le plus petit dy permis tel que le haut du panneau ne passe jamais sous
+            // margeHaut : top_base + dy >= margeHaut, avec top_base = rect.top - offset.dy
+            // (position actuelle moins l'offset déjà appliqué) => dy >= margeHaut - top_base.
+            const minDy = rect ? margeHaut - (rect.top - offset.dy) : -Infinity;
+            dragRef.current = { x: e.clientX, y: e.clientY, dx: offset.dx, dy: offset.dy, minDy };
+          }}>
           <GripHorizontal size={12} className={dark ? "text-white/50" : "text-ink-400"} />
         </div>
         {children}
