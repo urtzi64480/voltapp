@@ -2766,7 +2766,7 @@ export default function PlanPage() {
             </svg>
 
             {selectedPiece && mode === "select" && (
-              <DraggablePanel corner="bl" className="card card-inner !p-3 flex items-center gap-3 shadow-lg">
+              <DraggablePanel key={selectedPiece.id} corner="bl" className="card card-inner !p-3 flex items-center gap-3 shadow-lg">
                 <div>
                   <p className="text-sm font-semibold text-ink-900">{selectedPiece.nom || PIECE_TYPES[selectedPiece.type].label}</p>
                   <p className="text-xs text-ink-400">{PIECE_TYPES[selectedPiece.type].label} · {aireDuPolygone(selectedPiece.contour).toFixed(1)} m² · {selectedPiece.appareillages.length} appareillage(s) · {selectedPiece.contour.length} sommets</p>
@@ -2777,7 +2777,7 @@ export default function PlanPage() {
             )}
 
             {selectedAppareillage && mode === "select" && (
-              <DraggablePanel corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-72 max-h-[80vh] overflow-y-auto">
+              <DraggablePanel key={selectedAppareillage.id} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-72 max-h-[80vh] overflow-y-auto">
                 <div className="flex items-center gap-2">
                   <AppareillageSymbol type={selectedAppareillage.type} size={22} />
                   <input className="input !py-1 !text-sm flex-1 min-w-0" placeholder={labelAppareillage(selectedAppareillage.type)}
@@ -2950,7 +2950,7 @@ export default function PlanPage() {
               const o = piece?.ouvertures?.find(o => o.id === selectedOuvertureId);
               if (!piece || !o) return null;
               return (
-                <DraggablePanel corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+                <DraggablePanel key={o.id} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
                   <div className="flex items-center gap-2">
                     <OuvertureIcon type={o.type} size={18} color="#1c1917" />
                     <p className="text-sm font-semibold text-ink-900 flex-1">{LABEL_OUVERTURE[o.type]}</p>
@@ -3057,7 +3057,7 @@ export default function PlanPage() {
               const wp = niveauActif.liaisonWaypoints?.[selectedWaypoint.cle]?.find(w => w.id === selectedWaypoint.waypointId);
               if (!wp) return null;
               return (
-                <DraggablePanel corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+                <DraggablePanel key={`${selectedWaypoint.cle}-${selectedWaypoint.waypointId}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-ink-500 shrink-0">Coude — hauteur (cm)</span>
                     <input type="number" className="input !py-1 !text-xs !w-20" placeholder="—"
@@ -3086,7 +3086,7 @@ export default function PlanPage() {
               const boite = niveauActif.boitesDerivation?.[selectedBoite.label]?.find(b => b.id === selectedBoite.boiteId);
               if (!boite) return null;
               return (
-                <DraggablePanel corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+                <DraggablePanel key={`${selectedBoite.label}-${selectedBoite.boiteId}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
                   <div className="flex items-center gap-2">
                     <span className="text-lg leading-none">🔀</span>
                     <input className="input !py-1 !text-sm flex-1 min-w-0" placeholder="Boîte de dérivation"
