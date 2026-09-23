@@ -292,7 +292,10 @@ const Vue3D = forwardRef<Vue3DHandle, {
     // Circuits — tracé 3D en tenant compte des coudes manuels et de leur hauteur. Topologie
     // en étoile pour l'éclairage (une seule boîte de dérivation, jamais de chaîne en série).
     if (showCircuits && resultat && niveau.tableauPos) {
-      const tableauPos = niveau.tableauPos;
+      // Origine du tracé : le point d'arrivée des gaines quand il est configuré sur ce
+      // niveau (cohérent avec le plan 2D et le calcul de facturation, predevis-engine.ts —
+      // origineCalcul), sinon le tableau directement.
+      const tableauPos = niveau.pointArriveeGaines ?? niveau.tableauPos;
       const hauteurTableau = niveau.tableauHauteur != null ? niveau.tableauHauteur / 100 : HAUTEUR_TABLEAU_DEFAUT;
       const hauteurCoudeParDefaut = hauteurPlafond - 0.1;
       const tousAppareils = niveauResultat.pieces.flatMap(p => p.appareillages);
