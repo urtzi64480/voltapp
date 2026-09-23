@@ -2713,7 +2713,7 @@ export default function PlanPage() {
                         {niveauActif.distanceArriveeGainesTableau}m → tableau
                       </text>
                     )}
-                    {(() => {
+                    {showCircuits && showLongueurs && resultat && (() => {
                       // Ligne pointillée + étiquette de longueur jusqu'à l'appareillage le
                       // plus proche — même calcul que celui utilisé par le pré-devis
                       // (origineCalcul, predevis-engine.ts). Pointillé pour bien la
