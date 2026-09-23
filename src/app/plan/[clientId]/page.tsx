@@ -178,7 +178,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       const breaker = resultat.breakers.find(b => b.id === circuitId);
       if (!breaker) return;
       const color = colorMap.get(circuitId) ?? "#666";
-      const segments = segmentsPourCircuit(breaker, points, n, n.tableauPos!);
+      const segments = segmentsPourCircuit(breaker, points, n, n.pointArriveeGaines ?? n.tableauPos!);
       segments.forEach(seg => {
         const cheminM = cheminSegment(seg, n.liaisonWaypoints);
         const chemin = cheminM.map(toPx);
@@ -317,7 +317,7 @@ function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau
       if (showLongueurs && niveauVivant.tableauPos) {
         const pts = niveauVivant.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
         if (pts.length > 0) {
-          const segments = segmentsPourCircuit(b, pts, niveauVivant, niveauVivant.tableauPos);
+          const segments = segmentsPourCircuit(b, pts, niveauVivant, niveauVivant.pointArriveeGaines ?? niveauVivant.tableauPos);
           lgTxt = ` — ${longueurBranchesEclairage(segments, niveauVivant.liaisonWaypoints).toFixed(1)}m`;
         }
       }
@@ -2507,7 +2507,10 @@ export default function PlanPage() {
               })}
 
               {showCircuits && resultat && niveauActif?.tableauPos && (() => {
-                const tableauPos = niveauActif.tableauPos;
+                // Origine du tracé : le point d'arrivée des gaines quand il est configuré
+                // sur ce niveau (cohérent avec le calcul de facturation, predevis-engine.ts
+                // — origineCalcul), sinon le tableau directement.
+                const tableauPos = niveauActif.pointArriveeGaines ?? niveauActif.tableauPos;
                 const waypointsNiveau = niveauActif.liaisonWaypoints;
                 const tousAppareils = niveauActif.pieces.flatMap(p => p.appareillages);
                 const parCircuit = new Map<number, AppareillagePlace[]>();
@@ -3270,7 +3273,7 @@ export default function PlanPage() {
                     const visible = b ? circuitsVisibles.has(b.id) : true;
                     const pointsCircuit = b ? (niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id) ?? []) : [];
                     const lg = b && showLongueurs && niveauActif?.tableauPos && pointsCircuit.length > 0
-                      ? longueurBranchesEclairage(segmentsPourCircuit(b, pointsCircuit, niveauActif, niveauActif.tableauPos), niveauActif.liaisonWaypoints)
+                      ? longueurBranchesEclairage(segmentsPourCircuit(b, pointsCircuit, niveauActif, niveauActif.pointArriveeGaines ?? niveauActif.tableauPos), niveauActif.liaisonWaypoints)
                       : null;
                     return (
                       <label key={item.key} className={`flex items-center gap-1.5 text-[11px] cursor-pointer ${visible ? "text-ink-600" : "text-ink-300"}`}>
