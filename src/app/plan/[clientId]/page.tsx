@@ -1869,7 +1869,7 @@ export default function PlanPage() {
       }
       return;
     }
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) { e.stopPropagation(); return; }
     e.stopPropagation();
     // Sélectionne ET arme le déplacement dès le premier appui (comme un vrai
     // glisser-déposer) : un simple clic sans bouger équivaut juste à une sélection,
@@ -1885,7 +1885,7 @@ export default function PlanPage() {
 
   const onTableauPointerDown = (e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedTableau(true);
     setSelectedPieceId(null);
@@ -1898,7 +1898,7 @@ export default function PlanPage() {
 
   const onPointArriveePointerDown = (e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedPointArrivee(true);
     setSelectedPieceId(null);
@@ -1911,7 +1911,7 @@ export default function PlanPage() {
 
   const onOuverturePointerDown = (piece: Piece, o: Ouverture, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedOuvertureId(o.id);
     setSelectedPieceId(null);
@@ -1925,7 +1925,7 @@ export default function PlanPage() {
 
   const onBoitePointerDown = (label: string, boite: BoiteDerivation | null, positionActuelle: Point, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) { e.stopPropagation(); return; }
     e.stopPropagation();
     let boiteId = boite?.id;
     if (boiteId == null) {
