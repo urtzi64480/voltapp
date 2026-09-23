@@ -72,6 +72,16 @@ export interface OptionArticle {
   type_branche: "service" | "materiau";
   gamme: Gamme | null;
   longueur_unitaire: number | null;
+  // Pour un besoin de câblage principal ("cablage_X" — voir optionsPourBesoin) : 1 si
+  // l'option vient du catalogue en "cable_X" (câble tout-en-un, 1 unité couvre toute la
+  // longueur), 3 si elle vient de "fil_X" (fils séparés — phase/neutre/terre comptés
+  // individuellement). Absent (traité comme 1) pour tout autre type de besoin.
+  quantiteMultiplicateur?: number;
+  // sous_categorie RÉELLE de l'article catalogue dont vient cette option — peut différer
+  // de BesoinApparie.sousCategorie pour un besoin "cablage_X" (qui n'existe pas tel quel
+  // au catalogue, seuls cable_X et fil_X y figurent). Sert à retrouver le bon article "au
+  // mètre" pour le reliquat lors de la décomposition en bobines (genererLignesDevis).
+  sousCategorieArticle?: string;
 }
 
 export interface BesoinApparie extends LigneBesoin {
@@ -86,9 +96,14 @@ export interface ResultatPreDevis {
 
 // ─── LIBELLÉS ───────────────────────────────────────────────────────────────
 
-const LABEL_SECTION: Record<string, string> = {
-  "1.5": "Câble 1.5mm²", "2.5": "Câble 2.5mm²", "4.0": "Câble 4mm²",
-  "6.0": "Câble 6mm²", "10.0": "Câble 10mm²",
+// LABEL_CABLAGE : libellé du besoin "cablage_X" (tronçon d'alimentation principale) — un
+// besoin générique, dont les options mélangent câble tout-en-un ET fils séparés (voir
+// optionsPourBesoin) ; le nom réel de l'article choisi s'affiche par option, ce libellé
+// n'est qu'un en-tête.
+const LABEL_CABLAGE: Record<string, string> = {
+  "1.5": "Câblage 1.5mm² (câble ou fil, au choix)", "2.5": "Câblage 2.5mm² (câble ou fil, au choix)",
+  "4.0": "Câblage 4mm² (câble ou fil, au choix)", "6.0": "Câblage 6mm² (câble ou fil, au choix)",
+  "10.0": "Câblage 10mm² (câble ou fil, au choix)",
 };
 const LABEL_APPAREILLAGE: Record<string, string> = {
   prise: "Prise de courant", prise_commandee: "Prise commandée",
@@ -193,6 +208,13 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           ajouter(`prise_specialisee@${piece.id}`, "prise_specialisee", "Prise / sortie de câble spécialisée",
             piece.nom || "Pièce", 1, "u");
         }
+        // Tout point lumineux (plafonnier, applique…) a sa propre boîte d'encastrement
+        // DCL — jamais groupée avec les boîtes murales (prise/interrupteur), toujours 1
+        // par point lumineux quel que soit le type.
+        if (a.type === "point_lumineux" || a.type === "applique") {
+          ajouter(`boite_encastrement_dcl@${piece.id}`, "boite_encastrement_dcl", "Boîte d'encastrement DCL",
+            piece.nom || "Pièce", 1, "u");
+        }
         if (TYPES_ENCASTRABLES.includes(a.type)) clustersEncastrement.push({ id: a.id, x: a.x, y: a.y });
       });
       if (clustersEncastrement.length > 0) {
@@ -272,8 +294,25 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           const pieceTraversee = trouverPiece(milieu, niveau.pieces);
           const nomPiece = pieceTraversee?.nom || pseudoCommun(niveau.nom || niveau.type);
 
-          ajouter(`cable_${section}@${nomPiece}`, `cable_${section}`, LABEL_SECTION[section] ?? `Câble ${section}mm²`,
-            nomPiece, legLength, "m");
+          if (estLiaisonCommande) {
+            // Retour lampe (lampe -> 1er interrupteur/va-et-vient/télérupteur) et navette
+            // (entre deux va-et-vient) sont deux produits distincts au catalogue — même
+            // section (1.5mm²) mais souvent des couleurs de fil différentes en pratique,
+            // d'où deux sous-catégories séparées plutôt qu'une seule "fil_1.5" générique.
+            // Toujours 1 seul fil, jamais de câble tout-en-un possible ici.
+            const sousCatCommande = seg.type === "navette" ? "navette" : "retour_lampe";
+            const labelCommande = seg.type === "navette" ? "Navette (entre va-et-vient)" : "Retour lampe";
+            ajouter(`${sousCatCommande}@${nomPiece}`, sousCatCommande, labelCommande, nomPiece, legLength, "m");
+          } else {
+            // Tronçon d'alimentation principale : besoin générique "cablage_X" — le choix
+            // entre câble tout-en-un (cable_X, ×1) et fils séparés phase/neutre/terre
+            // (fil_X, ×3) se fait au niveau des OPTIONS catalogue, voir optionsPourBesoin.
+            // La quantité de base ici reste la longueur géométrique brute, sans
+            // multiplicateur — celui-ci est appliqué par option au moment du chiffrage
+            // (quantiteApprox / genererLignesDevis).
+            ajouter(`cablage_${section}@${nomPiece}`, `cablage_${section}`, LABEL_CABLAGE[section] ?? `Câblage ${section}mm²`,
+              nomPiece, legLength, "m");
+          }
 
           if (pose === "apparent") {
             ajouter(`moulure@${nomPiece}`, "moulure", "Moulure", nomPiece, legLength, "m");
@@ -288,12 +327,14 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
 
       // Distance verticale "point d'arrivée des gaines → tableau" — ajoutée une fois par
       // circuit RELIÉ AU TABLEAU de ce niveau (jamais pour un circuit "déjà existant"), à
-      // sa section propre, en pose encastrée (choix confirmé).
+      // sa section propre, en pose encastrée (choix confirmé). Toujours un tronçon
+      // d'alimentation principale (jamais une commande) : besoin "cablage_X", choix
+      // câble/fil au niveau des options, comme ci-dessus.
       if (!nonRelie && niveau.distanceArriveeGainesTableau != null && niveau.distanceArriveeGainesTableau > 0) {
         const d = niveau.distanceArriveeGainesTableau;
         const nomPiece = pseudoCommun(niveau.nom || niveau.type);
-        ajouter(`cable_${sectionCircuit}@${nomPiece}`, `cable_${sectionCircuit}`,
-          LABEL_SECTION[sectionCircuit] ?? `Câble ${sectionCircuit}mm²`, nomPiece, d, "m");
+        ajouter(`cablage_${sectionCircuit}@${nomPiece}`, `cablage_${sectionCircuit}`,
+          LABEL_CABLAGE[sectionCircuit] ?? `Câblage ${sectionCircuit}mm²`, nomPiece, d, "m");
         const gaineInfo = gaineRecommandee([sectionCircuit, sectionCircuit, sectionCircuit]);
         const chiffres = gaineInfo.gaine.replace(/\D/g, "");
         const sousCatGaine = `gaine_irl${chiffres}`;
@@ -330,7 +371,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
 // Exporté — réutilisé tel quel par la page pour la main d'œuvre (sous_categorie
 // "main_oeuvre"), qui suit exactement la même logique de gammes que les consommables.
 export function optionsPourSousCategorie(sousCategorie: string, prestations: Prestation[]): OptionArticle[] {
-  return optionsPour(sousCategorie, prestations);
+  return optionsPourBesoin(sousCategorie, prestations);
 }
 
 function optionsPour(sousCategorie: string, prestations: Prestation[]): OptionArticle[] {
@@ -339,6 +380,7 @@ function optionsPour(sousCategorie: string, prestations: Prestation[]): OptionAr
   const versOption = (p: Prestation): OptionArticle => ({
     prestation_id: p.id, nom: p.nom, prix_unitaire: p.prix_unitaire, unite: p.unite,
     type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire ?? null,
+    quantiteMultiplicateur: 1, sousCategorieArticle: sousCategorie,
   });
   const gammees = gammes.map(g => items.find(p => p.gamme === g)).filter((p): p is Prestation => !!p).map(versOption);
   if (gammees.length > 0) return gammees;
@@ -349,12 +391,28 @@ function optionsPour(sousCategorie: string, prestations: Prestation[]): OptionAr
   return sansGamme ? [versOption(sansGamme)] : [];
 }
 
+// Pour un besoin "cablage_X" (tronçon d'alimentation principale — voir calculerBesoinsBruts) :
+// combine les articles catalogue "cable_X" (câble tout-en-un, 1 unité = toute la longueur,
+// multiplicateur ×1) ET "fil_X" (fils séparés, phase+neutre+terre comptés individuellement,
+// ×3) en UNE seule liste d'options — Ben choisit librement l'un ou l'autre, jamais les deux
+// à la fois. Pour tout autre type de besoin, comportement inchangé (options normales,
+// multiplicateur ×1).
+function optionsPourBesoin(sousCategorie: string, prestations: Prestation[]): OptionArticle[] {
+  if (sousCategorie.startsWith("cablage_")) {
+    const section = sousCategorie.slice("cablage_".length);
+    const optsCable = optionsPour(`cable_${section}`, prestations).map(o => ({ ...o, quantiteMultiplicateur: 1 }));
+    const optsFil = optionsPour(`fil_${section}`, prestations).map(o => ({ ...o, quantiteMultiplicateur: 3 }));
+    return [...optsCable, ...optsFil];
+  }
+  return optionsPour(sousCategorie, prestations);
+}
+
 export function apparierCatalogue(besoins: LigneBesoin[], prestations: Prestation[]): ResultatPreDevis {
   const parPiece: Record<string, BesoinApparie[]> = {};
   const nonIdentifies: BesoinApparie[] = [];
 
   besoins.forEach(besoin => {
-    const options = optionsPour(besoin.sousCategorie, prestations);
+    const options = optionsPourBesoin(besoin.sousCategorie, prestations);
     const apparie: BesoinApparie = { ...besoin, options };
     (parPiece[besoin.piece] ??= []).push(apparie);
     if (options.length === 0) nonIdentifies.push(apparie);
@@ -374,18 +432,22 @@ export interface ChoixLigne {
 
 // Un câble/gaine/moulure choisi en bobine (longueur_unitaire défini) est décomposé en
 // bobines entières + un éventuel reliquat au mètre linéaire (autre article catalogue,
-// même sous_categorie, sans longueur_unitaire) — sinon arrondi à une bobine de plus.
+// même sous_categorie, sans longueur_unitaire) — sinon arrondi à une bobine de plus. La
+// quantité RÉELLE à commander est besoin.quantite × option.quantiteMultiplicateur (1 pour
+// un câble tout-en-un ou tout besoin non-"cablage_X", 3 pour des fils séparés) — jamais
+// besoin.quantite brut, qui n'est que la longueur géométrique de base.
 function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArticle, prestations: Prestation[]): Omit<DevisLigne, "devis_id" | "ordre">[] {
+  const quantiteReelle = besoin.quantite * (option.quantiteMultiplicateur ?? 1);
   if (!option.longueur_unitaire || option.longueur_unitaire <= 0) {
     return [{
-      nom: option.nom, description: besoin.piece, quantite: Math.ceil(besoin.quantite),
+      nom: option.nom, description: besoin.piece, quantite: Math.ceil(quantiteReelle),
       prix_unitaire: option.prix_unitaire, unite: option.unite, type_branche: option.type_branche,
       prestation_id: option.prestation_id,
     }];
   }
   const L = option.longueur_unitaire;
-  const nbBobines = Math.floor(besoin.quantite / L + 1e-6);
-  const reliquat = Math.round((besoin.quantite - nbBobines * L) * 100) / 100;
+  const nbBobines = Math.floor(quantiteReelle / L + 1e-6);
+  const reliquat = Math.round((quantiteReelle - nbBobines * L) * 100) / 100;
   const lignes: Omit<DevisLigne, "devis_id" | "ordre">[] = [];
   if (nbBobines > 0) {
     lignes.push({
@@ -395,7 +457,7 @@ function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArt
     });
   }
   if (reliquat > 0.01) {
-    const auMetre = prestations.find(p => p.sous_categorie === besoin.sousCategorie
+    const auMetre = prestations.find(p => p.sous_categorie === (option.sousCategorieArticle ?? besoin.sousCategorie)
       && (p.gamme ?? null) === (option.gamme ?? null) && !p.longueur_unitaire);
     if (auMetre) {
       lignes.push({
@@ -416,8 +478,9 @@ function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArt
   return lignes;
 }
 
-function estBobinable(sousCategorie: string): boolean {
-  return sousCategorie.startsWith("cable_") || sousCategorie.startsWith("gaine_irl") || sousCategorie === "moulure";
+export function estBobinable(sousCategorie: string): boolean {
+  return sousCategorie.startsWith("cablage_") || sousCategorie.startsWith("fil_")
+    || sousCategorie.startsWith("gaine_irl") || sousCategorie === "moulure";
 }
 
 export function genererLignesDevis(choix: ChoixLigne[], prestations: Prestation[]): Omit<DevisLigne, "devis_id" | "ordre">[] {
@@ -436,11 +499,31 @@ export function genererLignesDevis(choix: ChoixLigne[], prestations: Prestation[
       lignes.push(...genererLignesQuantiteBobinable(besoin, optionCatalogue, prestations));
     } else {
       lignes.push({
-        nom: optionCatalogue.nom, description: besoin.piece, quantite: besoin.quantite,
+        nom: optionCatalogue.nom, description: besoin.piece,
+        quantite: besoin.quantite * (optionCatalogue.quantiteMultiplicateur ?? 1),
         prix_unitaire: optionCatalogue.prix_unitaire, unite: optionCatalogue.unite,
         type_branche: optionCatalogue.type_branche, prestation_id: optionCatalogue.prestation_id,
       });
     }
   });
   return lignes;
+}
+
+// Multiplicateur à appliquer à besoin.quantite pour un article choisi "manuellement"
+// (recherche libre au catalogue, mode "autre" du pré-devis) — déduit de la sous_categorie
+// réelle de l'article choisi : ×3 si Ben cherche et sélectionne un article "fil_X" pour un
+// besoin "cablage_X", ×1 dans tous les autres cas.
+export function multiplicateurPourArticle(besoinSousCategorie: string, articleSousCategorie: string | null | undefined): number {
+  if (besoinSousCategorie.startsWith("cablage_") && articleSousCategorie?.startsWith("fil_")) return 3;
+  return 1;
+}
+
+// Un besoin est réel (attribuable à une pièce du plan) si sa "piece" n'est pas une des
+// pseudo-pièces PSEUDO_TABLEAU / pseudoCommun(niveau) — utilisé côté page pour la sélection
+// pièce par pièce du pré-devis : ces pseudo-pièces (tableau, distance verticale, boîtes de
+// dérivation communes à un niveau) doivent toujours rester incluses quelle que soit la
+// sélection, car elles ne sont pas rattachables à une seule pièce réelle sans fausser le
+// calcul des longueurs.
+export function estPieceReelle(piece: string): boolean {
+  return piece !== PSEUDO_TABLEAU && !piece.startsWith("Commun — ");
 }
