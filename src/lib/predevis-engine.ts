@@ -246,14 +246,14 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       return;
     }
     const tableauPos = niveau.tableauPos;
-    // Origine utilisée pour MESURER les câbles (jamais pour le tracé visuel sur le plan,
-    // qui reste inchangé et part toujours du tableau réel) : si un point d'arrivée des
-    // gaines est configuré sur ce niveau, la distance parcourue par le câble commence
-    // réellement là, coordonnées géométriques réelles à l'appui — ce calcul représente à
-    // lui seul le trajet complet et réel jusqu'aux appareillages, sans qu'il faille rien
-    // ajouter d'autre (voir plus bas : distanceArriveeGainesTableau ne s'ajoute plus dans
-    // ce cas, pour ne pas compter deux fois le même trajet). Sans point d'arrivée
-    // configuré : comportement inchangé, mesuré depuis le tableau directement.
+    // Origine utilisée pour MESURER les câbles visibles sur ce niveau (jamais pour le
+    // tracé sur le plan, qui reste inchangé et part toujours du tableau réel) : si un
+    // point d'arrivée des gaines est configuré, la distance géométrique visible (ex. point
+    // d'arrivée -> première prise d'une pièce) commence là plutôt qu'au tableau. C'est un
+    // tronçon DISTINCT de distanceArriveeGainesTableau (portion invisible tableau -> point
+    // d'arrivée, voir plus bas) : les deux s'additionnent, aucun des deux ne remplace
+    // l'autre. Sans point d'arrivée configuré : comportement inchangé, mesuré depuis le
+    // tableau directement.
     const origineCalcul = niveau.pointArriveeGaines ?? tableauPos;
     const idToAppareillage = new Map<string, AppareillagePlace>();
     niveau.pieces.forEach(p => p.appareillages.forEach(a => idToAppareillage.set(String(a.id), a)));
@@ -341,18 +341,18 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         }
       });
 
-      // Distance verticale "point d'arrivée des gaines → tableau" — ajoutée une fois par
-      // circuit RELIÉ AU TABLEAU de ce niveau (jamais pour un circuit "déjà existant"), à
-      // sa section propre, en pose encastrée (choix confirmé). Toujours un tronçon
-      // d'alimentation principale (jamais une commande) : besoin "cablage_X", choix
-      // câble/fil au niveau des options, comme ci-dessus.
-      // UNIQUEMENT si aucun point d'arrivée n'est configuré sur ce niveau : dès qu'un point
-      // d'arrivée existe, origineCalcul (voir plus haut) mesure DÉJÀ le trajet réel en
-      // entier depuis ce point, coordonnées géométriques réelles à l'appui — ajouter cette
-      // distance manuelle par-dessus la compterait deux fois. Cette distance manuelle ne
-      // sert donc que dans l'ancien cas de figure (aucun point d'arrivée positionné,
-      // uniquement une estimation à la main).
-      if (!nonRelie && !niveau.pointArriveeGaines && niveau.distanceArriveeGainesTableau != null && niveau.distanceArriveeGainesTableau > 0) {
+      // Distance verticale "point d'arrivée des gaines → tableau" — ajoutée une fois PAR
+      // CIRCUIT relié au tableau de ce niveau (jamais pour un circuit "déjà existant") :
+      // chaque circuit qui emprunte cette liaison verticale a besoin de SES PROPRES
+      // conducteurs sur toute cette distance, à sa section propre — ce n'est pas un tronçon
+      // partagé qu'on ne compte qu'une fois pour tout le niveau. Elle reste indépendante et
+      // s'ajoute TOUJOURS, même quand un point d'arrivée géométrique existe sur ce niveau :
+      // origineCalcul (voir plus haut) mesure le trajet visible à partir du point d'arrivée
+      // (ex. jusqu'à la première prise d'une pièce) ; cette distance verticale couvre la
+      // portion, elle, invisible sur le plan (tableau → point d'arrivée) — les deux sont
+      // deux tronçons réels et distincts du même circuit, jamais le même trajet compté deux
+      // fois.
+      if (!nonRelie && niveau.distanceArriveeGainesTableau != null && niveau.distanceArriveeGainesTableau > 0) {
         const d = niveau.distanceArriveeGainesTableau;
         const nomPiece = pseudoLiaisonVerticale(niveau.nom || niveau.type);
         ajouter(`cablage_${sectionCircuit}@${nomPiece}`, `cablage_${sectionCircuit}`,
