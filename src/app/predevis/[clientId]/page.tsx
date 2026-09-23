@@ -1,18 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Client, Prestation, DevisLigne } from "@/types";
 import { Niveau } from "@/lib/maison-types";
 import { BreakerRow } from "@/lib/electrical-constants";
 import {
-  calculerBesoinsBruts, apparierCatalogue, optionsPourSousCategorie, genererLignesDevis,
+  calculerBesoinsBruts, apparierCatalogue, optionsPourSousCategorie, genererLignesDevis, estBobinable,
+  multiplicateurPourArticle, estPieceReelle,
   ResultatPreDevis, BesoinApparie, OptionArticle, ChoixLigne,
 } from "@/lib/predevis-engine";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { ArrowLeft, AlertTriangle, Search, X, Sparkles, Save } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Search, X, Sparkles, Save, Cable } from "lucide-react";
 
 const LABEL_GAMME: Record<string, string> = { entree: "Entrée de gamme", moyenne: "Moyenne gamme", haut: "Haut de gamme" };
 
@@ -47,17 +48,18 @@ function etatParDefaut(besoin: BesoinApparie): EtatChoix {
 
 // Quantité approximative facturée pour l'affichage en direct (le calcul exact, avec
 // décomposition en bobines, n'est fait qu'à la génération finale — voir genererLignesDevis).
-function quantiteApprox(besoin: BesoinApparie, option?: { longueur_unitaire?: number | null }): number {
+function quantiteApprox(besoin: BesoinApparie, option?: { longueur_unitaire?: number | null; quantiteMultiplicateur?: number }): number {
+  const quantiteReelle = besoin.quantite * (option?.quantiteMultiplicateur ?? 1);
   if (option?.longueur_unitaire && option.longueur_unitaire > 0) {
-    return Math.max(1, Math.round(besoin.quantite / option.longueur_unitaire));
+    return Math.max(1, Math.round(quantiteReelle / option.longueur_unitaire));
   }
-  return besoin.unite === "m" ? Math.ceil(besoin.quantite) : besoin.quantite;
+  return besoin.unite === "m" ? Math.ceil(quantiteReelle) : quantiteReelle;
 }
 
 // ─── Ligne d'un besoin ───────────────────────────────────────────────────────
 
-function BesoinRow({ besoin, etat, onChange, prestations }: {
-  besoin: BesoinApparie; etat: EtatChoix; onChange: (e: EtatChoix) => void; prestations: Prestation[];
+function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
+  besoin: BesoinApparie; etat: EtatChoix; onChange: (e: EtatChoix) => void; prestations: Prestation[]; detail?: string;
 }) {
   const [rechercheOuverte, setRechercheOuverte] = useState(false);
   const [recherche, setRecherche] = useState("");
@@ -73,6 +75,7 @@ function BesoinRow({ besoin, etat, onChange, prestations }: {
         <div>
           <p className="text-sm font-medium text-ink-900">{besoin.label}</p>
           <p className="text-xs text-ink-400">{besoin.unite === "m" ? `${besoin.quantite.toFixed(2)} m` : `${besoin.quantite} ${besoin.unite === "heure" ? "h" : "u."}`}</p>
+          {detail && <p className="text-[11px] text-ink-400 italic mt-0.5">{detail}</p>}
         </div>
         {besoin.options.length === 0 && (
           <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
@@ -176,6 +179,13 @@ export default function PreDevisPage() {
   const [generating, setGenerating] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
+  const [choixAgrege, setChoixAgrege] = useState<Record<string, EtatChoix>>({});
+  // null = toutes les pièces incluses (comportement par défaut, inchangé). Un Set = pièces
+  // réelles sélectionnées uniquement — les pseudo-pièces (Tableau électrique, Commun — X :
+  // distance verticale au tableau, boîtes de dérivation communes au niveau) restent TOUJOURS
+  // incluses quelle que soit la sélection, pour ne jamais fausser les longueurs de câbles et
+  // gaines nécessaires (voir estPieceReelle, predevis-engine.ts).
+  const [piecesSelectionnees, setPiecesSelectionnees] = useState<Set<string> | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -237,6 +247,58 @@ export default function PreDevisPage() {
     load();
   }, [clientId]);
 
+  // Regroupe câbles/gaines/moulures par sous-catégorie, TOUTES PIÈCES CONFONDUES, pour
+  // choisir une seule fois la meilleure combinaison bobine + mètre linéaire sur le métrage
+  // total nécessaire — plutôt que de faire un choix (et un arrondi de bobine) séparé par
+  // pièce, ce qui gâche souvent des mètres. Le détail par pièce reste visible (piece est
+  // réutilisé comme texte descriptif affiché sur la ligne du devis final).
+  // Liste des pièces réelles disponibles pour la sélection (pseudo-pièces exclues — elles
+  // n'ont pas de case à cocher, elles sont toujours incluses).
+  const toutesLesPiecesReelles = useMemo(
+    () => resultat ? Object.keys(resultat.parPiece).filter(estPieceReelle).sort((a, b) => a.localeCompare(b)) : [],
+    [resultat],
+  );
+
+  // Vue filtrée de resultat.parPiece selon piecesSelectionnees — toujours utilisée à la
+  // place de resultat.parPiece directement, partout dans la page (affichage, agrégat,
+  // totaux, génération du devis), pour que la sélection pièce par pièce soit cohérente
+  // de bout en bout.
+  const parPieceFiltre: Record<string, BesoinApparie[]> = useMemo(() => {
+    if (!resultat) return {};
+    if (piecesSelectionnees === null) return resultat.parPiece;
+    return Object.fromEntries(
+      Object.entries(resultat.parPiece).filter(([piece]) => !estPieceReelle(piece) || piecesSelectionnees.has(piece)),
+    );
+  }, [resultat, piecesSelectionnees]);
+
+  const besoinsAgreges: BesoinApparie[] = useMemo(() => {
+    if (!resultat) return [];
+    const parSousCat = new Map<string, { label: string; total: number; options: OptionArticle[]; detail: Map<string, number> }>();
+    Object.values(parPieceFiltre).flat().forEach(b => {
+      if (!estBobinable(b.sousCategorie)) return;
+      const entry = parSousCat.get(b.sousCategorie) ?? { label: b.label, total: 0, options: b.options, detail: new Map() };
+      entry.total += b.quantite;
+      entry.detail.set(b.piece, (entry.detail.get(b.piece) ?? 0) + b.quantite);
+      parSousCat.set(b.sousCategorie, entry);
+    });
+    return Array.from(parSousCat.entries()).map(([sousCategorie, e]) => ({
+      cle: `AGREGE_${sousCategorie}`, sousCategorie, label: e.label,
+      piece: Array.from(e.detail.entries()).map(([piece, q]) => `${piece} : ${q.toFixed(2)}m`).join(", "),
+      quantite: e.total, unite: "m" as const, options: e.options,
+    }));
+  }, [resultat, parPieceFiltre]);
+
+  useEffect(() => {
+    setChoixAgrege(prev => {
+      let changed = false;
+      const next = { ...prev };
+      besoinsAgreges.forEach(b => {
+        if (!(b.cle in next)) { next[b.cle] = etatParDefaut(b); changed = true; }
+      });
+      return changed ? next : prev;
+    });
+  }, [besoinsAgreges]);
+
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
     const contenu = JSON.stringify({ choix, mainOeuvreHeures, mainOeuvreIndex, fraisGenerauxPct, deplacementEur });
@@ -265,7 +327,8 @@ export default function PreDevisPage() {
     if (etat.mode === "autre") {
       const p = prestations.find(x => x.id === etat.autrePrestationId);
       if (!p) return 0;
-      return quantiteApprox(besoin, { longueur_unitaire: p.longueur_unitaire ?? null }) * p.prix_unitaire;
+      const mult = multiplicateurPourArticle(besoin.sousCategorie, p.sous_categorie);
+      return quantiteApprox(besoin, { longueur_unitaire: p.longueur_unitaire ?? null, quantiteMultiplicateur: mult }) * p.prix_unitaire;
     }
     const prix = parseFloat(etat.librePrix) || 0;
     return (besoin.unite === "m" ? Math.ceil(besoin.quantite) : besoin.quantite) * prix;
@@ -276,7 +339,9 @@ export default function PreDevisPage() {
   const totalMainOeuvre = heures * tauxHoraire;
 
   const totalConsommablesApprox = resultat
-    ? Object.values(resultat.parPiece).flat().reduce((s, b) => s + totalLigneApprox(b, choix[b.cle] ?? etatParDefaut(b)), 0)
+    ? Object.values(parPieceFiltre).flat().filter(b => !estBobinable(b.sousCategorie))
+        .reduce((s, b) => s + totalLigneApprox(b, choix[b.cle] ?? etatParDefaut(b)), 0)
+      + besoinsAgreges.reduce((s, b) => s + totalLigneApprox(b, choixAgrege[b.cle] ?? etatParDefaut(b)), 0)
     : 0;
   const fraisGeneraux = (parseFloat(fraisGenerauxPct) || 0) / 100 * (totalConsommablesApprox + totalMainOeuvre);
   const deplacement = parseFloat(deplacementEur) || 0;
@@ -289,9 +354,8 @@ export default function PreDevisPage() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) { alert("Session expirée."); setGenerating(false); return; }
 
-      const tousLesBesoins = Object.values(resultat.parPiece).flat();
-      const choixLignes: ChoixLigne[] = tousLesBesoins.map(besoin => {
-        const etat = choix[besoin.cle] ?? etatParDefaut(besoin);
+      const tousLesBesoins = Object.values(parPieceFiltre).flat().filter(b => !estBobinable(b.sousCategorie));
+      const construireChoixLigne = (besoin: BesoinApparie, etat: EtatChoix): ChoixLigne => {
         if (etat.mode === "exclu") return { besoin };
         if (etat.mode === "option") {
           return { besoin, optionCatalogue: besoin.options[etat.optionIndex] };
@@ -304,13 +368,21 @@ export default function PreDevisPage() {
             optionCatalogue: {
               prestation_id: p.id, nom: p.nom, prix_unitaire: p.prix_unitaire, unite: p.unite,
               type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire ?? null,
+              quantiteMultiplicateur: multiplicateurPourArticle(besoin.sousCategorie, p.sous_categorie),
+              sousCategorieArticle: p.sous_categorie ?? besoin.sousCategorie,
             },
           };
         }
         const prix = parseFloat(etat.librePrix) || 0;
         if (!etat.libreNom.trim() || prix <= 0) return { besoin };
         return { besoin, libre: { nom: etat.libreNom, prixUnitaire: prix, unite: etat.libreUnite, typeBranche: etat.libreBranche } };
-      });
+      };
+      const choixLignes: ChoixLigne[] = [
+        ...tousLesBesoins.map(besoin => construireChoixLigne(besoin, choix[besoin.cle] ?? etatParDefaut(besoin))),
+        // Câbles/gaines/moulures : un seul choix par sous-catégorie sur le métrage total
+        // (toutes pièces confondues) — voir besoinsAgreges plus haut.
+        ...besoinsAgreges.map(besoin => construireChoixLigne(besoin, choixAgrege[besoin.cle] ?? etatParDefaut(besoin))),
+      ];
 
       const lignesConsommables = genererLignesDevis(choixLignes, prestations);
 
@@ -374,6 +446,37 @@ export default function PreDevisPage() {
           </div>
         </div>
 
+        {toutesLesPiecesReelles.length > 1 && (
+          <div className="card card-inner mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="font-semibold text-ink-800 text-sm">Pièces à inclure</h2>
+              <button
+                onClick={() => setPiecesSelectionnees(prev => prev === null ? new Set() : null)}
+                className="text-xs text-volt-600 font-medium">
+                {piecesSelectionnees === null ? "Tout désélectionner" : "Tout sélectionner"}
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {toutesLesPiecesReelles.map(piece => {
+                const coche = piecesSelectionnees === null || piecesSelectionnees.has(piece);
+                return (
+                  <label key={piece} className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border cursor-pointer ${coche ? "border-volt-400 bg-volt-50 text-volt-700" : "border-ink-200 text-ink-400"}`}>
+                    <input type="checkbox" checked={coche} onChange={() => {
+                      setPiecesSelectionnees(prev => {
+                        const base = prev === null ? new Set(toutesLesPiecesReelles) : new Set(prev);
+                        if (base.has(piece)) base.delete(piece); else base.add(piece);
+                        return base.size === toutesLesPiecesReelles.length ? null : base;
+                      });
+                    }} />
+                    {piece}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="text-xs text-ink-400 mt-2">Le tableau électrique, la distance au point d'arrivée des gaines et les boîtes de dérivation communes au niveau restent toujours pris en compte, même si tu ne sélectionnes que certaines pièces — sinon le calcul des longueurs de câbles et gaines serait faussé.</p>
+          </div>
+        )}
+
         {alertesGeometrie.length > 0 && (
           <div className="card card-inner mb-4 bg-amber-50 border-amber-200">
             <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
@@ -385,16 +488,23 @@ export default function PreDevisPage() {
           </div>
         )}
 
-        {resultat && resultat.nonIdentifies.length > 0 && (
+        {resultat && (() => {
+          const nonIdentifiesFiltres = Object.values(parPieceFiltre).flat().filter(b => b.options.length === 0);
+          return nonIdentifiesFiltres.length > 0 && (
           <div className="card card-inner mb-4 bg-red-50 border-red-200">
             <p className="text-xs font-semibold text-red-700 uppercase tracking-wide mb-1 flex items-center gap-1.5">
-              <AlertTriangle size={13} /> {resultat.nonIdentifies.length} besoin{resultat.nonIdentifies.length > 1 ? "s" : ""} non identifié{resultat.nonIdentifies.length > 1 ? "s" : ""} au catalogue
+              <AlertTriangle size={13} /> {nonIdentifiesFiltres.length} besoin{nonIdentifiesFiltres.length > 1 ? "s" : ""} non identifié{nonIdentifiesFiltres.length > 1 ? "s" : ""} au catalogue
             </p>
             <p className="text-xs text-red-600">Choisis un article existant, cherche-en un autre ou saisis un prix libre pour chacun ci-dessous.</p>
           </div>
-        )}
+          );
+        })()}
 
-        {resultat && Object.entries(resultat.parPiece).sort(([a], [b]) => a.localeCompare(b)).map(([piece, besoins]) => (
+        {resultat && Object.entries(parPieceFiltre)
+          .map(([piece, besoins]) => [piece, besoins.filter(b => !estBobinable(b.sousCategorie))] as const)
+          .filter(([, besoins]) => besoins.length > 0)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([piece, besoins]) => (
           <div key={piece} className="card card-inner mb-4">
             <h2 className="font-semibold text-ink-800 mb-3">{piece}</h2>
             <div className="flex flex-col gap-2">
@@ -406,7 +516,23 @@ export default function PreDevisPage() {
           </div>
         ))}
 
-        {resultat && Object.keys(resultat.parPiece).length === 0 && (
+        {besoinsAgreges.length > 0 && (
+          <div className="card card-inner mb-4 border-sky-200">
+            <div className="flex items-center gap-2 mb-1">
+              <Cable size={16} className="text-sky-600" />
+              <h2 className="font-semibold text-ink-800">Câbles, gaines & moulures — total toutes pièces</h2>
+            </div>
+            <p className="text-xs text-ink-400 mb-3">Un seul choix par section/type sur le métrage total nécessaire — la meilleure combinaison bobine + mètre linéaire se calcule sur l'ensemble, pas pièce par pièce. Le détail par pièce reste visible dans chaque besoin ci-dessous.</p>
+            <div className="flex flex-col gap-2">
+              {besoinsAgreges.map(b => (
+                <BesoinRow key={b.cle} besoin={b} etat={choixAgrege[b.cle] ?? etatParDefaut(b)}
+                  onChange={e => setChoixAgrege(prev => ({ ...prev, [b.cle]: e }))} prestations={prestations} detail={b.piece} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {resultat && Object.keys(parPieceFiltre).length === 0 && (
           <div className="card card-inner text-center py-10 text-ink-400 mb-4">
             Aucun besoin détecté — le plan de circuits est-il complet (appareillages placés, tableau positionné) ?
           </div>
