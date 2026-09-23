@@ -455,22 +455,26 @@ function DraggablePanel({ corner, className, dark, children }: {
     ? { maxHeight: "calc(100dvh - 88px)", overflowY: "auto" as const }
     : undefined;
 
+  const startDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    // On peut attraper le panneau n'importe où — sauf sur un champ, bouton, lien ou
+    // élément marqué data-no-drag, qui doivent garder leur comportement de clic normal.
+    const target = e.target as HTMLElement;
+    if (target.closest("input, textarea, select, button, a, label, [data-no-drag]")) return;
+    e.stopPropagation();
+    const rect = panelRef.current?.getBoundingClientRect();
+    const margeHaut = 72; // hauteur approx. de la barre d'outils du haut
+    // Le plus petit dy permis tel que le haut du panneau ne passe jamais sous margeHaut :
+    // top_base + dy >= margeHaut, avec top_base = rect.top - offset.dy (position actuelle
+    // moins l'offset déjà appliqué) => dy >= margeHaut - top_base.
+    const minDy = rect ? margeHaut - (rect.top - offset.dy) : -Infinity;
+    dragRef.current = { x: e.clientX, y: e.clientY, dx: offset.dx, dy: offset.dy, minDy };
+  };
+
   return (
     <div ref={panelRef} className={`absolute ${cornerClass} z-30`} style={{ transform }}>
-      <div className={className} style={maxHeightStyle}>
-        <div
-          className={`flex items-center justify-center h-4 -mx-3 -mt-3 mb-2 rounded-t-xl cursor-grab active:cursor-grabbing ${dark ? "bg-white/10 hover:bg-white/20" : "bg-ink-100 hover:bg-ink-200"}`}
-          style={{ touchAction: "none" }}
-          onPointerDown={e => {
-            e.stopPropagation();
-            const rect = panelRef.current?.getBoundingClientRect();
-            const margeHaut = 72; // hauteur approx. de la barre d'outils du haut
-            // Le plus petit dy permis tel que le haut du panneau ne passe jamais sous
-            // margeHaut : top_base + dy >= margeHaut, avec top_base = rect.top - offset.dy
-            // (position actuelle moins l'offset déjà appliqué) => dy >= margeHaut - top_base.
-            const minDy = rect ? margeHaut - (rect.top - offset.dy) : -Infinity;
-            dragRef.current = { x: e.clientX, y: e.clientY, dx: offset.dx, dy: offset.dy, minDy };
-          }}>
+      <div className={className} style={{ ...maxHeightStyle, cursor: "grab", touchAction: "none" }}
+        onPointerDown={startDrag}>
+        <div className={`flex items-center justify-center h-4 -mx-3 -mt-3 mb-2 rounded-t-xl ${dark ? "bg-white/10 hover:bg-white/20" : "bg-ink-100 hover:bg-ink-200"}`}>
           <GripHorizontal size={12} className={dark ? "text-white/50" : "text-ink-400"} />
         </div>
         {children}
