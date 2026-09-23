@@ -420,11 +420,25 @@ function DraggablePanel({ corner, className, dark, children }: {
 }) {
   const [offset, setOffset] = useState({ dx: 0, dy: 0 });
   const dragRef = useRef<{ x: number; y: number; dx: number; dy: number } | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // Empêche de glisser le panneau hors de l'écran (notamment au-dessus de la barre
+    // d'outils du haut, qui n'a pas de z-index propre — un panneau qui y grimperait
+    // finirait visuellement dessous). Marge de 8px sur les bords.
     const onMove = (e: PointerEvent) => {
       if (!dragRef.current) return;
-      setOffset({ dx: dragRef.current.dx + (e.clientX - dragRef.current.x), dy: dragRef.current.dy + (e.clientY - dragRef.current.y) });
+      const dx = dragRef.current.dx + (e.clientX - dragRef.current.x);
+      let dy = dragRef.current.dy + (e.clientY - dragRef.current.y);
+      const rect = panelRef.current?.getBoundingClientRect();
+      if (rect) {
+        const margeHaut = 72; // hauteur approx. de la barre d'outils du haut
+        // rect.top reflète déjà l'offset EN COURS (offset.dy) — on calcule où le haut du
+        // panneau atterrirait avec le nouveau dy proposé, et on le remonte si besoin.
+        const nouveauTop = rect.top - offset.dy + dy;
+        if (nouveauTop < margeHaut) dy += margeHaut - nouveauTop;
+      }
+      setOffset({ dx, dy });
     };
     const onUp = () => { dragRef.current = null; };
     window.addEventListener("pointermove", onMove);
@@ -433,7 +447,7 @@ function DraggablePanel({ corner, className, dark, children }: {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, []);
+  }, [offset.dy]);
 
   const cornerClass = corner === "bl" ? "bottom-4 left-4" : corner === "br" ? "bottom-4 right-4" : corner === "tr" ? "top-4 right-4" : "top-4 left-1/2";
   // "tc" (top-center) a besoin d'un -50% de centrage en plus de l'offset de glisser-déposer —
@@ -441,7 +455,7 @@ function DraggablePanel({ corner, className, dark, children }: {
   const transform = `${corner === "tc" ? "translateX(-50%) " : ""}translate(${offset.dx}px, ${offset.dy}px)`;
 
   return (
-    <div className={`absolute ${cornerClass} z-20`} style={{ transform }}>
+    <div ref={panelRef} className={`absolute ${cornerClass} z-30`} style={{ transform }}>
       <div className={className}>
         <div
           className={`flex items-center justify-center h-4 -mx-3 -mt-3 mb-2 rounded-t-xl cursor-grab active:cursor-grabbing ${dark ? "bg-white/10 hover:bg-white/20" : "bg-ink-100 hover:bg-ink-200"}`}
@@ -2144,7 +2158,7 @@ export default function PlanPage() {
   return (
     <Shell>
       <div className="flex flex-col h-[calc(100vh-4rem)] md:h-screen overflow-hidden">
-        <div className="flex items-center justify-between px-4 md:px-6 py-3 border-b border-ink-200 bg-white shrink-0 gap-3 flex-wrap">
+        <div className="flex items-center justify-between px-4 md:px-6 py-3 border-b border-ink-200 bg-white shrink-0 gap-3 flex-wrap relative z-10">
           <div className="flex items-center gap-3">
             <Link href={`/clients/${clientId}`} className="btn-ghost !px-2 !py-1.5 text-ink-400"><ArrowLeft size={16} /></Link>
             <div>
