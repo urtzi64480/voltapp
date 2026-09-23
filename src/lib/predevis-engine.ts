@@ -348,6 +348,39 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         ajouter(`${sousCatGaine}@${nomPiece}`, sousCatGaine, `Gaine ${gaineInfo.gaine}`, nomPiece, d, "m");
       }
     });
+
+    // ─── Point d'arrivée des gaines → appareillage le plus proche ──────────
+    // Le point d'arrivée a des coordonnées réelles sur le plan (contrairement à
+    // distanceArriveeGainesTableau, purement manuel) : la distance jusqu'à l'appareillage
+    // le plus proche est donc un vrai tronçon géométrique, calculé ici en plus — jamais à
+    // la place — du reste (tableau -> appareillages, distance verticale configurée).
+    if (niveau.pointArriveeGaines) {
+      const candidats = niveau.pieces.flatMap(p => p.appareillages).filter(a => {
+        if (a.dejaExistant) return false;
+        const manuel = a.circuitManuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === a.circuitManuelId) : undefined;
+        return !manuel?.nonRelieTableau;
+      });
+      let plusProche: AppareillagePlace | null = null;
+      let meilleureDistance = Infinity;
+      candidats.forEach(a => {
+        const d = distance(niveau.pointArriveeGaines!, { x: a.x, y: a.y });
+        if (d < meilleureDistance) { meilleureDistance = d; plusProche = a; }
+      });
+      const breakerProche = plusProche ? resultat.breakers.find(b => b.id === (plusProche as AppareillagePlace).circuitId) : undefined;
+      if (plusProche && breakerProche && meilleureDistance > 0) {
+        const pp = plusProche as AppareillagePlace;
+        const section = effectiveSection(breakerProche);
+        const milieu: Point = { x: (niveau.pointArriveeGaines.x + pp.x) / 2, y: (niveau.pointArriveeGaines.y + pp.y) / 2 };
+        const pieceTraversee = trouverPiece(milieu, niveau.pieces);
+        const nomPiece = pieceTraversee?.nom || pseudoLiaisonVerticale(niveau.nom || niveau.type);
+        ajouter(`cablage_${section}@${nomPiece}`, `cablage_${section}`,
+          LABEL_CABLAGE[section] ?? `Câblage ${section}mm²`, nomPiece, meilleureDistance, "m");
+        const gaineInfo = gaineRecommandee([section, section, section]);
+        const chiffres = gaineInfo.gaine.replace(/\D/g, "");
+        const sousCatGaine = `gaine_irl${chiffres}`;
+        ajouter(`${sousCatGaine}@${nomPiece}`, sousCatGaine, `Gaine ${gaineInfo.gaine}`, nomPiece, meilleureDistance, "m");
+      }
+    }
   });
 
   // ─── Disjoncteurs et différentiels (tableau — une seule fois, pas par niveau) ─────
