@@ -268,22 +268,30 @@ function FormMarque({ value, onChange, marques }: { value: string; onChange: (v:
 // doit rester synchronisée avec les sous_categorie recherchées par calculerBesoinsBruts()
 // dans src/lib/predevis-engine.ts — la mettre à jour si de nouveaux besoins y sont ajoutés.
 const SOUS_CATEGORIES_CONNUES: { code: string; label: string }[] = [
-  { code: "cable_1.5", label: "Câble 1.5mm²" },
-  { code: "cable_2.5", label: "Câble 2.5mm²" },
-  { code: "cable_4.0", label: "Câble 4mm²" },
-  { code: "cable_6.0", label: "Câble 6mm²" },
-  { code: "cable_10.0", label: "Câble 10mm²" },
+  { code: "cable_1.5", label: "Câble tout-en-un 1.5mm² (3G1.5)" },
+  { code: "cable_2.5", label: "Câble tout-en-un 2.5mm² (3G2.5)" },
+  { code: "cable_4.0", label: "Câble tout-en-un 4mm² (3G4)" },
+  { code: "cable_6.0", label: "Câble tout-en-un 6mm² (3G6)" },
+  { code: "cable_10.0", label: "Câble tout-en-un 10mm² (3G10)" },
+  { code: "fil_1.5", label: "Fil séparé 1.5mm² (H07V-U)" },
+  { code: "fil_2.5", label: "Fil séparé 2.5mm² (H07V-U)" },
+  { code: "fil_4.0", label: "Fil séparé 4mm² (H07V-U)" },
+  { code: "fil_6.0", label: "Fil séparé 6mm² (H07V-U)" },
+  { code: "fil_10.0", label: "Fil séparé 10mm² (H07V-U)" },
   { code: "gaine_irl16", label: "Gaine IRL 16" },
   { code: "gaine_irl20", label: "Gaine IRL 20" },
   { code: "gaine_irl25", label: "Gaine IRL 25" },
   { code: "gaine_irl32", label: "Gaine IRL 32" },
   { code: "gaine_irl40", label: "Gaine IRL 40" },
   { code: "moulure", label: "Moulure" },
+  { code: "retour_lampe", label: "Retour lampe (fil, lampe → 1er interrupteur)" },
+  { code: "navette", label: "Navette (fil, entre deux va-et-vient)" },
   { code: "boite_derivation", label: "Boîte de dérivation" },
   { code: "boite_encastrement_1poste", label: "Boîte d'encastrement simple" },
   { code: "boite_encastrement_2postes", label: "Boîte d'encastrement double" },
   { code: "boite_encastrement_3postes", label: "Boîte d'encastrement triple" },
   { code: "boite_encastrement_4postes", label: "Boîte d'encastrement quadruple" },
+  { code: "boite_encastrement_dcl", label: "Boîte d'encastrement DCL (point lumineux)" },
   { code: "disjoncteur_2A", label: "Disjoncteur 2A" },
   { code: "disjoncteur_6A", label: "Disjoncteur 6A" },
   { code: "disjoncteur_10A", label: "Disjoncteur 10A" },
@@ -317,7 +325,7 @@ function SousCategorieInput({ value, onChange }: { value: string; onChange: (v: 
     : SOUS_CATEGORIES_CONNUES;
   return (
     <div className="relative">
-      <input className="input text-sm" placeholder="Ex : cable_2.5, prise, disjoncteur_16A…"
+      <input className="input text-sm" placeholder="Ex : fil_2.5, prise, disjoncteur_16A…"
         value={value}
         onChange={e => { onChange(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
