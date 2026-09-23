@@ -73,14 +73,26 @@ function totalBobinable(besoin: BesoinApparie, option: { longueur_unitaire?: num
 
 // ─── Ligne d'un besoin ───────────────────────────────────────────────────────
 
-function decompositionLabel(besoin: BesoinApparie, option: { longueur_unitaire?: number | null; quantiteMultiplicateur?: number }): string | null {
+function decompositionLabel(besoin: BesoinApparie, option: { longueur_unitaire?: number | null; quantiteMultiplicateur?: number; gamme?: OptionArticle["gamme"]; sousCategorieArticle?: string }, prestations: Prestation[]): string | null {
   if (!(besoin.unite === "m" && estBobinable(besoin.sousCategorie) && option.longueur_unitaire && option.longueur_unitaire > 0)) return null;
   const quantiteReelle = besoin.quantite * (option.quantiteMultiplicateur ?? 1);
   const L = option.longueur_unitaire;
   const nb = Math.floor(quantiteReelle / L + 1e-6);
   const reliquat = Math.round((quantiteReelle - nb * L) * 100) / 100;
   if (reliquat <= 0.01) return `→ ${nb} bobine${nb > 1 ? "s" : ""} de ${L}m (${quantiteReelle.toFixed(2)}m au total)`;
-  return `→ ${nb > 0 ? `${nb} bobine${nb > 1 ? "s" : ""} de ${L}m + ` : ""}${reliquat.toFixed(2)}m restants (${quantiteReelle.toFixed(2)}m au total) — au mètre si dispo, sinon 1 bobine de plus`;
+  // Reproduit EXACTEMENT genererLignesQuantiteBobinable (predevis-engine.ts) : on cherche
+  // vraiment l'article "au mètre" compagnon plutôt que de laisser un texte vague — sinon,
+  // avec nb=0 (besoin plus petit qu'une bobine), l'ancien texte "Xm restants... sinon 1
+  // bobine de plus" donnait l'impression qu'aucune bobine n'était prévue, alors que le
+  // résultat final en achète bien une.
+  const auMetre = prestations.find(p => p.sous_categorie === (option.sousCategorieArticle ?? besoin.sousCategorie)
+    && (p.gamme ?? null) === (option.gamme ?? null) && !p.longueur_unitaire);
+  const baseBobines = nb > 0 ? `${nb} bobine${nb > 1 ? "s" : ""} de ${L}m` : "";
+  if (auMetre) {
+    return `→ ${baseBobines ? `${baseBobines} + ` : ""}${Math.ceil(reliquat)}m au mètre (${quantiteReelle.toFixed(2)}m au total)`;
+  }
+  const bobinesFinales = nb + 1; // reliquat non couvert par un article au mètre -> une bobine de plus
+  return `→ ${bobinesFinales} bobine${bobinesFinales > 1 ? "s" : ""} de ${L}m (couvre les ${quantiteReelle.toFixed(2)}m nécessaires — pas d'article au mètre pour ${besoin.label} en stock)`;
 }
 
 function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
@@ -127,7 +139,7 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
           </label>
         ))}
         {etat.mode === "option" && (() => {
-          const label = decompositionLabel(besoin, besoin.options[etat.optionIndex] ?? {});
+          const label = decompositionLabel(besoin, besoin.options[etat.optionIndex] ?? {}, prestations);
           return label ? <p className="text-[11px] text-sky-600 font-mono ml-6">{label}</p> : null;
         })()}
 
