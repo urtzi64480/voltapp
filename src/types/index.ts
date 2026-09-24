@@ -17,6 +17,9 @@ export interface Profil {
   prenom?: string;
   nom?: string;
   siret?: string;
+  // N° de TVA intracommunautaire (FRxx + SIREN) — requis par les plateformes pour
+  // une facture électronique B2B en franchise en base (règle EN 16931 BR-E-02)
+  numero_tva?: string;
   telephone?: string;
   email?: string;
   adresse?: string;
