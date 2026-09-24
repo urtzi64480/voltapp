@@ -1,6 +1,10 @@
 "use client";
 import { Devis, Profil, Facture } from "@/types";
 import { fmt, fmtDate, fmtDatetime } from "./utils";
+import {
+  buildFacturXml, assemblerFacturX, natureOperations, sirenFromSiret,
+  MENTION_RETARD_PRO, MENTION_ESCOMPTE,
+} from "./facturx";
 
 interface Acompte {
   id: string;
@@ -168,50 +172,96 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
   return doc;
 }
 
-async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acompte[] = []) {
+// Police embarquée (Liberation Sans, métriques Helvetica) — obligatoire pour PDF/A-3 / Factur-X
+const FX_FONT = "LiberationSans";
+
+async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acompte[] = [], pdfa = false) {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
-  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const doc = new jsPDF({ unit: "mm", format: "a4", putOnlyUsedFonts: true });
   const W = doc.internal.pageSize.getWidth();
   const M = 18;
+
+  let FONT = "helvetica";
+  if (pdfa) {
+    const { FONT_REGULAR, FONT_BOLD, FONT_ITALIC } = await import("./facturx-assets");
+    doc.addFileToVFS("LiberationSans-Regular.ttf", FONT_REGULAR);
+    doc.addFileToVFS("LiberationSans-Bold.ttf", FONT_BOLD);
+    doc.addFileToVFS("LiberationSans-Italic.ttf", FONT_ITALIC);
+    doc.addFont("LiberationSans-Regular.ttf", FX_FONT, "normal");
+    doc.addFont("LiberationSans-Bold.ttf", FX_FONT, "bold");
+    doc.addFont("LiberationSans-Italic.ttf", FX_FONT, "italic");
+    FONT = FX_FONT;
+    doc.setFont(FONT, "normal");
+  }
+  const estPro = facture.client?.type_client === "professionnel";
 
   const logoBase64 = await loadLogoBase64((profil as any).logo_url);
   doc.setFillColor(28, 25, 23); doc.rect(0, 0, W, 38, "F");
   if (logoBase64) doc.addImage(logoBase64, "PNG", M, 6, 24, 24);
 
   const textX = logoBase64 ? M + 28 : M;
-  doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.setTextColor(251, 191, 36);
+  doc.setFont(FONT, "bold"); doc.setFontSize(20); doc.setTextColor(251, 191, 36);
   doc.text("FACTURE", textX, 16);
-  doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(200, 200, 190);
+  doc.setFont(FONT, "normal"); doc.setFontSize(8); doc.setTextColor(200, 200, 190);
   doc.text(`N° ${facture.numero} · Émise le ${fmtDate(facture.date_emission)}`, textX, 23);
   if (facture.date_echeance) doc.text(`Échéance : ${fmtDate(facture.date_echeance)}`, textX, 28);
 
   const artisan = [
-    profil.nom_entreprise ?? `${profil.prenom ?? ""} ${profil.nom ?? ""}`.trim(),
+    profil.nom_entreprise || `${profil.prenom ?? ""} ${profil.nom ?? ""}`.trim(),
     profil.siret ? `SIRET ${profil.siret}` : "",
+    profil.numero_tva ? `N° TVA ${profil.numero_tva}` : "",
     profil.telephone ?? "",
     profil.email ?? "",
     [profil.adresse, profil.code_postal, profil.ville].filter(Boolean).join(" "),
   ].filter(Boolean);
+  const artStep = artisan.length > 5 ? 5 : 5.5;
+  const artY0 = artisan.length > 5 ? 9 : 13;
   artisan.forEach((l, i) => {
-    if (i === 0) { doc.setFont("helvetica", "bold"); doc.setTextColor(255, 255, 255); }
-    else { doc.setFont("helvetica", "normal"); doc.setTextColor(200, 200, 190); }
+    if (i === 0) { doc.setFont(FONT, "bold"); doc.setTextColor(255, 255, 255); }
+    else { doc.setFont(FONT, "normal"); doc.setTextColor(200, 200, 190); }
     doc.setFontSize(8);
-    doc.text(l, W - M, 13 + i * 5.5, { align: "right" });
+    doc.text(l, W - M, artY0 + i * artStep, { align: "right" });
   });
 
   if (facture.client) {
-    doc.setFillColor(245, 245, 244); doc.rect(M, 44, 80, 24, "F");
-    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(28, 25, 23);
-    doc.text(`${facture.client.prenom ?? ""} ${facture.client.nom}`.trim(), M + 4, 54);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(87, 83, 78);
-    if (facture.client.adresse) doc.text(facture.client.adresse, M + 4, 60);
-    if (facture.client.telephone) doc.text(facture.client.telephone, M + 4, 65);
+    const c = facture.client;
+    const clientLignes = [
+      c.adresse ?? "",
+      [c.code_postal, c.ville].filter(Boolean).join(" "),
+      c.telephone ?? "",
+      estPro && sirenFromSiret(c.siret_client) ? `SIREN ${sirenFromSiret(c.siret_client)}` : "",
+    ].filter(Boolean);
+    doc.setFillColor(245, 245, 244); doc.rect(M, 44, 80, 12 + clientLignes.length * 5, "F");
+    doc.setFont(FONT, "bold"); doc.setFontSize(7); doc.setTextColor(120, 113, 108);
+    doc.text("CLIENT", M + 4, 49);
+    doc.setFont(FONT, "bold"); doc.setFontSize(10); doc.setTextColor(28, 25, 23);
+    doc.text(`${c.prenom ?? ""} ${c.nom}`.trim(), M + 4, 54.5);
+    doc.setFont(FONT, "normal"); doc.setFontSize(8); doc.setTextColor(87, 83, 78);
+    clientLignes.forEach((l, i) => doc.text(l, M + 4, 60 + i * 5));
   }
+
+  // Objet + nature des opérations (mention obligatoire réforme facturation électronique)
+  const nature = natureOperations(facture);
+  const colX = W / 2 + 4;
+  let colY = 49;
+  if (facture.objet) {
+    doc.setFont(FONT, "bold"); doc.setFontSize(7); doc.setTextColor(120, 113, 108);
+    doc.text("OBJET", colX, colY);
+    doc.setFont(FONT, "normal"); doc.setFontSize(9); doc.setTextColor(28, 25, 23);
+    const objLines = doc.splitTextToSize(facture.objet, W - M - colX).slice(0, 2);
+    doc.text(objLines, colX, colY + 5.5);
+    colY += 6 + objLines.length * 4.5;
+  }
+  doc.setFont(FONT, "bold"); doc.setFontSize(7); doc.setTextColor(120, 113, 108);
+  doc.text("NATURE DES OPÉRATIONS", colX, colY);
+  doc.setFont(FONT, "normal"); doc.setFontSize(8.5); doc.setTextColor(28, 25, 23);
+  doc.text(nature.libelle, colX, colY + 5);
 
   const lignes = facture.lignes ?? [];
   autoTable(doc, {
-    startY: 78,
+    startY: 84,
+    styles: { font: FONT },
     head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
     body: lignes.map(l => [
       designationCell(l.nom, l.kit_description),
@@ -266,7 +316,7 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   doc.setFillColor(28, 25, 23); doc.rect(bx, fy, 80, boxH, "F");
   lignesTotal.forEach((row, i) => {
     const y = fy + 9 + i * 7;
-    doc.setFont("helvetica", row.bold ? "bold" : "normal");
+    doc.setFont(FONT, row.bold ? "bold" : "normal");
     doc.setFontSize(row.bold ? 10 : 8);
     const color = row.color ?? [200, 200, 190];
     doc.setTextColor(color[0], color[1], color[2]);
@@ -274,15 +324,19 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
     doc.text(row.value, bx + 76, y, { align: "right" });
   });
 
-  doc.setFont("helvetica", "italic"); doc.setFontSize(7.5); doc.setTextColor(163, 163, 163);
+  doc.setFont(FONT, "italic"); doc.setFontSize(7.5); doc.setTextColor(163, 163, 163);
   doc.text(profil.mention_tva ?? "TVA non applicable — Art. 293 B du CGI", M, fy + 11);
+  // Mentions de paiement (obligatoires entre professionnels)
+  const mentions = estPro ? `${MENTION_RETARD_PRO} ${MENTION_ESCOMPTE}` : MENTION_ESCOMPTE;
+  doc.setFontSize(6.5);
+  doc.text(doc.splitTextToSize(mentions, bx - M - 6), M, fy + 16);
 
   const pH = doc.internal.pageSize.getHeight();
   doc.setFillColor(28, 25, 23); doc.rect(0, pH - 22, W, 22, "F");
   if (profil.iban || profil.bic) {
-    doc.setFont("helvetica", "bold"); doc.setFontSize(6.5); doc.setTextColor(180, 180, 170);
+    doc.setFont(FONT, "bold"); doc.setFontSize(6.5); doc.setTextColor(180, 180, 170);
     doc.text("RÈGLEMENT PAR VIREMENT", M, pH - 17);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(140, 140, 130);
+    doc.setFont(FONT, "normal"); doc.setFontSize(6.5); doc.setTextColor(140, 140, 130);
     const lignesBanque = [
       profil.banque_titulaire ? `Titulaire : ${profil.banque_titulaire}` : null,
       profil.banque_nom ? `Banque : ${profil.banque_nom}` : null,
@@ -291,7 +345,7 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
     ].filter(Boolean) as string[];
     lignesBanque.forEach((l, i) => doc.text(l, M, pH - 12 + i * 4));
   }
-  doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(120, 113, 108);
+  doc.setFont(FONT, "normal"); doc.setFontSize(7); doc.setTextColor(120, 113, 108);
   doc.text(profil.conditions_paiement ?? "", W - M, pH - 4, { align: "right" });
 
   return doc;
@@ -307,12 +361,44 @@ export async function genPDFDevisBlob(devis: Devis, profil: Profil, sigData?: st
   return doc.output("blob");
 }
 
+// Facture = Factur-X (PDF/A-3 lisible + XML EN 16931 embarqué).
+// Repli automatique sur le PDF classique si l'assemblage échoue, pour ne jamais bloquer l'envoi.
+async function buildFactureBytes(facture: Facture, profil: Profil, acomptes: Acompte[] = []): Promise<Uint8Array> {
+  try {
+    const doc = await buildFactureDoc(facture, profil, acomptes, true);
+    const xml = buildFacturXml(facture, profil, acomptes);
+    const auteur = profil.nom_entreprise || `${profil.prenom ?? ""} ${profil.nom ?? ""}`.trim() || "VoltApp";
+    return await assemblerFacturX(doc.output("arraybuffer"), xml, { title: `Facture ${facture.numero}`, author: auteur });
+  } catch (err) {
+    console.error("Factur-X indisponible, PDF classique généré :", err);
+    const doc = await buildFactureDoc(facture, profil, acomptes, false);
+    return new Uint8Array(doc.output("arraybuffer"));
+  }
+}
+
+function telecharger(blob: Blob, nom: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nom;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export async function genPDFFacture(facture: Facture, profil: Profil, acomptes: Acompte[] = []) {
-  const doc = await buildFactureDoc(facture, profil, acomptes);
-  doc.save(`Facture-${facture.numero}.pdf`);
+  const bytes = await buildFactureBytes(facture, profil, acomptes);
+  telecharger(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }), `Facture-${facture.numero}.pdf`);
 }
 
 export async function genPDFFactureBlob(facture: Facture, profil: Profil, acomptes: Acompte[] = []): Promise<Blob> {
-  const doc = await buildFactureDoc(facture, profil, acomptes);
-  return doc.output("blob");
+  const bytes = await buildFactureBytes(facture, profil, acomptes);
+  return new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
+}
+
+// XML CII seul (Factur-X EN 16931) — pour les plateformes qui demandent un dépôt XML
+export async function genXMLFacture(facture: Facture, profil: Profil, acomptes: Acompte[] = []) {
+  const xml = buildFacturXml(facture, profil, acomptes);
+  telecharger(new Blob([xml], { type: "application/xml" }), `Facture-${facture.numero}.xml`);
 }
