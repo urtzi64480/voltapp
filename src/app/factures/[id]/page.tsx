@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { Facture } from "@/types";
+import { Facture, Profil } from "@/types";
+import { verifierConformiteFacture } from "@/lib/facturx";
 import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, CheckCircle, Clock, Trash2, Plus, Save, X, AlertTriangle, Mail } from "lucide-react";
+import { ArrowLeft, Download, CheckCircle, Clock, Trash2, Plus, Save, X, AlertTriangle, Mail, FileCode, ShieldCheck } from "lucide-react";
 
 interface Apporteur {
   id: string;
@@ -50,6 +51,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
   const [confirmDeleteAcompte, setConfirmDeleteAcompte] = useState<string | null>(null);
   const [devisAssocie, setDevisAssocie] = useState<{ id: string; numero: string; statut: string } | null>(null);
   const [sendingRelance, setSendingRelance] = useState(false);
+  const [profil, setProfil] = useState<Profil | null>(null);
 
   useEffect(() => {
     supabase.from("factures").select("devis_id").eq("id", id).single()
@@ -64,8 +66,10 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
       supabase.from("factures").select("*, client:clients(*), lignes:facture_lignes(id, facture_id, nom, kit_description, quantite, prix_unitaire, unite, type_branche, ordre)").eq("id", id).single(),
       supabase.from("apporteurs").select("id,nom,entreprise").eq("actif", true).order("nom"),
       supabase.from("acomptes").select("*").eq("facture_id", id).order("date_versement"),
-    ]).then(([{ data: f }, { data: ap }, { data: ac }]) => {
+      supabase.from("profil").select("*").maybeSingle(),
+    ]).then(([{ data: f }, { data: ap }, { data: ac }, { data: pr }]) => {
       setFacture(f as any);
+      setProfil((pr as Profil) ?? null);
       setApporteurs(ap ?? []);
       setApporteurId((f as any)?.apporteur_id ?? "");
       setAcomptes(ac ?? []);
@@ -232,6 +236,19 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
     );
   }
 
+  async function dlXml() {
+    if (!facture) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data: p } = await supabase.from("profil").select("*").eq("id", user.id).single();
+    const { genXMLFacture } = await import("@/lib/pdf");
+    await genXMLFacture(
+      facture,
+      p ?? { id: user.id, prefixe_devis: "DEV", prefixe_facture: "FAC", compteur_devis: 0, compteur_facture: 0, mention_tva: "TVA non applicable — Art. 293 B du CGI", conditions_paiement: "Paiement à réception", taux_horaire: 55 },
+      acomptes,
+    );
+  }
+
   if (!facture) return <Shell><div className="p-8 text-center text-ink-400">Chargement…</div></Shell>;
 
   const lignes = (facture.lignes ?? []) as any[];
@@ -245,6 +262,8 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
   const remiseS = (facture as any).remise_valeur > 0.01 ? Math.max(0, Math.round((lignesSBrut - facture.total_service - remiseFideliteEur) * 100) / 100) : 0;
   const remiseM = (facture as any).remise_valeur > 0.01 ? Math.max(0, Math.round((lignesMBrut - facture.total_materiau) * 100) / 100) : 0;
   const hasRemise = remiseS > 0.01 || remiseM > 0.01;
+
+  const conformite = verifierConformiteFacture(facture, profil);
 
   const retardJours = facture.date_echeance ? joursRetard(facture.date_echeance) : 0;
   const estEnRetard = (facture.statut === "envoyee" || facture.statut === "relance") && retardJours > 15;
@@ -409,8 +428,27 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
               )}
             </div>
           </div>
-          <p className="text-xs text-ink-300 mt-3">TVA non applicable — Art. 293 B du CGI</p>
+          <p className="text-xs text-ink-300 mt-3">{profil?.mention_tva || "TVA non applicable — Art. 293 B du CGI"}</p>
         </div>
+
+        {conformite.length > 0 ? (
+          <div className="card card-inner mb-4 border border-amber-200 bg-amber-50">
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle size={15} className="text-amber-600 shrink-0" />
+              <p className="font-semibold text-amber-800 text-sm">Facture électronique : à compléter</p>
+            </div>
+            <ul className="space-y-1">
+              {conformite.map((m, i) => (
+                <li key={i} className="text-xs text-amber-800">• {m}</li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-xs text-emerald-600 mb-4 px-1">
+            <ShieldCheck size={14} className="shrink-0" />
+            <span>Facture électronique conforme — PDF Factur-X (EN 16931) prêt à déposer sur une plateforme agréée.</span>
+          </div>
+        )}
 
         {facture.statut !== "payee" && facture.statut !== "envoyee" && (
           <div className="card card-inner mb-4">
@@ -506,7 +544,8 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
         )}
 
         <div className="flex flex-wrap gap-3">
-          <button onClick={dl} className="btn-ghost flex-1 justify-center"><Download size={15} /> PDF</button>
+          <button onClick={dl} className="btn-ghost flex-1 justify-center"><Download size={15} /> PDF Factur-X</button>
+          <button onClick={dlXml} className="btn-ghost justify-center" title="XML CII seul (si la plateforme le demande)"><FileCode size={15} /> XML</button>
           {facture.statut === "a_envoyer" && (
             <button onClick={marquerEnvoyeeEtEnvoyer} className="btn-volt flex-1 justify-center">
               <CheckCircle size={15} /> Envoyer la facture
