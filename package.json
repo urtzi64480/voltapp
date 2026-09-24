@@ -19,8 +19,8 @@
     "jspdf": "^2.5.1",
     "jspdf-autotable": "^3.8.2",
     "clsx": "^2.1.1",
-    "tailwind-merge": "^2.4.0"
-    "pdf-lib": "^1.17.1",
+    "tailwind-merge": "^2.4.0",
+    "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
     "typescript": "^5",
