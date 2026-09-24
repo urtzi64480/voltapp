@@ -688,6 +688,7 @@ export default function ParametresPage() {
                 <F label="Prénom" value={val("prenom")} onChange={v => set("prenom", v)} />
                 <F label="Nom" value={val("nom")} onChange={v => set("nom", v)} />
                 <F label="SIRET" placeholder="000 000 000 00000" value={val("siret")} onChange={v => set("siret", v)} />
+                <F label="N° TVA intracommunautaire" placeholder="FR00 000000000" value={val("numero_tva")} onChange={v => set("numero_tva", v)} />
                 <F label="Téléphone" type="tel" value={val("telephone")} onChange={v => set("telephone", v)} />
                 <F label="Email" type="email" full value={val("email")} onChange={v => set("email", v)} />
                 <F label="Adresse" full value={val("adresse")} onChange={v => set("adresse", v)} />
