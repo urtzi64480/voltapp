@@ -230,7 +230,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
   const dirLightRef = useRef<THREE.DirectionalLight | null>(null);
   // id d'appareillage (point_lumineux/applique) -> sa lumière 3D + le matériau de son
   // marqueur (pour faire "briller" l'ampoule elle-même, pas seulement éclairer la pièce).
-  const lumiereLightsRef = useRef<Map<number, { light: THREE.PointLight; mat: THREE.MeshStandardMaterial }>>(new Map());
+  const lumiereLightsRef = useRef<Map<number, { light: THREE.PointLight | THREE.SpotLight; mat: THREE.MeshStandardMaterial }>>(new Map());
 
   const [nightMode, setNightMode] = useState(false);
   const [interrupteursOn, setInterrupteursOn] = useState<Record<number, boolean>>({});
@@ -346,9 +346,24 @@ const Vue3D = forwardRef<Vue3DHandle, {
 
         // Point lumineux/applique : lumière réelle en plus du marqueur, éteinte par défaut —
         // allumée/éteinte via le panneau de simulation (voir lumiereLightsRef, syncEclairage).
-        if (app.type === "point_lumineux" || app.type === "applique") {
+        // Orientation physique différente selon le type : un plafonnier (point_lumineux)
+        // éclaire vers le bas en cône (SpotLight, cible au sol) plutôt que dans toutes les
+        // directions ; une applique rayonne réellement autour d'elle (PointLight classique).
+        if (app.type === "point_lumineux") {
           const bulbMat = (marker.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial;
-          const light = new THREE.PointLight(0xffe0ab, 0, app.type === "point_lumineux" ? 4.5 : 3, 2);
+          const light = new THREE.SpotLight(0xffe0ab, 0, 6, Math.PI / 2.6, 0.5, 1.5);
+          light.position.set(app.x, h, app.y);
+          light.target.position.set(app.x, 0, app.y);
+          scene.add(light.target);
+          light.castShadow = true;
+          light.shadow.mapSize.set(512, 512);
+          light.shadow.camera.near = 0.1;
+          light.shadow.camera.far = light.distance;
+          scene.add(light);
+          lumiereLightsRef.current.set(app.id, { light, mat: bulbMat });
+        } else if (app.type === "applique") {
+          const bulbMat = (marker.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial;
+          const light = new THREE.PointLight(0xffe0ab, 0, 3, 2);
           light.position.set(app.x, h, app.y);
           light.castShadow = true;
           light.shadow.mapSize.set(512, 512);
