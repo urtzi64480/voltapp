@@ -171,6 +171,23 @@ export interface Piece {
   appareillages: AppareillagePlace[];
   ouvertures?: Ouverture[];
   hauteurPlafond?: number; // mètres — remplace la hauteur du niveau pour cette pièce si définie (vue 3D)
+  // Mobilier simple (vue 3D uniquement) — voir MeubleSimple ci-dessous.
+  meubles?: MeubleSimple[];
+}
+
+// Élément cubique simple (table, armoire, plan de travail…) placé dans une pièce, sans
+// aucune portée électrique — sert uniquement à mieux juger l'éclairage en vue 3D (un meuble
+// bloque/façonne la lumière) et, accessoirement, à visualiser l'encombrement au sol. N'entre
+// dans aucun circuit, aucun calcul NF C 15-100, aucun pré-devis.
+export interface MeubleSimple {
+  id: number;
+  nom?: string;
+  x: number; y: number;       // centre, mètres (repère du niveau, comme un appareillage)
+  largeur: number;             // mètres, le long de x avant rotation
+  profondeur: number;          // mètres, le long de y avant rotation
+  hauteur: number;             // mètres
+  rotation?: number;           // degrés, sens horaire vu de dessus — 0 par défaut
+  couleur?: string;            // hex — couleur du cube en vue 3D, gris bois par défaut si absent
 }
 
 // Points de coude manuels sur le tracé d'un circuit (pour le faire passer dans un mur,
@@ -359,6 +376,7 @@ export function reamorcerCompteurId(niveaux: Niveau[]): void {
       max = Math.max(max, p.id);
       p.appareillages.forEach(a => { max = Math.max(max, a.id); });
       (p.ouvertures ?? []).forEach(o => { max = Math.max(max, o.id); });
+      (p.meubles ?? []).forEach(m => { max = Math.max(max, m.id); });
     });
     (n.circuitsManuels ?? []).forEach(m => { max = Math.max(max, m.id); });
     Object.values(n.liaisonWaypoints ?? {}).forEach(liste => liste.forEach(w => { max = Math.max(max, w.id); }));
@@ -397,7 +415,8 @@ export function dedupliquerIds(niveaux: Niveau[]): { niveaux: Niveau[]; correcti
         return { ...a, id: nouvAId };
       });
       const ouvertures = (p.ouvertures ?? []).map(o => ({ ...o, id: prendre(o.id) }));
-      return { ...p, id: nouvPId, appareillages, ouvertures: p.ouvertures ? ouvertures : p.ouvertures };
+      const meubles = (p.meubles ?? []).map(m => ({ ...m, id: prendre(m.id) }));
+      return { ...p, id: nouvPId, appareillages, ouvertures: p.ouvertures ? ouvertures : p.ouvertures, meubles: p.meubles ? meubles : p.meubles };
     });
     const circuitsManuels = (n.circuitsManuels ?? []).map(m => {
       const nouvMId = prendre(m.id);
@@ -459,6 +478,11 @@ const PUISSANCE_CHAUFFAGE_DEFAUT_W = 1000;
 export const nouvelAppareillage = (type: AppareillageType, x: number, y: number): AppareillagePlace => ({
   id: uidMaison(), type, x, y,
   ...(type === "chauffage" ? { puissanceW: PUISSANCE_CHAUFFAGE_DEFAUT_W } : {}),
+});
+// Dimensions de départ raisonnables (une petite table/desserte) — modifiables ensuite
+// depuis le panneau du meuble sélectionné.
+export const nouveauMeuble = (x: number, y: number): MeubleSimple => ({
+  id: uidMaison(), x, y, largeur: 0.6, profondeur: 0.4, hauteur: 0.75,
 });
 
 export function distance(a: Point, b: Point): number {
