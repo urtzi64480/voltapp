@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Client, DevisLigne, Prestation } from "@/types";
-import { fmt, genNumero, cn } from "@/lib/utils";
+import { fmt, genNumero, cn, nomAvecConditionnement } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Save, Eye, PenLine, Plus, X, RotateCcw, Check, Download, ChevronDown, Tag, Gift, Search, Layers } from "lucide-react";
@@ -189,11 +189,17 @@ function NouveauDevisPage() {
       return;
     }
 
+    // Nom persisté sur la ligne : précise le conditionnement (bobine/rouleau) et la
+    // longueur unitaire pour les articles vendus en longueur fixe — voir
+    // nomAvecConditionnement (src/lib/utils.ts). Le nom déjà enrichi sert aussi de clé de
+    // regroupement ci-dessous, pour que deux clics sur le même article s'incrémentent
+    // plutôt que de créer deux lignes.
+    const nomFinal = nomAvecConditionnement(p.nom, p.longueur_unitaire, p.sous_categorie);
     setLignes(prev => {
-      const ex = prev.findIndex(l => l.nom === p.nom && l.type_branche === p.type_branche && !l.kit_description);
+      const ex = prev.findIndex(l => l.nom === nomFinal && l.type_branche === p.type_branche && !l.kit_description);
       if (ex >= 0) { const n = [...prev]; n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 }; return n; }
       return [...prev, {
-        nom: p.nom,
+        nom: nomFinal,
         kit_description: p.description ?? null,
         prix_unitaire: p.prix_unitaire,
         quantite: 1,
