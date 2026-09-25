@@ -10,9 +10,9 @@
 // Ce composant remplace le canvas 2D quand la vue 3D est activée dans la page plan ;
 // il ne gère ni le dessin des pièces ni le placement des appareillages (lecture seule).
 
-import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
+import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { Niveau, PIECE_TYPES, centroide, AppareillageType, OuvertureEffective, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, centroide, AppareillageType, OuvertureEffective, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 
@@ -30,6 +30,26 @@ const HAUTEUR_DEFAUT: Partial<Record<AppareillageType, number>> = {
 
 // Hauteur d'installation par défaut du tableau électrique (mètres) quand non précisée.
 const HAUTEUR_TABLEAU_DEFAUT = 1.5;
+
+// ─── SIMULATION D'ÉCLAIRAGE (VUE 3D) ───────────────────────────────────────────
+// Chaque interrupteur/va-et-vient/télérupteur ayant des points lumineux commandés
+// (commandePourIds, maison-types.ts) peut être allumé/éteint indépendamment depuis
+// le panneau superposé à la vue 3D. Simplification volontaire pour un va-et-vient
+// (deux commandes sur les mêmes lampes) : logique "OU" — la lampe s'allume si AU
+// MOINS une de ses commandes est active, plutôt qu'une bascule XOR fidèle au
+// câblage réel, qui n'apporterait rien à une simulation visuelle.
+const LABEL_TYPE_INTERRUPTEUR: Record<"interrupteur" | "va_et_vient" | "telerupteur", string> = {
+  interrupteur: "Interrupteur",
+  va_et_vient: "Va-et-vient",
+  telerupteur: "Télérupteur",
+};
+
+interface InterrupteurUI {
+  id: number;
+  label: string;
+  pieceNom: string;
+  lumiereIds: number[];
+}
 
 // ─── IDENTITÉ VISUELLE 3D DES APPAREILLAGES ────────────────────────────────────
 // Chaque appareillage a, en plus de sa position/hauteur réelles, une forme et une
@@ -120,6 +140,8 @@ function construireMurAvecOuvertures(
     const mesh = new THREE.Mesh(geo, murMat);
     mesh.position.set(a.x + ux * centreLong, centreHauteur, a.y + uy * centreLong);
     mesh.rotation.y = -angle;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     scene.add(mesh);
   };
 
@@ -203,10 +225,57 @@ const Vue3D = forwardRef<Vue3DHandle, {
 }>(function Vue3D({ niveau, resultat, showCircuits }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const ambientLightRef = useRef<THREE.AmbientLight | null>(null);
+  const dirLightRef = useRef<THREE.DirectionalLight | null>(null);
+  // id d'appareillage (point_lumineux/applique) -> sa lumière 3D + le matériau de son
+  // marqueur (pour faire "briller" l'ampoule elle-même, pas seulement éclairer la pièce).
+  const lumiereLightsRef = useRef<Map<number, { light: THREE.PointLight; mat: THREE.MeshStandardMaterial }>>(new Map());
+
+  const [nightMode, setNightMode] = useState(false);
+  const [interrupteursOn, setInterrupteursOn] = useState<Record<number, boolean>>({});
 
   useImperativeHandle(ref, () => ({
     capturerImage: () => rendererRef.current?.domElement.toDataURL("image/png") ?? null,
   }));
+
+  // ── Repère : x du plan → x 3D, y du plan → z 3D (profondeur), hauteur → y 3D (vertical) ──
+  const niveauResultat = useMemo(
+    () => resultat?.maison.niveaux.find(n => n.id === niveau.id) ?? niveau,
+    [niveau, resultat],
+  );
+
+  // Panneau de simulation : un interrupteur/va-et-vient/télérupteur n'apparaît que s'il
+  // commande au moins un point lumineux (commandePourIds) — recalculé à chaque changement
+  // de niveau/génération, indépendamment de la reconstruction de la scène 3D elle-même.
+  const interrupteurs: InterrupteurUI[] = useMemo(() => {
+    const liste: InterrupteurUI[] = [];
+    niveauResultat.pieces.forEach(piece => {
+      piece.appareillages.forEach(app => {
+        if (app.type !== "interrupteur" && app.type !== "va_et_vient" && app.type !== "telerupteur") return;
+        const lumiereIds = app.commandePourIds ?? [];
+        if (lumiereIds.length === 0) return;
+        liste.push({
+          id: app.id,
+          label: app.nom || `${LABEL_TYPE_INTERRUPTEUR[app.type]}${lumiereIds.length > 1 ? ` (${lumiereIds.length} pts)` : ""}`,
+          pieceNom: piece.nom,
+          lumiereIds,
+        });
+      });
+    });
+    return liste;
+  }, [niveauResultat]);
+
+  // Changer de niveau réinitialise la simulation (les ids d'interrupteurs d'un autre
+  // niveau n'ont aucun sens ici) — le mode nuit, lui, est une préférence de vue et reste.
+  useEffect(() => { setInterrupteursOn({}); }, [niveau.id]);
+
+  // Ids des points lumineux actuellement allumés, dérivés des interrupteurs actifs.
+  const lumieresAllumeesIds = useMemo(() => {
+    const set = new Set<number>();
+    interrupteurs.forEach(i => { if (interrupteursOn[i.id]) i.lumiereIds.forEach(id => set.add(id)); });
+    return set;
+  }, [interrupteurs, interrupteursOn]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -215,22 +284,30 @@ const Vue3D = forwardRef<Vue3DHandle, {
     const hauteurPlafond = niveau.hauteurPlafond ?? 2.5;
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#e7e5e4");
+    sceneRef.current = scene;
+    lumiereLightsRef.current.clear();
 
     const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.05, 200);
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Ombres portées — condition sine qua non pour qu'un meuble (voir MeubleSimple plus bas)
+    // bloque réellement la lumière d'un point lumineux au lieu de simplement décorer la
+    // pièce. Coût mesuré nécessaire : chaque point lumineux allumé projette une ombre
+    // cube-map ; acceptable ici (module desktop, pas d'optimisation mobile prévue).
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+    scene.add(ambientLight);
+    ambientLightRef.current = ambientLight;
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
     dirLight.position.set(5, 10, 5);
     scene.add(dirLight);
+    dirLightRef.current = dirLight;
 
-    // ── Repère : x du plan → x 3D, y du plan → z 3D (profondeur), hauteur → y 3D (vertical) ──
-
-    const niveauResultat = resultat?.maison.niveaux.find(n => n.id === niveau.id) ?? niveau;
     const colorMap = resultat ? construireColorMap(resultat, [niveau]) : new Map<number, string>();
 
     // Sol + murs par pièce
@@ -244,6 +321,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
       const solMat = new THREE.MeshStandardMaterial({ color: spec.color, side: THREE.DoubleSide });
       const sol = new THREE.Mesh(solGeo, solMat);
       sol.rotation.x = -Math.PI / 2;
+      sol.receiveShadow = true;
       scene.add(sol);
 
       // Murs (un ou plusieurs pans de boîte par arête du contour, troués aux ouvertures) —
@@ -265,6 +343,33 @@ const Vue3D = forwardRef<Vue3DHandle, {
         const marker = creerMarqueurAppareillage(app.type, couleur);
         marker.position.set(app.x, h, app.y);
         scene.add(marker);
+
+        // Point lumineux/applique : lumière réelle en plus du marqueur, éteinte par défaut —
+        // allumée/éteinte via le panneau de simulation (voir lumiereLightsRef, syncEclairage).
+        if (app.type === "point_lumineux" || app.type === "applique") {
+          const bulbMat = (marker.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial;
+          const light = new THREE.PointLight(0xffe0ab, 0, app.type === "point_lumineux" ? 4.5 : 3, 2);
+          light.position.set(app.x, h, app.y);
+          light.castShadow = true;
+          light.shadow.mapSize.set(512, 512);
+          light.shadow.camera.near = 0.1;
+          light.shadow.camera.far = light.distance;
+          scene.add(light);
+          lumiereLightsRef.current.set(app.id, { light, mat: bulbMat });
+        }
+      });
+
+      // Mobilier simple — bloque/façonne réellement la lumière des points lumineux
+      // (voir renderer.shadowMap plus haut) : purement visuel, aucune portée électrique.
+      (piece.meubles ?? []).forEach((m: MeubleSimple) => {
+        const geo = new THREE.BoxGeometry(m.largeur, m.hauteur, m.profondeur);
+        const mat = new THREE.MeshStandardMaterial({ color: m.couleur || "#A8A29E", roughness: 0.85 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(m.x, m.hauteur / 2, m.y);
+        mesh.rotation.y = -((m.rotation ?? 0) * Math.PI) / 180;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        scene.add(mesh);
       });
     });
 
@@ -482,10 +587,82 @@ const Vue3D = forwardRef<Vue3DHandle, {
       });
       if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
       rendererRef.current = null;
+      sceneRef.current = null;
+      ambientLightRef.current = null;
+      dirLightRef.current = null;
+      lumiereLightsRef.current.clear();
     };
-  }, [niveau, resultat, showCircuits]);
+  }, [niveau, resultat, showCircuits, niveauResultat]);
 
-  return <div ref={containerRef} className="w-full h-full" style={{ touchAction: "none", cursor: "grab" }} />;
+  // Applique l'état courant (interrupteurs allumés + mode nuit) aux objets three.js déjà
+  // construits, sans reconstruire la scène. Dépend aussi de [niveauResultat, showCircuits]
+  // pour se réappliquer juste après une reconstruction de la scène (effet ci-dessus), qui
+  // recrée l'éclairage ambiant et les lumières à leur état par défaut (éteint / plein jour).
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    if (nightMode) {
+      scene.background = new THREE.Color("#0b1220");
+      if (ambientLightRef.current) ambientLightRef.current.intensity = 0.12;
+      if (dirLightRef.current) dirLightRef.current.intensity = 0.15;
+    } else {
+      scene.background = new THREE.Color("#e7e5e4");
+      if (ambientLightRef.current) ambientLightRef.current.intensity = 0.7;
+      if (dirLightRef.current) dirLightRef.current.intensity = 0.8;
+    }
+
+    lumiereLightsRef.current.forEach((entry, id) => {
+      const allumee = lumieresAllumeesIds.has(id);
+      entry.light.intensity = allumee ? (nightMode ? 2.4 : 1.4) : 0;
+      entry.mat.emissiveIntensity = allumee ? (nightMode ? 1.4 : 0.9) : 0.15;
+    });
+  }, [nightMode, lumieresAllumeesIds, niveauResultat, showCircuits]);
+
+  return (
+    <div className="relative w-full h-full">
+      <div ref={containerRef} className="w-full h-full" style={{ touchAction: "none", cursor: "grab" }} />
+
+      {interrupteurs.length > 0 && (
+        <div className="absolute inset-x-0 bottom-0 p-3 flex flex-col gap-2 pointer-events-none">
+          <div className="flex items-center gap-2 pointer-events-auto">
+            <button
+              onClick={() => setInterrupteursOn(Object.fromEntries(interrupteurs.map(i => [i.id, true])))}
+              className="btn-ghost !text-xs !bg-white/90 backdrop-blur">
+              Tout allumer
+            </button>
+            <button
+              onClick={() => setInterrupteursOn({})}
+              className="btn-ghost !text-xs !bg-white/90 backdrop-blur">
+              Tout éteindre
+            </button>
+            <button
+              onClick={() => setNightMode(m => !m)}
+              className={`btn-ghost !text-xs !ml-auto backdrop-blur ${nightMode ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}>
+              {nightMode ? "☀️ Mode jour" : "🌙 Mode nuit"}
+            </button>
+          </div>
+          <div className="flex items-center gap-2 overflow-x-auto pointer-events-auto pb-1">
+            {interrupteurs.map(i => {
+              const actif = !!interrupteursOn[i.id];
+              return (
+                <button
+                  key={i.id}
+                  onClick={() => setInterrupteursOn(s => ({ ...s, [i.id]: !s[i.id] }))}
+                  className={`shrink-0 card !py-1.5 !px-3 text-left transition-colors ${actif ? "!border-volt-500 !bg-volt-50" : "!bg-white/90"}`}>
+                  <div className="text-[10px] uppercase tracking-wide text-ink-400">{i.pieceNom}</div>
+                  <div className="text-xs font-semibold text-ink-900 flex items-center gap-1.5">
+                    <span className={`inline-block w-2 h-2 rounded-full ${actif ? "bg-volt-500" : "bg-ink-300"}`} />
+                    {i.label}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 });
 
 export default Vue3D;
