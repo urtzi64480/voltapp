@@ -518,16 +518,25 @@ function DemandePageContent({ userId }: { userId: string }) {
             </p>
           </div>
         </div>
-        <a
-          href={VCARD_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={handleAjoutContact}
-          className="shrink-0 inline-flex items-center justify-center gap-1.5 w-full sm:w-auto px-4 py-2.5 sm:py-2 rounded-lg bg-volt-500 text-ink-900 font-semibold text-sm sm:text-xs hover:bg-volt-400 transition-colors sm:ml-auto">
-          <UserPlus size={16} className="sm:hidden" />
-          <UserPlus size={14} className="hidden sm:block" />
-          <span>Ajouter à mes contacts</span>
-        </a>
+        <div className="shrink-0 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:ml-auto">
+          <a
+            href={URGENCE_TEL_LIEN}
+            className="inline-flex items-center justify-center gap-1.5 w-full sm:w-auto px-4 py-2.5 sm:py-2 rounded-lg bg-white/10 border border-white/15 text-white font-semibold text-sm sm:text-xs hover:bg-white/20 transition-colors">
+            <Phone size={16} className="sm:hidden" />
+            <Phone size={14} className="hidden sm:block" />
+            <span>{URGENCE_TEL_AFFICHE}</span>
+          </a>
+          <a
+            href={VCARD_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={handleAjoutContact}
+            className="inline-flex items-center justify-center gap-1.5 w-full sm:w-auto px-4 py-2.5 sm:py-2 rounded-lg bg-volt-500 text-ink-900 font-semibold text-sm sm:text-xs hover:bg-volt-400 transition-colors">
+            <UserPlus size={16} className="sm:hidden" />
+            <UserPlus size={14} className="hidden sm:block" />
+            <span>Ajouter à mes contacts</span>
+          </a>
+        </div>
       </div>
 
       {/* ÉCRAN DE CHOIX */}
