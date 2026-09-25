@@ -10,7 +10,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
-  GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt,
+  GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt, Box,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -22,6 +22,7 @@ import {
   LiaisonWaypoint, cleSegmentLiaison,
   cheminSegment, longueurBranchesEclairage, centroidePoints, assombrirCouleur, pointsOndulesEntre,
   BoiteDerivation, migrerBoitesDerivation,
+  MeubleSimple, nouveauMeuble,
 } from "@/lib/maison-types";
 import { AppareillageSymbol, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
@@ -369,6 +370,7 @@ type DragMode =
   | { kind: "vertex"; pieceId: number; vertexIndex: number }
   | { kind: "piece"; pieceId: number; startX: number; startY: number; startContour: Point[] }
   | { kind: "appareillage"; pieceId: number; appareillageId: number }
+  | { kind: "meuble"; pieceId: number; meubleId: number }
   | { kind: "ouverture"; pieceId: number; ouvertureId: number }
   | { kind: "tableau" }
   | { kind: "pointArrivee" }
@@ -912,8 +914,10 @@ export default function PlanPage() {
   const [placementType, setPlacementType] = useState<AppareillageType | null>(null);
   const [placingTableau, setPlacingTableau] = useState(false);
   const [placingPointArrivee, setPlacingPointArrivee] = useState(false);
+  const [placingMeuble, setPlacingMeuble] = useState(false);
   const [pendingCommande, setPendingCommande] = useState<{ item: AppareillagePlace; estNouveau: boolean } | null>(null);
   const [selectedAppareillageId, setSelectedAppareillageId] = useState<number | null>(null);
+  const [selectedMeubleId, setSelectedMeubleId] = useState<number | null>(null);
   // Incrémenté à chaque fin de geste de déplacement — sert uniquement de "key" pour forcer
   // les champs de position/distance à se resynchroniser avec la géométrie après un drag,
   // sans jamais les resynchroniser pendant la frappe (ce qui bloquait l'effacement).
@@ -1061,6 +1065,17 @@ export default function PlanPage() {
             ...p, appareillages: p.appareillages.map(a => a.id === dragMode.appareillageId ? { ...a, x: m.x, y: m.y } : a),
           }),
         }));
+      } else if (dragMode.kind === "meuble") {
+        // Pas de snap-alignement (pas d'intérêt structurel pour du mobilier) : position brute.
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const raw = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        updateNiveauActif(n => ({
+          ...n,
+          pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : {
+            ...p, meubles: (p.meubles ?? []).map(mb => mb.id === dragMode.meubleId ? { ...mb, x: raw.x, y: raw.y } : mb),
+          }),
+        }));
       } else if (dragMode.kind === "tableau") {
         const rect = svgRef.current?.getBoundingClientRect();
         if (!rect) return;
@@ -1138,7 +1153,7 @@ export default function PlanPage() {
       // (porte/fenêtre), "boite" et "pointArrivee" (purement cosmétiques/informatifs) ne
       // changent jamais la composition électrique du plan — les exclure évite de
       // réinitialiser les circuits générés à chaque simple clic ou déplacement de ces éléments.
-      if (!["liaison", "pan", "ouverture", "boite", "pointArrivee"].includes(dragMode.kind)) invalidateResultat();
+      if (!["liaison", "pan", "ouverture", "boite", "pointArrivee", "meuble"].includes(dragMode.kind)) invalidateResultat();
       setDragEndTick(t => t + 1);
       setDragMode({ kind: "none" });
       setSnapGuide(null);
@@ -1204,7 +1219,7 @@ export default function PlanPage() {
       if (o) {
         setMode("select"); setDrawingPoints([]);
         setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null);
-        setPlacingPointArrivee(false); setSelectedPointArrivee(false);
+        setPlacingPointArrivee(false); setSelectedPointArrivee(false); setPlacingMeuble(false);
         setCheminementDessin(null); setLiaisonLumiereMode(null);
       }
       return !o;
@@ -1212,29 +1227,37 @@ export default function PlanPage() {
   };
 
   const entrerModeDessiner = () => {
-    setMode("dessiner"); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
-    setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null);
+    setMode("dessiner"); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
+    setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
   };
   const armerPlacement = (t: AppareillageType | null) => {
-    setPlacementType(t); setMode("select"); setPlacingTableau(false); setPlacingOuverture(null); setDrawingPoints([]);
+    setPlacementType(t); setMode("select"); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false); setDrawingPoints([]);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
-    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
   };
   const armerPlacementTableau = () => {
-    setPlacingTableau(true); setMode("select"); setPlacementType(null); setPlacingOuverture(null); setDrawingPoints([]);
+    setPlacingTableau(true); setMode("select"); setPlacementType(null); setPlacingOuverture(null); setPlacingMeuble(false); setDrawingPoints([]);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
-    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
   };
   const armerPlacementPointArrivee = () => {
-    setPlacingPointArrivee(true); setMode("select"); setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setDrawingPoints([]);
+    setPlacingPointArrivee(true); setMode("select"); setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false); setDrawingPoints([]);
     setLiaisonLumiereMode(null);
-    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedPointArrivee(false);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedPointArrivee(false); setSelectedMeubleId(null);
   };
   const armerPlacementOuverture = (t: OuvertureType | null) => {
-    setPlacingOuverture(t); setMode("select"); setPlacementType(null); setPlacingTableau(false); setDrawingPoints([]);
+    setPlacingOuverture(t); setMode("select"); setPlacementType(null); setPlacingTableau(false); setPlacingMeuble(false); setDrawingPoints([]);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
-    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
+  };
+  // Mobilier simple : reste armé après chaque pose (comme la palette d'appareillages) pour
+  // enchaîner plusieurs meubles sans rerouvrir le bouton — se désarme via son propre bouton
+  // (toggle) ou en passant à un autre mode/outil.
+  const armerPlacementMeuble = () => {
+    setPlacingMeuble(true); setMode("select"); setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setDrawingPoints([]);
+    setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
   };
 
   const removerAppareillage = (appareillageId: number) => {
@@ -1251,6 +1274,26 @@ export default function PlanPage() {
     }));
     setSelectedAppareillageId(null);
     invalidateResultat();
+  };
+
+  // ─── MOBILIER SIMPLE (vue 3D) ───────────────────────────────────────────────────
+  // Purement visuel : jamais d'invalidateResultat() ici, un meuble n'entre dans aucun
+  // circuit ni calcul.
+  const modifierMeuble = (meubleId: number, patch: Partial<MeubleSimple>) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({
+        ...p,
+        meubles: (p.meubles ?? []).map(m => m.id === meubleId ? { ...m, ...patch } : m),
+      })),
+    }));
+  };
+  const removerMeuble = (meubleId: number) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({ ...p, meubles: (p.meubles ?? []).filter(m => m.id !== meubleId) })),
+    }));
+    setSelectedMeubleId(null);
   };
 
   // ─── SOMMETS DU CONTOUR D'UNE PIÈCE ────────────────────────────────────────────
@@ -1648,10 +1691,10 @@ export default function PlanPage() {
 
   // ─── DESSIN DU CHEMINEMENT (clic sur les appareillages du circuit, dans l'ordre) ───────
   const demarrerDessinCheminement = (b: Breaker) => {
-    setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null);
+    setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setMode("select"); setDrawingPoints([]);
-    setSelectedAppareillageId(null); setSelectedPieceId(null); setSelectedTableau(false);
+    setSelectedAppareillageId(null); setSelectedPieceId(null); setSelectedTableau(false); setSelectedMeubleId(null);
     setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedWaypoint(null);
     const existant = niveauActif?.ordresCircuits?.[b.label];
     setCheminementDessin({ breaker: b, ordre: existant ? [...existant] : [] });
@@ -1701,9 +1744,9 @@ export default function PlanPage() {
 
   // ─── LIAISON DIRECTE ENTRE POINTS LUMINEUX (sans boîte de dérivation) ──────────────
   const demarrerLiaisonDirecteLumiere = (label: string) => {
-    setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingPointArrivee(false);
+    setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingPointArrivee(false); setPlacingMeuble(false);
     setMode("select"); setDrawingPoints([]); setCheminementDessin(null);
-    setSelectedAppareillageId(null); setSelectedPieceId(null); setSelectedTableau(false);
+    setSelectedAppareillageId(null); setSelectedPieceId(null); setSelectedTableau(false); setSelectedMeubleId(null);
     setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedWaypoint(null); setSelectedPointArrivee(false);
     setLiaisonLumiereMode({ label, premierId: null });
   };
@@ -1843,6 +1886,22 @@ export default function PlanPage() {
       return;
     }
 
+    if (placingMeuble) {
+      const piece = niveauActif ? trouverPiece(m, niveauActif.pieces) : null;
+      if (!piece) {
+        setPlacementError("Clique à l'intérieur d'une pièce dessinée.");
+        setTimeout(() => setPlacementError(null), 2000);
+        return;
+      }
+      const nouveau = nouveauMeuble(m.x, m.y);
+      updateNiveauActif(n => ({
+        ...n,
+        pieces: n.pieces.map(p => p.id === piece.id ? { ...p, meubles: [...(p.meubles ?? []), nouveau] } : p),
+      }));
+      setSelectedMeubleId(nouveau.id);
+      return;
+    }
+
     if (placingOuverture) {
       const seuilM = SEUIL_MUR_PX / (PX_PER_M * zoom);
       const mur = niveauActif ? trouverMurLePlusProche(niveauActif.pieces, m, seuilM) : null;
@@ -1865,6 +1924,7 @@ export default function PlanPage() {
     setSelectedOuvertureId(null); setSelectedBoite(null);
     setSelectedWaypoint(null);
     setSelectedPointArrivee(false);
+    setSelectedMeubleId(null);
     setDragMode({ kind: "pan", startX: e.clientX, startY: e.clientY, startPan: pan });
   };
 
@@ -1876,7 +1936,7 @@ export default function PlanPage() {
   };
 
   const onPieceDown = (piece: Piece, e: React.PointerEvent) => {
-    if (cheminementDessin || liaisonLumiereMode || mode === "dessiner" || placementType || placingTableau || placingOuverture || placingPointArrivee) return;
+    if (cheminementDessin || liaisonLumiereMode || mode === "dessiner" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) return;
     e.stopPropagation();
     if (selectedPieceId === piece.id) {
       setDragMode({ kind: "piece", pieceId: piece.id, startX: e.clientX, startY: e.clientY, startContour: piece.contour });
@@ -1886,6 +1946,7 @@ export default function PlanPage() {
       setSelectedTableau(false);
       setSelectedOuvertureId(null); setSelectedBoite(null);
       setSelectedWaypoint(null);
+      setSelectedMeubleId(null);
       setPanelResetTick(t => t + 1);
     }
   };
@@ -1917,7 +1978,7 @@ export default function PlanPage() {
       }
       return;
     }
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     // Sélectionne ET arme le déplacement dès le premier appui (comme un vrai
     // glisser-déposer) : un simple clic sans bouger équivaut juste à une sélection,
@@ -1928,13 +1989,29 @@ export default function PlanPage() {
     setSelectedOuvertureId(null); setSelectedBoite(null);
     setSelectedWaypoint(null);
     setSelectedPointArrivee(false);
+    setSelectedMeubleId(null);
     setPanelResetTick(t => t + 1);
     setDragMode({ kind: "appareillage", pieceId: piece.id, appareillageId: a.id });
   };
 
+  const onMeublePointerDown = (piece: Piece, m: MeubleSimple, e: React.PointerEvent) => {
+    if (cheminementDessin || liaisonLumiereMode) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) { e.stopPropagation(); return; }
+    e.stopPropagation();
+    setSelectedMeubleId(m.id);
+    setSelectedAppareillageId(null);
+    setSelectedTableau(false);
+    setSelectedPieceId(null);
+    setSelectedOuvertureId(null); setSelectedBoite(null);
+    setSelectedWaypoint(null);
+    setSelectedPointArrivee(false);
+    setPanelResetTick(t => t + 1);
+    setDragMode({ kind: "meuble", pieceId: piece.id, meubleId: m.id });
+  };
+
   const onTableauPointerDown = (e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedTableau(true);
     setSelectedPieceId(null);
@@ -1942,13 +2019,14 @@ export default function PlanPage() {
     setSelectedOuvertureId(null); setSelectedBoite(null);
     setSelectedWaypoint(null);
     setSelectedPointArrivee(false);
+    setSelectedMeubleId(null);
     setPanelResetTick(t => t + 1);
     setDragMode({ kind: "tableau" });
   };
 
   const onPointArriveePointerDown = (e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedPointArrivee(true);
     setSelectedPieceId(null);
@@ -1956,13 +2034,14 @@ export default function PlanPage() {
     setSelectedTableau(false);
     setSelectedOuvertureId(null); setSelectedBoite(null);
     setSelectedWaypoint(null);
+    setSelectedMeubleId(null);
     setPanelResetTick(t => t + 1);
     setDragMode({ kind: "pointArrivee" });
   };
 
   const onOuverturePointerDown = (piece: Piece, o: Ouverture, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedOuvertureId(o.id);
     setSelectedPieceId(null);
@@ -1971,13 +2050,14 @@ export default function PlanPage() {
     setSelectedBoite(null);
     setSelectedWaypoint(null);
     setSelectedPointArrivee(false);
+    setSelectedMeubleId(null);
     setPanelResetTick(t => t + 1);
     setDragMode({ kind: "ouverture", pieceId: piece.id, ouvertureId: o.id });
   };
 
   const onBoitePointerDown = (label: string, boite: BoiteDerivation | null, positionActuelle: Point, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     let boiteId = boite?.id;
     if (boiteId == null) {
@@ -2001,6 +2081,7 @@ export default function PlanPage() {
     setSelectedOuvertureId(null);
     setSelectedWaypoint(null);
     setSelectedPointArrivee(false);
+    setSelectedMeubleId(null);
     setPanelResetTick(t => t + 1);
     setDragMode({ kind: "boite", label, boiteId });
   };
@@ -2159,6 +2240,7 @@ export default function PlanPage() {
   const pieceDeSelectedAppareillage = selectedAppareillage
     ? niveauActif?.pieces.find(p => p.appareillages.some(a => a.id === selectedAppareillage.id)) ?? null
     : null;
+  const selectedMeuble = niveauActif?.pieces.flatMap(p => p.meubles ?? []).find(m => m.id === selectedMeubleId) ?? null;
 
   const colorMap = resultat ? construireColorMap(resultat, niveaux) : new Map<number, string>();
 
@@ -2228,7 +2310,7 @@ export default function PlanPage() {
 
         <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 bg-ink-50 overflow-x-auto shrink-0">
           {[...niveaux].sort((a, b) => a.ordre - b.ordre).map(n => (
-            <button key={n.id} onClick={() => { setNiveauActifId(n.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedPointArrivee(false); setCheminementDessin(null); setLiaisonLumiereMode(null); }}
+            <button key={n.id} onClick={() => { setNiveauActifId(n.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedPointArrivee(false); setSelectedMeubleId(null); setCheminementDessin(null); setLiaisonLumiereMode(null); }}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
                 n.id === niveauActifId ? "bg-ink-900 text-volt-400" : "bg-white border border-ink-200 text-ink-500 hover:border-ink-400"
               }`}>
@@ -2249,8 +2331,8 @@ export default function PlanPage() {
 
         {!vue3D && toolbarOuvert && (
         <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 shrink-0 flex-wrap bg-ink-50">
-          <button onClick={() => { setMode("select"); setDrawingPoints([]); setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingPointArrivee(false); }}
-            className={`btn-ghost !text-xs ${mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingPointArrivee ? "!bg-ink-900 !text-volt-400" : ""}`}>
+          <button onClick={() => { setMode("select"); setDrawingPoints([]); setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingPointArrivee(false); setPlacingMeuble(false); }}
+            className={`btn-ghost !text-xs ${mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingPointArrivee && !placingMeuble ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <MousePointer2 size={13} /> Sélection
           </button>
           <button onClick={entrerModeDessiner} className={`btn-ghost !text-xs ${mode === "dessiner" ? "!bg-ink-900 !text-volt-400" : ""}`}>
@@ -2261,6 +2343,11 @@ export default function PlanPage() {
           </button>
           <button onClick={armerPlacementPointArrivee} className={`btn-ghost !text-xs ${placingPointArrivee ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <ArrowDownToLine size={13} /> Arrivée gaines
+          </button>
+          <button onClick={() => placingMeuble ? setPlacingMeuble(false) : armerPlacementMeuble()}
+            title="Meuble simple (vue 3D) — pour mieux juger l'éclairage"
+            className={`btn-ghost !text-xs ${placingMeuble ? "!bg-ink-900 !text-volt-400" : ""}`}>
+            <Box size={13} /> Meuble
           </button>
           <div className="relative">
             <button onClick={() => setOuvertureMenuOpen(o => !o)}
@@ -2353,7 +2440,7 @@ export default function PlanPage() {
             <svg
               ref={svgRef}
               className="w-full h-full block"
-              style={{ touchAction: "none", cursor: mode === "dessiner" || placementType || placingTableau || placingPointArrivee ? "crosshair" : "grab" }}
+              style={{ touchAction: "none", cursor: mode === "dessiner" || placementType || placingTableau || placingPointArrivee || placingMeuble ? "crosshair" : "grab" }}
               onPointerDown={onBackgroundPointerDown}
               onPointerMove={onCanvasPointerMove}
               onWheel={handleWheel}
@@ -2581,6 +2668,7 @@ export default function PlanPage() {
                             setSelectedAppareillageId(null);
                             setSelectedTableau(false);
                             setSelectedBoite(null);
+                            setSelectedMeubleId(null);
                             setPanelResetTick(t => t + 1);
                             setDragMode({ kind: "liaison", cle, waypointId: c.id });
                           }}
@@ -2633,6 +2721,27 @@ export default function PlanPage() {
                   return elements;
                 });
               })()}
+
+              {niveauActif?.pieces.flatMap(piece => (piece.meubles ?? []).map(m => ({ piece, m }))).map(({ piece, m }) => {
+                const p = toScreen({ x: m.x, y: m.y });
+                const wPx = m.largeur * PX_PER_M * zoom;
+                const dPx = m.profondeur * PX_PER_M * zoom;
+                const isSel = m.id === selectedMeubleId;
+                const couleur = m.couleur || "#A8A29E";
+                return (
+                  <g key={`meuble-${m.id}`}
+                    onPointerDown={e => onMeublePointerDown(piece, m, e)}
+                    transform={`translate(${p.x}, ${p.y}) rotate(${m.rotation ?? 0})`}
+                    style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingMeuble ? (isSel ? "grab" : "pointer") : "default" }}>
+                    <rect x={-wPx / 2} y={-dPx / 2} width={wPx} height={dPx} rx={3}
+                      fill={couleur} fillOpacity={0.35} stroke={isSel ? "#F59E0B" : couleur} strokeWidth={isSel ? 2 : 1.2}
+                      strokeDasharray={isSel ? undefined : "4,2"} />
+                    {m.nom && (
+                      <text x={0} y={3} textAnchor="middle" fontSize="9" fontWeight="600" fill="#44403c" style={{ pointerEvents: "none" }}>{m.nom}</text>
+                    )}
+                  </g>
+                );
+              })}
 
               {niveauActif?.pieces.flatMap(piece => piece.appareillages.map(a => ({ piece, a }))).map(({ piece, a }) => {
                 const p = toScreen({ x: a.x, y: a.y });
@@ -2947,6 +3056,52 @@ export default function PlanPage() {
               </DraggablePanel>
             )}
 
+            {selectedMeuble && mode === "select" && (
+              <DraggablePanel key={`meuble-${selectedMeuble.id}-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-72">
+                <div className="flex items-center gap-2">
+                  <Box size={18} className="text-ink-400 shrink-0" />
+                  <input className="input !py-1 !text-sm flex-1 min-w-0" placeholder="Meuble"
+                    value={selectedMeuble.nom ?? ""}
+                    onChange={e => modifierMeuble(selectedMeuble.id, { nom: e.target.value })} />
+                  <button onClick={() => removerMeuble(selectedMeuble.id)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs text-ink-500">
+                  <div>
+                    <span className="block mb-1">Largeur (m)</span>
+                    <input type="number" step="0.05" min="0.05" className="input !py-1 !text-xs"
+                      value={selectedMeuble.largeur}
+                      onChange={e => e.target.value && modifierMeuble(selectedMeuble.id, { largeur: Math.max(0.05, Number(e.target.value)) })} />
+                  </div>
+                  <div>
+                    <span className="block mb-1">Profondeur (m)</span>
+                    <input type="number" step="0.05" min="0.05" className="input !py-1 !text-xs"
+                      value={selectedMeuble.profondeur}
+                      onChange={e => e.target.value && modifierMeuble(selectedMeuble.id, { profondeur: Math.max(0.05, Number(e.target.value)) })} />
+                  </div>
+                  <div>
+                    <span className="block mb-1">Hauteur (m)</span>
+                    <input type="number" step="0.05" min="0.05" className="input !py-1 !text-xs"
+                      value={selectedMeuble.hauteur}
+                      onChange={e => e.target.value && modifierMeuble(selectedMeuble.id, { hauteur: Math.max(0.05, Number(e.target.value)) })} />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-ink-500">
+                  <span className="shrink-0 w-16">Rotation</span>
+                  <input type="range" min={0} max={359} step={1} className="flex-1"
+                    value={selectedMeuble.rotation ?? 0}
+                    onChange={e => modifierMeuble(selectedMeuble.id, { rotation: Number(e.target.value) })} />
+                  <span className="w-10 text-right font-mono">{selectedMeuble.rotation ?? 0}°</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-ink-500">
+                  <span className="shrink-0">Couleur</span>
+                  <input type="color" className="w-8 h-8 rounded-lg border border-ink-200 cursor-pointer"
+                    value={selectedMeuble.couleur || "#A8A29E"}
+                    onChange={e => modifierMeuble(selectedMeuble.id, { couleur: e.target.value })} />
+                  <span className="text-ink-400">Purement visuel — vue 3D uniquement, aucun impact sur les circuits.</span>
+                </div>
+              </DraggablePanel>
+            )}
+
             {selectedTableau && niveauActif?.tableauPos && mode === "select" && (
               <DraggablePanel key={`tableau-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
                 <div className="flex items-center gap-2">
@@ -3213,6 +3368,11 @@ export default function PlanPage() {
             {placingTableau && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-lg">
                 Clique pour positionner le tableau électrique
+              </div>
+            )}
+            {placingMeuble && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-lg">
+                Clique dans une pièce pour placer un meuble — reste armé pour en poser plusieurs
               </div>
             )}
             {placingPointArrivee && (
