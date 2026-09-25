@@ -450,6 +450,18 @@ export default function PreDevisPage() {
         lignesFinales.push({ nom: "Déplacement", quantite: 1, prix_unitaire: deplacement, unite: "forfait", type_branche: "service" });
       }
 
+      // Garde-fou : un devis sans aucune ligne (désignation) est un document invalide,
+      // impossible à faire signer et faussant toute rentabilité en aval (CRM). On bloque
+      // la génération AVANT de créer le moindre enregistrement en base plutôt que de
+      // laisser passer un devis vide — ce qui pouvait arriver en silence si tous les
+      // besoins étaient exclus/non résolus (mode "libre" sans prix saisi) et qu'aucune
+      // main d'œuvre/frais/déplacement n'était renseigné(e).
+      if (lignesFinales.length === 0) {
+        alert("Aucune ligne à générer : tous les besoins sont exclus ou non résolus (pas de prix saisi), et aucune main d'œuvre/frais/déplacement n'est renseigné. Résous au moins une ligne avant de générer le devis.");
+        setGenerating(false);
+        return;
+      }
+
       const totalService = lignesFinales.filter(l => l.type_branche === "service").reduce((s, l) => s + l.quantite * l.prix_unitaire, 0);
       const totalMateriau = lignesFinales.filter(l => l.type_branche === "materiau").reduce((s, l) => s + l.quantite * l.prix_unitaire, 0);
 
@@ -464,8 +476,22 @@ export default function PreDevisPage() {
       }).select().single();
       if (error || !devis) { alert("Erreur création devis : " + error?.message); setGenerating(false); return; }
 
-      if (lignesFinales.length > 0) {
-        await supabase.from("devis_lignes").insert(lignesFinales.map((l, i) => ({ ...l, devis_id: devis.id, ordre: i })));
+      // CRITIQUE : on vérifie l'erreur de cet insert — sans ce contrôle, un échec ici
+      // (RLS, contrainte, colonne) passait totalement inaperçu : le devis (en-tête) était
+      // déjà créé avec des totaux calculés en mémoire, mais aucune ligne n'était
+      // réellement enregistrée. Résultat : un devis "signable" vide (aucune désignation,
+      // ni matériel ni main d'œuvre) et une rentabilité faussée côté CRM (qui lit les
+      // coûts depuis devis_lignes). On échoue maintenant bruyamment, et on supprime le
+      // devis orphelin plutôt que de laisser un document invalide et une rentabilité
+      // faussée dans la base.
+      const { error: errLignes } = await supabase.from("devis_lignes").insert(
+        lignesFinales.map((l, i) => ({ ...l, devis_id: devis.id, ordre: i }))
+      );
+      if (errLignes) {
+        await supabase.from("devis").delete().eq("id", devis.id);
+        alert("Erreur lors de l'enregistrement des lignes du devis (aucune ligne sauvegardée) : " + errLignes.message);
+        setGenerating(false);
+        return;
       }
       await supabase.from("profil").update({ compteur_devis: (prof?.compteur_devis ?? 0) + 1 }).eq("id", session.user.id);
       // Le devis final matérialise le brouillon — on l'efface pour ne pas laisser un
