@@ -35,6 +35,26 @@ function calcMarge(prixAchat: number, prixVente: number): number | null {
 function prixVenteFromMarge(prixAchat: number, margePct: number): number {
   return Math.round(prixAchat * (1 + margePct / 100) * 100) / 100;
 }
+
+// ─── Rentabilité mini branche achat-revente (matériau) ─────────────────────
+// Taux de cotisations URSSAF appliqué sur le CA encaissé de la branche achat-revente
+// (vente de marchandises). Taux officiel 2026 = 12,3% ; on prend 12,5% avec une marge
+// de sécurité (arrondi, CFP, évolution de taux). À ajuster ici si le taux officiel change.
+const URSSAF_MATERIAU_PCT = 12.5;
+
+// L'URSSAF prélève sur le prix de vente (le CA), pas sur la marge. Pour être à 0€ de
+// rentabilité nette après cotisations, le prix de vente doit couvrir le prix d'achat
+// ET la cotisation calculée sur ce prix de vente lui-même :
+//   PV = PA / (1 - taux)  →  marge_min% = taux / (1 - taux)
+function margeMiniUrssaf(): number {
+  const t = URSSAF_MATERIAU_PCT / 100;
+  return Math.round((t / (1 - t)) * 1000) / 10;
+}
+function prixVenteMiniUrssaf(prixAchat: number): number | null {
+  if (!prixAchat || prixAchat <= 0) return null;
+  const t = URSSAF_MATERIAU_PCT / 100;
+  return Math.round((prixAchat / (1 - t)) * 100) / 100;
+}
 function matchSearch(p: PrestationExt, q: string): boolean {
   if (!q.trim()) return true;
   const lower = q.toLowerCase();
@@ -98,10 +118,11 @@ function MargeTag({ prixAchat, prixVente }: { prixAchat?: number | null; prixVen
   );
 }
 
-function MargeFields({ prixAchat, prixVente, onPrixAchatChange, onPrixVenteChange }: {
+function MargeFields({ prixAchat, prixVente, onPrixAchatChange, onPrixVenteChange, typeBranche }: {
   prixAchat: string; prixVente: string;
   onPrixAchatChange: (v: string) => void;
   onPrixVenteChange: (v: string) => void;
+  typeBranche?: string;
 }) {
   const [margePct, setMargePct] = useState("");
   // Mode de saisie du prix d'achat : "ttc" (par défaut — la plupart des fournisseurs
@@ -156,6 +177,10 @@ function MargeFields({ prixAchat, prixVente, onPrixAchatChange, onPrixVenteChang
   const pa = parseFloat(prixAchat);
   const pv = parseFloat(prixVente);
   const margeCalc = pa > 0 && pv >= 0 ? calcMarge(pa, pv) : null;
+  const isMateriau = typeBranche === "materiau";
+  const margeMini = margeMiniUrssaf();
+  const pvMini = pa > 0 ? prixVenteMiniUrssaf(pa) : null;
+  const sousRentable = isMateriau && margeCalc !== null && margeCalc < margeMini;
   return (
     <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3 p-3 bg-emerald-50 rounded-xl border border-emerald-100">
       <div>
@@ -195,6 +220,12 @@ function MargeFields({ prixAchat, prixVente, onPrixAchatChange, onPrixVenteChang
           <p className={cn("text-xs mt-1 font-medium",
             margeCalc === 0 ? "text-blue-600" : margeCalc < 0 ? "text-red-500" : "text-emerald-700")}>
             {margeCalc === 0 ? "Offert au client" : `Marge : ${margeCalc > 0 ? "+" : ""}${margeCalc}% · Gain : ${fmt(pv - pa)}`}
+          </p>
+        )}
+        {isMateriau && pvMini !== null && (
+          <p className={cn("text-xs mt-1", sousRentable ? "text-red-600 font-medium" : "text-emerald-600/70")}>
+            {sousRentable ? <AlertCircle size={10} className="inline -mt-0.5 mr-0.5" /> : null}
+            Mini après URSSAF ({URSSAF_MATERIAU_PCT}%) : {fmt(pvMini)} (marge ≥ +{margeMini}%)
           </p>
         )}
       </div>
@@ -962,7 +993,8 @@ function CategorieBlock({
                             </div>
                             <MargeFields prixAchat={editPrixAchat} prixVente={editPrixVente}
                               onPrixAchatChange={setEditPrixAchat}
-                              onPrixVenteChange={v => { setEditPrixVente(v); setEditData((d: any) => ({ ...d, prix_unitaire: parseFloat(v) || 0 })); }} />
+                              onPrixVenteChange={v => { setEditPrixVente(v); setEditData((d: any) => ({ ...d, prix_unitaire: parseFloat(v) || 0 })); }}
+                              typeBranche={(editData as any).type_branche ?? p.type_branche} />
                             <div><label className="label">Liens fournisseurs</label>
                               <LiensFournisseurs liens={editLiens} setLiens={setEditLiens} /></div>
                             <div><label className="label">Image du produit (URL)</label>
@@ -1003,6 +1035,18 @@ function CategorieBlock({
                                 <div className="text-right">
                                   <MargeTag prixAchat={p.prix_achat} prixVente={p.prix_unitaire} />
                                   <p className="text-xs text-ink-300 mt-0.5">PA {fmt(p.prix_achat)}</p>
+                                  {p.type_branche === "materiau" && (() => {
+                                    const margeMini = margeMiniUrssaf();
+                                    const marge = calcMarge(p.prix_achat!, p.prix_unitaire);
+                                    const sousRentable = marge !== null && marge < margeMini;
+                                    return (
+                                      <p className={cn("text-[10px] mt-0.5",
+                                        sousRentable ? "text-red-500 font-medium" : "text-ink-300")}
+                                        title={`Prix de vente minimum pour couvrir les cotisations URSSAF (${URSSAF_MATERIAU_PCT}%) sans perte`}>
+                                        Mini URSSAF {fmt(prixVenteMiniUrssaf(p.prix_achat!)!)}
+                                      </p>
+                                    );
+                                  })()}
                                 </div>
                               ) : <span className="text-ink-200 text-xs">—</span>}
                             </div>
@@ -1383,7 +1427,8 @@ export default function CataloguePage() {
                     value={formPrixVente} onChange={e => setFormPrixVente(e.target.value)} /></div>
               ) : (
                 <MargeFields prixAchat={formPrixAchat} prixVente={formPrixVente}
-                  onPrixAchatChange={setFormPrixAchat} onPrixVenteChange={setFormPrixVente} />
+                  onPrixAchatChange={setFormPrixAchat} onPrixVenteChange={setFormPrixVente}
+                  typeBranche={form.type_branche} />
               )}
               {form.type_branche === "materiau" && (
                 <>
