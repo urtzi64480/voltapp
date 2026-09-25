@@ -19,8 +19,22 @@ export const initiales = (nom: string, prenom?: string | null) => {
   const p = prenom?.trim()[0]?.toUpperCase() ?? "";
   return p ? `${p}${n}` : n.slice(0, 2);
 };
-export const UNITES = ["forfait", "heure", "u", "ml", "m2"] as const;
-export const BRANCHES = ["service", "materiau"] as const;
+// Nom d'un article de devis pour un article catalogue vendu en longueur fixe (câble, fil,
+// gaine, moulure — sous_categorie de la forme "cablage_X"/"fil_X"/"gaine_irlXX"/"moulure").
+// Précise le conditionnement ET la longueur unitaire directement dans le nom persisté sur
+// la ligne (devis_lignes.nom) — sans ça, la liste de courses n'affiche qu'une quantité en
+// unités ("2×") sans dire si c'est 2 bobines de 25m, de 50m... impossible à utiliser pour
+// l'achat en magasin. Utilisé partout où une ligne de devis matériau est créée à partir du
+// catalogue : pré-devis (predevis-engine.ts), nouveau devis manuel et édition d'un devis
+// (devis/[id]/page.tsx, devis/nouveau/page.tsx) — pas seulement le module pré-devis.
+// Gaine/moulure → "rouleau" (usage courant du métier) ; câble/fil → "bobine". Article vendu
+// au mètre linéaire (longueur_unitaire absent/null) : nom inchangé.
+export function nomAvecConditionnement(nom: string, longueurUnitaire: number | null | undefined, sousCategorie: string | null | undefined): string {
+  if (!longueurUnitaire || longueurUnitaire <= 0) return nom;
+  const mot = sousCategorie && (sousCategorie.startsWith("gaine_") || sousCategorie === "moulure") ? "rouleau" : "bobine";
+  return `${nom} (${mot} ${longueurUnitaire}m)`;
+}
+export const UNITES = ["forfait", "heure", "u", "ml", "m2"] as const;export const BRANCHES = ["service", "materiau"] as const;
 export const STATUTS_DEVIS = ["brouillon", "envoye", "signe", "refuse", "expire"] as const;
 export const STATUTS_FACTURE = ["a_envoyer", "envoyee", "payee", "relance", "impayee"] as const;
 export const PLAFOND_SERVICE = 83600;

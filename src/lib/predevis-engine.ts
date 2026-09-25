@@ -50,6 +50,7 @@ import {
   effectiveSection, gaineRecommandee, uid,
 } from "./electrical-constants";
 import { Prestation, Gamme, DevisLigne } from "@/types";
+import { nomAvecConditionnement } from "@/lib/utils";
 
 // ─── TYPES DE BESOIN ────────────────────────────────────────────────────────
 
@@ -468,18 +469,24 @@ function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArt
     }];
   }
   const L = option.longueur_unitaire;
+  // Le nom de la ligne précise désormais le conditionnement ET la longueur unitaire (voir
+  // nomAvecConditionnement, src/lib/utils.ts, partagée avec le devis manuel) — sans ça, la
+  // liste de courses n'affichait qu'une quantité en unités ("2×") sans dire si c'était 2
+  // bobines de 25m, de 50m... impossible à utiliser pour l'achat en magasin.
+  const sousCatArticle = option.sousCategorieArticle ?? besoin.sousCategorie;
+  const nomLigne = nomAvecConditionnement(option.nom, L, sousCatArticle);
   const nbBobines = Math.floor(quantiteReelle / L + 1e-6);
   const reliquat = Math.round((quantiteReelle - nbBobines * L) * 100) / 100;
   const lignes: Omit<DevisLigne, "devis_id" | "ordre">[] = [];
   if (nbBobines > 0) {
     lignes.push({
-      nom: option.nom, description: besoin.piece, quantite: nbBobines,
+      nom: nomLigne, description: besoin.piece, quantite: nbBobines,
       prix_unitaire: option.prix_unitaire, unite: option.unite, type_branche: option.type_branche,
       prestation_id: option.prestation_id,
     });
   }
   if (reliquat > 0.01) {
-    const auMetre = prestations.find(p => p.sous_categorie === (option.sousCategorieArticle ?? besoin.sousCategorie)
+    const auMetre = prestations.find(p => p.sous_categorie === sousCatArticle
       && (p.gamme ?? null) === (option.gamme ?? null) && !p.longueur_unitaire);
     if (auMetre) {
       lignes.push({
@@ -488,10 +495,10 @@ function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArt
         prestation_id: auMetre.id,
       });
     } else if (lignes.length > 0) {
-      lignes[0].quantite += 1; // pas d'article "au mètre" pour ce reliquat — une bobine de plus
+      lignes[0].quantite += 1; // pas d'article "au mètre" pour ce reliquat — une bobine/rouleau de plus
     } else {
       lignes.push({
-        nom: option.nom, description: besoin.piece, quantite: 1,
+        nom: nomLigne, description: besoin.piece, quantite: 1,
         prix_unitaire: option.prix_unitaire, unite: option.unite, type_branche: option.type_branche,
         prestation_id: option.prestation_id,
       });
