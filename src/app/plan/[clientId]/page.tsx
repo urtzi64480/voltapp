@@ -1066,14 +1066,16 @@ export default function PlanPage() {
           }),
         }));
       } else if (dragMode.kind === "meuble") {
-        // Pas de snap-alignement (pas d'intérêt structurel pour du mobilier) : position brute.
+        // Aligné sur la grille du plan, comme une pièce (arrondiGrille) — pas de snap
+        // d'alignement sur les murs/autres points, pas assez pertinent pour du mobilier.
         const rect = svgRef.current?.getBoundingClientRect();
         if (!rect) return;
         const raw = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        const snapped = { x: arrondiGrille(raw.x), y: arrondiGrille(raw.y) };
         updateNiveauActif(n => ({
           ...n,
           pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : {
-            ...p, meubles: (p.meubles ?? []).map(mb => mb.id === dragMode.meubleId ? { ...mb, x: raw.x, y: raw.y } : mb),
+            ...p, meubles: (p.meubles ?? []).map(mb => mb.id === dragMode.meubleId ? { ...mb, x: snapped.x, y: snapped.y } : mb),
           }),
         }));
       } else if (dragMode.kind === "tableau") {
@@ -1893,7 +1895,7 @@ export default function PlanPage() {
         setTimeout(() => setPlacementError(null), 2000);
         return;
       }
-      const nouveau = nouveauMeuble(m.x, m.y);
+      const nouveau = nouveauMeuble(arrondiGrille(m.x), arrondiGrille(m.y));
       updateNiveauActif(n => ({
         ...n,
         pieces: n.pieces.map(p => p.id === piece.id ? { ...p, meubles: [...(p.meubles ?? []), nouveau] } : p),
@@ -3068,21 +3070,33 @@ export default function PlanPage() {
                 <div className="grid grid-cols-3 gap-2 text-xs text-ink-500">
                   <div>
                     <span className="block mb-1">Largeur (m)</span>
-                    <input type="number" step="0.05" min="0.05" className="input !py-1 !text-xs"
-                      value={selectedMeuble.largeur}
-                      onChange={e => e.target.value && modifierMeuble(selectedMeuble.id, { largeur: Math.max(0.05, Number(e.target.value)) })} />
+                    <input type="text" inputMode="decimal" className="input !py-1 !text-xs"
+                      key={`${selectedMeuble.id}-largeur-${panelResetTick}`}
+                      defaultValue={selectedMeuble.largeur}
+                      onChange={e => {
+                        const n = Number(e.target.value.replace(",", "."));
+                        if (!Number.isNaN(n) && n > 0) modifierMeuble(selectedMeuble.id, { largeur: n });
+                      }} />
                   </div>
                   <div>
                     <span className="block mb-1">Profondeur (m)</span>
-                    <input type="number" step="0.05" min="0.05" className="input !py-1 !text-xs"
-                      value={selectedMeuble.profondeur}
-                      onChange={e => e.target.value && modifierMeuble(selectedMeuble.id, { profondeur: Math.max(0.05, Number(e.target.value)) })} />
+                    <input type="text" inputMode="decimal" className="input !py-1 !text-xs"
+                      key={`${selectedMeuble.id}-profondeur-${panelResetTick}`}
+                      defaultValue={selectedMeuble.profondeur}
+                      onChange={e => {
+                        const n = Number(e.target.value.replace(",", "."));
+                        if (!Number.isNaN(n) && n > 0) modifierMeuble(selectedMeuble.id, { profondeur: n });
+                      }} />
                   </div>
                   <div>
                     <span className="block mb-1">Hauteur (m)</span>
-                    <input type="number" step="0.05" min="0.05" className="input !py-1 !text-xs"
-                      value={selectedMeuble.hauteur}
-                      onChange={e => e.target.value && modifierMeuble(selectedMeuble.id, { hauteur: Math.max(0.05, Number(e.target.value)) })} />
+                    <input type="text" inputMode="decimal" className="input !py-1 !text-xs"
+                      key={`${selectedMeuble.id}-hauteur-${panelResetTick}`}
+                      defaultValue={selectedMeuble.hauteur}
+                      onChange={e => {
+                        const n = Number(e.target.value.replace(",", "."));
+                        if (!Number.isNaN(n) && n > 0) modifierMeuble(selectedMeuble.id, { hauteur: n });
+                      }} />
                   </div>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-ink-500">
