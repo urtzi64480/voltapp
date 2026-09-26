@@ -34,7 +34,9 @@ export async function middleware(request: NextRequest) {
   //    mêmes pages publiques (photo de présentation, vignette). /devis/signer et /liste :
   //    liens envoyés directement aux clients (signature du devis, liste de courses après
   //    devis signé) — sans ça, un client sans session (le cas normal) est redirigé vers
-  //    /login au lieu de sa page.
+  //    /login au lieu de sa page. /robots.txt et /sitemap.xml : générés par Next.js
+  //    (src/app/robots.ts, src/app/sitemap.ts) et lus par les crawlers sans session —
+  //    sans cette exception ils étaient redirigés vers /login, invisibles pour Google.
   if (
     pathname.startsWith("/login") ||
     pathname.startsWith("/demande") ||
@@ -45,7 +47,9 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/images") ||
     pathname.startsWith("/carte-nfc") ||
     pathname === "/icon-192.png" ||
-    pathname === "/icon-512.png"
+    pathname === "/icon-512.png" ||
+    pathname === "/robots.txt" ||
+    pathname === "/sitemap.xml"
   ) {
     return NextResponse.next();
   }
