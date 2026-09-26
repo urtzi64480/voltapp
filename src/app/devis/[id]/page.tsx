@@ -495,7 +495,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     // (conditionnement + longueur) pour les articles vendus en longueur fixe.
     const nomFinal = nomAvecConditionnement(p.nom, p.longueur_unitaire, p.sous_categorie);
     setLignes(prev => {
-      const ex = prev.findIndex(l => l.nom === nomFinal && l.type_branche === p.type_branche && !(l as any).kit_description);
+      const ex = prev.findIndex(l => l.nom === nomFinal && l.type_branche === p.type_branche && (l as any).kit_ratio_service == null);
       if (ex >= 0) { const n = [...prev]; n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 }; return n; }
       return [...prev, {
         nom: nomFinal,
