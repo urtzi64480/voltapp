@@ -55,6 +55,12 @@ function prixVenteMiniUrssaf(prixAchat: number): number | null {
   const t = URSSAF_MATERIAU_PCT / 100;
   return Math.round((prixAchat / (1 - t)) * 100) / 100;
 }
+// Gain réellement encaissé une fois la cotisation URSSAF retirée. La cotisation porte sur
+// le prix de vente (le CA), pas sur la marge — donc gain net = (PV - PA) - PV * taux.
+function gainNetUrssaf(prixAchat: number, prixVente: number): number {
+  const cotisation = prixVente * URSSAF_MATERIAU_PCT / 100;
+  return Math.round((prixVente - prixAchat - cotisation) * 100) / 100;
+}
 function matchSearch(p: PrestationExt, q: string): boolean {
   if (!q.trim()) return true;
   const lower = q.toLowerCase();
@@ -219,7 +225,7 @@ function MargeFields({ prixAchat, prixVente, onPrixAchatChange, onPrixVenteChang
         {margeCalc !== null && (
           <p className={cn("text-xs mt-1 font-medium",
             margeCalc === 0 ? "text-blue-600" : margeCalc < 0 ? "text-red-500" : "text-emerald-700")}>
-            {margeCalc === 0 ? "Offert au client" : `Marge : ${margeCalc > 0 ? "+" : ""}${margeCalc}% · Gain : ${fmt(pv - pa)}`}
+            {margeCalc === 0 ? "Offert au client" : `Marge : ${margeCalc > 0 ? "+" : ""}${margeCalc}% · Gain net (après URSSAF ${URSSAF_MATERIAU_PCT}%) : ${fmt(isMateriau ? gainNetUrssaf(pa, pv) : pv - pa)}`}
           </p>
         )}
         {isMateriau && pvMini !== null && (
@@ -1039,12 +1045,20 @@ function CategorieBlock({
                                     const margeMini = margeMiniUrssaf();
                                     const marge = calcMarge(p.prix_achat!, p.prix_unitaire);
                                     const sousRentable = marge !== null && marge < margeMini;
+                                    const gainNet = gainNetUrssaf(p.prix_achat!, p.prix_unitaire);
                                     return (
-                                      <p className={cn("text-[10px] mt-0.5",
-                                        sousRentable ? "text-red-500 font-medium" : "text-ink-300")}
-                                        title={`Prix de vente minimum pour couvrir les cotisations URSSAF (${URSSAF_MATERIAU_PCT}%) sans perte`}>
-                                        Mini URSSAF {fmt(prixVenteMiniUrssaf(p.prix_achat!)!)}
-                                      </p>
+                                      <>
+                                        <p className={cn("text-[10px] mt-0.5 font-medium",
+                                          gainNet < 0 ? "text-red-500" : "text-emerald-600")}
+                                          title={`Gain net une fois la cotisation URSSAF (${URSSAF_MATERIAU_PCT}%) retirée du prix de vente`}>
+                                          Gain net {fmt(gainNet)}
+                                        </p>
+                                        <p className={cn("text-[10px] mt-0.5",
+                                          sousRentable ? "text-red-500 font-medium" : "text-ink-300")}
+                                          title={`Prix de vente minimum pour couvrir les cotisations URSSAF (${URSSAF_MATERIAU_PCT}%) sans perte`}>
+                                          Mini URSSAF {fmt(prixVenteMiniUrssaf(p.prix_achat!)!)}
+                                        </p>
+                                      </>
                                     );
                                   })()}
                                 </div>
