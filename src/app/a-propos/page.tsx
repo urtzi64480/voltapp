@@ -4,8 +4,9 @@ import { supabase } from "@/lib/supabase";
 import ActionsAndGallery from "@/components/ActionsAndGallery";
 import TrackerAPropos from "@/components/TrackerAPropos";
 import LocalBusinessJsonLd from "@/components/LocalBusinessJsonLd";
-import { VILLE_PRINCIPALE, RAYON_KM, ZONES } from "@/lib/seo-zone";
-import { ChevronLeft, MapPin } from "lucide-react";
+import ZoneCarte from "@/components/ZoneCarte";
+import { VILLE_PRINCIPALE, RAYON_KM } from "@/lib/seo-zone";
+import { ChevronLeft } from "lucide-react";
 
 // Empêche Next.js de figer cette page au build : sans ça, les photos
 // ajoutées/supprimées côté CRM après le déploiement ne remontent jamais
@@ -131,33 +132,9 @@ export default async function AProposPage() {
           </div>
         </div>
 
-        {/* Zone d'intervention — contenu texte naturel pour le référencement local,
-            regroupé par secteur géographique plutôt qu'en liste brute */}
-        <div className="mt-12 card card-inner">
-          <div className="flex items-center gap-2 mb-1">
-            <MapPin size={18} className="text-volt-600 shrink-0" />
-            <h2 className="section-title mb-0">Zone d'intervention</h2>
-          </div>
-          <p className="section-sub">
-            Basé à {VILLE_PRINCIPALE}, j'interviens dans un rayon d'environ{" "}
-            {RAYON_KM}&nbsp;km, sur l'ensemble du Pays Basque et ses abords :
-          </p>
-          <div className="grid sm:grid-cols-2 gap-x-8 gap-y-4">
-            {ZONES.map((zone) => (
-              <div key={zone.label}>
-                <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-1.5">
-                  {zone.label}
-                </p>
-                <p className="text-sm text-ink-600 leading-relaxed">
-                  {zone.villes.join(", ")}
-                </p>
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-ink-400 mt-5">
-            Votre commune n'apparaît pas dans la liste ? Contactez-moi quand même,
-            il y a de bonnes chances que je puisse me déplacer.
-          </p>
+        {/* Zone d'intervention — carte visuelle (rayon d'action) + villes en badges */}
+        <div className="mt-12">
+          <ZoneCarte />
         </div>
       </div>
     </div>
