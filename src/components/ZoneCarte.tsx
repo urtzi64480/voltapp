@@ -6,11 +6,11 @@
 // — pas de dépendance npm à ajouter à package.json, pas de clé d'API.
 //
 // Affiche : un cercle représentant le rayon de RAYON_KM autour de la base,
-// un marqueur pour la base (Jatxou), et un petit marqueur par commune
-// desservie (VILLES_COORDS). Pour rester lisible malgré la cinquantaine de
-// communes, seules les "villes phares" (VILLES_PHARES) portent une étiquette
-// affichée en permanence ; les autres restent visibles comme points et
-// affichent leur nom au survol/clic.
+// un marqueur pour la base (Jatxou), et un marqueur étiqueté pour chacune
+// des "villes phares" (VILLES_PHARES) — volontairement un sous-ensemble
+// restreint (~12) plutôt que les ~50 communes de VILLES_COORDS, pour que la
+// carte reste lisible (les étiquettes se chevauchaient avec toutes les
+// communes affichées). La liste complète reste juste en dessous, en badges.
 //
 // Le résumé + les badges de villes (texte) restent TOUJOURS dans le DOM,
 // juste masqués en CSS quand replié — donc toujours indexables par les
@@ -77,10 +77,12 @@ export default function ZoneCarte() {
       .then((L) => {
         if (annule || !mapContainerRef.current || mapInstanceRef.current) return;
 
+        // Pas de center/zoom fixe : on cadre automatiquement sur les points
+        // affichés via fitBounds plus bas, pour que la répartition des
+        // villes phares (jamais tout à fait la même densité selon la zone)
+        // soit toujours bien centrée et lisible.
         const map = L.map(mapContainerRef.current, {
-          center: [COORDONNEES.lat, COORDONNEES.lng],
-          zoom: 9,
-          scrollWheelZoom: false,
+          scrollWheelZoom: true,
         });
         mapInstanceRef.current = map;
 
@@ -116,27 +118,33 @@ export default function ZoneCarte() {
             className: "carte-label carte-label-centre",
           });
 
-        // Communes desservies
-        Object.entries(VILLES_COORDS).forEach(([nom, coord]) => {
-          const marker = L.circleMarker([coord.lat, coord.lng], {
-            radius: 4,
+        // Villes phares uniquement — un point + une étiquette permanente
+        // chacune. Le reste des communes reste listé en texte sous la carte.
+        const bounds = L.latLngBounds([[COORDONNEES.lat, COORDONNEES.lng]]);
+
+        VILLES_PHARES.forEach((nom) => {
+          const coord = VILLES_COORDS[nom];
+          if (!coord) return;
+
+          L.circleMarker([coord.lat, coord.lng], {
+            radius: 5,
             color: "#fff",
             weight: 1.5,
             fillColor: "#57534E",
-            fillOpacity: 0.9,
-          }).addTo(map);
-
-          if (VILLES_PHARES.includes(nom)) {
-            marker.bindTooltip(nom, {
+            fillOpacity: 0.95,
+          })
+            .addTo(map)
+            .bindTooltip(nom, {
               permanent: true,
               direction: "right",
               offset: [6, 0],
               className: "carte-label",
             });
-          } else {
-            marker.bindTooltip(nom, { direction: "top" });
-          }
+
+          bounds.extend([coord.lat, coord.lng]);
         });
+
+        map.fitBounds(bounds, { padding: [36, 36] });
 
         // La carte est montée dans un conteneur déjà visible (pas de display:none
         // au moment du montage), mais un invalidateSize() différé évite tout
@@ -218,10 +226,16 @@ export default function ZoneCarte() {
           ))}
         </div>
 
-        <p className="text-xs text-ink-400 mt-6">
-          Votre commune n'apparaît pas dans la liste ? Contactez-moi quand même,
-          il y a de bonnes chances que je puisse me déplacer.
-        </p>
+        <div className="mt-6 flex items-start gap-2 rounded-xl bg-volt-50 border border-volt-200 px-3.5 py-3">
+          <MapPin size={16} className="text-volt-600 shrink-0 mt-0.5" />
+          <p className="text-sm text-ink-700">
+            <span className="font-semibold">
+              Votre commune n'apparaît pas dans la liste ?
+            </span>{" "}
+            Contactez-moi quand même, il y a de bonnes chances que je puisse
+            me déplacer.
+          </p>
+        </div>
       </div>
     </div>
   );
