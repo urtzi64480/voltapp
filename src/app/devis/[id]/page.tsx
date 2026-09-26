@@ -6,8 +6,9 @@ import { fmt, fmtDate, fmtDatetime, STATUT_LABELS, STATUT_COLORS, cn, nomAvecCon
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, X, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro } from "lucide-react";
+import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, X, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro, Search, Layers } from "lucide-react";
 
+type PrestationExt = Prestation & { est_kit?: boolean; kit_description?: string | null };
 type Mode = "view" | "edit";
 type Tab = "edition" | "apercu" | "signature";
 type RemiseType = "pct" | "eur";
@@ -227,11 +228,12 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const [mode, setMode] = useState<Mode>("view");
   const [tab, setTab] = useState<Tab>("edition");
   const [clients, setClients] = useState<Client[]>([]);
-  const [prestations, setPrestations] = useState<Prestation[]>([]);
+  const [prestations, setPrestations] = useState<PrestationExt[]>([]);
   const [paliers, setPaliers] = useState<Palier[]>([]);
   const [apporteurs, setApporteurs] = useState<Apporteur[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [activeCat, setActiveCat] = useState("Tous");
+  const [searchCatalogue, setSearchCatalogue] = useState("");
   const [clientId, setClientId] = useState("");
   const [apporteurId, setApporteurId] = useState("");
   const [objet, setObjet] = useState("");
@@ -317,10 +319,10 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       supabase.from("profil").select("*").eq("id", "d506c94e-40c7-4bcd-a48c-97e86f4ea7c0").single(),
     ]).then(([{ data: cls }, { data: pre }, { data: pal }, { data: ap }, { data: p }]) => {
       setClients((cls ?? []) as any);
-      setPrestations(pre ?? []);
+      setPrestations((pre ?? []) as PrestationExt[]);
       setPaliers(pal ?? []);
       setApporteurs(ap ?? []);
-      setCategories([...new Set((pre ?? []).map((p: any) => p.categorie))].sort() as string[]);
+      setCategories([...new Set((pre ?? []).filter((p: any) => !p.est_kit).map((p: any) => p.categorie))].sort() as string[]);
       if (p) setProfil(p as Profil);
     });
   }, [id]);
@@ -454,22 +456,56 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     setTimeout(() => setLinkCopied(false), 2000);
   }
 
-  function addPrestation(p: Prestation) {
+  async function addPrestation(p: PrestationExt) {
+    if (p.est_kit) {
+      const { data: composants } = await supabase
+        .from("kit_composants")
+        .select("*, prestation:composant_id(*)")
+        .eq("kit_id", p.id)
+        .order("ordre");
+
+      const comps = composants ?? [];
+      const totalComposants = comps.reduce((s: number, c: any) => s + (c.prestation?.prix_unitaire ?? 0) * c.quantite, 0);
+      const totalService = comps.filter((c: any) => c.prestation?.type_branche === "service")
+        .reduce((s: number, c: any) => s + (c.prestation?.prix_unitaire ?? 0) * c.quantite, 0);
+      const ratioService = totalComposants > 0 ? totalService / totalComposants : 0;
+
+      setLignes(prev => {
+        const ex = prev.findIndex(l => (l as any).prestation_id === p.id);
+        if (ex >= 0) {
+          const n = [...prev];
+          n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 };
+          return n;
+        }
+        return [...prev, {
+          nom: p.nom,
+          prix_unitaire: totalComposants,
+          quantite: 1,
+          unite: "forfait",
+          type_branche: (ratioService >= 0.5 ? "service" : "materiau") as "service" | "materiau",
+          prestation_id: p.id,
+          kit_description: p.kit_description ?? null,
+          kit_ratio_service: ratioService,
+        } as any];
+      });
+      return;
+    }
+
     // Voir devis/nouveau/page.tsx addPrestation — même logique de nom enrichi
     // (conditionnement + longueur) pour les articles vendus en longueur fixe.
     const nomFinal = nomAvecConditionnement(p.nom, p.longueur_unitaire, p.sous_categorie);
     setLignes(prev => {
-      const ex = prev.findIndex(l => l.nom === nomFinal && l.type_branche === p.type_branche);
+      const ex = prev.findIndex(l => l.nom === nomFinal && l.type_branche === p.type_branche && !(l as any).kit_description);
       if (ex >= 0) { const n = [...prev]; n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 }; return n; }
       return [...prev, {
         nom: nomFinal,
-        kit_description: p.description,
+        kit_description: p.description ?? null,
         prix_unitaire: p.prix_unitaire,
         quantite: 1,
         unite: p.unite,
         type_branche: p.type_branche,
         prestation_id: p.id,
-      }];
+      } as any];
     });
   }
 
@@ -480,8 +516,16 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     setShowLibre(false);
   }
 
-  const totServiceBrut = lignes.filter(l => l.type_branche === "service").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
-  const totMateriauBrut = lignes.filter(l => l.type_branche === "materiau").reduce((a, l) => a + l.prix_unitaire * l.quantite, 0);
+  const totServiceBrut = lignes.reduce((a, l) => {
+    const total = l.prix_unitaire * l.quantite;
+    if (l.kit_ratio_service != null) return a + total * l.kit_ratio_service;
+    return l.type_branche === "service" ? a + total : a;
+  }, 0);
+  const totMateriauBrut = lignes.reduce((a, l) => {
+    const total = l.prix_unitaire * l.quantite;
+    if (l.kit_ratio_service != null) return a + total * (1 - l.kit_ratio_service);
+    return l.type_branche === "materiau" ? a + total : a;
+  }, 0);
   const remiseService = calcRemise(totServiceBrut, remise.service_type, remise.service_val);
   const remiseMateriau = calcRemise(totMateriauBrut, remise.materiau_type, remise.materiau_val);
   const totServiceApresRemise = totServiceBrut - remiseService;
@@ -492,7 +536,20 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const hasRemise = remiseService > 0 || remiseMateriau > 0;
 
   const palierActuelClient = [...paliers].reverse().find(p => caClientPayé >= p.seuil_min) ?? null;
-  const filteredPrests = activeCat === "Tous" ? prestations : prestations.filter(p => p.categorie === activeCat);
+
+  const kitsFiltered = prestations.filter(p => {
+    if (!p.est_kit) return false;
+    const q = searchCatalogue.trim().toLowerCase();
+    return !q || p.nom.toLowerCase().includes(q) || (p.kit_description ?? "").toLowerCase().includes(q);
+  });
+  const prestsFiltered = prestations.filter(p => {
+    if (p.est_kit) return false;
+    const matchCat = activeCat === "Tous" || p.categorie === activeCat;
+    const q = searchCatalogue.trim().toLowerCase();
+    const matchSearch = !q || p.nom.toLowerCase().includes(q) || p.categorie.toLowerCase().includes(q);
+    return matchCat && matchSearch;
+  });
+  const filteredPrests = [...kitsFiltered, ...prestsFiltered];
 
   async function saveEdit() {
     if (!devis) return;
@@ -938,23 +995,53 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                       <p className="text-ink-400 text-sm text-center py-4">Catalogue vide.</p>
                     ) : (
                       <>
-                        <div className="flex gap-1.5 flex-wrap mb-3">
-                          {["Tous", ...categories].map(cat => (
-                            <button key={cat} onClick={() => setActiveCat(cat)}
-                              className={cn("px-2.5 py-1 rounded-lg text-xs font-medium border transition-all",
-                                activeCat === cat ? "bg-ink-900 text-volt-400 border-ink-900" : "bg-white border-ink-200 text-ink-500 hover:bg-ink-50")}>
-                              {cat}
+                        <div className="relative mb-3">
+                          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400 pointer-events-none" />
+                          <input type="text" placeholder="Rechercher une prestation ou un kit…"
+                            value={searchCatalogue}
+                            onChange={e => { setSearchCatalogue(e.target.value); if (e.target.value) setActiveCat("Tous"); }}
+                            className="input pl-8 text-sm py-1.5" />
+                          {searchCatalogue && (
+                            <button onClick={() => setSearchCatalogue("")}
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-300 hover:text-ink-600 transition-colors">
+                              <X size={13} />
                             </button>
-                          ))}
+                          )}
                         </div>
+
+                        {!searchCatalogue && (
+                          <div className="flex gap-1.5 flex-wrap mb-3">
+                            {["Tous", ...categories].map(cat => (
+                              <button key={cat} onClick={() => setActiveCat(cat)}
+                                className={cn("px-2.5 py-1 rounded-lg text-xs font-medium border transition-all",
+                                  activeCat === cat ? "bg-ink-900 text-volt-400 border-ink-900" : "bg-white border-ink-200 text-ink-500 hover:bg-ink-50")}>
+                                {cat}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
                         <div className="space-y-1 max-h-56 overflow-y-auto">
-                          {filteredPrests.map(p => (
+                          {filteredPrests.length === 0 ? (
+                            <p className="text-center text-xs text-ink-400 py-6">Aucune prestation trouvée pour « {searchCatalogue} »</p>
+                          ) : filteredPrests.map(p => (
                             <button key={p.id} onClick={() => addPrestation(p)}
                               className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-ink-100 hover:border-volt-400 hover:bg-volt-50 bg-white transition-all text-left">
-                              <span className={cn("badge text-xs shrink-0", p.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
-                                {p.type_branche === "service" ? "S" : "M"}
-                              </span>
-                              <span className="flex-1 text-sm text-ink-800 truncate">{p.nom}</span>
+                              {p.est_kit ? (
+                                <span className="inline-flex items-center gap-1 badge text-xs shrink-0 bg-purple-100 text-purple-700">
+                                  <Layers size={10} /> KIT
+                                </span>
+                              ) : (
+                                <span className={cn("badge text-xs shrink-0", p.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
+                                  {p.type_branche === "service" ? "S" : "M"}
+                                </span>
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm text-ink-800 truncate">{p.nom}</p>
+                                {p.est_kit && p.kit_description && (
+                                  <p className="text-xs text-ink-400 italic truncate">{p.kit_description}</p>
+                                )}
+                              </div>
                               <span className="text-sm font-semibold text-ink-900 shrink-0">{fmt(p.prix_unitaire)}</span>
                               <Plus size={14} className="text-ink-300 shrink-0" />
                             </button>
@@ -993,20 +1080,36 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                     ) : (
                       <div className="space-y-2">
                         {lignes.map((l, i) => (
-                          <div key={i} className="flex items-center gap-2 p-2.5 rounded-xl bg-ink-50 border border-ink-100">
-                            <span className={cn("badge text-xs shrink-0", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
-                              {l.type_branche === "service" ? "S" : "M"}
-                            </span>
-                            <span className="text-xs text-ink-800 flex-1 min-w-0 truncate">{l.nom}</span>
-                            <input type="number" min="1" step="0.5" value={l.quantite}
-                              onChange={e => setLignes(prev => { const n = [...prev]; n[i] = { ...n[i], quantite: parseFloat(e.target.value) || 1 }; return n; })}
-                              className="w-14 text-center text-xs border border-ink-200 rounded-lg py-1 bg-white" />
-                            <span className="text-xs text-ink-400">×</span>
-                            <input type="number" min="0" step="0.5" value={l.prix_unitaire}
-                              onChange={e => setLignes(prev => { const n = [...prev]; n[i] = { ...n[i], prix_unitaire: parseFloat(e.target.value) || 0 }; return n; })}
-                              className="w-16 text-right text-xs border border-ink-200 rounded-lg py-1 bg-white" />
-                            <span className="text-xs font-semibold text-ink-900 w-14 text-right shrink-0">{fmt(l.prix_unitaire * l.quantite)}</span>
-                            <button onClick={() => setLignes(p => p.filter((_, idx) => idx !== i))} className="text-ink-300 hover:text-red-500 transition-colors"><X size={14} /></button>
+                          <div key={i} className="flex flex-col gap-0.5 p-2.5 rounded-xl bg-ink-50 border border-ink-100">
+                            <div className="flex items-center gap-2">
+                              {l.kit_ratio_service != null ? (
+                                <span className="inline-flex items-center gap-1 badge text-xs shrink-0 bg-purple-100 text-purple-700">
+                                  <Layers size={10} /> KIT
+                                </span>
+                              ) : (
+                                <span className={cn("badge text-xs shrink-0", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
+                                  {l.type_branche === "service" ? "S" : "M"}
+                                </span>
+                              )}
+                              <span className="text-xs text-ink-800 flex-1 min-w-0 truncate">{l.nom}</span>
+                              <input type="number" min="1" step="0.5" value={l.quantite}
+                                onChange={e => setLignes(prev => { const n = [...prev]; n[i] = { ...n[i], quantite: parseFloat(e.target.value) || 1 }; return n; })}
+                                className="w-14 text-center text-xs border border-ink-200 rounded-lg py-1 bg-white" />
+                              <span className="text-xs text-ink-400">×</span>
+                              <input type="number" min="0" step="0.5" value={l.prix_unitaire}
+                                onChange={e => setLignes(prev => { const n = [...prev]; n[i] = { ...n[i], prix_unitaire: parseFloat(e.target.value) || 0 }; return n; })}
+                                className="w-16 text-right text-xs border border-ink-200 rounded-lg py-1 bg-white" />
+                              <span className="text-xs font-semibold text-ink-900 w-14 text-right shrink-0">{fmt(l.prix_unitaire * l.quantite)}</span>
+                              <button onClick={() => setLignes(p => p.filter((_, idx) => idx !== i))} className="text-ink-300 hover:text-red-500 transition-colors"><X size={14} /></button>
+                            </div>
+                            {l.kit_description && (
+                              <p className="text-xs text-ink-400 italic pl-7 truncate">{l.kit_description}</p>
+                            )}
+                            {l.kit_ratio_service != null && (
+                              <p className="text-xs text-purple-400 pl-7">
+                                Ventilation : {fmt(l.prix_unitaire * l.quantite * l.kit_ratio_service)} service · {fmt(l.prix_unitaire * l.quantite * (1 - l.kit_ratio_service))} matériaux
+                              </p>
+                            )}
                           </div>
                         ))}
                       </div>
