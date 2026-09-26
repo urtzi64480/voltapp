@@ -31,12 +31,15 @@ export async function middleware(request: NextRequest) {
   // ── 3. Routes publiques — pas d'auth requise ──
   //    /a-propos et /api/public/* : visiteurs anonymes (clients qui scannent le
   //    QR code, formulaire de RDV). /images : assets statiques référencés par ces
-  //    mêmes pages publiques (photo de présentation, vignette). Sans ça, un visiteur
-  //    non connecté est redirigé vers /login — ce qui passait inaperçu depuis un
-  //    navigateur où une session admin était déjà active.
+  //    mêmes pages publiques (photo de présentation, vignette). /devis/signer et /liste :
+  //    liens envoyés directement aux clients (signature du devis, liste de courses après
+  //    devis signé) — sans ça, un client sans session (le cas normal) est redirigé vers
+  //    /login au lieu de sa page.
   if (
     pathname.startsWith("/login") ||
     pathname.startsWith("/demande") ||
+    pathname.startsWith("/devis/signer") ||
+    pathname.startsWith("/liste") ||
     pathname.startsWith("/a-propos") ||
     pathname.startsWith("/api/public") ||
     pathname.startsWith("/images") ||
