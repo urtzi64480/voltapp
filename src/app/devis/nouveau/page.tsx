@@ -551,7 +551,7 @@ function NouveauDevisPage() {
                 {lignes.length > 0 && (
                   <div className="mt-4 pt-4 border-t border-ink-100 space-y-2">
                     <div className="flex justify-between text-xs text-ink-500"><span>Prestation service</span><span>{fmt(totServiceBrut)}</span></div>
-                    <div className="flex justify-between text-xs text-ink-500"><span>Achat / revente matériaux</span><span>{fmt(totMateriauBrut)}</span></div>
+                    <div className="flex justify-between text-xs text-ink-500"><span>Matériels</span><span>{fmt(totMateriauBrut)}</span></div>
                     <button onClick={() => setShowRemise(!showRemise)} className="w-full flex items-center gap-2 text-xs text-ink-500 hover:text-ink-700 py-1 mt-1">
                       <Tag size={12} /><span>Appliquer une remise</span>
                       {hasRemise && <span className="ml-1 px-1.5 py-0.5 rounded-md bg-red-100 text-red-600 text-xs font-medium">− {fmt(remiseService + remiseMateriau)}</span>}
