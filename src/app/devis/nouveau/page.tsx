@@ -510,8 +510,8 @@ function NouveauDevisPage() {
                 ) : (
                   <div className="space-y-2">
                     {lignes.map((l, i) => (
-                      <div key={i} className="flex flex-col gap-0.5 p-2.5 rounded-xl bg-ink-50 border border-ink-100">
-                        <div className="flex items-center gap-2">
+                      <div key={i} className="flex flex-col gap-1.5 p-2.5 rounded-xl bg-ink-50 border border-ink-100">
+                        <div className="flex items-start gap-2">
                           {l.kit_ratio_service != null ? (
                             <span className="inline-flex items-center gap-1 badge text-xs shrink-0 bg-purple-100 text-purple-700">
                               <Layers size={10} /> KIT
@@ -521,17 +521,19 @@ function NouveauDevisPage() {
                               {l.type_branche === "service" ? "S" : "M"}
                             </span>
                           )}
-                          <span className="text-xs text-ink-800 flex-1 min-w-0 truncate">{l.nom}</span>
+                          <span className="text-xs text-ink-800 flex-1 min-w-0 break-words">{l.nom}</span>
+                          <button onClick={() => setLignes(p => p.filter((_, idx) => idx !== i))} className="text-ink-300 hover:text-red-500 transition-colors shrink-0"><X size={14} /></button>
+                        </div>
+                        <div className="flex items-center gap-2 pl-7">
                           <span className="text-xs text-ink-400 shrink-0">{l.unite}</span>
                           <input type="number" min="1" step="0.5" value={l.quantite}
                             onChange={e => setLignes(prev => { const n = [...prev]; n[i] = { ...n[i], quantite: parseFloat(e.target.value) || 1 }; return n; })}
-                            className="w-14 text-center text-xs border border-ink-200 rounded-lg py-1 bg-white" />
-                          <span className="text-xs text-ink-400">×</span>
+                            className="w-14 shrink-0 text-center text-xs border border-ink-200 rounded-lg py-1 bg-white" />
+                          <span className="text-xs text-ink-400 shrink-0">×</span>
                           <input type="number" min="0" step="0.5" value={l.prix_unitaire}
                             onChange={e => setLignes(prev => { const n = [...prev]; n[i] = { ...n[i], prix_unitaire: parseFloat(e.target.value) || 0 }; return n; })}
-                            className="w-16 text-right text-xs border border-ink-200 rounded-lg py-1 bg-white" />
-                          <span className="text-xs font-semibold text-ink-900 w-14 text-right shrink-0">{fmt(l.prix_unitaire * l.quantite)}</span>
-                          <button onClick={() => setLignes(p => p.filter((_, idx) => idx !== i))} className="text-ink-300 hover:text-red-500 transition-colors"><X size={14} /></button>
+                            className="w-16 shrink-0 text-right text-xs border border-ink-200 rounded-lg py-1 bg-white" />
+                          <span className="text-xs font-semibold text-ink-900 ml-auto shrink-0">{fmt(l.prix_unitaire * l.quantite)}</span>
                         </div>
                         {l.kit_description && (
                           <p className="text-xs text-ink-400 italic pl-7 truncate">{l.kit_description}</p>
