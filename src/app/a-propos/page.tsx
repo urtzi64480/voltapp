@@ -3,7 +3,9 @@ import type { Metadata } from "next";
 import { supabase } from "@/lib/supabase";
 import ActionsAndGallery from "@/components/ActionsAndGallery";
 import TrackerAPropos from "@/components/TrackerAPropos";
-import { ChevronLeft } from "lucide-react";
+import LocalBusinessJsonLd from "@/components/LocalBusinessJsonLd";
+import { VILLE_PRINCIPALE, RAYON_KM, ZONES } from "@/lib/seo-zone";
+import { ChevronLeft, MapPin } from "lucide-react";
 
 // Empêche Next.js de figer cette page au build : sans ça, les photos
 // ajoutées/supprimées côté CRM après le déploiement ne remontent jamais
@@ -32,9 +34,25 @@ export async function generateMetadata(): Promise<Metadata> {
 
   const icon = data?.logo_url || undefined;
 
+  const title = `Elektron — Électricien à ${VILLE_PRINCIPALE} et dans tout le Pays Basque`;
+  const description = `Électricien indépendant basé à ${VILLE_PRINCIPALE}, j'interviens dans un rayon de ${RAYON_KM} km : Bayonne, Anglet, Biarritz, Cambo-les-Bains, Hasparren, Saint-Jean-de-Luz et tout le Pays Basque. Devis gratuit, dépannage, mise aux normes, tableau électrique.`;
+
   return {
-    title: "Elektron - Électricité",
+    title,
+    description,
     icons: icon ? { icon } : undefined,
+    alternates: {
+      canonical: "https://elektron-electricite.fr/a-propos",
+    },
+    openGraph: {
+      title,
+      description,
+      url: "https://elektron-electricite.fr/a-propos",
+      siteName: "Elektron",
+      locale: "fr_FR",
+      type: "website",
+      images: icon ? [icon] : undefined,
+    },
   };
 }
 
@@ -50,6 +68,7 @@ export default async function AProposPage() {
 
   return (
     <div className="min-h-screen bg-ink-50">
+      <LocalBusinessJsonLd />
       <TrackerAPropos userId={USER_ID} />
 
       {/* Header sombre — /a-propos est le point d'entrée, donc lien "en avant" vers la demande */}
@@ -74,7 +93,7 @@ export default async function AProposPage() {
               <div className="absolute -top-3 -left-3 w-full h-full rounded-2xl bg-volt-500" />
               <img
                 src="/images/ben-elektron-bw.jpg"
-                alt="Benoît, électricien Elektron"
+                alt={`Benoît, électricien Elektron à ${VILLE_PRINCIPALE}`}
                 className="relative w-full rounded-2xl object-cover shadow-sm border border-ink-200"
               />
             </div>
@@ -82,7 +101,7 @@ export default async function AProposPage() {
             {/* Texte de présentation */}
             <div>
               <p className="text-volt-600 text-xs font-semibold uppercase tracking-wider mb-2">
-                Elektron · Électricien
+                Elektron · Électricien à {VILLE_PRINCIPALE} et alentours
               </p>
               <h1 className="font-display text-3xl sm:text-4xl text-ink-900 leading-tight mb-4">
                 Benoît, votre futur électricien
@@ -110,6 +129,35 @@ export default async function AProposPage() {
           <div className="w-full md:w-56 shrink-0 md:sticky md:top-8">
             <ActionsAndGallery userId={USER_ID} photos={photos} />
           </div>
+        </div>
+
+        {/* Zone d'intervention — contenu texte naturel pour le référencement local,
+            regroupé par secteur géographique plutôt qu'en liste brute */}
+        <div className="mt-12 card card-inner">
+          <div className="flex items-center gap-2 mb-1">
+            <MapPin size={18} className="text-volt-600 shrink-0" />
+            <h2 className="section-title mb-0">Zone d'intervention</h2>
+          </div>
+          <p className="section-sub">
+            Basé à {VILLE_PRINCIPALE}, j'interviens dans un rayon d'environ{" "}
+            {RAYON_KM}&nbsp;km, sur l'ensemble du Pays Basque et ses abords :
+          </p>
+          <div className="grid sm:grid-cols-2 gap-x-8 gap-y-4">
+            {ZONES.map((zone) => (
+              <div key={zone.label}>
+                <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-1.5">
+                  {zone.label}
+                </p>
+                <p className="text-sm text-ink-600 leading-relaxed">
+                  {zone.villes.join(", ")}
+                </p>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-ink-400 mt-5">
+            Votre commune n'apparaît pas dans la liste ? Contactez-moi quand même,
+            il y a de bonnes chances que je puisse me déplacer.
+          </p>
         </div>
       </div>
     </div>
