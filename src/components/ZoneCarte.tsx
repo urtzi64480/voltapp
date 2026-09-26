@@ -1,46 +1,160 @@
 // src/components/ZoneCarte.tsx
 "use client";
 //
-// Visuel "carte" pour la zone d'intervention : une vraie carte OpenStreetMap
-// (pas d'API key, embed public gratuit), cadrée sur le Pays Basque autour de
-// la base, plus les communes desservies en badges groupés par secteur.
+// Carte de la zone d'intervention : Leaflet + tuiles OpenStreetMap, chargés
+// dynamiquement depuis un CDN (unpkg) au moment où le visiteur ouvre le bloc
+// — pas de dépendance npm à ajouter à package.json, pas de clé d'API.
 //
-// Toggle contrôlé en React (useState), pas un <details> natif : le contenu
-// texte (résumé, badges de villes) reste TOUJOURS dans le DOM, juste masqué
-// visuellement via la classe "hidden" quand replié — donc toujours indexable
-// par les moteurs de recherche, quel que soit l'état du toggle. La carte
-// (iframe) est en revanche montée/démontée par React : elle ne charge (et ne
-// consomme de bande passante) qu'au moment où le visiteur clique pour l'ouvrir
-// — un iframe n'apporte de toute façon aucun contenu indexable pour cette
-// page (contenu cross-origin), donc rien à perdre à ne pas le garder monté.
-import { useState } from "react";
+// Affiche : un cercle représentant le rayon de RAYON_KM autour de la base,
+// un marqueur pour la base (Jatxou), et un petit marqueur par commune
+// desservie (VILLES_COORDS). Pour rester lisible malgré la cinquantaine de
+// communes, seules les "villes phares" (VILLES_PHARES) portent une étiquette
+// affichée en permanence ; les autres restent visibles comme points et
+// affichent leur nom au survol/clic.
+//
+// Le résumé + les badges de villes (texte) restent TOUJOURS dans le DOM,
+// juste masqués en CSS quand replié — donc toujours indexables par les
+// moteurs de recherche, contrairement au contenu de la carte elle-même
+// (tuiles/canvas, non indexable de toute façon).
+import { useEffect, useRef, useState } from "react";
 import { MapPin, ChevronDown } from "lucide-react";
-import { VILLE_PRINCIPALE, RAYON_KM, COORDONNEES, ZONES } from "@/lib/seo-zone";
+import {
+  VILLE_PRINCIPALE,
+  RAYON_KM,
+  COORDONNEES,
+  ZONES,
+  VILLES_COORDS,
+  VILLES_PHARES,
+} from "@/lib/seo-zone";
 
-// Construit un bbox (emprise) centré sur les coordonnées données, assez large
-// pour montrer confortablement le rayon d'intervention avec un peu de marge.
-function buildBbox(lat: number, lng: number, rayonKm: number) {
-  const kmParDegreLat = 111.03;
-  const kmParDegreLng = 111.32 * Math.cos((lat * Math.PI) / 180);
-  const margeKm = rayonKm * 1.4; // marge de confort autour du rayon affiché
-  const dLat = margeKm / kmParDegreLat;
-  const dLng = margeKm / kmParDegreLng;
-  return {
-    left: lng - dLng,
-    right: lng + dLng,
-    bottom: lat - dLat,
-    top: lat + dLat,
-  };
+const LEAFLET_VERSION = "1.9.4";
+
+declare global {
+  interface Window {
+    L?: any;
+    __leafletLoadPromise?: Promise<any>;
+  }
+}
+
+// Charge Leaflet (CSS + JS) une seule fois, même si plusieurs instances du
+// composant tentent de l'ouvrir en même temps.
+function loadLeaflet(): Promise<any> {
+  if (typeof window === "undefined") return Promise.reject(new Error("SSR"));
+  if (window.L) return Promise.resolve(window.L);
+  if (window.__leafletLoadPromise) return window.__leafletLoadPromise;
+
+  window.__leafletLoadPromise = new Promise((resolve, reject) => {
+    if (!document.querySelector('link[data-leaflet-css="true"]')) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
+      link.setAttribute("data-leaflet-css", "true");
+      document.head.appendChild(link);
+    }
+
+    const script = document.createElement("script");
+    script.src = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js`;
+    script.async = true;
+    script.onload = () => resolve(window.L);
+    script.onerror = () => reject(new Error("Échec du chargement de Leaflet"));
+    document.head.appendChild(script);
+  });
+
+  return window.__leafletLoadPromise;
 }
 
 export default function ZoneCarte() {
   const [open, setOpen] = useState(false);
+  const [erreurCarte, setErreurCarte] = useState(false);
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapInstanceRef = useRef<any>(null);
 
-  const bbox = buildBbox(COORDONNEES.lat, COORDONNEES.lng, RAYON_KM);
-  const mapSrc =
-    `https://www.openstreetmap.org/export/embed.html` +
-    `?bbox=${bbox.left},${bbox.bottom},${bbox.right},${bbox.top}` +
-    `&layer=mapnik&marker=${COORDONNEES.lat},${COORDONNEES.lng}`;
+  useEffect(() => {
+    if (!open) return;
+    let annule = false;
+
+    loadLeaflet()
+      .then((L) => {
+        if (annule || !mapContainerRef.current || mapInstanceRef.current) return;
+
+        const map = L.map(mapContainerRef.current, {
+          center: [COORDONNEES.lat, COORDONNEES.lng],
+          zoom: 9,
+          scrollWheelZoom: false,
+        });
+        mapInstanceRef.current = map;
+
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution:
+            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+          maxZoom: 18,
+        }).addTo(map);
+
+        // Rayon d'intervention
+        L.circle([COORDONNEES.lat, COORDONNEES.lng], {
+          radius: RAYON_KM * 1000,
+          color: "#D97706",
+          weight: 1.5,
+          fillColor: "#F59E0B",
+          fillOpacity: 0.07,
+          dashArray: "6 6",
+        }).addTo(map);
+
+        // Base — Jatxou
+        L.circleMarker([COORDONNEES.lat, COORDONNEES.lng], {
+          radius: 7,
+          color: "#fff",
+          weight: 2,
+          fillColor: "#1C1917",
+          fillOpacity: 1,
+        })
+          .addTo(map)
+          .bindTooltip(`${VILLE_PRINCIPALE} · Elektron`, {
+            permanent: true,
+            direction: "top",
+            offset: [0, -8],
+            className: "carte-label carte-label-centre",
+          });
+
+        // Communes desservies
+        Object.entries(VILLES_COORDS).forEach(([nom, coord]) => {
+          const marker = L.circleMarker([coord.lat, coord.lng], {
+            radius: 4,
+            color: "#fff",
+            weight: 1.5,
+            fillColor: "#57534E",
+            fillOpacity: 0.9,
+          }).addTo(map);
+
+          if (VILLES_PHARES.includes(nom)) {
+            marker.bindTooltip(nom, {
+              permanent: true,
+              direction: "right",
+              offset: [6, 0],
+              className: "carte-label",
+            });
+          } else {
+            marker.bindTooltip(nom, { direction: "top" });
+          }
+        });
+
+        // La carte est montée dans un conteneur déjà visible (pas de display:none
+        // au moment du montage), mais un invalidateSize() différé évite tout
+        // souci de dimensions mal calculées juste après la transition d'ouverture.
+        setTimeout(() => map.invalidateSize(), 150);
+      })
+      .catch(() => {
+        if (!annule) setErreurCarte(true);
+      });
+
+    return () => {
+      annule = true;
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, [open]);
 
   return (
     <div className="card card-inner">
@@ -70,22 +184,20 @@ export default function ZoneCarte() {
       {/* Carte : montée uniquement à l'ouverture (pas de coût réseau tant que fermé) */}
       {open && (
         <div className="mt-6 rounded-xl overflow-hidden border border-ink-200">
-          <iframe
-            title={`Carte de la zone d'intervention Elektron autour de ${VILLE_PRINCIPALE}`}
-            src={mapSrc}
-            className="w-full h-72 sm:h-96"
-            loading="lazy"
-          />
+          {erreurCarte ? (
+            <p className="p-4 text-sm text-ink-500">
+              La carte n'a pas pu se charger. Les communes desservies restent
+              listées ci-dessous.
+            </p>
+          ) : (
+            <div ref={mapContainerRef} className="w-full h-72 sm:h-96" />
+          )}
         </div>
       )}
 
       {/* Résumé + badges de villes : toujours dans le DOM, juste masqués en CSS quand replié
           (donc toujours lus par les moteurs de recherche, peu importe l'état du toggle) */}
       <div className={open ? "mt-6" : "hidden"}>
-        <p className="text-xs text-ink-400 text-center mb-6">
-          Rayon d'intervention d'environ {RAYON_KM}&nbsp;km autour de {VILLE_PRINCIPALE}
-        </p>
-
         <div className="grid sm:grid-cols-2 gap-x-8 gap-y-5">
           {ZONES.map((zone) => (
             <div key={zone.label}>
