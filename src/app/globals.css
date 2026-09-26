@@ -75,3 +75,25 @@ padding-bottom: env(safe-area-inset-bottom);
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #d6d3d1; border-radius: 3px; }
 }
+
+/* Étiquettes de la carte Leaflet (ZoneCarte.tsx) — hors @layer components
+   car ce sont des classes posées par Leaflet lui-même sur des éléments DOM
+   créés en JS, pas des classes utilisées directement dans le JSX. */
+.carte-label {
+  background: #1C1917;
+  color: #fff;
+  border: none;
+  border-radius: 9999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: 'DM Sans', system-ui, sans-serif;
+  box-shadow: none;
+}
+.carte-label::before {
+  display: none; /* masque la petite flèche par défaut du tooltip Leaflet */
+}
+.carte-label-centre {
+  background: #F59E0B;
+  color: #1C1917;
+}
