@@ -171,7 +171,7 @@ function ApercuDocument({
           <div className="w-64 bg-ink-50 rounded-xl px-4 py-3 space-y-1.5">
             <div className="flex justify-between text-xs text-ink-500"><span>Prestation service</span><span>{fmt(totServiceBrut)}</span></div>
             {remiseService > 0.01 && <div className="flex justify-between text-xs text-red-500"><span>Remise service</span><span>− {fmt(remiseService)}</span></div>}
-            <div className="flex justify-between text-xs text-ink-500"><span>Achat / revente</span><span>{fmt(totMateriauBrut)}</span></div>
+            <div className="flex justify-between text-xs text-ink-500"><span>Matériels</span><span>{fmt(totMateriauBrut)}</span></div>
             {remiseMateriau > 0.01 && <div className="flex justify-between text-xs text-red-500"><span>Remise matériaux</span><span>− {fmt(remiseMateriau)}</span></div>}
             {remiseFideliteEur > 0.01 && (
               <div className="flex justify-between text-xs text-emerald-600 font-medium">
