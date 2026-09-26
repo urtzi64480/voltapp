@@ -1,22 +1,22 @@
 // src/lib/seo-zone.ts
 //
 // Source unique de vérité pour la zone d'intervention géographique d'Elektron.
-// Utilisé à la fois pour le texte affiché (page /a-propos) et pour les
-// métadonnées structurées (JSON-LD LocalBusiness) afin d'éviter toute
-// duplication entre le contenu visible et les données pour les moteurs
+// Utilisé à la fois pour le contenu affiché (page /a-propos, carte de zone)
+// et pour les métadonnées structurées (JSON-LD LocalBusiness) afin d'éviter
+// toute duplication entre le contenu visible et les données pour les moteurs
 // de recherche.
 //
 // ⚠️ Liste indicative : les distances routières réelles peuvent différer
 // du rayon à vol d'oiseau. Ben peut ajuster VILLE_PRINCIPALE, COORDONNEES
 // et les groupes ci-dessous si certaines communes sont trop/pas assez loin.
 
-export const VILLE_PRINCIPALE = "Ustaritz";
+export const VILLE_PRINCIPALE = "Jatxou";
 export const RAYON_KM = 40;
 
-// Coordonnées approximatives d'Ustaritz (centre du rayon d'intervention)
+// Coordonnées approximatives de Jatxou (centre du rayon d'intervention)
 export const COORDONNEES = {
-  lat: 43.3986,
-  lng: -1.4547,
+  lat: 43.3858,
+  lng: -1.4169,
 };
 
 export interface ZoneGroupe {
@@ -26,6 +26,8 @@ export interface ZoneGroupe {
 
 // Groupes géographiques, du plus proche au plus périphérique.
 // Chaque ville n'apparaît qu'une seule fois, dans son groupe le plus pertinent.
+// Jatxou n'apparaît pas dans les listes ci-dessous : c'est la base (voir
+// VILLE_PRINCIPALE), pas une "ville desservie" au même titre que les autres.
 export const ZONES: ZoneGroupe[] = [
   {
     label: "Agglomération Bayonne – Anglet – Biarritz et littoral",
@@ -54,13 +56,12 @@ export const ZONES: ZoneGroupe[] = [
     ],
   },
   {
-    label: "Vallée de la Nive (autour d'Ustaritz)",
+    label: "Vallée de la Nive (autour de Jatxou)",
     villes: [
       "Ustaritz",
       "Villefranque",
       "Halsou",
       "Larressore",
-      "Jatxou",
       "Cambo-les-Bains",
       "Itxassou",
       "Louhossoa",
