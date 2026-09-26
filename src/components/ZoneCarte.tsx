@@ -1,23 +1,47 @@
 // src/components/ZoneCarte.tsx
+"use client";
 //
-// Visuel "carte" pour la zone d'intervention : un schéma en cercles concentriques
-// (façon radar) centré sur la base, avec le rayon d'action affiché, puis les
-// communes desservies présentées en badges groupés par secteur.
+// Visuel "carte" pour la zone d'intervention : une vraie carte OpenStreetMap
+// (pas d'API key, embed public gratuit), cadrée sur le Pays Basque autour de
+// la base, plus les communes desservies en badges groupés par secteur.
 //
-// Replié par défaut derrière un <details>/<summary> natif : un résumé court
-// reste visible en permanence (ville, rayon, quelques villes phares), et la
-// carte + la liste complète des communes ne s'affichent qu'au clic — pour ne
-// pas allonger inutilement la page. <details> garde le contenu dans le HTML
-// même fermé (contrairement à un `{open && ...}` React), donc rien n'est
-// perdu pour le référencement, juste visuellement replié par défaut.
-//
-// Schéma stylisé plutôt qu'un vrai fond de carte géographique (Google Maps/
-// Leaflet) : pas de dépendance externe, pas de clé d'API, aucun script tiers.
-// Le rayon et les distances sont indicatifs, pas à l'échelle au pixel près.
+// Toggle contrôlé en React (useState), pas un <details> natif : le contenu
+// texte (résumé, badges de villes) reste TOUJOURS dans le DOM, juste masqué
+// visuellement via la classe "hidden" quand replié — donc toujours indexable
+// par les moteurs de recherche, quel que soit l'état du toggle. La carte
+// (iframe) est en revanche montée/démontée par React : elle ne charge (et ne
+// consomme de bande passante) qu'au moment où le visiteur clique pour l'ouvrir
+// — un iframe n'apporte de toute façon aucun contenu indexable pour cette
+// page (contenu cross-origin), donc rien à perdre à ne pas le garder monté.
+import { useState } from "react";
 import { MapPin, ChevronDown } from "lucide-react";
-import { VILLE_PRINCIPALE, RAYON_KM, ZONES } from "@/lib/seo-zone";
+import { VILLE_PRINCIPALE, RAYON_KM, COORDONNEES, ZONES } from "@/lib/seo-zone";
+
+// Construit un bbox (emprise) centré sur les coordonnées données, assez large
+// pour montrer confortablement le rayon d'intervention avec un peu de marge.
+function buildBbox(lat: number, lng: number, rayonKm: number) {
+  const kmParDegreLat = 111.03;
+  const kmParDegreLng = 111.32 * Math.cos((lat * Math.PI) / 180);
+  const margeKm = rayonKm * 1.4; // marge de confort autour du rayon affiché
+  const dLat = margeKm / kmParDegreLat;
+  const dLng = margeKm / kmParDegreLng;
+  return {
+    left: lng - dLng,
+    right: lng + dLng,
+    bottom: lat - dLat,
+    top: lat + dLat,
+  };
+}
 
 export default function ZoneCarte() {
+  const [open, setOpen] = useState(false);
+
+  const bbox = buildBbox(COORDONNEES.lat, COORDONNEES.lng, RAYON_KM);
+  const mapSrc =
+    `https://www.openstreetmap.org/export/embed.html` +
+    `?bbox=${bbox.left},${bbox.bottom},${bbox.right},${bbox.top}` +
+    `&layer=mapnik&marker=${COORDONNEES.lat},${COORDONNEES.lng}`;
+
   return (
     <div className="card card-inner">
       <div className="flex items-center gap-2 mb-1">
@@ -30,92 +54,63 @@ export default function ZoneCarte() {
         Cambo-les-Bains, Hasparren, et tout le Pays Basque.
       </p>
 
-      <details className="group mt-3">
-        <summary className="list-none flex items-center gap-1.5 cursor-pointer text-sm font-semibold text-volt-600 hover:text-volt-700 select-none">
-          Voir la carte et toutes les communes desservies
-          <ChevronDown
-            size={16}
-            className="transition-transform duration-150 group-open:rotate-180"
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="mt-3 flex items-center gap-1.5 text-sm font-semibold text-volt-600 hover:text-volt-700 select-none cursor-pointer"
+      >
+        {open ? "Masquer la carte et les communes" : "Voir la carte et toutes les communes desservies"}
+        <ChevronDown
+          size={16}
+          className={`transition-transform duration-150 ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      {/* Carte : montée uniquement à l'ouverture (pas de coût réseau tant que fermé) */}
+      {open && (
+        <div className="mt-6 rounded-xl overflow-hidden border border-ink-200">
+          <iframe
+            title={`Carte de la zone d'intervention Elektron autour de ${VILLE_PRINCIPALE}`}
+            src={mapSrc}
+            className="w-full h-72 sm:h-96"
+            loading="lazy"
           />
-        </summary>
+        </div>
+      )}
 
-        <div className="mt-6 grid md:grid-cols-[260px_1fr] gap-8 items-start">
-          {/* Schéma "radar" : cercles concentriques + rayon d'action */}
-          <div className="relative w-full max-w-[260px] mx-auto aspect-square shrink-0">
-            <svg viewBox="0 0 260 260" className="w-full h-full" role="img" aria-label={`Rayon d'intervention de ${RAYON_KM} km autour de ${VILLE_PRINCIPALE}`}>
-              {/* Cercle extérieur : rayon 40 km */}
-              <circle
-                cx="130"
-                cy="130"
-                r="122"
-                fill="none"
-                stroke="currentColor"
-                className="text-ink-200"
-                strokeWidth="1.5"
-                strokeDasharray="5 5"
-              />
-              {/* Cercle intermédiaire : rayon 20 km */}
-              <circle
-                cx="130"
-                cy="130"
-                r="72"
-                fill="none"
-                stroke="currentColor"
-                className="text-ink-200"
-                strokeWidth="1.5"
-                strokeDasharray="3 5"
-              />
-              {/* Léger halo autour du centre */}
-              <circle cx="130" cy="130" r="28" className="fill-volt-500/10" />
+      {/* Résumé + badges de villes : toujours dans le DOM, juste masqués en CSS quand replié
+          (donc toujours lus par les moteurs de recherche, peu importe l'état du toggle) */}
+      <div className={open ? "mt-6" : "hidden"}>
+        <p className="text-xs text-ink-400 text-center mb-6">
+          Rayon d'intervention d'environ {RAYON_KM}&nbsp;km autour de {VILLE_PRINCIPALE}
+        </p>
 
-              {/* Repères de distance */}
-              <text x="130" y="14" textAnchor="middle" className="fill-ink-400 text-[10px] font-semibold">
-                {RAYON_KM}&nbsp;km
-              </text>
-              <text x="130" y="64" textAnchor="middle" className="fill-ink-400 text-[10px] font-semibold">
-                {Math.round(RAYON_KM / 2)}&nbsp;km
-              </text>
-
-              {/* Repère central */}
-              <circle cx="130" cy="130" r="6" className="fill-volt-500 stroke-white" strokeWidth="2" />
-            </svg>
-
-            {/* Libellé du centre, en HTML par-dessus le SVG (plus simple à mettre en forme qu'un <text> multi-lignes) */}
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="mt-1 px-2.5 py-1 rounded-full bg-ink-900 text-white text-xs font-semibold shadow-sm">
-                {VILLE_PRINCIPALE}
-              </span>
-              <span className="mt-1 text-[11px] text-ink-400">Elektron</span>
-            </div>
-          </div>
-
-          {/* Communes desservies, groupées par secteur, en badges plutôt qu'en liste */}
-          <div className="grid sm:grid-cols-2 gap-x-8 gap-y-5">
-            {ZONES.map((zone) => (
-              <div key={zone.label}>
-                <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">
-                  {zone.label}
-                </p>
-                <div className="flex flex-wrap gap-1.5">
-                  {zone.villes.map((ville) => (
-                    <span
-                      key={ville}
-                      className="badge bg-ink-50 text-ink-700 border border-ink-200"
-                    >
-                      {ville}
-                    </span>
-                  ))}
-                </div>
+        <div className="grid sm:grid-cols-2 gap-x-8 gap-y-5">
+          {ZONES.map((zone) => (
+            <div key={zone.label}>
+              <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">
+                {zone.label}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {zone.villes.map((ville) => (
+                  <span
+                    key={ville}
+                    className="badge bg-ink-50 text-ink-700 border border-ink-200"
+                  >
+                    {ville}
+                  </span>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
 
         <p className="text-xs text-ink-400 mt-6">
           Votre commune n'apparaît pas dans la liste ? Contactez-moi quand même,
           il y a de bonnes chances que je puisse me déplacer.
         </p>
-      </details>
+      </div>
     </div>
   );
 }
