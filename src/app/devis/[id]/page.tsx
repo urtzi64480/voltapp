@@ -905,9 +905,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
             <div className="flex flex-wrap gap-3">
               <button onClick={dl} className="btn-ghost flex-1 justify-center"><Download size={15} /> Télécharger PDF</button>
               <button onClick={planifierIntervention} className="btn-ghost flex-1 justify-center"><CalendarDays size={15} /> Planifier</button>
-              {devis.statut === "signe" && (
-                <Link href={`/devis/${id}/courses`} className="btn-ghost flex-1 justify-center"><ShoppingCart size={15} /> Liste de courses</Link>
-              )}
+              <Link href={`/devis/${id}/courses`} className="btn-ghost flex-1 justify-center"><ShoppingCart size={15} /> Liste de courses</Link>
               {devis.statut !== "signe" && (
                 <button className="flex-1 flex items-center justify-center gap-2 bg-ink-200 text-ink-400 font-semibold rounded-xl px-4 py-2.5 text-sm cursor-not-allowed">
                   <Receipt size={15} /> Convertir en facture
