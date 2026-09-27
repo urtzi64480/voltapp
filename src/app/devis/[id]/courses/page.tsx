@@ -122,19 +122,6 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
     return <Shell><div className="p-8 text-center text-ink-400">Devis introuvable.</div></Shell>;
   }
 
-  if (devisInfo.statut !== "signe") {
-    return (
-      <Shell>
-        <div className="p-4 md:p-8 max-w-lg mx-auto text-center">
-          <Link href={`/devis/${id}`} className="btn-ghost !px-2.5 !py-2 inline-flex mb-4"><ArrowLeft size={16} /></Link>
-          <div className="card card-inner">
-            <p className="text-ink-500 text-sm">La liste de courses n'est disponible qu'une fois le devis signé.</p>
-          </div>
-        </div>
-      </Shell>
-    );
-  }
-
   const client = devisInfo.client as any;
 
   return (
