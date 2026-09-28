@@ -2,7 +2,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { Loader2, Smartphone, Monitor, Globe, Link2, AppWindow, Cpu, MapPin, UserPlus, FileSearch } from "lucide-react";
+import { Loader2, Smartphone, Monitor, Globe, Clock, UserPlus, FileSearch } from "lucide-react";
 
 interface Visite {
   created_at: string;
@@ -54,6 +54,13 @@ function ecranLabel(screenKey: string): string {
   return "Écran d'accueil (choix)";
 }
 
+function dateVisite(iso: string): string {
+  return new Date(iso).toLocaleString("fr-FR", {
+    timeZone: "Europe/Paris",
+    day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+  }).replace(",", " ·");
+}
+
 function topEntries(counts: Record<string, number>, max = 5) {
   return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, max);
 }
@@ -103,33 +110,8 @@ export default function VisitesStats({ userId }: { userId: string }) {
   const nbDesktop = visites.filter((v) => v.device_type === "desktop").length;
   const nbMobile = total - nbDesktop;
 
-  const referrerCounts = visites.reduce<Record<string, number>>((acc, v) => {
-    const r = referrerLabel(v.referrer);
-    acc[r] = (acc[r] ?? 0) + 1;
-    return acc;
-  }, {});
-  const topReferrers = topEntries(referrerCounts);
-
-  const browserCounts = visites.reduce<Record<string, number>>((acc, v) => {
-    const b = v.navigateur ?? "Inconnu";
-    acc[b] = (acc[b] ?? 0) + 1;
-    return acc;
-  }, {});
-  const topBrowsers = topEntries(browserCounts);
-
-  const osCounts = visites.reduce<Record<string, number>>((acc, v) => {
-    const o = v.os ?? "Inconnu";
-    acc[o] = (acc[o] ?? 0) + 1;
-    return acc;
-  }, {});
-  const topOS = topEntries(osCounts);
-
-  const locationCounts = visites.reduce<Record<string, number>>((acc, v) => {
-    const label = v.ville ? `${v.ville} · ${paysLabel(v.pays)}` : paysLabel(v.pays);
-    acc[label] = (acc[label] ?? 0) + 1;
-    return acc;
-  }, {});
-  const topLocations = topEntries(locationCounts);
+  // Les 10 visites les plus récentes (visites déjà triées par date décroissante).
+  const dernieresVisites = visites.slice(0, 10);
 
   // Pages/écrans consultés : /a-propos vient des visites (1 ligne/session sur cette
   // page dédiée) ; les écrans de la SPA /demande (accueil/devis/rdv/urgence) viennent
@@ -208,65 +190,30 @@ export default function VisitesStats({ userId }: { userId: string }) {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <div>
-          <p className="text-xs font-semibold text-ink-600 mb-2 flex items-center gap-1.5">
-            <Link2 size={14} /> Sources principales
-          </p>
-          <div className="space-y-1.5">
-            {topReferrers.map(([label, count]) => (
-              <div key={label} className="flex items-center justify-between text-sm">
-                <span className="text-ink-700 truncate">{label}</span>
-                <span className="text-ink-400 shrink-0 ml-2">{count} ({pct(count)}%)</span>
+      <div>
+        <p className="text-xs font-semibold text-ink-600 mb-2 flex items-center gap-1.5">
+          <Clock size={14} /> 10 dernières visites
+        </p>
+        <div className="space-y-2">
+          {dernieresVisites.map((v, i) => {
+            const lieu = v.ville ? `${v.ville} · ${paysLabel(v.pays)}` : paysLabel(v.pays);
+            const isDesktop = v.device_type === "desktop";
+            return (
+              <div key={`${v.created_at}-${i}`} className="bg-ink-50 rounded-xl p-3 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-ink-800 font-medium flex items-center gap-1.5 min-w-0">
+                    {isDesktop ? <Monitor size={14} className="shrink-0 text-ink-500" /> : <Smartphone size={14} className="shrink-0 text-ink-500" />}
+                    <span className="truncate">{lieu}</span>
+                  </span>
+                  <span className="text-ink-400 text-xs shrink-0">{dateVisite(v.created_at)}</span>
+                </div>
+                <p className="text-ink-400 text-xs mt-1 truncate">
+                  {referrerLabel(v.referrer)} · {v.navigateur ?? "Navigateur inconnu"} / {v.os ?? "OS inconnu"}
+                </p>
               </div>
-            ))}
-            {topReferrers.length === 0 && <p className="text-ink-300 text-sm">Aucune donnée pour le moment.</p>}
-          </div>
-        </div>
-
-        <div>
-          <p className="text-xs font-semibold text-ink-600 mb-2 flex items-center gap-1.5">
-            <MapPin size={14} /> Localisation
-          </p>
-          <div className="space-y-1.5">
-            {topLocations.map(([label, count]) => (
-              <div key={label} className="flex items-center justify-between text-sm">
-                <span className="text-ink-700 truncate">{label}</span>
-                <span className="text-ink-400 shrink-0 ml-2">{count} ({pct(count)}%)</span>
-              </div>
-            ))}
-            {topLocations.length === 0 && <p className="text-ink-300 text-sm">Aucune donnée pour le moment.</p>}
-          </div>
-        </div>
-
-        <div>
-          <p className="text-xs font-semibold text-ink-600 mb-2 flex items-center gap-1.5">
-            <AppWindow size={14} /> Navigateurs
-          </p>
-          <div className="space-y-1.5">
-            {topBrowsers.map(([label, count]) => (
-              <div key={label} className="flex items-center justify-between text-sm">
-                <span className="text-ink-700 truncate">{label}</span>
-                <span className="text-ink-400 shrink-0 ml-2">{count} ({pct(count)}%)</span>
-              </div>
-            ))}
-            {topBrowsers.length === 0 && <p className="text-ink-300 text-sm">Aucune donnée pour le moment.</p>}
-          </div>
-        </div>
-
-        <div>
-          <p className="text-xs font-semibold text-ink-600 mb-2 flex items-center gap-1.5">
-            <Cpu size={14} /> Système
-          </p>
-          <div className="space-y-1.5">
-            {topOS.map(([label, count]) => (
-              <div key={label} className="flex items-center justify-between text-sm">
-                <span className="text-ink-700 truncate">{label}</span>
-                <span className="text-ink-400 shrink-0 ml-2">{count} ({pct(count)}%)</span>
-              </div>
-            ))}
-            {topOS.length === 0 && <p className="text-ink-300 text-sm">Aucune donnée pour le moment.</p>}
-          </div>
+            );
+          })}
+          {dernieresVisites.length === 0 && <p className="text-ink-300 text-sm">Aucune donnée pour le moment.</p>}
         </div>
       </div>
     </div>
