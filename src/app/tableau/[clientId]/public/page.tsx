@@ -145,16 +145,18 @@ export default function TableauPublicPage() {
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      supabase.from("clients").select("*").eq("id", clientId).single(),
-      supabase.from("profil").select("*").single(),
-    ]).then(([{ data: c }, { data: p }]) => {
-      if (!c || !c.tableau_config) { setNotFound(true); setLoading(false); return; }
-      setClient(c);
-      setProfil(p as Profil | null);
-      setRows(parseRows(c.tableau_config));
-      setLoading(false);
-    });
+    // Accès anonyme via fonction SECURITY DEFINER (ne renvoie que les champs nécessaires,
+    // jamais IBAN / tokens du profil).
+    supabase
+      .rpc("get_tableau_public", { p_client_id: clientId })
+      .then(({ data }) => {
+        const c = data?.client as Client | undefined;
+        if (!c || !c.tableau_config) { setNotFound(true); setLoading(false); return; }
+        setClient(c);
+        setProfil((data?.profil ?? null) as Profil | null);
+        setRows(parseRows(c.tableau_config));
+        setLoading(false);
+      });
   }, [clientId]);
 
   if (loading) {
