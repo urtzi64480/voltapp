@@ -3,9 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { ArrowLeft, Check, ShoppingCart, RotateCcw, Share2, Link2, MessageSquare, Mail } from "lucide-react";
+import { ArrowLeft, Check, ShoppingCart, RotateCcw, Share2, Link2, MessageSquare, Mail, Copy, FileDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buildCourseItems, CourseItem } from "@/lib/courseItems";
+import { buildCourseText, genPDFListeCourses, courseFileName } from "@/lib/courseExport";
 
 export default function ListeCoursesPage({ params }: { params: { id: string } }) {
   const { id } = params;
@@ -16,6 +17,13 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   const [copied, setCopied] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [textCopied, setTextCopied] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [canShare, setCanShare] = useState(false);
+
+  useEffect(() => {
+    setCanShare(typeof navigator !== "undefined" && typeof (navigator as any).share === "function");
+  }, []);
 
   useEffect(() => {
     supabase
@@ -112,6 +120,72 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
     setMenuOpen(false);
   }
 
+
+  // ── Export personnel (uniquement côté artisan, jamais exposé aux clients) ──
+  function exportMeta() {
+    const c = devisInfo?.client as any;
+    const clientNom = c ? (c.prenom ? `${c.prenom} ${c.nom}` : c.nom) : undefined;
+    return { numero: devisInfo?.numero ?? "", clientNom, objet: devisInfo?.objet };
+  }
+
+  async function handleCopyText() {
+    const text = buildCourseText(items, checked, exportMeta());
+    try {
+      await navigator.clipboard.writeText(text);
+      setTextCopied(true);
+      setTimeout(() => setTextCopied(false), 2000);
+    } catch {
+      window.prompt("Copie la liste :", text);
+    }
+  }
+
+  async function handleShareText() {
+    const meta = exportMeta();
+    const text = buildCourseText(items, checked, meta);
+    try {
+      await (navigator as any).share({ title: `Liste de courses — Devis ${meta.numero}`, text });
+    } catch (e: any) {
+      if (e?.name !== "AbortError") handleCopyText();
+    }
+  }
+
+  function downloadBlob(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  async function handlePdf() {
+    if (pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      const meta = exportMeta();
+      const blob = await genPDFListeCourses(items, checked, meta);
+      const filename = courseFileName(meta.numero);
+      const nav = navigator as any;
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+      if (isMobile && typeof nav.share === "function" && typeof nav.canShare === "function") {
+        const file = new File([blob], filename, { type: "application/pdf" });
+        if (nav.canShare({ files: [file] })) {
+          try {
+            await nav.share({ files: [file], title: `Liste de courses — Devis ${meta.numero}` });
+            return;
+          } catch (e: any) {
+            if (e?.name === "AbortError") return;
+          }
+        }
+      }
+      downloadBlob(blob, filename);
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+
   const totalChecked = items.filter(it => checked[it.key]).length;
 
   if (loading) {
@@ -180,6 +254,23 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
           </div>
         ) : (
           <>
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <span className="text-xs text-ink-400 mr-1">Export perso :</span>
+              <button onClick={handleCopyText} className="btn-ghost !px-3 !py-2 inline-flex items-center gap-1.5 text-xs">
+                {textCopied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                {textCopied ? "Copié" : "Copier"}
+              </button>
+              <button onClick={handlePdf} disabled={pdfBusy} className="btn-ghost !px-3 !py-2 inline-flex items-center gap-1.5 text-xs disabled:opacity-50">
+                <FileDown size={14} />
+                {pdfBusy ? "Création…" : "PDF"}
+              </button>
+              {canShare && (
+                <button onClick={handleShareText} className="btn-ghost !px-3 !py-2 inline-flex items-center gap-1.5 text-xs">
+                  <Share2 size={14} /> Envoyer le texte
+                </button>
+              )}
+            </div>
+
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm text-ink-500">{totalChecked} / {items.length} coché{totalChecked > 1 ? "s" : ""}</p>
               <div className="flex gap-2">
