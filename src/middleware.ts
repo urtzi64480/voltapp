@@ -37,8 +37,13 @@ export async function middleware(request: NextRequest) {
   //    /login au lieu de sa page. /robots.txt et /sitemap.xml : générés par Next.js
   //    (src/app/robots.ts, src/app/sitemap.ts) et lus par les crawlers sans session —
   //    sans cette exception ils étaient redirigés vers /login, invisibles pour Google.
+  //    /auth/confirm : page d'activation / réinitialisation du mot de passe (lien email, sans session).
+  //    /tableau/[id]/public : tableau électrique partagé au client (QR code / lien).
+  const isTableauPublic = /^\/tableau\/[^/]+\/public\/?$/.test(pathname);
   if (
+    isTableauPublic ||
     pathname.startsWith("/login") ||
+    pathname.startsWith("/auth/confirm") ||
     pathname.startsWith("/demande") ||
     pathname.startsWith("/devis/signer") ||
     pathname.startsWith("/liste") ||
