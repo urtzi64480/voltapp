@@ -2,9 +2,10 @@
 "use client";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { Loader2, Smartphone, Monitor, Globe, Clock, UserPlus, FileSearch } from "lucide-react";
+import { Loader2, Smartphone, Monitor, Globe, Clock, UserPlus, FileSearch, X, ChevronRight } from "lucide-react";
 
 interface Visite {
+  [colonne: string]: unknown;
   created_at: string;
   referrer: string | null;
   device_type: string | null;
@@ -54,6 +55,24 @@ function ecranLabel(screenKey: string): string {
   return "Écran d'accueil (choix)";
 }
 
+const CHAMPS_LABELS: Record<string, string> = {
+  id: "Identifiant", user_id: "Identifiant électricien", created_at: "Date et heure",
+  referrer: "Référent (URL complète)", user_agent: "User-agent", device_type: "Appareil",
+  navigateur: "Navigateur", os: "Système", langue: "Langue", pays: "Pays",
+  region: "Région", ville: "Ville", page: "Page", mode: "Mode / écran",
+};
+const CHAMPS_ORDRE = ["created_at", "ville", "region", "pays", "device_type", "navigateur", "os", "langue", "referrer", "page", "mode", "user_agent", "id", "user_id"];
+
+function valeurChamp(cle: string, v: unknown): string {
+  if (v === null || v === undefined || v === "") return "—";
+  if (cle === "created_at") {
+    return new Date(String(v)).toLocaleString("fr-FR", { timeZone: "Europe/Paris", dateStyle: "full", timeStyle: "medium" });
+  }
+  if (cle === "pays") return `${paysLabel(String(v))} (${String(v).toUpperCase()})`;
+  if (cle === "device_type") return String(v) === "desktop" ? "PC" : "Mobile";
+  return typeof v === "object" ? JSON.stringify(v) : String(v);
+}
+
 function dateVisite(iso: string): string {
   return new Date(iso).toLocaleString("fr-FR", {
     timeZone: "Europe/Paris",
@@ -70,6 +89,7 @@ export default function VisitesStats({ userId }: { userId: string }) {
   const [visites, setVisites] = useState<Visite[]>([]);
   const [clics, setClics] = useState<Clic[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selection, setSelection] = useState<Visite | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -77,7 +97,7 @@ export default function VisitesStats({ userId }: { userId: string }) {
       const [visitesRes, clicsRes] = await Promise.all([
         supabase
           .from("demande_visites")
-          .select("created_at, referrer, device_type, navigateur, os, pays, ville, page, mode")
+          .select("*")
           .eq("user_id", userId)
           .order("created_at", { ascending: false })
           .limit(500),
@@ -88,12 +108,19 @@ export default function VisitesStats({ userId }: { userId: string }) {
           .order("created_at", { ascending: false })
           .limit(500),
       ]);
-      setVisites(visitesRes.data ?? []);
+      setVisites((visitesRes.data ?? []) as Visite[]);
       setClics(clicsRes.data ?? []);
       setLoading(false);
     }
     load();
   }, [userId]);
+
+  useEffect(() => {
+    if (!selection) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSelection(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selection]);
 
   if (loading) {
     return (
@@ -199,7 +226,12 @@ export default function VisitesStats({ userId }: { userId: string }) {
             const lieu = v.ville ? `${v.ville} · ${paysLabel(v.pays)}` : paysLabel(v.pays);
             const isDesktop = v.device_type === "desktop";
             return (
-              <div key={`${v.created_at}-${i}`} className="bg-ink-50 rounded-xl p-3 text-sm">
+              <button
+                type="button"
+                key={`${v.created_at}-${i}`}
+                onClick={() => setSelection(v)}
+                className="w-full text-left bg-ink-50 hover:bg-ink-100 rounded-xl p-3 text-sm transition-colors cursor-pointer"
+              >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-ink-800 font-medium flex items-center gap-1.5 min-w-0">
                     {isDesktop ? <Monitor size={14} className="shrink-0 text-ink-500" /> : <Smartphone size={14} className="shrink-0 text-ink-500" />}
@@ -207,15 +239,44 @@ export default function VisitesStats({ userId }: { userId: string }) {
                   </span>
                   <span className="text-ink-400 text-xs shrink-0">{dateVisite(v.created_at)}</span>
                 </div>
-                <p className="text-ink-400 text-xs mt-1 truncate">
-                  {referrerLabel(v.referrer)} · {v.navigateur ?? "Navigateur inconnu"} / {v.os ?? "OS inconnu"}
-                </p>
-              </div>
+                <div className="flex items-center justify-between gap-2 mt-1">
+                  <p className="text-ink-400 text-xs truncate">
+                    {referrerLabel(v.referrer)} · {v.navigateur ?? "Navigateur inconnu"} / {v.os ?? "OS inconnu"}
+                  </p>
+                  <ChevronRight size={14} className="shrink-0 text-ink-300" />
+                </div>
+              </button>
             );
           })}
           {dernieresVisites.length === 0 && <p className="text-ink-300 text-sm">Aucune donnée pour le moment.</p>}
         </div>
       </div>
+      {selection && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4"
+          onClick={() => setSelection(null)}
+        >
+          <div className="card w-full max-w-lg max-h-[85vh] overflow-y-auto p-6 relative" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => setSelection(null)}
+              className="absolute top-4 right-4 text-ink-300 hover:text-ink-500 transition-colors"
+              aria-label="Fermer"
+            >
+              <X size={18} />
+            </button>
+            <h3 className="font-display text-lg text-ink-900 mb-4 pr-6">Détail de la visite</h3>
+            <dl className="space-y-3">
+              {[...CHAMPS_ORDRE.filter((c) => c in selection), ...Object.keys(selection).filter((c) => !CHAMPS_ORDRE.includes(c))].map((cle) => (
+                <div key={cle}>
+                  <dt className="text-ink-400 text-xs">{CHAMPS_LABELS[cle] ?? cle}</dt>
+                  <dd className="text-ink-800 text-sm break-words">{valeurChamp(cle, selection[cle])}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
