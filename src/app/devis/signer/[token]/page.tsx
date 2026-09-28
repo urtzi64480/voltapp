@@ -31,8 +31,15 @@ export default function SignerPage({ params }: { params: { token: string } }) {
         setError("Ce lien a expiré."); return;
       }
 
-      // Charge le profil via user_id du devis
-      const { data: p } = await supabase.from("profil").select("*").eq("id", data.user_id).single();
+      // Profil de l'artisan : fonction SECURITY DEFINER (accès anonyme, sans IBAN ni tokens).
+      // Repli sur la lecture directe si la fonction est absente (ex. artisan connecté qui teste son lien).
+      let p: any = null;
+      const rpcRes = await supabase.rpc("get_public_profil_by_devis_token", { p_token: token }).maybeSingle();
+      p = rpcRes.data ?? null;
+      if (!p) {
+        const direct = await supabase.from("profil").select("*").eq("id", data.user_id).maybeSingle();
+        p = direct.data ?? null;
+      }
       setProfil(p);
 
       if (data.statut === "signe") { setSigned(true); setDevis(data); return; }
