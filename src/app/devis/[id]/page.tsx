@@ -438,14 +438,18 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ devis_id: id }),
       });
-      const { token } = await res.json();
+      const payload = await res.json().catch(() => ({} as any));
+      if (!res.ok || !payload.token) throw new Error(payload.error || "Impossible de générer le lien de signature.");
+      const token = payload.token as string;
       const link = `${window.location.origin}/devis/signer/${token}`;
       setSigLink(link);
       const client = devis.client as any;
       const tel = client?.telephone?.replace(/\s/g, "") ?? "";
       const msg = `Bonjour ${client?.prenom ?? ""}, veuillez signer votre devis ${devis.numero} ici : ${link}`;
       window.location.href = `sms:${tel}?body=${encodeURIComponent(msg)}`;
-    } catch {}
+    } catch (e: any) {
+      alert(e?.message || "Erreur lors de la génération du lien.");
+    }
     setGeneratingLink(false);
   }
 
