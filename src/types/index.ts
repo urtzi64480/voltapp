@@ -229,3 +229,21 @@ export interface DemandeClient {
   client_id?: string;
   user_id: string;
 }
+
+// Un projet = un logement / chantier d'un client. Porte son propre plan de circuits
+// (maison_config), son tableau (tableau_config) et son brouillon de pré-devis.
+export interface Projet {
+  id: string;
+  user_id: string;
+  client_id: string;
+  nom: string;
+  adresse?: string | null;
+  maison_config?: string | null;
+  tableau_config?: string | null;
+  predevis_config?: string | null;
+  // JSON [{ id, nom, rows }] — tableaux annexes (pool house, garage…) ; le principal reste
+  // dans tableau_config. Voir lireAnnexes / sauverAnnexes (src/lib/projets.ts).
+  tableaux_annexes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
