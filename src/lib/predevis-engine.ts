@@ -40,7 +40,7 @@
 
 import {
   Maison, Niveau, Piece, Point, AppareillagePlace, AppareillageType,
-  distance, trouverPiece, cleSegmentLiaison, cheminSegment, SegmentCircuit,
+  distance, trouverPiece, cleSegmentLiaison, cheminSegment, SegmentCircuit, origineCircuits,
 } from "./maison-types";
 import {
   genererCircuits, segmentsPourCircuit, ResultatGeneration, CIRCUIT_DEDIE,
@@ -238,15 +238,19 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       }
     });
 
-    // Pas de tableau positionné sur ce niveau : pas de tracé, donc pas de câbles/gaines/
-    // boîtes de dérivation calculables — seuls les appareillages ci-dessus restent chiffrés.
-    if (!niveau.tableauPos) {
+    // Ni tableau ni point d'arrivée des gaines sur ce niveau : pas de tracé, donc pas de
+    // câbles/gaines/boîtes de dérivation calculables — seuls les appareillages ci-dessus
+    // restent chiffrés. (Un niveau de la maison qui ne porte pas le tableau part de son
+    // point d'arrivée des gaines ; une annexe part de son propre tableau.)
+    const origineTrace = origineCircuits(niveau);
+    if (!origineTrace) {
       if (niveau.pieces.some(p => p.appareillages.length > 0)) {
-        alertes.push(`Niveau "${niveau.nom}" : tableau non positionné sur le plan — câbles/gaines non calculés pour ce niveau.`);
+        alertes.push(niveau.type === "annexe"
+          ? `Annexe "${niveau.nom}" : tableau non positionné sur le plan — câbles/gaines non calculés pour cette annexe.`
+          : `Niveau "${niveau.nom}" : point d'arrivée des gaines non positionné sur le plan (le tableau de la maison est sur un autre niveau) — câbles/gaines non calculés pour ce niveau.`);
       }
       return;
     }
-    const tableauPos = niveau.tableauPos;
     // Origine utilisée pour MESURER les câbles visibles sur ce niveau (jamais pour le
     // tracé sur le plan, qui reste inchangé et part toujours du tableau réel) : si un
     // point d'arrivée des gaines est configuré, la distance géométrique visible (ex. point
@@ -255,7 +259,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
     // d'arrivée, voir plus bas) : les deux s'additionnent, aucun des deux ne remplace
     // l'autre. Sans point d'arrivée configuré : comportement inchangé, mesuré depuis le
     // tableau directement.
-    const origineCalcul = niveau.pointArriveeGaines ?? tableauPos;
+    const origineCalcul = origineTrace;
     const idToAppareillage = new Map<string, AppareillagePlace>();
     niveau.pieces.forEach(p => p.appareillages.forEach(a => idToAppareillage.set(String(a.id), a)));
 
@@ -353,7 +357,8 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       // portion, elle, invisible sur le plan (tableau → point d'arrivée) — les deux sont
       // deux tronçons réels et distincts du même circuit, jamais le même trajet compté deux
       // fois.
-      if (!nonRelie && niveau.distanceArriveeGainesTableau != null && niveau.distanceArriveeGainesTableau > 0) {
+      // Une annexe a son propre tableau sur son niveau : pas de liaison verticale à ajouter.
+      if (!nonRelie && niveau.type !== "annexe" && niveau.distanceArriveeGainesTableau != null && niveau.distanceArriveeGainesTableau > 0) {
         const d = niveau.distanceArriveeGainesTableau;
         const nomPiece = pseudoLiaisonVerticale(niveau.nom || niveau.type);
         ajouter(`cablage_${sectionCircuit}@${nomPiece}`, `cablage_${sectionCircuit}`,
