@@ -2,15 +2,16 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { Client } from "@/types";
+import { Client, Projet } from "@/types";
+import { qsProjet } from "@/lib/projets";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { LayoutTemplate, Plus, Search, ChevronRight, X } from "lucide-react";
 
 interface Niveau { id: number; nom: string; type: string; pieces: { id: number }[]; }
 
-function ClientPickerModal({ clients, onPick, onClose }: {
-  clients: Client[]; onPick: (clientId: string) => void; onClose: () => void;
+function ClientPickerModal({ clients, planClientIds, onPick, onClose }: {
+  clients: Client[]; planClientIds: Set<string>; onPick: (clientId: string) => void; onClose: () => void;
 }) {
   const [search, setSearch] = useState("");
   const filtered = clients.filter(c =>
@@ -44,7 +45,7 @@ function ClientPickerModal({ clients, onPick, onClose }: {
             <p className="text-center text-ink-400 text-sm py-8">Aucun client trouvé</p>
           ) : (
             filtered.map(c => {
-              const hasPlan = !!(c as any).maison_config && (c as any).maison_config !== "";
+              const hasPlan = planClientIds.has(c.id);
               return (
                 <button key={c.id} onClick={() => onPick(c.id)}
                   className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-volt-50 transition-colors text-left">
@@ -68,7 +69,20 @@ function ClientPickerModal({ clients, onPick, onClose }: {
   );
 }
 
-interface PlanEntry { clientId: string; client: Client; niveaux: Niveau[]; nbPieces: number; }
+interface PlanEntry {
+  key: string; clientId: string; projetId: string | null; projetNom: string | null;
+  client: Client; niveaux: Niveau[]; nbPieces: number;
+}
+
+function lirePlan(raw: string | null | undefined): { niveaux: Niveau[]; nbPieces: number } | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    const niveaux: Niveau[] = Array.isArray(parsed?.niveaux) ? parsed.niveaux : [];
+    if (niveaux.length === 0) return null;
+    return { niveaux, nbPieces: niveaux.reduce((s, n) => s + (n.pieces?.length ?? 0), 0) };
+  } catch { return null; }
+}
 
 export default function PlansPage() {
   const router = useRouter();
@@ -79,20 +93,27 @@ export default function PlansPage() {
   const [showPicker, setShowPicker] = useState(false);
 
   useEffect(() => {
-    supabase.from("clients").select("*").order("nom").then(({ data }) => {
+    Promise.all([
+      supabase.from("clients").select("*").order("nom"),
+      supabase.from("projets").select("*").order("created_at", { ascending: true }),
+    ]).then(([{ data }, { data: projetsData }]) => {
       const all = data ?? [];
       setClients(all);
+      const parClient: Record<string, Projet[]> = {};
+      ((projetsData ?? []) as Projet[]).forEach(p => { (parClient[p.client_id] ??= []).push(p); });
       const entries: PlanEntry[] = [];
       all.forEach(c => {
-        const raw = (c as any).maison_config as string | null | undefined;
-        if (!raw) return;
-        try {
-          const parsed = JSON.parse(raw);
-          const niveaux: Niveau[] = Array.isArray(parsed?.niveaux) ? parsed.niveaux : [];
-          const nbPieces = niveaux.reduce((s, n) => s + (n.pieces?.length ?? 0), 0);
-          if (niveaux.length === 0) return;
-          entries.push({ clientId: c.id, client: c, niveaux, nbPieces });
-        } catch {}
+        const ps = parClient[c.id] ?? [];
+        if (ps.length === 0) {
+          // Client pas encore repris dans un projet : plan historique (migré à l'ouverture).
+          const plan = lirePlan((c as any).maison_config);
+          if (plan) entries.push({ key: c.id, clientId: c.id, projetId: null, projetNom: null, client: c, ...plan });
+          return;
+        }
+        ps.forEach(p => {
+          const plan = lirePlan(p.maison_config);
+          if (plan) entries.push({ key: p.id, clientId: c.id, projetId: p.id, projetNom: ps.length > 1 ? p.nom : null, client: c, ...plan });
+        });
       });
       setPlans(entries);
       setLoading(false);
@@ -104,9 +125,16 @@ export default function PlansPage() {
     router.push(`/plan/${clientId}`);
   };
 
-  const filtered = plans.filter(p =>
-    `${p.client.nom} ${p.client.prenom ?? ""} ${p.client.ville ?? ""}`.toLowerCase().includes(search.toLowerCase())
-  );
+  // Recherche insensible à la casse et aux accents, sur nom / prénom (dans les deux ordres),
+  // ville et nom du projet.
+  const normaliser = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  const requete = normaliser(search);
+  const filtered = plans.filter(p => {
+    if (!requete) return true;
+    const c = p.client;
+    const texte = normaliser(`${c.nom} ${c.prenom ?? ""} ${c.prenom ?? ""} ${c.nom} ${c.ville ?? ""} ${p.projetNom ?? ""}`);
+    return requete.split(/\s+/).every(mot => texte.includes(mot));
+  });
 
   return (
     <Shell>
@@ -121,10 +149,15 @@ export default function PlansPage() {
           <button onClick={() => setShowPicker(true)} className="btn-volt"><Plus size={16} /> Nouveau</button>
         </div>
 
-        {plans.length > 3 && (
+        {plans.length > 0 && (
           <div className="relative mb-4">
             <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-400" />
-            <input className="input pl-10" placeholder="Rechercher par client…" value={search} onChange={e => setSearch(e.target.value)} />
+            <input className="input pl-10 pr-9" placeholder="Rechercher par nom de client…" value={search} onChange={e => setSearch(e.target.value)} />
+            {search && (
+              <button type="button" onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-400 hover:text-ink-600" title="Effacer la recherche">
+                <X size={15} />
+              </button>
+            )}
           </div>
         )}
 
@@ -146,9 +179,9 @@ export default function PlansPage() {
         ) : (
           <div className="space-y-3">
             {filtered.map(entry => {
-              const { client, niveaux, nbPieces } = entry;
+              const { client, niveaux, nbPieces, projetNom } = entry;
               return (
-                <div key={entry.clientId} className="card card-inner hover:border-volt-300 transition-colors">
+                <div key={entry.key} className="card card-inner hover:border-volt-300 transition-colors">
                   <div className="flex items-start gap-3">
                     <div className="w-10 h-10 rounded-full bg-ink-900 flex items-center justify-center text-volt-400 font-semibold text-sm shrink-0">
                       {(client.prenom ? client.prenom[0] : "") + (client.nom?.[0] ?? "")}
@@ -157,10 +190,11 @@ export default function PlansPage() {
                       <p className="font-semibold text-ink-900">{client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</p>
                       <p className="text-xs text-ink-400">
                         {niveaux.length} niveau{niveaux.length > 1 ? "x" : ""} · {nbPieces} pièce{nbPieces > 1 ? "s" : ""}
+                        {projetNom ? ` · ${projetNom}` : ""}
                         {client.ville ? ` · ${client.ville}` : ""}
                       </p>
                       <div className="flex gap-2 mt-3">
-                        <Link href={`/plan/${entry.clientId}`} className="btn-volt !py-1.5 !text-xs">
+                        <Link href={`/plan/${entry.clientId}${qsProjet(entry.projetId)}`} className="btn-volt !py-1.5 !text-xs">
                           <LayoutTemplate size={12} /> Ouvrir
                         </Link>
                         <Link href={`/clients/${entry.clientId}`} className="btn-ghost !py-1.5 !text-xs ml-auto">
@@ -177,7 +211,7 @@ export default function PlansPage() {
       </div>
 
       {showPicker && (
-        <ClientPickerModal clients={clients} onPick={handleCreate} onClose={() => setShowPicker(false)} />
+        <ClientPickerModal clients={clients} planClientIds={new Set(plans.map(p => p.clientId))} onPick={handleCreate} onClose={() => setShowPicker(false)} />
       )}
     </Shell>
   );
