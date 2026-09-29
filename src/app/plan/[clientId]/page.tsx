@@ -1,13 +1,14 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, Fragment } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
 import Shell from "@/components/layout/Shell";
-import { useProjets, qsProjet, modifierProjet, sauverTableau, sauverAnnexes, lireAnnexes, nouvelIdAnnexe, TABLEAU_PRINCIPAL, TableauAnnexe } from "@/lib/projets";
+import { useProjets, qsProjet, modifierProjet, sauverTableau, sauverAnnexes, synchroniserAnnexes, lireAnnexes, nouvelIdAnnexe, TABLEAU_PRINCIPAL, TableauAnnexe } from "@/lib/projets";
 import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, X,
@@ -17,7 +18,7 @@ import {
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
   Ouverture, OuvertureType, nouvelleOuverture, positionSurSegment, OuvertureEffective, ouverturesEffectivesMur,
-  NIVEAU_TYPES, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, ajusterLongueurContour,
+  NIVEAU_TYPES, estAnnexe, origineCircuits, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, ajusterLongueurContour,
   distanceAuSegment, positionnerADistanceDuSegment,
   CircuitManuel, FamilleCircuitManuel,
   nouveauNiveau, nouvellePiece, nouvelAppareillage, uidMaison, reamorcerCompteurId, dedupliquerIds,
@@ -168,7 +169,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
     });
   });
 
-  if ((showCircuits || showHauteurs) && resultat && n.tableauPos) {
+  if ((showCircuits || showHauteurs) && resultat && origineCircuits(n)) {
     const tousAppareils = niveauResultat.pieces.flatMap(p => p.appareillages);
     const parCircuit = new Map<number, AppareillagePlace[]>();
     tousAppareils.forEach(a => {
@@ -181,7 +182,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       const breaker = resultat.breakers.find(b => b.id === circuitId);
       if (!breaker) return;
       const color = colorMap.get(circuitId) ?? "#666";
-      const segments = segmentsPourCircuit(breaker, points, n, n.pointArriveeGaines ?? n.tableauPos!);
+      const segments = segmentsPourCircuit(breaker, points, n, origineCircuits(n)!);
       segments.forEach(seg => {
         const cheminM = cheminSegment(seg, n.liaisonWaypoints);
         const chemin = cheminM.map(toPx);
@@ -317,10 +318,10 @@ function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau
       // Longueur calculée sur le niveau VIVANT (tableau/coudes/ordre de câblage actuels) plutôt
       // que sur l'instantané figé au moment de la génération — sinon un cheminement redessiné
       // ou un coude déplacé après coup ne se répercuterait pas sur la longueur imprimée.
-      if (showLongueurs && niveauVivant.tableauPos) {
+      if (showLongueurs && origineCircuits(niveauVivant)) {
         const pts = niveauVivant.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
         if (pts.length > 0) {
-          const segments = segmentsPourCircuit(b, pts, niveauVivant, niveauVivant.pointArriveeGaines ?? niveauVivant.tableauPos);
+          const segments = segmentsPourCircuit(b, pts, niveauVivant, origineCircuits(niveauVivant)!);
           lgTxt = ` — ${longueurBranchesEclairage(segments, niveauVivant.liaisonWaypoints).toFixed(1)}m`;
         }
       }
@@ -562,13 +563,18 @@ function NiveauForm({ onValidate, onCancel }: { onValidate: (nom: string, type: 
         <div className="p-4 flex flex-col gap-3">
           <div>
             <label className="label">Nom</label>
-            <input autoFocus className="input" placeholder="Ex: R+1, Combles…" value={nom} onChange={e => setNom(e.target.value)} />
+            <input autoFocus className="input" placeholder={type === "annexe" ? "Ex: Pool house, Garage indépendant…" : "Ex: R+1, Combles…"} value={nom} onChange={e => setNom(e.target.value)} />
           </div>
           <div>
             <label className="label">Type</label>
             <select className="input" value={type} onChange={e => setType(e.target.value as NiveauType)}>
               {Object.entries(NIVEAU_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
+            <p className="text-[11px] text-ink-400 mt-1">
+              {type === "annexe"
+                ? "Une annexe (pool house, dépendance…) a son propre tableau électrique, à positionner sur son plan."
+                : "Les niveaux de la maison partagent un seul tableau : pour chacun, tu renseignes sa distance au tableau."}
+            </p>
           </div>
           <div>
             <label className="label">Hauteur sous plafond (m) — pour la vue 3D</label>
@@ -889,7 +895,7 @@ export default function PlanPage() {
   const { projets, projet, loading, changerProjet, recharger } = useProjets(clientId);
   // Recharge la liste (données fraîches de chaque projet) puis bascule : la clé force un
   // remontage complet de l'éditeur, donc aucun état d'un projet ne fuit dans l'autre.
-  const choisir = async (id: string) => { await recharger(id); changerProjet(id); };
+  const choisir = async (id: string | null) => { await recharger(id ?? undefined); if (id) changerProjet(id); };
   if (loading) return <Shell><div className="flex items-center justify-center h-64 text-ink-400">Chargement…</div></Shell>;
   if (!projet) return <Shell><div className="p-8 text-center text-ink-500">Impossible de charger le projet de ce client. Vérifie que la migration 002_projets.sql a bien été exécutée.</div></Shell>;
   return <PlanEditor key={projet.id} clientId={clientId} projet={projet} projets={projets} onSelect={choisir} onChanged={choisir} />;
@@ -897,7 +903,7 @@ export default function PlanPage() {
 
 function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   clientId: string; projet: Projet; projets: Projet[];
-  onSelect: (id: string) => Promise<void> | void; onChanged: (id: string) => Promise<void> | void;
+  onSelect: (id: string) => Promise<void> | void; onChanged: (id: string | null) => Promise<void> | void;
 }) {
 
   const [client, setClient] = useState<Client | null>(null);
@@ -908,6 +914,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [niveaux, setNiveaux] = useState<Niveau[]>([]);
   const [niveauActifId, setNiveauActifId] = useState<number | null>(null);
   const [showNiveauForm, setShowNiveauForm] = useState(false);
+  const [confirmSuppNiveau, setConfirmSuppNiveau] = useState(false);
+  const [suppNiveauEnCours, setSuppNiveauEnCours] = useState(false);
 
   const [mode, setMode] = useState<"select" | "dessiner">("select");
   const [drawingPoints, setDrawingPoints] = useState<Point[]>([]);
@@ -1010,11 +1018,24 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           // différents peuvent partager le même id et se marcher dessus visuellement
           // (l'un "increvable" au clic, qui dérive sur le plan).
           const { niveaux: niveauxPropres, corrections } = dedupliquerIds(parsed.niveaux);
-          setNiveaux(niveauxPropres);
-          setNiveauActifId(niveauxPropres[0].id);
+          // Une annexe sans tableau (tableau supprimé, ancienne donnée) en récupère un vierge,
+          // pour que ses circuits aient toujours un tableau où être poussés.
+          const orphelines = niveauxPropres.filter(n => estAnnexe(n) && !(n.tableauId && annexes.some(a => a.id === n.tableauId)));
+          let niveauxFinal = niveauxPropres;
+          if (orphelines.length > 0) {
+            const nouvelles = orphelines.map(n => ({ niveauId: n.id, id: nouvelIdAnnexe(), nom: n.nom || "Annexe" }));
+            niveauxFinal = niveauxPropres.map(n => {
+              const r = nouvelles.find(x => x.niveauId === n.id);
+              return r ? { ...n, tableauId: r.id } : n;
+            });
+            synchroniserAnnexes(projet.id, [...annexes.map(a => ({ id: a.id, nom: a.nom })), ...nouvelles.map(x => ({ id: x.id, nom: x.nom }))]).then(setAnnexes);
+          }
+          const premier = [...niveauxFinal].sort((a, b) => a.ordre - b.ordre)[0];
+          setNiveaux(niveauxFinal);
+          setNiveauActifId(premier.id);
           setLoading(false);
-          if (corrections > 0) {
-            modifierProjet(projet.id, { maison_config: JSON.stringify({ niveaux: niveauxPropres }) });
+          if (corrections > 0 || orphelines.length > 0) {
+            modifierProjet(projet.id, { maison_config: JSON.stringify({ niveaux: niveauxFinal }) });
           }
           return;
         }
@@ -1259,6 +1280,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
   };
   const armerPlacementTableau = () => {
+    // Maison : un seul tableau. S'il est déjà posé sur un autre niveau, le placer ici le déplace.
+    if (niveauActif && !estAnnexe(niveauActif) && !niveauActif.tableauPos) {
+      const autre = niveaux.find(n => n.id !== niveauActif.id && !estAnnexe(n) && n.tableauPos);
+      if (autre && !window.confirm(`Le tableau de la maison est déjà positionné sur « ${autre.nom || NIVEAU_TYPES[autre.type]} ». Le déplacer sur « ${niveauActif.nom || NIVEAU_TYPES[niveauActif.type]} » ?`)) return;
+    }
     setPlacingTableau(true); setMode("select"); setPlacementType(null); setPlacingOuverture(null); setPlacingMeuble(false); setDrawingPoints([]);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
@@ -1564,7 +1590,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     updateNiveauActif(n => ({
       ...n,
       boitesDerivation: (!existing && famille === "lumiere" && creerBoite)
-        ? { ...(n.boitesDerivation ?? {}), [nom]: [{ id: uidMaison(), nom: "Boîte 1", point: n.tableauPos ?? { x: 0, y: 0 } }] }
+        ? { ...(n.boitesDerivation ?? {}), [nom]: [{ id: uidMaison(), nom: "Boîte 1", point: origineCircuits(n) ?? { x: 0, y: 0 } }] }
         : n.boitesDerivation,
       circuitsManuels: existing
         ? (n.circuitsManuels ?? []).map(m => m.id === id ? { ...m, nom, famille, couleur, nonRelieTableau } : m)
@@ -1877,7 +1903,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
 
     if (placingTableau) {
-      updateNiveauActif(n => ({ ...n, tableauPos: m }));
+      const actifEstMaison = !!niveauActif && !estAnnexe(niveauActif);
+      setNiveaux(nvs => nvs.map(n => {
+        if (n.id === niveauActifId) return { ...n, tableauPos: m };
+        // Un seul tableau pour la maison : on le retire des autres niveaux de la maison.
+        if (actifEstMaison && !estAnnexe(n) && n.tableauPos) return { ...n, tableauPos: undefined, tableauHauteur: undefined, tableauRotation: undefined };
+        return n;
+      }));
       setPlacingTableau(false);
       invalidateResultat();
       return;
@@ -2113,7 +2145,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const ajouterBoiteDerivation = (label: string) => {
     if (!niveauActif) return;
     const breaker = resultat?.breakers.find(b => b.label === label);
-    let centre = niveauActif.tableauPos ?? { x: 0, y: 0 };
+    let centre = origineCircuits(niveauActif) ?? { x: 0, y: 0 };
     if (breaker) {
       const lumieres = niveauActif.pieces.flatMap(p => p.appareillages)
         .filter(a => a.circuitId === breaker.id && (a.type === "point_lumineux" || a.type === "applique"));
@@ -2148,6 +2180,30 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       boitesDerivation: { ...(n.boitesDerivation ?? {}), [label]: (n.boitesDerivation?.[label] ?? []).filter(b => b.id !== boiteId) },
     }));
     setSelectedBoite(null);
+  };
+
+  // Supprime le niveau actif (niveau de la maison ou annexe) — enregistré tout de suite, en une
+  // fois : plan + (pour une annexe) suppression de son tableau et de ses rangées.
+  const supprimerNiveauActif = async () => {
+    if (!niveauActif || niveaux.length <= 1) return;
+    setSuppNiveauEnCours(true);
+    try {
+      const cible = niveauActif;
+      const restants = niveaux.filter(n => n.id !== cible.id);
+      if (estAnnexe(cible)) {
+        const liste = await synchroniserAnnexes(projet.id, annexes.filter(a => a.id !== cible.tableauId).map(a => ({ id: a.id, nom: a.nom })));
+        setAnnexes(liste);
+      }
+      const ok = await modifierProjet(projet.id, { maison_config: JSON.stringify({ niveaux: restants }) });
+      if (!ok) { alert("La suppression n'a pas pu être enregistrée."); return; }
+      const suivant = [...restants].sort((a, b) => a.ordre - b.ordre)[0];
+      setNiveaux(restants);
+      setNiveauActifId(suivant.id);
+      setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null);
+      setSelectedBoite(null); setSelectedPointArrivee(false); setSelectedMeubleId(null); setCheminementDessin(null); setLiaisonLumiereMode(null);
+      setResultat(null); setShowCircuits(false);
+      setConfirmSuppNiveau(false);
+    } finally { setSuppNiveauEnCours(false); }
   };
 
   const handleSave = useCallback(async () => {
@@ -2194,25 +2250,6 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
   };
 
-  const choisirTableauNiveau = async (valeur: string) => {
-    if (valeur === "__nouveau") {
-      const nom = window.prompt("Nom du tableau annexe (ex : Pool house, Garage)", "Pool house");
-      if (!nom || !nom.trim()) return;
-      const nouvelle: TableauAnnexe = { id: nouvelIdAnnexe(), nom: nom.trim(), rows: [] };
-      // Relit la base avant d'ajouter : l'éditeur de tableau a pu modifier les annexes.
-      const { data: c } = await supabase.from("projets").select("tableaux_annexes").eq("id", projet.id).single();
-      const deLaBase = lireAnnexes((c as any)?.tableaux_annexes).filter(a => !annexes.some(x => x.id === a.id));
-      const liste = [...deLaBase, ...annexes, nouvelle];
-      await sauverAnnexes(projet.id, liste);
-      setAnnexes(liste);
-      updateNiveauActif(n => ({ ...n, tableauId: nouvelle.id }));
-      invalidateResultat();
-      return;
-    }
-    updateNiveauActif(n => ({ ...n, tableauId: valeur === TABLEAU_PRINCIPAL ? undefined : valeur }));
-    invalidateResultat();
-  };
-
   const handlePousserVersTableau = async () => {
     if (!resultat || resultat.breakers.length === 0) return;
     setPushing(true);
@@ -2232,12 +2269,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const tousNomsCircuits: Record<string, string> = {};
     niveaux.forEach(n => Object.assign(tousNomsCircuits, n.nomsCircuits ?? {}));
     const breakersAvecNoms = breakersAPousser.map(b => ({ ...b, label: tousNomsCircuits[b.label] ?? b.label }));
-    // Routage par niveau : chaque circuit part vers le tableau de SON niveau (principal ou
-    // annexe). Un niveau dont l'annexe a été supprimée retombe sur le principal.
+    // Routage par niveau : les circuits de la maison partent vers l'unique tableau principal,
+    // ceux d'une annexe vers le tableau de cette annexe.
     const idsAnnexes = new Set(annexes.map(a => a.id));
     const cibleDuNiveau = (niveauId: number | undefined): string => {
-      const t = niveaux.find(n => n.id === niveauId)?.tableauId;
-      return t && t !== TABLEAU_PRINCIPAL && idsAnnexes.has(t) ? t : TABLEAU_PRINCIPAL;
+      const niv = niveaux.find(n => n.id === niveauId);
+      // Maison = toujours le tableau principal ; annexe = son propre tableau.
+      return niv && estAnnexe(niv) && niv.tableauId && idsAnnexes.has(niv.tableauId) ? niv.tableauId : TABLEAU_PRINCIPAL;
     };
     const groupes: Record<string, typeof breakersAvecNoms> = { [TABLEAU_PRINCIPAL]: [] };
     annexes.forEach(a => { groupes[a.id] = []; });
@@ -2394,26 +2432,49 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         </div>
 
         <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 bg-ink-50 overflow-x-auto shrink-0">
-          {[...niveaux].sort((a, b) => a.ordre - b.ordre).map(n => (
-            <button key={n.id} onClick={() => { setNiveauActifId(n.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedPointArrivee(false); setSelectedMeubleId(null); setCheminementDessin(null); setLiaisonLumiereMode(null); }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
-                n.id === niveauActifId ? "bg-ink-900 text-volt-400" : "bg-white border border-ink-200 text-ink-500 hover:border-ink-400"
-              }`}>
-              {n.nom || NIVEAU_TYPES[n.type]}
+          {[...niveaux].sort((a, b) => a.ordre - b.ordre).map((n, idx, arr) => {
+            const annexe = estAnnexe(n);
+            const debutAnnexes = annexe && (idx === 0 || !estAnnexe(arr[idx - 1]));
+            const actif = n.id === niveauActifId;
+            return (
+              <Fragment key={n.id}>
+                {debutAnnexes && (
+                  <span className="flex items-center gap-1.5 shrink-0 pl-1">
+                    <span className="w-px h-5 bg-ink-300" />
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-amber-600">Annexes</span>
+                  </span>
+                )}
+                <button onClick={() => { setNiveauActifId(n.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedPointArrivee(false); setSelectedMeubleId(null); setCheminementDessin(null); setLiaisonLumiereMode(null); }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+                    annexe
+                      ? (actif ? "bg-amber-500 text-white" : "bg-amber-50 border border-amber-300 text-amber-700 hover:border-amber-500")
+                      : (actif ? "bg-ink-900 text-volt-400" : "bg-white border border-ink-200 text-ink-500 hover:border-ink-400")
+                  }`}>
+                  {n.nom || NIVEAU_TYPES[n.type]}
+                </button>
+              </Fragment>
+            );
+          })}
+          <button onClick={() => setShowNiveauForm(true)} className="btn-ghost !px-2 !py-1.5 shrink-0" title="Ajouter un niveau ou une annexe"><Plus size={14} /></button>
+          {niveauActif && niveaux.length > 1 && (
+            <button onClick={() => setConfirmSuppNiveau(true)} className="btn-ghost !px-2 !py-1.5 shrink-0 text-red-500"
+              title={estAnnexe(niveauActif) ? "Supprimer cette annexe (et son tableau)" : "Supprimer ce niveau"}>
+              <Trash2 size={14} />
             </button>
-          ))}
-          <button onClick={() => setShowNiveauForm(true)} className="btn-ghost !px-2 !py-1.5 shrink-0"><Plus size={14} /></button>
+          )}
           {niveauActif && (
             <div className="flex items-center gap-1.5 ml-auto shrink-0 text-xs text-ink-400">
-              <span>Tableau</span>
-              <select className="input !py-1 !text-xs !w-auto max-w-[9rem]"
-                value={niveauActif.tableauId && annexes.some(a => a.id === niveauActif.tableauId) ? niveauActif.tableauId : TABLEAU_PRINCIPAL}
-                onChange={e => choisirTableauNiveau(e.target.value)}
-                title="Tableau qui alimente les circuits de ce niveau">
-                <option value={TABLEAU_PRINCIPAL}>Principal</option>
-                {annexes.map(a => <option key={a.id} value={a.id}>{a.nom}</option>)}
-                <option value="__nouveau">＋ Tableau annexe…</option>
-              </select>
+              {estAnnexe(niveauActif) ? (
+                <span className="px-2 py-1 rounded-md bg-amber-100 text-amber-700 font-semibold">Tableau propre à l'annexe</span>
+              ) : (
+                <>
+                  <span title="Distance entre le tableau de la maison et l'arrivée des gaines de ce niveau (liaison verticale non dessinée)">Distance tableau</span>
+                  <input type="number" min={0} step="0.1" className="input !py-1 !text-xs !w-16" placeholder="—"
+                    value={niveauActif.distanceArriveeGainesTableau ?? ""}
+                    onChange={e => modifierDistanceArriveeGaines(e.target.value !== "" ? Number(e.target.value) : undefined)} />
+                  <span>m</span>
+                </>
+              )}
               <span className="ml-2">Plafond</span>
               <input type="number" step="0.1" className="input !py-1 !text-xs !w-16"
                 value={niveauActif.hauteurPlafond ?? 2.5}
@@ -2493,8 +2554,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               🔀 {gaineNiveauActif.gaine} · {gaineNiveauActif.tauxPct}%
             </span>
           )}
-          {resultat && !niveauActif?.tableauPos && (
-            <span className="text-[11px] text-amber-600 font-semibold">Positionne le tableau pour voir le tracé des gaines</span>
+          {resultat && niveauActif && !origineCircuits(niveauActif) && (
+            <span className="text-[11px] text-amber-600 font-semibold">
+              {estAnnexe(niveauActif)
+                ? "Positionne le tableau de l'annexe pour voir le tracé des gaines"
+                : niveaux.some(n => !estAnnexe(n) && n.tableauPos)
+                  ? "Place l'arrivée des gaines de ce niveau pour voir le tracé (le tableau de la maison est sur un autre niveau)"
+                  : "Positionne le tableau pour voir le tracé des gaines"}
+            </span>
           )}
           {resultat && resultat.alertes.length > 0 && (
             <div className="relative">
@@ -2687,11 +2754,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 );
               })}
 
-              {showCircuits && resultat && niveauActif?.tableauPos && (() => {
+              {showCircuits && resultat && niveauActif && origineCircuits(niveauActif) && (() => {
                 // Origine du tracé : le point d'arrivée des gaines quand il est configuré
                 // sur ce niveau (cohérent avec le calcul de facturation, predevis-engine.ts
                 // — origineCalcul), sinon le tableau directement.
-                const tableauPos = niveauActif.pointArriveeGaines ?? niveauActif.tableauPos;
+                const tableauPos = origineCircuits(niveauActif)!;
                 const waypointsNiveau = niveauActif.liaisonWaypoints;
                 const tousAppareils = niveauActif.pieces.flatMap(p => p.appareillages);
                 const parCircuit = new Map<number, AppareillagePlace[]>();
@@ -2948,7 +3015,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 );
               })()}
 
-              {cheminementDessin && niveauActif?.tableauPos && (() => {
+              {cheminementDessin && niveauActif && origineCircuits(niveauActif) && (() => {
                 const membres = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === cheminementDessin.breaker.id);
                 // Un circuit manuel "déjà existant" (non relié au tableau) ne part jamais du
                 // tableau — même pendant l'aperçu du dessin de cheminement, avant de valider.
@@ -2960,7 +3027,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   .map(id => membres.find(m => m.id === id))
                   .filter((m): m is AppareillagePlace => !!m)
                   .map(a => toScreen({ x: a.x, y: a.y }));
-                const chemin = relieAuTableau ? [toScreen(niveauActif.tableauPos), ...placesPx] : placesPx;
+                const chemin = relieAuTableau ? [toScreen(origineCircuits(niveauActif)!), ...placesPx] : placesPx;
                 const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
                 return (
                   <>
@@ -3538,8 +3605,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     const couleur = b ? (colorMap.get(b.id) ?? "#666666") : (manuel!.couleur ?? "#78716c");
                     const visible = b ? circuitsVisibles.has(b.id) : true;
                     const pointsCircuit = b ? (niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id) ?? []) : [];
-                    const lg = b && showLongueurs && niveauActif?.tableauPos && pointsCircuit.length > 0
-                      ? longueurBranchesEclairage(segmentsPourCircuit(b, pointsCircuit, niveauActif, niveauActif.pointArriveeGaines ?? niveauActif.tableauPos), niveauActif.liaisonWaypoints)
+                    const lg = b && showLongueurs && niveauActif && origineCircuits(niveauActif) && pointsCircuit.length > 0
+                      ? longueurBranchesEclairage(segmentsPourCircuit(b, pointsCircuit, niveauActif, origineCircuits(niveauActif)!), niveauActif.liaisonWaypoints)
                       : null;
                     return (
                       <label key={item.key} className={`flex items-center gap-1.5 text-[11px] cursor-pointer ${visible ? "text-ink-600" : "text-ink-300"}`}>
@@ -3657,12 +3724,35 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         />
       )}
 
+      <ConfirmDialog
+        open={confirmSuppNiveau && !!niveauActif}
+        title={niveauActif && estAnnexe(niveauActif) ? "Supprimer cette annexe ?" : "Supprimer ce niveau ?"}
+        message={!niveauActif ? "" : estAnnexe(niveauActif)
+          ? `L'annexe « ${niveauActif.nom || "Annexe"} » sera supprimée avec ses pièces, ses appareillages et son tableau électrique (rangées comprises). Cette action est définitive.`
+          : `Le niveau « ${niveauActif.nom || NIVEAU_TYPES[niveauActif.type]} » sera supprimé avec ses ${niveauActif.pieces.length} pièce(s) et leurs appareillages.${niveauActif.tableauPos ? " Il porte le tableau de la maison : sa position sera perdue et sera à replacer sur un autre niveau." : ""} Les circuits déjà poussés restent dans le tableau jusqu'au prochain « Pousser vers le tableau ». Cette action est définitive.`}
+        onConfirm={supprimerNiveauActif}
+        onCancel={() => setConfirmSuppNiveau(false)}
+        loading={suppNiveauEnCours}
+      />
+
       {showNiveauForm && (
         <NiveauForm
-          onValidate={(nom, type, hauteurPlafond) => {
-            const nouveau = nouveauNiveau(type, niveaux.length);
-            nouveau.nom = nom;
+          onValidate={async (nom, type, hauteurPlafond) => {
+            const annexe = type === "annexe";
+            // Annexes triées après la maison (ordre ≥ 100) ; niveaux de la maison à la suite.
+            const ordre = annexe
+              ? 100 + niveaux.filter(estAnnexe).length
+              : Math.max(-1, ...niveaux.filter(n => !estAnnexe(n)).map(n => n.ordre)) + 1;
+            const nouveau = nouveauNiveau(type, ordre);
+            nouveau.nom = nom.trim() || (annexe ? "Annexe" : "");
             nouveau.hauteurPlafond = hauteurPlafond;
+            if (annexe) {
+              // Une annexe naît avec son propre tableau (vide) ; ses circuits y seront poussés.
+              const idTableau = nouvelIdAnnexe();
+              nouveau.tableauId = idTableau;
+              const liste = await synchroniserAnnexes(projet.id, [...annexes.map(a => ({ id: a.id, nom: a.nom })), { id: idTableau, nom: nouveau.nom }]);
+              setAnnexes(liste);
+            }
             setNiveaux(nvs => [...nvs, nouveau]);
             setNiveauActifId(nouveau.id);
             setShowNiveauForm(false);
