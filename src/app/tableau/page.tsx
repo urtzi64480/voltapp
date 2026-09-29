@@ -2,7 +2,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { Client } from "@/types";
+import { Client, Projet } from "@/types";
+import { qsProjet, listerProjets, sauverTableau } from "@/lib/projets";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { Zap, Plus, ShieldCheck, ShieldAlert, ShieldX, Search, ChevronRight, X } from "lucide-react";
@@ -38,9 +39,10 @@ function quickScore(rows: BreakerRow[]) {
 // ─── CLIENT PICKER MODAL ─────────────────────────────────────────────────────
 
 function ClientPickerModal({
-  clients, onPick, onClose,
+  clients, tableauClientIds, onPick, onClose,
 }: {
   clients: Client[];
+  tableauClientIds: Set<string>;
   onPick: (clientId: string) => void;
   onClose: () => void;
 }) {
@@ -85,7 +87,7 @@ function ClientPickerModal({
             <p className="text-center text-ink-400 text-sm py-8">Aucun client trouvé</p>
           ) : (
             filtered.map(c => {
-              const hasTableau = !!c.tableau_config && c.tableau_config !== "[]";
+              const hasTableau = tableauClientIds.has(c.id);
               return (
                 <button key={c.id}
                   onClick={() => onPick(c.id)}
@@ -179,7 +181,10 @@ function ReassignModal({
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 
 interface TableauEntry {
+  key: string;
   clientId: string;
+  projetId: string | null;
+  projetNom: string | null;
   client: Client;
   rows: BreakerRow[];
   score: number;
@@ -194,23 +199,41 @@ export default function TableauxPage() {
   const [showPicker, setShowPicker] = useState(false);
   const [reassign, setReassign]     = useState<TableauEntry | null>(null);
 
-  useEffect(() => {
-    supabase.from("clients").select("*").order("nom").then(({ data }) => {
-      const all = data ?? [];
-      setClients(all);
-      const entries: TableauEntry[] = [];
-      all.forEach(c => {
-        if (!c.tableau_config) return;
-        try {
-          const rows: BreakerRow[] = JSON.parse(c.tableau_config);
-          if (rows.length === 0) return;
-          entries.push({ clientId: c.id, client: c, rows, score: quickScore(rows) });
-        } catch {}
+  const charger = async () => {
+    const [{ data }, { data: projetsData }] = await Promise.all([
+      supabase.from("clients").select("*").order("nom"),
+      supabase.from("projets").select("*").order("created_at", { ascending: true }),
+    ]);
+    const all = data ?? [];
+    setClients(all);
+    const parClient: Record<string, Projet[]> = {};
+    ((projetsData ?? []) as Projet[]).forEach(p => { (parClient[p.client_id] ??= []).push(p); });
+    const lire = (raw: string | null | undefined): BreakerRow[] | null => {
+      if (!raw) return null;
+      try {
+        const rows: BreakerRow[] = JSON.parse(raw);
+        return Array.isArray(rows) && rows.length > 0 ? rows : null;
+      } catch { return null; }
+    };
+    const entries: TableauEntry[] = [];
+    all.forEach(c => {
+      const ps = parClient[c.id] ?? [];
+      if (ps.length === 0) {
+        // Client pas encore repris dans un projet : tableau historique (migré à l'ouverture).
+        const rows = lire(c.tableau_config);
+        if (rows) entries.push({ key: c.id, clientId: c.id, projetId: null, projetNom: null, client: c, rows, score: quickScore(rows) });
+        return;
+      }
+      ps.forEach(p => {
+        const rows = lire(p.tableau_config);
+        if (rows) entries.push({ key: p.id, clientId: c.id, projetId: p.id, projetNom: ps.length > 1 ? p.nom : null, client: c, rows, score: quickScore(rows) });
       });
-      setTableaux(entries);
-      setLoading(false);
     });
-  }, []);
+    setTableaux(entries);
+    setLoading(false);
+  };
+
+  useEffect(() => { charger(); }, []);
 
   const handleCreate = (clientId: string) => {
     setShowPicker(false);
@@ -219,23 +242,23 @@ export default function TableauxPage() {
 
   const handleReassign = async (entry: TableauEntry, newClientId: string | null) => {
     setReassign(null);
+    // Vide le tableau de la source (projet ou, à défaut, fiche client historique).
+    const viderSource = async () => {
+      if (entry.projetId) await sauverTableau(entry.clientId, entry.projetId, null);
+      else await supabase.from("clients").update({ tableau_config: null }).eq("id", entry.clientId);
+    };
     if (!newClientId) {
-      await supabase.from("clients").update({ tableau_config: null }).eq("id", entry.clientId);
-      setTableaux(t => t.filter(x => x.clientId !== entry.clientId));
+      await viderSource();
+      await charger();
       return;
     }
     if (newClientId === entry.clientId) return;
-    await Promise.all([
-      supabase.from("clients").update({ tableau_config: JSON.stringify(entry.rows) }).eq("id", newClientId),
-      supabase.from("clients").update({ tableau_config: null }).eq("id", entry.clientId),
-    ]);
-    const newClient = clients.find(c => c.id === newClientId);
-    if (!newClient) return;
-    setTableaux(t => t.map(x =>
-      x.clientId === entry.clientId
-        ? { ...x, clientId: newClientId, client: newClient }
-        : x
-    ));
+    // Le tableau arrive dans le premier projet du client cible (créé au besoin).
+    const cible = (await listerProjets(newClientId))[0];
+    if (!cible) { alert("Impossible de trouver le projet du client cible."); return; }
+    await sauverTableau(newClientId, cible.id, JSON.stringify(entry.rows));
+    await viderSource();
+    await charger();
   };
 
   const filtered = tableaux.filter(t =>
@@ -296,7 +319,7 @@ export default function TableauxPage() {
               const preview = nonDiffBreakers.slice(0, 8);
 
               return (
-                <div key={entry.clientId} className="card card-inner hover:border-volt-300 transition-colors">
+                <div key={entry.key} className="card card-inner hover:border-volt-300 transition-colors">
                   <div className="flex items-start gap-3">
                     <div className="w-10 h-10 rounded-full bg-ink-900 flex items-center justify-center text-volt-400 font-semibold text-sm shrink-0">
                       {(client.prenom ? client.prenom[0] : "") + (client.nom?.[0] ?? "")}
@@ -310,6 +333,7 @@ export default function TableauxPage() {
                           </p>
                           <p className="text-xs text-ink-400">
                             {rows.length} rangée{rows.length > 1 ? "s" : ""} · {totalBreakers} circuit{totalBreakers > 1 ? "s" : ""}
+                            {entry.projetNom ? ` · ${entry.projetNom}` : ""}
                             {client.ville ? ` · ${client.ville}` : ""}
                           </p>
                         </div>
@@ -335,7 +359,7 @@ export default function TableauxPage() {
                       </div>
 
                       <div className="flex gap-2 mt-3">
-                        <Link href={`/tableau/${entry.clientId}`} className="btn-volt !py-1.5 !text-xs">
+                        <Link href={`/tableau/${entry.clientId}${qsProjet(entry.projetId)}`} className="btn-volt !py-1.5 !text-xs">
                           <Zap size={12} /> Ouvrir
                         </Link>
                         <button
@@ -360,6 +384,7 @@ export default function TableauxPage() {
       {showPicker && (
         <ClientPickerModal
           clients={clients}
+          tableauClientIds={new Set(tableaux.map(t => t.clientId))}
           onPick={handleCreate}
           onClose={() => setShowPicker(false)}
         />
