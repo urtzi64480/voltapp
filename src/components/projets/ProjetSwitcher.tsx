@@ -13,8 +13,9 @@ interface Props {
   avantChangement?: () => Promise<void> | void;
   /** Changement de projet (déjà sauvegardé via avantChangement). */
   onSelect: (id: string) => void;
-  /** Liste modifiée (création / renommage / suppression) : recharger puis sélectionner nextId. */
-  onChanged: (nextId: string) => Promise<void> | void;
+  /** Liste modifiée (création / renommage / suppression) : recharger puis sélectionner nextId
+   *  (null = aucun projet restant : la page en recrée un vierge). */
+  onChanged: (nextId: string | null) => Promise<void> | void;
   compact?: boolean;
 }
 
@@ -56,12 +57,13 @@ export default function ProjetSwitcher({ clientId, projets, projetId, avantChang
   };
 
   const supprimer = async () => {
-    if (!courant || projets.length <= 1) return;
+    if (!courant) return;
     setBusy(true);
     try {
       const restant = projets.find(p => p.id !== courant.id);
-      await supprimerProjet(courant.id);
-      if (restant) await onChanged(restant.id);
+      const ok = await supprimerProjet(clientId, courant.id);
+      if (!ok) { alert("La suppression du projet a échoué."); return; }
+      await onChanged(restant?.id ?? null);
       setConfirmDel(false);
     } finally { setBusy(false); }
   };
@@ -80,9 +82,8 @@ export default function ProjetSwitcher({ clientId, projets, projetId, avantChang
         </select>
         <button type="button" onClick={() => ouvrir("new")} className="btn-ghost !px-2 !py-1.5" title="Nouveau projet pour ce client"><Plus size={14} /></button>
         <button type="button" onClick={() => ouvrir("edit")} className="btn-ghost !px-2 !py-1.5" title="Renommer le projet"><Pencil size={13} /></button>
-        {projets.length > 1 && (
-          <button type="button" onClick={() => setConfirmDel(true)} className="btn-ghost !px-2 !py-1.5 text-red-500" title="Supprimer le projet"><Trash2 size={13} /></button>
-        )}
+        <button type="button" onClick={() => setConfirmDel(true)} className="btn-ghost !px-2 !py-1.5 text-red-500"
+          title={projets.length > 1 ? "Supprimer ce projet (logement)" : "Supprimer le plan de ce client (remise à zéro)"}><Trash2 size={13} /></button>
       </div>
 
       {modal && (
@@ -112,8 +113,10 @@ export default function ProjetSwitcher({ clientId, projets, projetId, avantChang
 
       <ConfirmDialog
         open={confirmDel}
-        title="Supprimer ce projet ?"
-        message={`« ${courant?.nom ?? ""} » sera supprimé avec son plan de circuits, son tableau et son brouillon de pré-devis. Les devis déjà créés ne sont pas touchés.`}
+        title={projets.length > 1 ? "Supprimer ce projet ?" : "Supprimer le plan de ce client ?"}
+        message={projets.length > 1
+          ? `« ${courant?.nom ?? ""} » sera supprimé avec son plan de circuits, son tableau (annexes comprises) et son brouillon de pré-devis. Les devis déjà créés ne sont pas touchés. Cette action est définitive.`
+          : `C'est le seul projet de ce client : le supprimer efface son plan de circuits, son tableau (annexes comprises) et son brouillon de pré-devis, et repart d'un projet vierge. Les devis déjà créés ne sont pas touchés. Cette action est définitive.`}
         onConfirm={supprimer}
         onCancel={() => setConfirmDel(false)}
         loading={busy}
