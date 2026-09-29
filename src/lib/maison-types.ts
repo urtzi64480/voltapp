@@ -4,7 +4,7 @@
 // génération de circuits (maison-engine.ts). Source unique — ne pas dupliquer
 // ces interfaces ailleurs.
 
-export type NiveauType = "sous_sol" | "rdc" | "etage" | "combles" | "garage";
+export type NiveauType = "sous_sol" | "rdc" | "etage" | "combles" | "garage" | "annexe";
 export type PieceType = "sejour" | "chambre" | "cuisine" | "sdb" | "wc" | "circulation" | "exterieur" | "garage" | "autre";
 
 export type AppareillageType =
@@ -280,8 +280,9 @@ export interface Niveau {
   type: NiveauType;
   ordre: number;
   pieces: Piece[];
-  // Tableau qui alimente les circuits de ce niveau : absent / "principal" = tableau principal
-  // du projet ; sinon id d'un tableau annexe (Projet.tableaux_annexes — pool house, garage…).
+  // Niveaux de type "annexe" uniquement : id du tableau annexe (Projet.tableaux_annexes) qui
+  // alimente cette annexe, créé avec elle. Ignoré pour les niveaux de la maison, qui
+  // dépendent tous du tableau principal.
   tableauId?: string;
   tableauPos?: Point; // position du tableau électrique / GTL sur ce niveau
   tableauHauteur?: number; // cm — hauteur d'installation du tableau (vue 3D), 150 par défaut
@@ -348,7 +349,19 @@ export interface Maison {
 
 export const NIVEAU_TYPES: Record<NiveauType, string> = {
   sous_sol: "Sous-sol", rdc: "RDC", etage: "Étage", combles: "Combles", garage: "Garage",
+  annexe: "Annexe (pool house, dépendance…)",
 };
+
+// Une ANNEXE (pool house, dépendance…) a son propre tableau électrique. Tous les autres
+// niveaux forment « la maison » : un SEUL tableau (posé sur l'un des niveaux), et chaque
+// niveau de la maison configure sa distance à ce tableau (Niveau.distanceArriveeGainesTableau).
+export const estAnnexe = (n: { type: NiveauType }): boolean => n.type === "annexe";
+
+// Point d'où partent les câbles d'un niveau sur le plan : le point d'arrivée des gaines
+// quand il est configuré, sinon le tableau (posé sur ce niveau). Un niveau de la maison qui
+// ne porte pas le tableau n'a que son point d'arrivée.
+export const origineCircuits = (n: { pointArriveeGaines?: Point; tableauPos?: Point }): Point | undefined =>
+  n.pointArriveeGaines ?? n.tableauPos;
 
 export const PIECE_TYPES: Record<PieceType, { label: string; color: string; stroke: string }> = {
   sejour:      { label: "Séjour",        color: "#DBEAFE", stroke: "#60A5FA" },

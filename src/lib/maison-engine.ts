@@ -674,7 +674,7 @@ export function genererGainesNiveaux(resultat: ResultatGeneration): TronconGaine
 
     const info = gaineRecommandee(cables);
     troncons.push({
-      nom: `Tableau → ${niveau.nom || niveau.type}`,
+      nom: niveau.type === "annexe" ? `Tableau annexe → ${niveau.nom || "Annexe"}` : `Tableau → ${niveau.nom || niveau.type}`,
       niveau: niveau.nom || niveau.type,
       circuits: circuitsNiveau.map(b => b.label || CIRCUITS[b.circuit]?.label || b.circuit),
       cables,

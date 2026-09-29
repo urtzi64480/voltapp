@@ -91,6 +91,22 @@ export async function sauverAnnexes(projetId: string, annexes: TableauAnnexe[]) 
   return modifierProjet(projetId, { tableaux_annexes: annexes.length > 0 ? JSON.stringify(annexes) : null });
 }
 
+/**
+ * Aligne la liste des tableaux annexes sur les annexes voulues (une par niveau « Annexe » du
+ * plan) : les rangées déjà en base sont conservées, les nouvelles annexes démarrent vides,
+ * celles qui ne sont plus voulues sont supprimées avec leurs rangées. Relit la base avant
+ * d'écrire, pour ne jamais écraser des rangées modifiées depuis l'éditeur de tableau.
+ */
+export async function synchroniserAnnexes(projetId: string, voulues: { id: string; nom: string }[]): Promise<TableauAnnexe[]> {
+  const { data } = await supabase.from("projets").select("tableaux_annexes").eq("id", projetId).single();
+  const enBase = lireAnnexes((data as any)?.tableaux_annexes);
+  const liste: TableauAnnexe[] = voulues.map(v => ({
+    id: v.id, nom: v.nom, rows: enBase.find(a => a.id === v.id)?.rows ?? [],
+  }));
+  await sauverAnnexes(projetId, liste);
+  return liste;
+}
+
 /** Enregistre le tableau d'un projet ; recopie aussi dans clients.tableau_config si c'est le premier projet. */
 export async function sauverTableau(clientId: string, projetId: string, json: string | null) {
   const ok = await modifierProjet(projetId, { tableau_config: json });
@@ -101,9 +117,32 @@ export async function sauverTableau(clientId: string, projetId: string, json: st
   return ok;
 }
 
-export async function supprimerProjet(id: string) {
+/**
+ * Supprime un projet (plan, tableau principal, annexes et brouillon de pré-devis compris).
+ * Les colonnes historiques du client (clients.maison_config / tableau_config /
+ * predevis_config) sont ensuite réalignées : sans ça, la reprise automatique de
+ * listerProjets() ressusciterait le projet supprimé à partir de l'ancienne copie.
+ * Les devis déjà créés ne sont pas touchés. Un client n'est jamais laissé sans projet :
+ * supprimer son dernier projet le remet à zéro (un projet vierge est recréé à l'ouverture).
+ */
+export async function supprimerProjet(clientId: string, id: string) {
   const { error } = await supabase.from("projets").delete().eq("id", id);
-  if (error) console.error("projets: suppression impossible", error);
+  if (error) { console.error("projets: suppression impossible", error); return false; }
+  const { data: restants } = await supabase
+    .from("projets").select("tableau_config").eq("client_id", clientId).order("created_at", { ascending: true });
+  if (restants && restants.length > 0) {
+    await supabase.from("clients").update({ tableau_config: (restants[0] as any).tableau_config ?? null } as any).eq("id", clientId);
+  } else {
+    await supabase.from("clients").update({ maison_config: null, tableau_config: null, predevis_config: null } as any).eq("id", clientId);
+  }
+  return true;
+}
+
+/** Client sans projet (ancien plan jamais ouvert depuis l'ajout des projets) : vide ses données historiques. */
+export async function viderDonneesHistoriques(clientId: string) {
+  const { error } = await supabase.from("clients")
+    .update({ maison_config: null, tableau_config: null, predevis_config: null } as any).eq("id", clientId);
+  if (error) console.error("projets: nettoyage impossible", error);
   return !error;
 }
 
@@ -129,6 +168,12 @@ export function useProjets(clientId: string) {
     setProjets(liste);
     setProjetId(choisi?.id ?? null);
     setLoading(false);
+    // Garde l'URL cohérente (un ?projet= pointant sur un projet supprimé est corrigé).
+    if (choisi && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("projet") !== choisi.id) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("projet", choisi.id);
+      window.history.replaceState(null, "", url.toString());
+    }
   }, [clientId]);
 
   useEffect(() => { setLoading(true); charger(); }, [charger]);
