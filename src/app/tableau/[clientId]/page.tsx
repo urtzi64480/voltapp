@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
 import Shell from "@/components/layout/Shell";
-import { useProjets, qsProjet, sauverTableau, sauverAnnexes, lireAnnexes, nouvelIdAnnexe, TABLEAU_PRINCIPAL } from "@/lib/projets";
+import { useProjets, qsProjet, sauverTableau, sauverAnnexes, lireAnnexes, TABLEAU_PRINCIPAL } from "@/lib/projets";
 import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import Link from "next/link";
 import {
@@ -1290,7 +1290,7 @@ export default function TableauPage() {
   const clientId = params.clientId as string;
   const { projets, projet, loading, changerProjet, recharger } = useProjets(clientId);
   // Recharge les projets (données fraîches) puis bascule ; la clé remonte toute la page.
-  const choisir = async (id: string) => { await recharger(id); changerProjet(id); };
+  const choisir = async (id: string | null) => { await recharger(id ?? undefined); if (id) changerProjet(id); };
   if (loading) return <Shell><div className="flex items-center justify-center h-64 text-ink-400">Chargement…</div></Shell>;
   if (!projet) return <Shell><div className="p-8 text-center text-ink-500">Impossible de charger le projet de ce client. Vérifie que la migration 002_projets.sql a bien été exécutée.</div></Shell>;
   return <TableauEditor key={projet.id} clientId={clientId} projet={projet} projets={projets} onSelect={choisir} onChanged={choisir} />;
@@ -1333,7 +1333,7 @@ function normaliserRows(parsed: any[]): BreakerRow[] {
 
 function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
   clientId: string; projet: Projet; projets: Projet[];
-  onSelect: (id: string) => Promise<void> | void; onChanged: (id: string) => Promise<void> | void;
+  onSelect: (id: string) => Promise<void> | void; onChanged: (id: string | null) => Promise<void> | void;
 }) {
 
   const [client, setClient]   = useState<Client | null>(null);
@@ -1400,38 +1400,6 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setStock(st => ({ ...st, [actifId]: rows }));
     setRows(stock[id] ?? []);
     setActifId(id);
-    setSelectedSlot(null); setEditBreaker(null); setSchemaBreaker(null);
-  };
-
-  const ajouterAnnexe = () => {
-    const nom = window.prompt("Nom du tableau annexe (ex : Pool house, Garage)", "Pool house");
-    if (!nom || !nom.trim()) return;
-    const id = nouvelIdAnnexe();
-    setAnnexes(a => [...a, { id, nom: nom.trim() }]);
-    setStock(st => ({ ...st, [actifId]: rows, [id]: [] }));
-    setRows([]);
-    setActifId(id);
-    setSelectedSlot(null); setEditBreaker(null); setSchemaBreaker(null);
-  };
-
-  const renommerAnnexe = () => {
-    const courante = annexes.find(a => a.id === actifId);
-    if (!courante) return;
-    const nom = window.prompt("Nouveau nom du tableau annexe", courante.nom);
-    if (!nom || !nom.trim()) return;
-    setAnnexes(a => a.map(x => (x.id === actifId ? { ...x, nom: nom.trim() } : x)));
-  };
-
-  const supprimerAnnexe = () => {
-    const courante = annexes.find(a => a.id === actifId);
-    if (!courante) return;
-    if (!window.confirm(`Supprimer le tableau annexe « ${courante.nom} » et toutes ses rangées ? Les niveaux du plan qui y étaient rattachés repartiront sur le tableau principal au prochain « Pousser ».`)) return;
-    const restant = { ...stock };
-    delete restant[courante.id];
-    setAnnexes(a => a.filter(x => x.id !== courante.id));
-    setRows(restant[TABLEAU_PRINCIPAL] ?? []);
-    setStock(restant);
-    setActifId(TABLEAU_PRINCIPAL);
     setSelectedSlot(null); setEditBreaker(null); setSchemaBreaker(null);
   };
 
@@ -1528,14 +1496,8 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 actifId === a.id ? "bg-ink-900 text-volt-400" : "bg-white border border-ink-200 text-ink-500 hover:border-ink-400"
               }`}>{a.nom}</button>
           ))}
-          <button onClick={ajouterAnnexe} className="btn-ghost !px-2 !py-1.5 !text-xs shrink-0" title="Ajouter un tableau annexe (pool house, garage…)">
-            <Plus size={13} /> Tableau annexe
-          </button>
-          {actifId !== TABLEAU_PRINCIPAL && (
-            <div className="flex items-center gap-1 ml-auto shrink-0">
-              <button onClick={renommerAnnexe} className="btn-ghost !px-2 !py-1.5 !text-xs">Renommer</button>
-              <button onClick={supprimerAnnexe} className="btn-ghost !px-2 !py-1.5 !text-xs text-red-500"><Trash2 size={13} /></button>
-            </div>
+          {annexes.length === 0 && (
+            <span className="text-[11px] text-ink-400 ml-1">Pool house, dépendance… : crée un niveau « Annexe » dans le plan de circuits, son tableau apparaîtra ici.</span>
           )}
         </div>
         <div className="px-6 py-2 bg-ink-50 border-b border-ink-100 text-xs text-ink-400 hidden md:block">
