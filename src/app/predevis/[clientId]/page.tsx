@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { Client, Prestation, DevisLigne } from "@/types";
+import { Client, Prestation, DevisLigne, Projet } from "@/types";
+import { useProjets, qsProjet, modifierProjet, lireAnnexes } from "@/lib/projets";
+import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import { Niveau } from "@/lib/maison-types";
 import { BreakerRow } from "@/lib/electrical-constants";
 import {
@@ -203,8 +205,20 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
 
 export default function PreDevisPage() {
   const params = useParams();
-  const router = useRouter();
   const clientId = params.clientId as string;
+  const { projets, projet, loading, changerProjet, recharger } = useProjets(clientId);
+  // Recharge les projets (données fraîches) puis bascule ; la clé remonte toute la page.
+  const choisir = async (id: string) => { await recharger(id); changerProjet(id); };
+  if (loading) return <Shell><div className="p-8 text-center text-ink-400">Chargement…</div></Shell>;
+  if (!projet) return <Shell><div className="p-8 text-center text-ink-500">Impossible de charger le projet de ce client. Vérifie que la migration 002_projets.sql a bien été exécutée.</div></Shell>;
+  return <PreDevisEditor key={projet.id} clientId={clientId} projet={projet} projets={projets} onSelect={choisir} onChanged={choisir} />;
+}
+
+function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
+  clientId: string; projet: Projet; projets: Projet[];
+  onSelect: (id: string) => Promise<void> | void; onChanged: (id: string) => Promise<void> | void;
+}) {
+  const router = useRouter();
 
   const [client, setClient] = useState<Client | null>(null);
   const [prestations, setPrestations] = useState<Prestation[]>([]);
@@ -245,16 +259,20 @@ export default function PreDevisPage() {
       setProfil(prof);
 
       let niveaux: Niveau[] = [];
-      if ((c as any)?.maison_config) {
-        try { const parsed = JSON.parse((c as any).maison_config); if (Array.isArray(parsed?.niveaux)) niveaux = parsed.niveaux; } catch {}
+      if (projet.maison_config) {
+        try { const parsed = JSON.parse(projet.maison_config); if (Array.isArray(parsed?.niveaux)) niveaux = parsed.niveaux; } catch {}
       }
       let rows: BreakerRow[] = [];
-      if ((c as any)?.tableau_config) {
-        try { const parsed = JSON.parse((c as any).tableau_config); if (Array.isArray(parsed)) rows = parsed; } catch {}
+      if (projet.tableau_config) {
+        try { const parsed = JSON.parse(projet.tableau_config); if (Array.isArray(parsed)) rows = parsed; } catch {}
       }
+      // Tableaux annexes (pool house, garage…) : leurs disjoncteurs/différentiels se chiffrent
+      // avec ceux du principal, et la section d'un circuit se retrouve par son libellé quel
+      // que soit le tableau qui le porte.
+      rows = [...rows, ...lireAnnexes(projet.tableaux_annexes).flatMap(a => a.rows)];
 
       if (niveaux.length === 0) {
-        setAlertesGeometrie(["Aucun plan de circuits enregistré pour ce client — dessine et génère les circuits d'abord."]);
+        setAlertesGeometrie(["Aucun plan de circuits enregistré pour ce projet — dessine et génère les circuits d'abord."]);
         setLoading(false);
         return;
       }
@@ -268,8 +286,8 @@ export default function PreDevisPage() {
       // les choix dont la clé de besoin existe encore (le plan/tableau peut avoir changé
       // depuis la dernière sauvegarde) ; le reste repart sur les valeurs par défaut.
       let brouillon: { choix?: Record<string, EtatChoix>; mainOeuvreHeures?: string; mainOeuvreIndex?: number; fraisGenerauxPct?: string; deplacementEur?: string } | null = null;
-      if ((c as any)?.predevis_config) {
-        try { brouillon = JSON.parse((c as any).predevis_config); } catch {}
+      if (projet.predevis_config) {
+        try { brouillon = JSON.parse(projet.predevis_config); } catch {}
       }
 
       const initChoix: Record<string, EtatChoix> = {};
@@ -286,7 +304,8 @@ export default function PreDevisPage() {
       setLoading(false);
     }
     load();
-  }, [clientId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId, projet.id]);
 
   // Regroupe câbles/gaines/moulures par sous-catégorie, TOUTES PIÈCES CONFONDUES, pour
   // choisir une seule fois la meilleure combinaison bobine + mètre linéaire sur le métrage
@@ -343,7 +362,7 @@ export default function PreDevisPage() {
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
     const contenu = JSON.stringify({ choix, mainOeuvreHeures, mainOeuvreIndex, fraisGenerauxPct, deplacementEur });
-    await supabase.from("clients").update({ predevis_config: contenu } as any).eq("id", clientId);
+    await modifierProjet(projet.id, { predevis_config: contenu });
     setSavingDraft(false);
     setDraftSaved(true);
     setTimeout(() => setDraftSaved(false), 2000);
@@ -470,7 +489,7 @@ export default function PreDevisPage() {
 
       const { data: devis, error } = await supabase.from("devis").insert({
         user_id: session.user.id, client_id: clientId, numero,
-        objet: "Pré-devis électrique",
+        objet: projets.length > 1 ? `Pré-devis électrique — ${projet.nom}` : "Pré-devis électrique",
         statut: "brouillon", total_service: totalService, total_materiau: totalMateriau,
         total_ttc: totalService + totalMateriau,
       }).select().single();
@@ -496,7 +515,7 @@ export default function PreDevisPage() {
       await supabase.from("profil").update({ compteur_devis: (prof?.compteur_devis ?? 0) + 1 }).eq("id", session.user.id);
       // Le devis final matérialise le brouillon — on l'efface pour ne pas laisser un
       // brouillon obsolète si le client revient sur cette page plus tard.
-      await supabase.from("clients").update({ predevis_config: null } as any).eq("id", clientId);
+      await modifierProjet(projet.id, { predevis_config: null });
 
       router.push(`/devis/${devis.id}`);
     } finally {
@@ -510,11 +529,13 @@ export default function PreDevisPage() {
     <Shell>
       <div className="p-4 md:p-8 max-w-3xl mx-auto">
         <div className="flex items-center gap-3 mb-6">
-          <Link href={`/plan/${clientId}`} className="btn-ghost !px-2.5 !py-2"><ArrowLeft size={16} /></Link>
+          <Link href={`/plan/${clientId}${qsProjet(projet.id)}`} className="btn-ghost !px-2.5 !py-2"><ArrowLeft size={16} /></Link>
           <div className="flex-1">
             <h1 className="font-display text-2xl">Pré-devis électrique</h1>
             {client && <p className="text-xs text-ink-400">{client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</p>}
           </div>
+          <ProjetSwitcher clientId={clientId} projets={projets} projetId={projet.id}
+            avantChangement={sauvegarderBrouillon} onSelect={onSelect} onChanged={onChanged} compact />
         </div>
 
         {toutesLesPiecesReelles.length > 1 && (
