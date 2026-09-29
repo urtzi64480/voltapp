@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
+import { qsProjet } from "@/lib/projets";
 import { Zap, ShieldCheck, ShieldAlert, ShieldX, Plus } from "lucide-react";
 
 interface Breaker {
@@ -75,26 +76,43 @@ function quickScore(rows: BreakerRow[]): number {
   return Math.max(0, Math.round(100 - errors * 15));
 }
 
+interface Item { projetId: string | null; nom: string | null; rows: BreakerRow[]; annexes: { nom: string; nbCircuits: number }[]; }
+
+function parseAnnexes(raw: string | null | undefined): { nom: string; nbCircuits: number }[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((t: any) => ({
+      nom: typeof t?.nom === "string" && t.nom ? t.nom : "Tableau annexe",
+      nbCircuits: (Array.isArray(t?.rows) ? t.rows : []).flatMap((r: BreakerRow) => safeBreakers(r)).filter((b: Breaker) => !BREAKER_TYPES[b.type]?.isDiff).length,
+    }));
+  } catch { return []; }
+}
+
+function parseRows(raw: string | null | undefined): BreakerRow[] {
+  if (!raw) return [];
+  try { const parsed = JSON.parse(raw); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+}
+
 export default function TableauClientWidget({ clientId }: { clientId: string }) {
-  const [rows, setRows]       = useState<BreakerRow[] | null>(null);
+  const [items, setItems]     = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.from("clients")
-      .select("tableau_config")
-      .eq("id", clientId)
-      .single()
-      .then(({ data }) => {
-        if (data?.tableau_config) {
-          try {
-            const parsed = JSON.parse(data.tableau_config);
-            setRows(Array.isArray(parsed) ? parsed : []);
-          } catch { setRows([]); }
-        } else {
-          setRows([]);
-        }
-        setLoading(false);
-      });
+    Promise.all([
+      supabase.from("projets").select("id, nom, tableau_config, tableaux_annexes").eq("client_id", clientId).order("created_at", { ascending: true }),
+      supabase.from("clients").select("tableau_config").eq("id", clientId).single(),
+    ]).then(([{ data: projets }, { data: client }]) => {
+      if (projets && projets.length > 0) {
+        const multi = projets.length > 1;
+        setItems(projets.map((p: any) => ({ projetId: p.id as string, nom: multi ? (p.nom as string) : null, rows: parseRows(p.tableau_config), annexes: parseAnnexes(p.tableaux_annexes) })));
+      } else {
+        // Client pas encore repris dans un projet : tableau historique.
+        setItems([{ projetId: null, nom: null, rows: parseRows((client as any)?.tableau_config), annexes: [] }]);
+      }
+      setLoading(false);
+    });
   }, [clientId]);
 
   if (loading) {
@@ -107,7 +125,24 @@ export default function TableauClientWidget({ clientId }: { clientId: string }) 
     );
   }
 
-  if (!rows || rows.length === 0) {
+  return (
+    <div className="space-y-3">
+      {items.map(it => (
+        <CarteTableau key={it.projetId ?? "legacy"} clientId={clientId} projetId={it.projetId} projetNom={it.nom} rows={it.rows} annexes={it.annexes} />
+      ))}
+    </div>
+  );
+}
+
+function CarteTableau({ clientId, projetId, projetNom, rows, annexes }: {
+  clientId: string; projetId: string | null; projetNom: string | null; rows: BreakerRow[];
+  annexes: { nom: string; nbCircuits: number }[];
+}) {
+  const texteAnnexes = annexes.length > 0 ? ` · + ${annexes.map(a => `${a.nom} (${a.nbCircuits})`).join(", ")}` : "";
+  const href = `/tableau/${clientId}${qsProjet(projetId)}`;
+  const titre = projetNom ? `Tableau électrique — ${projetNom}` : "Tableau électrique";
+
+  if (rows.length === 0) {
     return (
       <div className="card card-inner flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -115,11 +150,11 @@ export default function TableauClientWidget({ clientId }: { clientId: string }) 
             <Zap size={18} className="text-ink-400" />
           </div>
           <div>
-            <p className="font-semibold text-ink-700 text-sm">Tableau électrique</p>
-            <p className="text-xs text-ink-400">Aucun tableau configuré</p>
+            <p className="font-semibold text-ink-700 text-sm">{titre}</p>
+            <p className="text-xs text-ink-400">Aucun tableau configuré{texteAnnexes}</p>
           </div>
         </div>
-        <Link href={`/tableau/${clientId}`} className="btn-volt !py-1.5 !text-xs">
+        <Link href={href} className="btn-volt !py-1.5 !text-xs">
           <Plus size={13} /> Créer
         </Link>
       </div>
@@ -137,7 +172,7 @@ export default function TableauClientWidget({ clientId }: { clientId: string }) 
   const preview = allBreakers.slice(0, 10);
 
   return (
-    <Link href={`/tableau/${clientId}`}
+    <Link href={href}
       className="card card-inner block hover:border-volt-400 transition-colors group">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
@@ -145,9 +180,9 @@ export default function TableauClientWidget({ clientId }: { clientId: string }) 
             <Zap size={15} className="text-volt-400" />
           </div>
           <div>
-            <p className="font-semibold text-ink-900 text-sm">Tableau électrique</p>
+            <p className="font-semibold text-ink-900 text-sm">{titre}</p>
             <p className="text-xs text-ink-400">
-              {rows.length} rangée{rows.length > 1 ? "s" : ""} · {allBreakers.length} circuit{allBreakers.length > 1 ? "s" : ""}
+              {rows.length} rangée{rows.length > 1 ? "s" : ""} · {allBreakers.length} circuit{allBreakers.length > 1 ? "s" : ""}{texteAnnexes}
             </p>
           </div>
         </div>
