@@ -4,8 +4,10 @@ import type { ReactNode } from "react";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { Client } from "@/types";
+import { Client, Projet } from "@/types";
 import Shell from "@/components/layout/Shell";
+import { useProjets, qsProjet, modifierProjet, sauverTableau, sauverAnnexes, lireAnnexes, nouvelIdAnnexe, TABLEAU_PRINCIPAL, TableauAnnexe } from "@/lib/projets";
+import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, X,
@@ -884,6 +886,19 @@ function Print3DForm({ niveaux, niveauActifId, onValider, onCancel }: {
 export default function PlanPage() {
   const params = useParams();
   const clientId = params.clientId as string;
+  const { projets, projet, loading, changerProjet, recharger } = useProjets(clientId);
+  // Recharge la liste (données fraîches de chaque projet) puis bascule : la clé force un
+  // remontage complet de l'éditeur, donc aucun état d'un projet ne fuit dans l'autre.
+  const choisir = async (id: string) => { await recharger(id); changerProjet(id); };
+  if (loading) return <Shell><div className="flex items-center justify-center h-64 text-ink-400">Chargement…</div></Shell>;
+  if (!projet) return <Shell><div className="p-8 text-center text-ink-500">Impossible de charger le projet de ce client. Vérifie que la migration 002_projets.sql a bien été exécutée.</div></Shell>;
+  return <PlanEditor key={projet.id} clientId={clientId} projet={projet} projets={projets} onSelect={choisir} onChanged={choisir} />;
+}
+
+function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
+  clientId: string; projet: Projet; projets: Projet[];
+  onSelect: (id: string) => Promise<void> | void; onChanged: (id: string) => Promise<void> | void;
+}) {
 
   const [client, setClient] = useState<Client | null>(null);
   const [loading, setLoading] = useState(true);
@@ -962,6 +977,9 @@ export default function PlanPage() {
   const vue3DRef = useRef<Vue3DHandle>(null);
   const [pushing, setPushing] = useState(false);
   const [pushMsg, setPushMsg] = useState<string | null>(null);
+  // Tableaux annexes du projet (pool house, garage…) — chaque niveau choisit son tableau
+  // (Niveau.tableauId) ; le tableau principal reste dans projets.tableau_config.
+  const [annexes, setAnnexes] = useState<TableauAnnexe[]>(() => lireAnnexes(projet.tableaux_annexes));
 
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<Point>({ x: 60, y: 60 });
@@ -972,41 +990,43 @@ export default function PlanPage() {
   useEffect(() => { forceRerender(t => t + 1); }, []);
 
   useEffect(() => {
-    supabase.from("clients").select("*").eq("id", clientId).single().then(({ data: c }) => {
-      if (c) {
-        setClient(c);
-        const raw = (c as any).maison_config as string | null | undefined;
-        if (raw) {
-          try {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed?.niveaux) && parsed.niveaux.length > 0) {
-              // Doit tourner avant reamorcerCompteurId : assigne de nouveaux id (uidMaison())
-              // aux boîtes migrées depuis l'ancien format, que le compteur doit ensuite couvrir.
-              migrerBoitesDerivation(parsed.niveaux);
-              reamorcerCompteurId(parsed.niveaux);
-              // Nettoie une fois pour toutes d'éventuels id en double laissés par une
-              // session précédente (voir dedupliquerIds) — sinon deux appareillages
-              // différents peuvent partager le même id et se marcher dessus visuellement
-              // (l'un "increvable" au clic, qui dérive sur le plan).
-              const { niveaux: niveauxPropres, corrections } = dedupliquerIds(parsed.niveaux);
-              setNiveaux(niveauxPropres);
-              setNiveauActifId(niveauxPropres[0].id);
-              setLoading(false);
-              if (corrections > 0) {
-                supabase.from("clients").update({ maison_config: JSON.stringify({ niveaux: niveauxPropres }) } as any).eq("id", clientId);
-              }
-              return;
-            }
-          } catch {}
-        }
-      }
-      const def = nouveauNiveau("rdc", 0);
-      def.nom = "RDC";
-      setNiveaux([def]);
-      setNiveauActifId(def.id);
-      setLoading(false);
-    });
+    supabase.from("clients").select("*").eq("id", clientId).single().then(({ data: c }) => { if (c) setClient(c); });
   }, [clientId]);
+
+  // Le plan vient du projet (et non plus directement du client) : un client peut avoir
+  // plusieurs projets. L'éditeur est remonté (key=projet.id) à chaque changement de projet.
+  useEffect(() => {
+    const raw = projet.maison_config;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed?.niveaux) && parsed.niveaux.length > 0) {
+          // Doit tourner avant reamorcerCompteurId : assigne de nouveaux id (uidMaison())
+          // aux boîtes migrées depuis l'ancien format, que le compteur doit ensuite couvrir.
+          migrerBoitesDerivation(parsed.niveaux);
+          reamorcerCompteurId(parsed.niveaux);
+          // Nettoie une fois pour toutes d'éventuels id en double laissés par une
+          // session précédente (voir dedupliquerIds) — sinon deux appareillages
+          // différents peuvent partager le même id et se marcher dessus visuellement
+          // (l'un "increvable" au clic, qui dérive sur le plan).
+          const { niveaux: niveauxPropres, corrections } = dedupliquerIds(parsed.niveaux);
+          setNiveaux(niveauxPropres);
+          setNiveauActifId(niveauxPropres[0].id);
+          setLoading(false);
+          if (corrections > 0) {
+            modifierProjet(projet.id, { maison_config: JSON.stringify({ niveaux: niveauxPropres }) });
+          }
+          return;
+        }
+      } catch {}
+    }
+    const def = nouveauNiveau("rdc", 0);
+    def.nom = "RDC";
+    setNiveaux([def]);
+    setNiveauActifId(def.id);
+    setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projet.id]);
 
   const niveauActif = niveaux.find(n => n.id === niveauActifId) ?? null;
 
@@ -2132,10 +2152,10 @@ export default function PlanPage() {
 
   const handleSave = useCallback(async () => {
     setSaving(true);
-    await supabase.from("clients").update({ maison_config: JSON.stringify({ niveaux }) } as any).eq("id", clientId);
+    await modifierProjet(projet.id, { maison_config: JSON.stringify({ niveaux }) });
     setSaving(false); setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-  }, [niveaux, clientId]);
+  }, [niveaux, projet.id]);
 
   const handleGenerer = () => {
     const res = genererCircuits({ niveaux });
@@ -2174,6 +2194,25 @@ export default function PlanPage() {
     }
   };
 
+  const choisirTableauNiveau = async (valeur: string) => {
+    if (valeur === "__nouveau") {
+      const nom = window.prompt("Nom du tableau annexe (ex : Pool house, Garage)", "Pool house");
+      if (!nom || !nom.trim()) return;
+      const nouvelle: TableauAnnexe = { id: nouvelIdAnnexe(), nom: nom.trim(), rows: [] };
+      // Relit la base avant d'ajouter : l'éditeur de tableau a pu modifier les annexes.
+      const { data: c } = await supabase.from("projets").select("tableaux_annexes").eq("id", projet.id).single();
+      const deLaBase = lireAnnexes((c as any)?.tableaux_annexes).filter(a => !annexes.some(x => x.id === a.id));
+      const liste = [...deLaBase, ...annexes, nouvelle];
+      await sauverAnnexes(projet.id, liste);
+      setAnnexes(liste);
+      updateNiveauActif(n => ({ ...n, tableauId: nouvelle.id }));
+      invalidateResultat();
+      return;
+    }
+    updateNiveauActif(n => ({ ...n, tableauId: valeur === TABLEAU_PRINCIPAL ? undefined : valeur }));
+    invalidateResultat();
+  };
+
   const handlePousserVersTableau = async () => {
     if (!resultat || resultat.breakers.length === 0) return;
     setPushing(true);
@@ -2193,22 +2232,64 @@ export default function PlanPage() {
     const tousNomsCircuits: Record<string, string> = {};
     niveaux.forEach(n => Object.assign(tousNomsCircuits, n.nomsCircuits ?? {}));
     const breakersAvecNoms = breakersAPousser.map(b => ({ ...b, label: tousNomsCircuits[b.label] ?? b.label }));
-    const nouvellesRows = assemblerTableau(breakersAvecNoms);
-    const { data: c } = await supabase.from("clients").select("tableau_config").eq("id", clientId).single();
-    let rows: BreakerRow[] = [];
+    // Routage par niveau : chaque circuit part vers le tableau de SON niveau (principal ou
+    // annexe). Un niveau dont l'annexe a été supprimée retombe sur le principal.
+    const idsAnnexes = new Set(annexes.map(a => a.id));
+    const cibleDuNiveau = (niveauId: number | undefined): string => {
+      const t = niveaux.find(n => n.id === niveauId)?.tableauId;
+      return t && t !== TABLEAU_PRINCIPAL && idsAnnexes.has(t) ? t : TABLEAU_PRINCIPAL;
+    };
+    const groupes: Record<string, typeof breakersAvecNoms> = { [TABLEAU_PRINCIPAL]: [] };
+    annexes.forEach(a => { groupes[a.id] = []; });
+    breakersAvecNoms.forEach(b => { groupes[cibleDuNiveau(b.niveauId)].push(b); });
+
+    // Remplace le lot généré par le plan (tag origine:"plan") dans un tableau : sans ça, chaque
+    // clic sur "Pousser" dupliquerait les rangées. Les rangées créées à la main dans l'éditeur
+    // de tableau (sans ce tag) ne sont jamais touchées. Appliqué à TOUS les tableaux, même
+    // sans nouveau circuit : un niveau rattaché à un autre tableau doit disparaître de l'ancien.
+    const remplacerLotPlan = (existantes: BreakerRow[], circuits: typeof breakersAvecNoms) => {
+      const rowsConservees = existantes.filter(r => r.origine !== "plan");
+      const nouvelles = circuits.length > 0 ? assemblerTableau(circuits) : [];
+      const offset = maxIdRows(rowsConservees) + 100000;
+      const remap = remapperIdsRows(nouvelles, offset).map((r, i) => ({ ...r, name: `Rangée ${rowsConservees.length + i + 1}` }));
+      return { rowsFinal: [...rowsConservees, ...remap], nbRangees: remap.length };
+    };
+
+    const { data: c } = await supabase.from("projets").select("tableau_config, tableaux_annexes").eq("id", projet.id).single();
+    let rowsPrincipal: BreakerRow[] = [];
     if (c?.tableau_config) {
-      try { const parsed = JSON.parse(c.tableau_config); if (Array.isArray(parsed)) rows = parsed; } catch {}
+      try { const parsed = JSON.parse(c.tableau_config); if (Array.isArray(parsed)) rowsPrincipal = parsed; } catch {}
     }
-    // On retire l'ancien lot généré par le plan (tag origine:"plan") avant de réinsérer le
-    // nouveau — sinon chaque clic sur "Pousser" duplique les rangées. Les rangées créées à
-    // la main dans l'éditeur de tableau (sans ce tag) ne sont jamais touchées.
-    const rowsConservees = rows.filter(r => r.origine !== "plan");
-    const offset = maxIdRows(rowsConservees) + 100000;
-    const remap = remapperIdsRows(nouvellesRows, offset).map((r, i) => ({ ...r, name: `Rangée ${rowsConservees.length + i + 1}` }));
-    const rowsFinal = [...rowsConservees, ...remap];
-    await supabase.from("clients").update({ tableau_config: JSON.stringify(rowsFinal) }).eq("id", clientId);
+    const annexesBase = lireAnnexes((c as any)?.tableaux_annexes);
+
+    const resPrincipal = remplacerLotPlan(rowsPrincipal, groupes[TABLEAU_PRINCIPAL]);
+    await sauverTableau(clientId, projet.id, JSON.stringify(resPrincipal.rowsFinal));
+
+    let nbRangeesAnnexes = 0;
+    let nbCircuitsAnnexes = 0;
+    if (annexes.length > 0) {
+      // On repart de la version en base (elle peut avoir été modifiée dans l'éditeur de
+      // tableau) ; une annexe créée ici mais absente de la base est reprise de l'état local.
+      const parId = new Map<string, TableauAnnexe>();
+      annexes.forEach(a => parId.set(a.id, a));
+      annexesBase.forEach(a => parId.set(a.id, a));
+      const annexesFinales = annexes.map(a => {
+        const base = parId.get(a.id) ?? a;
+        const r = remplacerLotPlan(base.rows ?? [], groupes[a.id] ?? []);
+        nbRangeesAnnexes += r.nbRangees;
+        nbCircuitsAnnexes += (groupes[a.id] ?? []).length;
+        return { ...base, rows: r.rowsFinal };
+      });
+      await sauverAnnexes(projet.id, annexesFinales);
+      setAnnexes(annexesFinales);
+    }
+
     setPushing(false);
-    setPushMsg(`${remap.length} rangée(s) et ${breakersAPousser.length} circuit(s) mis à jour dans le tableau.${nbExclus > 0 ? ` ${nbExclus} circuit(s) déjà existant(s) non poussé(s).` : ""}`);
+    setPushMsg(
+      `${resPrincipal.nbRangees} rangée(s) et ${groupes[TABLEAU_PRINCIPAL].length} circuit(s) mis à jour dans le tableau principal.` +
+      (annexes.length > 0 ? ` Annexes : ${nbRangeesAnnexes} rangée(s), ${nbCircuitsAnnexes} circuit(s).` : "") +
+      (nbExclus > 0 ? ` ${nbExclus} circuit(s) déjà existant(s) non poussé(s).` : ""),
+    );
     setTimeout(() => setPushMsg(null), 5000);
   };
 
@@ -2288,6 +2369,8 @@ export default function PlanPage() {
               <h1 className="font-display text-lg text-ink-900 leading-tight">Plan de circuits</h1>
               {client && <p className="text-xs text-ink-400">{client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</p>}
             </div>
+            <ProjetSwitcher clientId={clientId} projets={projets} projetId={projet.id}
+              avantChangement={handleSave} onSelect={onSelect} onChanged={onChanged} compact />
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
             {!vue3D && (
@@ -2303,7 +2386,7 @@ export default function PlanPage() {
             ) : (
               <button onClick={() => setShowPrintForm(true)} className="btn-ghost"><Printer size={15} /> Imprimer</button>
             )}
-            <Link href={`/predevis/${clientId}`} className="btn-ghost"><Receipt size={15} /> Pré-devis</Link>
+            <Link href={`/predevis/${clientId}${qsProjet(projet.id)}`} className="btn-ghost"><Receipt size={15} /> Pré-devis</Link>
             <button onClick={handleSave} disabled={saving} className={`btn-volt ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
               <Save size={15} />{saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
             </button>
@@ -2322,7 +2405,16 @@ export default function PlanPage() {
           <button onClick={() => setShowNiveauForm(true)} className="btn-ghost !px-2 !py-1.5 shrink-0"><Plus size={14} /></button>
           {niveauActif && (
             <div className="flex items-center gap-1.5 ml-auto shrink-0 text-xs text-ink-400">
-              <span>Plafond</span>
+              <span>Tableau</span>
+              <select className="input !py-1 !text-xs !w-auto max-w-[9rem]"
+                value={niveauActif.tableauId && annexes.some(a => a.id === niveauActif.tableauId) ? niveauActif.tableauId : TABLEAU_PRINCIPAL}
+                onChange={e => choisirTableauNiveau(e.target.value)}
+                title="Tableau qui alimente les circuits de ce niveau">
+                <option value={TABLEAU_PRINCIPAL}>Principal</option>
+                {annexes.map(a => <option key={a.id} value={a.id}>{a.nom}</option>)}
+                <option value="__nouveau">＋ Tableau annexe…</option>
+              </select>
+              <span className="ml-2">Plafond</span>
               <input type="number" step="0.1" className="input !py-1 !text-xs !w-16"
                 value={niveauActif.hauteurPlafond ?? 2.5}
                 onChange={e => updateNiveauActif(n => ({ ...n, hauteurPlafond: parseFloat(e.target.value) || 2.5 }))} />
@@ -2419,7 +2511,7 @@ export default function PlanPage() {
           )}
           {pushMsg && (
             <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-2">
-              {pushMsg} <Link href={`/tableau/${clientId}`} className="underline">Voir le tableau →</Link>
+              {pushMsg} <Link href={`/tableau/${clientId}${qsProjet(projet.id)}`} className="underline">Voir le tableau →</Link>
             </span>
           )}
 
