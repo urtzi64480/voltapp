@@ -148,7 +148,10 @@ export default function TableauPublicPage() {
     // Accès anonyme via fonction SECURITY DEFINER (ne renvoie que les champs nécessaires,
     // jamais IBAN / tokens du profil).
     supabase
-      .rpc("get_tableau_public", { p_client_id: clientId })
+      .rpc("get_tableau_public_projet", {
+        p_client_id: clientId,
+        p_projet_id: new URLSearchParams(window.location.search).get("projet"),
+      })
       .then(({ data }) => {
         const c = data?.client as Client | undefined;
         if (!c || !c.tableau_config) { setNotFound(true); setLoading(false); return; }
