@@ -208,7 +208,7 @@ export default function PreDevisPage() {
   const clientId = params.clientId as string;
   const { projets, projet, loading, changerProjet, recharger } = useProjets(clientId);
   // Recharge les projets (données fraîches) puis bascule ; la clé remonte toute la page.
-  const choisir = async (id: string) => { await recharger(id); changerProjet(id); };
+  const choisir = async (id: string | null) => { await recharger(id ?? undefined); if (id) changerProjet(id); };
   if (loading) return <Shell><div className="p-8 text-center text-ink-400">Chargement…</div></Shell>;
   if (!projet) return <Shell><div className="p-8 text-center text-ink-500">Impossible de charger le projet de ce client. Vérifie que la migration 002_projets.sql a bien été exécutée.</div></Shell>;
   return <PreDevisEditor key={projet.id} clientId={clientId} projet={projet} projets={projets} onSelect={choisir} onChanged={choisir} />;
@@ -216,7 +216,7 @@ export default function PreDevisPage() {
 
 function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   clientId: string; projet: Projet; projets: Projet[];
-  onSelect: (id: string) => Promise<void> | void; onChanged: (id: string) => Promise<void> | void;
+  onSelect: (id: string) => Promise<void> | void; onChanged: (id: string | null) => Promise<void> | void;
 }) {
   const router = useRouter();
 
