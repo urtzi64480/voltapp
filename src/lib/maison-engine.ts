@@ -328,6 +328,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
   }));
 
   for (const niveau of niveaux) {
+    const debutBreakersNiveau = breakers.length;
     const tousItems: Item[] = [];
     niveau.pieces.forEach(piece => {
       piece.appareillages.forEach(a => tousItems.push({ base: a, pieceNom: piece.nom, piece, x: a.x, y: a.y }));
@@ -442,6 +443,10 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
         alertes.push(`"${label}" (${niveau.nom}) : cheminement redessiné incomplet — ${oublies.length} appareillage(s) non cliqué(s), resté(s) sur ce circuit en fin de tracé par proximité.`);
       }
     });
+
+    // Marque chaque circuit créé pour ce niveau : sert à le router vers le bon tableau
+    // (principal ou annexe) au moment du "Pousser" — voir Niveau.tableauId.
+    for (let i = debutBreakersNiveau; i < breakers.length; i++) breakers[i].niveauId = niveau.id;
   }
 
   return { maison: { niveaux }, breakers, alertes };

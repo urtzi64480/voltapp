@@ -35,6 +35,10 @@ export interface Breaker {
   // maison-types.ts / maison-engine.ts) — id stable, permet de retrouver sa couleur/son
   // nom d'un niveau même après régénération. Ignoré ailleurs (module Tableau).
   manuelId?: number;
+  // Rempli par le module Plan : id du niveau dont provient ce circuit — sert à le router vers
+  // le bon tableau (principal ou annexe, voir Niveau.tableauId) au moment du "Pousser". Non
+  // conservé une fois le circuit dans un tableau_config ; ignoré ailleurs (module Tableau).
+  niveauId?: number;
 }
 
 export interface BreakerRow {

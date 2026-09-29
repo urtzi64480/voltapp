@@ -280,6 +280,9 @@ export interface Niveau {
   type: NiveauType;
   ordre: number;
   pieces: Piece[];
+  // Tableau qui alimente les circuits de ce niveau : absent / "principal" = tableau principal
+  // du projet ; sinon id d'un tableau annexe (Projet.tableaux_annexes — pool house, garage…).
+  tableauId?: string;
   tableauPos?: Point; // position du tableau électrique / GTL sur ce niveau
   tableauHauteur?: number; // cm — hauteur d'installation du tableau (vue 3D), 150 par défaut
   tableauRotation?: number; // degrés — orientation du tableau (aligné sur le mur porteur), 0 par défaut
