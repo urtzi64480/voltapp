@@ -3,10 +3,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
-import { qsProjet } from "@/lib/projets";
+import { qsProjet, supprimerProjet, viderDonneesHistoriques } from "@/lib/projets";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { LayoutTemplate, Plus, Search, ChevronRight, X } from "lucide-react";
+import { LayoutTemplate, Plus, Search, ChevronRight, X, Trash2 } from "lucide-react";
 
 interface Niveau { id: number; nom: string; type: string; pieces: { id: number }[]; }
 
@@ -91,8 +92,10 @@ export default function PlansPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [showPicker, setShowPicker] = useState(false);
+  const [aSupprimer, setASupprimer] = useState<PlanEntry | null>(null);
+  const [suppEnCours, setSuppEnCours] = useState(false);
 
-  useEffect(() => {
+  const charger = () => {
     Promise.all([
       supabase.from("clients").select("*").order("nom"),
       supabase.from("projets").select("*").order("created_at", { ascending: true }),
@@ -118,7 +121,24 @@ export default function PlansPage() {
       setPlans(entries);
       setLoading(false);
     });
-  }, []);
+  };
+
+  useEffect(() => { charger(); }, []);
+
+  // Supprime un plan (projet du client). Le tableau, les annexes et le brouillon de pré-devis
+  // du projet partent avec ; les devis déjà créés ne sont pas touchés.
+  const confirmerSuppression = async () => {
+    if (!aSupprimer) return;
+    setSuppEnCours(true);
+    try {
+      const ok = aSupprimer.projetId
+        ? await supprimerProjet(aSupprimer.clientId, aSupprimer.projetId)
+        : await viderDonneesHistoriques(aSupprimer.clientId);
+      if (!ok) { alert("La suppression a échoué."); return; }
+      setASupprimer(null);
+      charger();
+    } finally { setSuppEnCours(false); }
+  };
 
   const handleCreate = (clientId: string) => {
     setShowPicker(false);
@@ -189,7 +209,9 @@ export default function PlansPage() {
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-ink-900">{client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</p>
                       <p className="text-xs text-ink-400">
-                        {niveaux.length} niveau{niveaux.length > 1 ? "x" : ""} · {nbPieces} pièce{nbPieces > 1 ? "s" : ""}
+                        {niveaux.filter(n => n.type !== "annexe").length} niveau{niveaux.filter(n => n.type !== "annexe").length > 1 ? "x" : ""}
+                        {niveaux.some(n => n.type === "annexe") ? ` + ${niveaux.filter(n => n.type === "annexe").length} annexe${niveaux.filter(n => n.type === "annexe").length > 1 ? "s" : ""}` : ""}
+                        {" "}· {nbPieces} pièce{nbPieces > 1 ? "s" : ""}
                         {projetNom ? ` · ${projetNom}` : ""}
                         {client.ville ? ` · ${client.ville}` : ""}
                       </p>
@@ -197,7 +219,10 @@ export default function PlansPage() {
                         <Link href={`/plan/${entry.clientId}${qsProjet(entry.projetId)}`} className="btn-volt !py-1.5 !text-xs">
                           <LayoutTemplate size={12} /> Ouvrir
                         </Link>
-                        <Link href={`/clients/${entry.clientId}`} className="btn-ghost !py-1.5 !text-xs ml-auto">
+                        <button onClick={() => setASupprimer(entry)} className="btn-ghost !py-1.5 !text-xs text-red-500 ml-auto" title="Supprimer ce plan">
+                          <Trash2 size={12} /> Supprimer
+                        </button>
+                        <Link href={`/clients/${entry.clientId}`} className="btn-ghost !py-1.5 !text-xs">
                           Fiche client <ChevronRight size={12} />
                         </Link>
                       </div>
@@ -209,6 +234,17 @@ export default function PlansPage() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={!!aSupprimer}
+        title="Supprimer ce plan ?"
+        message={aSupprimer
+          ? `Le plan de ${aSupprimer.client.prenom ? `${aSupprimer.client.prenom} ${aSupprimer.client.nom}` : aSupprimer.client.nom}${aSupprimer.projetNom ? ` (${aSupprimer.projetNom})` : ""} sera supprimé avec son tableau électrique (annexes comprises) et son brouillon de pré-devis. Les devis déjà créés ne sont pas touchés. Cette action est définitive.`
+          : ""}
+        onConfirm={confirmerSuppression}
+        onCancel={() => setASupprimer(null)}
+        loading={suppEnCours}
+      />
 
       {showPicker && (
         <ClientPickerModal clients={clients} planClientIds={new Set(plans.map(p => p.clientId))} onPick={handleCreate} onClose={() => setShowPicker(false)} />
