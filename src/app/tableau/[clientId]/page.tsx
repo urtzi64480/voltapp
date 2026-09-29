@@ -2,8 +2,10 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { Client } from "@/types";
+import { Client, Projet } from "@/types";
 import Shell from "@/components/layout/Shell";
+import { useProjets, qsProjet, sauverTableau, sauverAnnexes, lireAnnexes, nouvelIdAnnexe, TABLEAU_PRINCIPAL } from "@/lib/projets";
+import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, ShieldCheck, ShieldAlert,
@@ -1101,12 +1103,12 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
 
 // ─── QR EXPORT MODAL ─────────────────────────────────────────────────────────
 
-function QRModal({ clientId, clientName, onClose }: {
-  clientId: string; clientName: string; onClose: () => void;
+function QRModal({ clientId, projetId, clientName, onClose }: {
+  clientId: string; projetId: string; clientName: string; onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const publicUrl = typeof window !== "undefined"
-    ? `${window.location.origin}/tableau/${clientId}/public`
+    ? `${window.location.origin}/tableau/${clientId}/public${qsProjet(projetId)}`
     : "";
   const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(publicUrl)}`;
 
@@ -1286,6 +1288,53 @@ function printLabels(rows: BreakerRow[], clientName: string) {
 export default function TableauPage() {
   const params   = useParams();
   const clientId = params.clientId as string;
+  const { projets, projet, loading, changerProjet, recharger } = useProjets(clientId);
+  // Recharge les projets (données fraîches) puis bascule ; la clé remonte toute la page.
+  const choisir = async (id: string) => { await recharger(id); changerProjet(id); };
+  if (loading) return <Shell><div className="flex items-center justify-center h-64 text-ink-400">Chargement…</div></Shell>;
+  if (!projet) return <Shell><div className="p-8 text-center text-ink-500">Impossible de charger le projet de ce client. Vérifie que la migration 002_projets.sql a bien été exécutée.</div></Shell>;
+  return <TableauEditor key={projet.id} clientId={clientId} projet={projet} projets={projets} onSelect={choisir} onChanged={choisir} />;
+}
+
+// Normalise un tableau_config brut (formats historiques compris) en BreakerRow[] — utilisé
+// pour le tableau principal et pour chaque tableau annexe.
+function normaliserRows(parsed: any[]): BreakerRow[] {
+  return parsed.map((row: any) => {
+        if (!row || typeof row !== "object") return null;
+        const slots: (Breaker | null)[] = Array(9).fill(null);
+        const rawSlots = Array.isArray(row.slots) ? row.slots : (Array.isArray(row.breakers) ? row.breakers : []);
+        rawSlots.forEach((b: any, i: number) => {
+          if (i >= 9 || b == null || typeof b !== "object" || typeof b.type !== "string") return;
+          let pieces: PieceConfig[] = [];
+          if (Array.isArray(b.pieces)) {
+            pieces = b.pieces.map((p: any) => ({
+              nom: p.nom ?? "",
+              nbPrises: p.nbPrises ?? 1,
+              groupes: Array.isArray(p.groupes) && p.groupes.length > 0
+                ? p.groupes
+                : [{ nbPoints: p.pointsLumineux ?? 1, typeCommande: (p.typeCommande ?? "simple") as CommandeType, nbCommandes: p.nbCommandes ?? 1 }],
+            }));
+          } else if (b.switchType || b.lampCount) {
+            pieces = [{ nom: b.label ?? "", nbPrises: 1, groupes: [{ nbPoints: b.lampCount ?? 1, typeCommande: (b.switchType ?? "simple") as CommandeType, nbCommandes: b.switchCount ?? 1 }] }];
+          }
+          slots[i] = {
+            id: b.id ?? uid(),
+            label: b.label ?? "",
+            circuit: b.circuit ?? "autre",
+            amperes: b.amperes ?? 16,
+            type: b.type,
+            customSection: b.customSection ?? CIRCUITS[b.circuit ?? "autre"]?.section ?? "2.5",
+            pieces,
+          } as Breaker;
+        });
+        return { id: row.id ?? uid(), name: row.name ?? "Rangée", slots, origine: row.origine === "plan" ? "plan" as const : undefined };
+  }).filter(Boolean) as BreakerRow[];
+}
+
+function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
+  clientId: string; projet: Projet; projets: Projet[];
+  onSelect: (id: string) => Promise<void> | void; onChanged: (id: string) => Promise<void> | void;
+}) {
 
   const [client, setClient]   = useState<Client | null>(null);
   const [rows, setRows]       = useState<BreakerRow[]>([]);
@@ -1299,60 +1348,92 @@ export default function TableauPage() {
   const [showReport, setShowReport]       = useState(false);
   const [showQR, setShowQR]               = useState(false);
 
+  // Tableaux du projet : le principal + d'éventuels tableaux annexes (pool house, garage…).
+  // `rows` est toujours le tableau ACTIF ; `stock` garde les rangées des autres (celles du
+  // tableau actif y sont périmées tant qu'on ne bascule/sauvegarde pas).
+  const [actifId, setActifId]       = useState<string>(TABLEAU_PRINCIPAL);
+  const [annexes, setAnnexes]       = useState<{ id: string; nom: string }[]>([]);
+  const [stock, setStock]           = useState<Record<string, BreakerRow[]>>({});
+
   useEffect(() => {
+    // Annexes chargées AVANT le tableau principal : un principal illisible ne doit jamais
+    // faire perdre les annexes à la sauvegarde suivante.
+    const ann = lireAnnexes(projet.tableaux_annexes);
+    setAnnexes(ann.map(a => ({ id: a.id, nom: a.nom })));
+    setStock(Object.fromEntries(ann.map(a => [a.id, normaliserRows(a.rows as any[])])));
     supabase.from("clients").select("*").eq("id", clientId).single().then(({ data: c }) => {
       if (c) {
         setClient(c);
-        if (c.tableau_config) {
+        if (projet.tableau_config) {
           try {
-            const parsed = JSON.parse(c.tableau_config);
+            const parsed = JSON.parse(projet.tableau_config);
             if (!Array.isArray(parsed)) { setLoading(false); return; }
-            const normalized = parsed.map((row: any) => {
-              if (!row || typeof row !== "object") return null;
-              const slots: (Breaker | null)[] = Array(9).fill(null);
-              const rawSlots = Array.isArray(row.slots) ? row.slots : (Array.isArray(row.breakers) ? row.breakers : []);
-              rawSlots.forEach((b: any, i: number) => {
-                if (i >= 9 || b == null || typeof b !== "object" || typeof b.type !== "string") return;
-                let pieces: PieceConfig[] = [];
-                if (Array.isArray(b.pieces)) {
-                  pieces = b.pieces.map((p: any) => ({
-                    nom: p.nom ?? "",
-                    nbPrises: p.nbPrises ?? 1,
-                    groupes: Array.isArray(p.groupes) && p.groupes.length > 0
-                      ? p.groupes
-                      : [{ nbPoints: p.pointsLumineux ?? 1, typeCommande: (p.typeCommande ?? "simple") as CommandeType, nbCommandes: p.nbCommandes ?? 1 }],
-                  }));
-                } else if (b.switchType || b.lampCount) {
-                  pieces = [{ nom: b.label ?? "", nbPrises: 1, groupes: [{ nbPoints: b.lampCount ?? 1, typeCommande: (b.switchType ?? "simple") as CommandeType, nbCommandes: b.switchCount ?? 1 }] }];
-                }
-                slots[i] = {
-                  id: b.id ?? uid(),
-                  label: b.label ?? "",
-                  circuit: b.circuit ?? "autre",
-                  amperes: b.amperes ?? 16,
-                  type: b.type,
-                  customSection: b.customSection ?? CIRCUITS[b.circuit ?? "autre"]?.section ?? "2.5",
-                  pieces,
-                } as Breaker;
-              });
-              return { id: row.id ?? uid(), name: row.name ?? "Rangée", slots, origine: row.origine === "plan" ? "plan" as const : undefined };
-            }).filter(Boolean) as BreakerRow[];
+            const normalized = normaliserRows(parsed);
             setRows(normalized);
           } catch {}
         }
       }
       setLoading(false);
     });
-  }, [clientId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId, projet.id]);
 
   const compliance = useMemo(() => checkNFC(rows), [rows]);
 
+  const rowsDe = (id: string): BreakerRow[] => (id === actifId ? rows : (stock[id] ?? []));
+
   const handleSave = useCallback(async () => {
     setSaving(true);
-    await supabase.from("clients").update({ tableau_config: JSON.stringify(rows) }).eq("id", clientId);
+    await sauverTableau(clientId, projet.id, JSON.stringify(rowsDe(TABLEAU_PRINCIPAL)));
+    // Annexes : on ne réécrit la colonne que s'il y en a (ou s'il y en avait) — pas de
+    // colonne inutilement touchée pour un projet à tableau unique.
+    if (annexes.length > 0 || projet.tableaux_annexes) {
+      await sauverAnnexes(projet.id, annexes.map(a => ({ id: a.id, nom: a.nom, rows: rowsDe(a.id) })));
+    }
     setSaving(false); setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-  }, [rows, clientId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, stock, actifId, annexes, clientId, projet.id]);
+
+  const basculerTableau = (id: string) => {
+    if (id === actifId) return;
+    setStock(st => ({ ...st, [actifId]: rows }));
+    setRows(stock[id] ?? []);
+    setActifId(id);
+    setSelectedSlot(null); setEditBreaker(null); setSchemaBreaker(null);
+  };
+
+  const ajouterAnnexe = () => {
+    const nom = window.prompt("Nom du tableau annexe (ex : Pool house, Garage)", "Pool house");
+    if (!nom || !nom.trim()) return;
+    const id = nouvelIdAnnexe();
+    setAnnexes(a => [...a, { id, nom: nom.trim() }]);
+    setStock(st => ({ ...st, [actifId]: rows, [id]: [] }));
+    setRows([]);
+    setActifId(id);
+    setSelectedSlot(null); setEditBreaker(null); setSchemaBreaker(null);
+  };
+
+  const renommerAnnexe = () => {
+    const courante = annexes.find(a => a.id === actifId);
+    if (!courante) return;
+    const nom = window.prompt("Nouveau nom du tableau annexe", courante.nom);
+    if (!nom || !nom.trim()) return;
+    setAnnexes(a => a.map(x => (x.id === actifId ? { ...x, nom: nom.trim() } : x)));
+  };
+
+  const supprimerAnnexe = () => {
+    const courante = annexes.find(a => a.id === actifId);
+    if (!courante) return;
+    if (!window.confirm(`Supprimer le tableau annexe « ${courante.nom} » et toutes ses rangées ? Les niveaux du plan qui y étaient rattachés repartiront sur le tableau principal au prochain « Pousser ».`)) return;
+    const restant = { ...stock };
+    delete restant[courante.id];
+    setAnnexes(a => a.filter(x => x.id !== courante.id));
+    setRows(restant[TABLEAU_PRINCIPAL] ?? []);
+    setStock(restant);
+    setActifId(TABLEAU_PRINCIPAL);
+    setSelectedSlot(null); setEditBreaker(null); setSchemaBreaker(null);
+  };
 
   const addRow = () => setRows(r => [...r, emptyRow(r.length + 1)]);
   const deleteRow = (rowId: number) => { setRows(r => r.filter(x => x.id !== rowId)); if (selectedSlot?.rowId === rowId) setSelectedSlot(null); };
@@ -1415,6 +1496,8 @@ export default function TableauPage() {
                 </p>
               )}
             </div>
+            <ProjetSwitcher clientId={clientId} projets={projets} projetId={projet.id}
+              avantChangement={handleSave} onSelect={onSelect} onChanged={onChanged} compact />
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button onClick={() => setShowReport(true)}
@@ -1434,6 +1517,27 @@ export default function TableauPage() {
           </div>
         </div>
 
+        <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 bg-ink-50 overflow-x-auto shrink-0">
+          <button onClick={() => basculerTableau(TABLEAU_PRINCIPAL)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+              actifId === TABLEAU_PRINCIPAL ? "bg-ink-900 text-volt-400" : "bg-white border border-ink-200 text-ink-500 hover:border-ink-400"
+            }`}>Tableau principal</button>
+          {annexes.map(a => (
+            <button key={a.id} onClick={() => basculerTableau(a.id)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+                actifId === a.id ? "bg-ink-900 text-volt-400" : "bg-white border border-ink-200 text-ink-500 hover:border-ink-400"
+              }`}>{a.nom}</button>
+          ))}
+          <button onClick={ajouterAnnexe} className="btn-ghost !px-2 !py-1.5 !text-xs shrink-0" title="Ajouter un tableau annexe (pool house, garage…)">
+            <Plus size={13} /> Tableau annexe
+          </button>
+          {actifId !== TABLEAU_PRINCIPAL && (
+            <div className="flex items-center gap-1 ml-auto shrink-0">
+              <button onClick={renommerAnnexe} className="btn-ghost !px-2 !py-1.5 !text-xs">Renommer</button>
+              <button onClick={supprimerAnnexe} className="btn-ghost !px-2 !py-1.5 !text-xs text-red-500"><Trash2 size={13} /></button>
+            </div>
+          )}
+        </div>
         <div className="px-6 py-2 bg-ink-50 border-b border-ink-100 text-xs text-ink-400 hidden md:block">
           1er clic = sélectionner · 2e clic = configurer · Chaque rangée : 1 différentiel + 8 disjoncteurs
         </div>
@@ -1450,7 +1554,7 @@ export default function TableauPage() {
             <>
               <div style={{ background: "linear-gradient(170deg,#374151 0%,#1f2937 100%)", borderRadius: 14, padding: "24px 24px 12px", boxShadow: "0 8px 32px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.06)", border: "2px solid #4b5563", display: "inline-block", minWidth: 400 }}>
                 <div style={{ background: "#111827", borderRadius: 7, padding: "6px 16px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 11, color: "#F59E0B", fontFamily: "monospace", fontWeight: 700, letterSpacing: 2 }}>TABLEAU ÉLECTRIQUE</span>
+                  <span style={{ fontSize: 11, color: "#F59E0B", fontFamily: "monospace", fontWeight: 700, letterSpacing: 2 }}>{actifId === TABLEAU_PRINCIPAL ? "TABLEAU ÉLECTRIQUE" : `TABLEAU ANNEXE — ${(annexes.find(a => a.id === actifId)?.nom ?? "").toUpperCase()}`}</span>
                   <div style={{ display: "flex", gap: 6 }}>
                     {[
                       compliance.errors.length > 0  ? "#ef4444" : "#374151",
@@ -1494,7 +1598,7 @@ export default function TableauPage() {
         />
       )}
       {showReport && <CompliancePanel result={compliance} onClose={() => setShowReport(false)} />}
-      {showQR && <QRModal clientId={clientId} clientName={client?.nom ?? ""} onClose={() => setShowQR(false)} />}
+      {showQR && <QRModal clientId={clientId} projetId={projet.id} clientName={client?.nom ?? ""} onClose={() => setShowQR(false)} />}
       {schemaBreaker && <CircuitSchema breaker={schemaBreaker.breaker} rowBreakers={schemaBreaker.rowBreakers} onClose={() => setSchemaBreaker(null)} />}
     </Shell>
   );
