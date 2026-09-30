@@ -24,6 +24,7 @@ export async function generateMetadata({ params }: { params: { token: string } }
       // L'icône du site (favicon / apple-touch) est aussi remplacée par le logo de l'artisan.
       ...(logoUrl ? { icons: { icon: logoUrl, apple: logoUrl } } : {}),
       openGraph: {
+        type: "website",
         title,
         description,
         images: logoUrl ? [{ url: logoUrl, width: 512, height: 512 }] : undefined,
