@@ -676,7 +676,12 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       date_echeance: ech.toISOString().split("T")[0],
     }).select().single();
     if (f && devis.lignes) {
-      await supabase.from("facture_lignes").insert(devis.lignes.map((l: any, i: number) => ({
+      // Lignes reprises dans l'ordre d'affichage du devis (postes, puis hors poste).
+      // `poste` n'est envoyé que si le devis en utilise : sans poste, insertion identique à avant.
+      const lignesDevis = trierParOrdre(devis.lignes as any[]);
+      const lignesFacture = ordonnerLignes(lignesDevis, extrairePostes(lignesDevis));
+      const facturePostes = lignesFacture.some(l => posteDe(l) !== null);
+      await supabase.from("facture_lignes").insert(lignesFacture.map((l: any, i: number) => ({
         facture_id: f.id,
         nom: l.nom,
         kit_description: l.kit_description ?? null,
@@ -685,6 +690,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         unite: l.unite,
         type_branche: l.type_branche,
         ordre: i,
+        ...(facturePostes ? { poste: posteDe(l) } : {}),
       })));
       await supabase.from("profil").update({ compteur_facture: (p?.compteur_facture ?? 0) + 1 }).eq("id", user.id);
       await supabase.from("devis").update({ statut: "signe" }).eq("id", devis.id);
