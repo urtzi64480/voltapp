@@ -1,9 +1,11 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Client, DevisLigne, Prestation } from "@/types";
 import { fmt, genNumero, cn, nomAvecConditionnement } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
+import PostesLignes from "@/components/devis/PostesLignes";
+import { grouperParPoste, ordonnerLignes, posteDe, totalItems } from "@/lib/postes";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Save, Eye, PenLine, Plus, X, RotateCcw, Check, Download, ChevronDown, Tag, Gift, Search, Layers } from "lucide-react";
 import Link from "next/link";
@@ -80,6 +82,8 @@ function NouveauDevisPage() {
   const [objet, setObjet] = useState("");
   const [validite, setValidite] = useState(60);
   const [lignes, setLignes] = useState<DevisLigneExt[]>([]);
+  const [postes, setPostes] = useState<string[]>([]);
+  const [posteActif, setPosteActif] = useState<string | null>(null);
   const [remise, setRemise] = useState<Remise>({ service_type: "pct", service_val: "", materiau_type: "pct", materiau_val: "" });
   const [showRemise, setShowRemise] = useState(false);
   const [remiseFidelitePct, setRemiseFidelitePct] = useState<number>(0);
@@ -155,6 +159,8 @@ function NouveauDevisPage() {
   }
 
   async function addPrestation(p: PrestationExt) {
+    // Poste cible au moment du clic : les nouvelles lignes vont dans le poste actif.
+    const cible = posteActif;
     if (p.est_kit) {
       const { data: composants } = await supabase
         .from("kit_composants")
@@ -169,7 +175,7 @@ function NouveauDevisPage() {
       const ratioService = totalComposants > 0 ? totalService / totalComposants : 0;
 
       setLignes(prev => {
-        const ex = prev.findIndex(l => l.prestation_id === p.id);
+        const ex = prev.findIndex(l => l.prestation_id === p.id && posteDe(l) === cible);
         if (ex >= 0) {
           const n = [...prev];
           n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 };
@@ -184,6 +190,7 @@ function NouveauDevisPage() {
           prestation_id: p.id,
           kit_description: p.kit_description ?? null,
           kit_ratio_service: ratioService,
+          poste: cible,
         } as DevisLigneExt];
       });
       return;
@@ -196,7 +203,7 @@ function NouveauDevisPage() {
     // plutôt que de créer deux lignes.
     const nomFinal = nomAvecConditionnement(p.nom, p.longueur_unitaire, p.sous_categorie);
     setLignes(prev => {
-      const ex = prev.findIndex(l => l.nom === nomFinal && l.type_branche === p.type_branche && l.kit_ratio_service == null);
+      const ex = prev.findIndex(l => l.nom === nomFinal && l.type_branche === p.type_branche && l.kit_ratio_service == null && posteDe(l) === cible);
       if (ex >= 0) { const n = [...prev]; n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 }; return n; }
       return [...prev, {
         nom: nomFinal,
@@ -206,13 +213,14 @@ function NouveauDevisPage() {
         unite: p.unite,
         type_branche: p.type_branche,
         prestation_id: p.id,
+        poste: cible,
       } as DevisLigneExt];
     });
   }
 
   function addLibre() {
     if (!libre.nom.trim() || !libre.prix_unitaire) return;
-    setLignes(prev => [...prev, { nom: libre.nom, prix_unitaire: parseFloat(libre.prix_unitaire), quantite: 1, unite: libre.unite, type_branche: libre.type_branche as any } as DevisLigneExt]);
+    setLignes(prev => [...prev, { nom: libre.nom, prix_unitaire: parseFloat(libre.prix_unitaire), quantite: 1, unite: libre.unite, type_branche: libre.type_branche as any, poste: posteActif } as DevisLigneExt]);
     setLibre({ nom: "", prix_unitaire: "", unite: "forfait", type_branche: "service" });
     setShowLibre(false);
   }
@@ -280,8 +288,12 @@ function NouveauDevisPage() {
 
     if (error || !dv) { alert("Erreur : " + error?.message); setSaving(false); return; }
     if (lignes.length > 0) {
-      await supabase.from("devis_lignes").insert(
-        lignes.map((l, i) => ({
+      // Lignes remises à plat dans l'ordre d'affichage (postes, puis hors poste) pour que
+      // `ordre` reflète le regroupement. La colonne `poste` n'est envoyée que si le devis
+      // utilise des postes : un devis sans poste s'enregistre exactement comme avant.
+      const utilisePostes = lignes.some(l => posteDe(l) !== null);
+      const { error: errLignes } = await supabase.from("devis_lignes").insert(
+        ordonnerLignes(lignes, postes).map((l, i) => ({
           devis_id: dv.id,
           ordre: i,
           nom: l.nom,
@@ -292,8 +304,15 @@ function NouveauDevisPage() {
           unite: l.unite,
           type_branche: l.type_branche,
           prestation_id: l.prestation_id ?? null,
+          ...(utilisePostes ? { poste: posteDe(l) } : {}),
         }))
       );
+      if (errLignes) {
+        await supabase.from("devis").delete().eq("id", dv.id);
+        alert("Erreur lors de l'enregistrement des lignes (devis non créé) : " + errLignes.message);
+        setSaving(false);
+        return;
+      }
     }
     await supabase.from("profil").update({ compteur_devis: (profil?.compteur_devis ?? 0) + 1 }).eq("id", user.id);
     router.push(`/devis/${dv.id}`);
@@ -310,7 +329,7 @@ function NouveauDevisPage() {
       total_service: totService, total_materiau: totMateriau, total_ttc: totTTC,
       remise_fidelite_pct: remiseFidelitePct > 0 ? remiseFidelitePct : undefined,
       created_at: "", updated_at: "",
-      client: selectedClient ?? undefined, lignes,
+      client: selectedClient ?? undefined, lignes: ordonnerLignes(lignes, postes),
       signature_data: sigData ?? undefined,
       signe_le: sigData ? new Date().toISOString() : undefined,
     }, profil ?? { id: user.id, prefixe_devis: "DEV", prefixe_facture: "FAC", compteur_devis: 0, compteur_facture: 0, mention_tva: "TVA non applicable — Art. 293 B du CGI", conditions_paiement: "Paiement à réception", taux_horaire: 55, created_at: "", updated_at: "" },
@@ -505,48 +524,12 @@ function NouveauDevisPage() {
             <div className="space-y-4">
               <div className="card card-inner">
                 <h2 className="font-semibold text-ink-800 mb-3 text-sm uppercase tracking-wide">Lignes du devis</h2>
-                {lignes.length === 0 ? (
-                  <p className="text-sm text-ink-400 text-center py-10">Ajoutez des prestations depuis le catalogue</p>
-                ) : (
-                  <div className="space-y-2">
-                    {lignes.map((l, i) => (
-                      <div key={i} className="flex flex-col gap-1.5 p-2.5 rounded-xl bg-ink-50 border border-ink-100">
-                        <div className="flex items-start gap-2">
-                          {l.kit_ratio_service != null ? (
-                            <span className="inline-flex items-center gap-1 badge text-xs shrink-0 bg-purple-100 text-purple-700">
-                              <Layers size={10} /> KIT
-                            </span>
-                          ) : (
-                            <span className={cn("badge text-xs shrink-0", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
-                              {l.type_branche === "service" ? "S" : "M"}
-                            </span>
-                          )}
-                          <span className="text-xs text-ink-800 flex-1 min-w-0 break-words">{l.nom}</span>
-                          <button onClick={() => setLignes(p => p.filter((_, idx) => idx !== i))} className="text-ink-300 hover:text-red-500 transition-colors shrink-0"><X size={14} /></button>
-                        </div>
-                        <div className="flex items-center gap-2 pl-7">
-                          <span className="text-xs text-ink-400 shrink-0">{l.unite}</span>
-                          <input type="number" min="1" step="0.5" value={l.quantite}
-                            onChange={e => setLignes(prev => { const n = [...prev]; n[i] = { ...n[i], quantite: parseFloat(e.target.value) || 1 }; return n; })}
-                            className="w-14 shrink-0 text-center text-xs border border-ink-200 rounded-lg py-1 bg-white" />
-                          <span className="text-xs text-ink-400 shrink-0">×</span>
-                          <input type="number" min="0" step="0.5" value={l.prix_unitaire}
-                            onChange={e => setLignes(prev => { const n = [...prev]; n[i] = { ...n[i], prix_unitaire: parseFloat(e.target.value) || 0 }; return n; })}
-                            className="w-16 shrink-0 text-right text-xs border border-ink-200 rounded-lg py-1 bg-white" />
-                          <span className="text-xs font-semibold text-ink-900 ml-auto shrink-0">{fmt(l.prix_unitaire * l.quantite)}</span>
-                        </div>
-                        {l.kit_description && (
-                          <p className="text-xs text-ink-400 italic pl-7 truncate">{l.kit_description}</p>
-                        )}
-                        {l.kit_ratio_service != null && (
-                          <p className="text-xs text-purple-400 pl-7">
-                            Ventilation : {fmt(l.prix_unitaire * l.quantite * l.kit_ratio_service)} service · {fmt(l.prix_unitaire * l.quantite * (1 - l.kit_ratio_service))} matériaux
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <PostesLignes
+                  lignes={lignes} setLignes={setLignes}
+                  postes={postes} setPostes={setPostes}
+                  posteActif={posteActif} setPosteActif={setPosteActif}
+                  showUnite texteVide="Ajoutez des prestations depuis le catalogue"
+                />
 
                 {lignes.length > 0 && (
                   <div className="mt-4 pt-4 border-t border-ink-100 space-y-2">
@@ -634,30 +617,40 @@ function NouveauDevisPage() {
                     <tbody>
                       {lignes.length === 0 ? (
                         <tr><td colSpan={6} className="text-center py-8 text-ink-400">Aucune ligne</td></tr>
-                      ) : lignes.map((l, i) => (
-                        <tr key={i} className="border-b border-ink-100">
-                          <td className="py-2.5 pr-2">
-                            <p>{l.nom}</p>
-                            {l.kit_description && (
-                              <p className="text-xs text-ink-400 italic mt-0.5">{l.kit_description}</p>
-                            )}
-                          </td>
-                          <td className="py-2.5">
-                            {l.kit_ratio_service != null ? (
-                              <span className="inline-flex items-center gap-1 badge text-xs bg-purple-100 text-purple-700">
-                                <Layers size={10} /> Kit
-                              </span>
-                            ) : (
-                              <span className={cn("badge text-xs", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
-                                {l.type_branche === "service" ? "Service" : "Matériau"}
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-2.5 text-ink-500 text-xs">{l.unite}</td>
-                          <td className="py-2.5 text-right">{l.quantite}</td>
-                          <td className="py-2.5 text-right text-ink-500">{fmt(l.prix_unitaire)}</td>
-                          <td className="py-2.5 text-right font-semibold">{fmt(l.prix_unitaire * l.quantite)}</td>
-                        </tr>
+                      ) : grouperParPoste(lignes, { postes }).map(b => (
+                        <Fragment key={b.poste ?? "__hors_poste"}>
+                          {postes.length > 0 && (
+                            <tr className="bg-ink-50 border-b border-ink-100">
+                              <td colSpan={5} className="py-2 px-2 text-xs font-semibold uppercase tracking-wide text-ink-700">{b.poste ?? "Autres prestations"}</td>
+                              <td className="py-2 text-right text-xs font-semibold text-ink-900">{fmt(totalItems(b.items))}</td>
+                            </tr>
+                          )}
+                          {b.items.map(({ l, i }) => (
+                            <tr key={i} className="border-b border-ink-100">
+                              <td className="py-2.5 pr-2">
+                                <p>{l.nom}</p>
+                                {l.kit_description && (
+                                  <p className="text-xs text-ink-400 italic mt-0.5">{l.kit_description}</p>
+                                )}
+                              </td>
+                              <td className="py-2.5">
+                                {l.kit_ratio_service != null ? (
+                                  <span className="inline-flex items-center gap-1 badge text-xs bg-purple-100 text-purple-700">
+                                    <Layers size={10} /> Kit
+                                  </span>
+                                ) : (
+                                  <span className={cn("badge text-xs", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
+                                    {l.type_branche === "service" ? "Service" : "Matériau"}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2.5 text-ink-500 text-xs">{l.unite}</td>
+                              <td className="py-2.5 text-right">{l.quantite}</td>
+                              <td className="py-2.5 text-right text-ink-500">{fmt(l.prix_unitaire)}</td>
+                              <td className="py-2.5 text-right font-semibold">{fmt(l.prix_unitaire * l.quantite)}</td>
+                            </tr>
+                          ))}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
