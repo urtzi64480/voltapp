@@ -1,27 +1,28 @@
 import type { Metadata } from "next";
 import { supabase } from "@/lib/supabase";
+import { chargerApercuSignature } from "@/lib/apercuSignature";
 import SignerClient from "./SignerClient";
 
+// Jamais de cache : l'aperçu doit refléter le logo actuel de l'artisan pour chaque lien.
+export const dynamic = "force-dynamic";
+
 // Aperçu du lien (SMS, WhatsApp, iMessage…) : logo et nom de l'artisan, pas ceux de VoltApp.
-// Même principe que la liste de courses partagée.
+// Même principe que la liste de courses partagée (balises Open Graph).
 export async function generateMetadata({ params }: { params: { token: string } }): Promise<Metadata> {
   const defaut: Metadata = { title: "Devis à signer" };
   try {
-    const [{ data: devis }, { data: profil }] = await Promise.all([
-      supabase.from("devis").select("numero").eq("signature_token", params.token).maybeSingle(),
-      supabase.rpc("get_public_profil_by_devis_token", { p_token: params.token }).maybeSingle(),
-    ]);
-    if (!devis) return defaut;
+    const apercu = await chargerApercuSignature(supabase, params.token);
+    if (!apercu) return defaut;
 
-    const p = (profil ?? {}) as any;
-    const entreprise: string = p.nom_entreprise || [p.prenom, p.nom].filter(Boolean).join(" ");
-    const title = `Devis ${(devis as any).numero}${entreprise ? ` — ${entreprise}` : ""}`;
+    const title = `Devis ${apercu.numero}${apercu.entreprise ? ` — ${apercu.entreprise}` : ""}`;
     const description = "Consultez votre devis et signez-le en ligne.";
-    const logoUrl: string | undefined = p.logo_url || undefined;
+    const logoUrl = apercu.logoUrl;
 
     return {
       title,
       description,
+      // L'icône du site (favicon / apple-touch) est aussi remplacée par le logo de l'artisan.
+      ...(logoUrl ? { icons: { icon: logoUrl, apple: logoUrl } } : {}),
       openGraph: {
         title,
         description,
