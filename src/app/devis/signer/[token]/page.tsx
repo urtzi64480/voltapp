@@ -1,7 +1,8 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Check, RotateCcw, PenLine, Download } from "lucide-react";
+import { grouperParPoste, totalItems, trierParOrdre } from "@/lib/postes";
 
 function fmt(n: number) { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n); }
 
@@ -160,7 +161,9 @@ export default function SignerPage({ params }: { params: { token: string } }) {
     </div>
   );
 
-  const lignes = devis.lignes ?? [];
+  const lignes = trierParOrdre((devis.lignes ?? []) as any[]);
+  const blocs = grouperParPoste(lignes);
+  const aDesPostes = blocs.some(b => b.poste !== null);
   const client = devis.client;
 
   return (
@@ -195,12 +198,23 @@ export default function SignerPage({ params }: { params: { token: string } }) {
               </tr>
             </thead>
             <tbody>
-              {lignes.map((l: any, i: number) => (
-                <tr key={i} className="border-b border-gray-50">
-                  <td className="py-2 text-gray-700">{l.nom}</td>
-                  <td className="py-2 text-right text-gray-500">{l.quantite}</td>
-                  <td className="py-2 text-right font-medium">{fmt(l.prix_unitaire * l.quantite)}</td>
-                </tr>
+              {blocs.map(b => (
+                <Fragment key={b.poste ?? "__hors_poste"}>
+                  {aDesPostes && (
+                    <tr className="bg-gray-50 border-b border-gray-100">
+                      <td className="py-2 px-2 text-xs font-semibold uppercase tracking-wide text-gray-700">{b.poste ?? "Autres prestations"}</td>
+                      <td />
+                      <td className="py-2 text-right text-xs font-semibold text-gray-900">{fmt(totalItems(b.items))}</td>
+                    </tr>
+                  )}
+                  {b.items.map(({ l }, k) => (
+                    <tr key={k} className="border-b border-gray-50">
+                      <td className="py-2 text-gray-700">{l.nom}</td>
+                      <td className="py-2 text-right text-gray-500">{l.quantite}</td>
+                      <td className="py-2 text-right font-medium">{fmt(l.prix_unitaire * l.quantite)}</td>
+                    </tr>
+                  ))}
+                </Fragment>
               ))}
             </tbody>
           </table>
