@@ -119,6 +119,8 @@ export interface DevisLigne {
   unite: string;
   type_branche: TypeBranche;
   ordre?: number;
+  // Nom du poste (regroupement libre dans le devis) — null/absent = ligne hors poste.
+  poste?: string | null;
 }
 
 export interface Devis {
