@@ -1,6 +1,7 @@
 "use client";
 import { Devis, Profil, Facture } from "@/types";
 import { fmt, fmtDate, fmtDatetime } from "./utils";
+import { grouperParPoste, totalItems, trierParOrdre } from "./postes";
 import {
   buildFacturXml, assemblerFacturX, natureOperations, sirenFromSiret,
   MENTION_RETARD_PRO, MENTION_ESCOMPTE,
@@ -87,18 +88,39 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
     doc.text(devis.objet, W / 2 + 4, 58);
   }
 
-  const lignes = devis.lignes ?? [];
-  autoTable(doc, {
-    startY: 80,
-    head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
-    body: lignes.map(l => [
+  // Lignes triées par `ordre`, puis regroupées par poste (titre + sous-total par poste).
+  // Sans aucun poste, le tableau reste identique à l'ancien (lignes à plat).
+  const lignes = trierParOrdre(devis.lignes ?? []);
+  const blocs = grouperParPoste(lignes);
+  const aDesPostes = blocs.some(b => b.poste !== null);
+  const body: any[] = [];
+  blocs.forEach(b => {
+    const titre = b.poste ?? "Autres prestations";
+    if (aDesPostes) {
+      body.push([{
+        content: titre, colSpan: 6,
+        styles: { fontStyle: "bold", fillColor: [245, 245, 244], textColor: [28, 25, 23] },
+      }]);
+    }
+    b.items.forEach(({ l }) => body.push([
       designationCell(l.nom, l.kit_description),
       l.type_branche === "service" ? "Service" : "Matériau",
       l.unite, l.quantite, fmt(l.prix_unitaire), fmt(l.prix_unitaire * l.quantite),
-    ]),
+    ]));
+    if (aDesPostes) {
+      body.push([
+        { content: `Sous-total — ${titre}`, colSpan: 5, styles: { halign: "right", fontStyle: "bold", fillColor: [245, 245, 244] } },
+        { content: fmt(totalItems(b.items)), styles: { halign: "right", fontStyle: "bold", fillColor: [245, 245, 244] } },
+      ]);
+    }
+  });
+  autoTable(doc, {
+    startY: 80,
+    head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
+    body,
     headStyles: { fillColor: [28, 25, 23], textColor: [251, 191, 36], fontStyle: "bold", fontSize: 8 },
     bodyStyles: { fontSize: 8.5, textColor: [44, 38, 34] },
-    alternateRowStyles: { fillColor: [250, 250, 249] },
+    alternateRowStyles: aDesPostes ? {} : { fillColor: [250, 250, 249] },
     columnStyles: {
       0: { cellWidth: 65 }, 1: { cellWidth: 22 }, 2: { cellWidth: 18 },
       3: { cellWidth: 12, halign: "center" }, 4: { cellWidth: 25, halign: "right" }, 5: { cellWidth: 25, halign: "right" },
