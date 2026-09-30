@@ -1,9 +1,11 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Devis, DevisLigne, Prestation, Client, Profil } from "@/types";
 import { fmt, fmtDate, fmtDatetime, STATUT_LABELS, STATUT_COLORS, cn, nomAvecConditionnement } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
+import PostesLignes from "@/components/devis/PostesLignes";
+import { extrairePostes, grouperParPoste, ordonnerLignes, posteDe, totalItems, trierParOrdre } from "@/lib/postes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, X, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro, Search, Layers } from "lucide-react";
@@ -143,22 +145,36 @@ function ApercuDocument({
               </tr>
             </thead>
             <tbody>
-              {lignes.map((l, i) => (
-                <tr key={i} className={cn("border-t border-ink-100", i % 2 === 1 ? "bg-ink-50/50" : "bg-white")}>
-                  <td className="px-4 py-2.5 text-ink-900">
-                    <span className="font-medium">{l.nom}</span>
-                    {(l as any).kit_description && (
-                      <p className="text-xs text-ink-400 italic mt-0.5">{(l as any).kit_description}</p>
-                    )}
-                    {!(l as any).kit_description && l.description && (
-                      <p className="text-xs text-ink-400 italic mt-0.5">{l.description}</p>
-                    )}
-                  </td>
-                  <td className="px-3 py-2.5 text-ink-500 text-xs hidden md:table-cell">{l.type_branche === "service" ? "Service" : "Matériau"}</td>
-                  <td className="px-3 py-2.5 text-center text-ink-700">{l.quantite}</td>
-                  <td className="px-3 py-2.5 text-right text-ink-500">{fmt(l.prix_unitaire)}</td>
-                  <td className="px-4 py-2.5 text-right font-semibold text-ink-900">{fmt(l.prix_unitaire * l.quantite)}</td>
-                </tr>
+              {grouperParPoste(lignes).map((b, bi, arr) => (
+                <Fragment key={b.poste ?? "__hors_poste"}>
+                  {arr.some(x => x.poste !== null) && (
+                    <tr className="border-t border-ink-200 bg-ink-100">
+                      <td colSpan={5} className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-ink-700">
+                        <span className="flex justify-between gap-3">
+                          <span>{b.poste ?? "Autres prestations"}</span>
+                          <span className="text-ink-900">{fmt(totalItems(b.items))}</span>
+                        </span>
+                      </td>
+                    </tr>
+                  )}
+                  {b.items.map(({ l, i }) => (
+                    <tr key={i} className={cn("border-t border-ink-100", i % 2 === 1 ? "bg-ink-50/50" : "bg-white")}>
+                      <td className="px-4 py-2.5 text-ink-900">
+                        <span className="font-medium">{l.nom}</span>
+                        {(l as any).kit_description && (
+                          <p className="text-xs text-ink-400 italic mt-0.5">{(l as any).kit_description}</p>
+                        )}
+                        {!(l as any).kit_description && l.description && (
+                          <p className="text-xs text-ink-400 italic mt-0.5">{l.description}</p>
+                        )}
+                      </td>
+                      <td className="px-3 py-2.5 text-ink-500 text-xs hidden md:table-cell">{l.type_branche === "service" ? "Service" : "Matériau"}</td>
+                      <td className="px-3 py-2.5 text-center text-ink-700">{l.quantite}</td>
+                      <td className="px-3 py-2.5 text-right text-ink-500">{fmt(l.prix_unitaire)}</td>
+                      <td className="px-4 py-2.5 text-right font-semibold text-ink-900">{fmt(l.prix_unitaire * l.quantite)}</td>
+                    </tr>
+                  ))}
+                </Fragment>
               ))}
               {lignes.length === 0 && (
                 <tr><td colSpan={5} className="px-4 py-6 text-center text-ink-300 italic">Aucune ligne</td></tr>
@@ -239,6 +255,8 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const [objet, setObjet] = useState("");
   const [validite, setValidite] = useState(60);
   const [lignes, setLignes] = useState<DevisLigne[]>([]);
+  const [postes, setPostes] = useState<string[]>([]);
+  const [posteActif, setPosteActif] = useState<string | null>(null);
   const [remise, setRemise] = useState<Remise>({ service_type: "pct", service_val: "", materiau_type: "pct", materiau_val: "" });
   const [showRemise, setShowRemise] = useState(false);
   const [remiseFidelitePct, setRemiseFidelitePct] = useState<number>(0);
@@ -280,11 +298,15 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         if (error) console.error("Erreur récupération devis :", error);
         if (!data) return;
         const d = data as any;
+        // Les lignes reviennent de Supabase sans ordre garanti : on les trie par `ordre`
+        // pour que le regroupement en postes (et le PDF) suive l'ordre enregistré.
+        d.lignes = trierParOrdre((d.lignes ?? []) as any[]);
         setDevis(d);
         setClientId(d.client_id ?? "");
         setApporteurId(d.apporteur_id ?? "");
         setObjet(d.objet ?? "");
-        setLignes(d.lignes ?? []);
+        setLignes(d.lignes);
+        setPostes(extrairePostes(d.lignes));
         setRemiseFidelitePct(d.remise_fidelite_pct ?? 0);
         if (d.remise_valeur > 0 && d.remise_type) {
           try {
@@ -461,6 +483,8 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   }
 
   async function addPrestation(p: PrestationExt) {
+    // Poste cible au moment du clic : les nouvelles lignes vont dans le poste actif.
+    const cible = posteActif;
     if (p.est_kit) {
       const { data: composants } = await supabase
         .from("kit_composants")
@@ -475,7 +499,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       const ratioService = totalComposants > 0 ? totalService / totalComposants : 0;
 
       setLignes(prev => {
-        const ex = prev.findIndex(l => (l as any).prestation_id === p.id);
+        const ex = prev.findIndex(l => (l as any).prestation_id === p.id && posteDe(l) === cible);
         if (ex >= 0) {
           const n = [...prev];
           n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 };
@@ -490,6 +514,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
           prestation_id: p.id,
           kit_description: p.kit_description ?? null,
           kit_ratio_service: ratioService,
+          poste: cible,
         } as any];
       });
       return;
@@ -499,7 +524,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     // (conditionnement + longueur) pour les articles vendus en longueur fixe.
     const nomFinal = nomAvecConditionnement(p.nom, p.longueur_unitaire, p.sous_categorie);
     setLignes(prev => {
-      const ex = prev.findIndex(l => l.nom === nomFinal && l.type_branche === p.type_branche && (l as any).kit_ratio_service == null);
+      const ex = prev.findIndex(l => l.nom === nomFinal && l.type_branche === p.type_branche && (l as any).kit_ratio_service == null && posteDe(l) === cible);
       if (ex >= 0) { const n = [...prev]; n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 }; return n; }
       return [...prev, {
         nom: nomFinal,
@@ -509,13 +534,14 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         unite: p.unite,
         type_branche: p.type_branche,
         prestation_id: p.id,
+        poste: cible,
       } as any];
     });
   }
 
   function addLibre() {
     if (!libre.nom.trim() || !libre.prix_unitaire) return;
-    setLignes(prev => [...prev, { nom: libre.nom, prix_unitaire: parseFloat(libre.prix_unitaire), quantite: 1, unite: libre.unite, type_branche: libre.type_branche as any }]);
+    setLignes(prev => [...prev, { nom: libre.nom, prix_unitaire: parseFloat(libre.prix_unitaire), quantite: 1, unite: libre.unite, type_branche: libre.type_branche as any, poste: posteActif }]);
     setLibre({ nom: "", prix_unitaire: "", unite: "forfait", type_branche: "service" });
     setShowLibre(false);
   }
@@ -559,7 +585,40 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     if (!devis) return;
     setSaving(true);
     const dateV = new Date(); dateV.setDate(dateV.getDate() + validite);
-    await supabase.from("devis_lignes").delete().eq("devis_id", id);
+
+    // 1) On insère les nouvelles lignes AVANT de supprimer les anciennes : si l'insertion
+    //    échoue (ex. colonne `poste` absente), le devis garde ses lignes d'origine.
+    //    Lignes remises à plat dans l'ordre d'affichage (postes, puis hors poste).
+    //    La colonne `poste` n'est envoyée que si le devis utilise des postes.
+    const { data: anciennes } = await supabase.from("devis_lignes").select("id").eq("devis_id", id);
+    const anciensIds = (anciennes ?? []).map((r: any) => r.id as string);
+    const utilisePostes = lignes.some(l => posteDe(l) !== null);
+    if (lignes.length > 0) {
+      const { error: errLignes } = await supabase.from("devis_lignes").insert(
+        ordonnerLignes(lignes, postes).map((l, i) => ({
+          devis_id: id,
+          ordre: i,
+          nom: l.nom,
+          kit_description: (l as any).kit_description ?? null,
+          quantite: l.quantite,
+          prix_unitaire: l.prix_unitaire,
+          unite: l.unite,
+          type_branche: l.type_branche,
+          prestation_id: (l as any).prestation_id ?? null,
+          kit_groupe: (l as any).kit_groupe ?? null,
+          kit_ratio_service: (l as any).kit_ratio_service ?? null,
+          ...(utilisePostes ? { poste: posteDe(l) } : {}),
+        }))
+      );
+      if (errLignes) {
+        alert("Erreur lors de l'enregistrement des lignes (devis inchangé) : " + errLignes.message);
+        setSaving(false);
+        return;
+      }
+    }
+    if (anciensIds.length > 0) {
+      await supabase.from("devis_lignes").delete().in("id", anciensIds);
+    }
     await supabase.from("devis").update({
       client_id: clientId || null,
       apporteur_id: apporteurId || null,
@@ -573,24 +632,15 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       signe_le: sigData ? new Date().toISOString() : devis.signe_le,
       statut: sigData ? "signe" : devis.statut,
     }).eq("id", id);
-    if (lignes.length > 0) {
-      await supabase.from("devis_lignes").insert(lignes.map((l, i) => ({
-        devis_id: id,
-        ordre: i,
-        nom: l.nom,
-        kit_description: (l as any).kit_description ?? null,
-        quantite: l.quantite,
-        prix_unitaire: l.prix_unitaire,
-        unite: l.unite,
-        type_branche: l.type_branche,
-        prestation_id: (l as any).prestation_id ?? null,
-        kit_groupe: (l as any).kit_groupe ?? null,
-        kit_ratio_service: (l as any).kit_ratio_service ?? null,
-      })));
-    }
     const { data, error: errRefetch } = await supabase.from("devis").select(SELECT_DEVIS).eq("id", id).single();
     if (errRefetch) console.error("Erreur récupération devis après sauvegarde :", errRefetch);
-    setDevis(data as any);
+    if (data) {
+      const dd = data as any;
+      dd.lignes = trierParOrdre((dd.lignes ?? []) as any[]);
+      setLignes(dd.lignes);
+      setPostes(extrairePostes(dd.lignes));
+      setDevis(dd);
+    }
     setMode("view");
     setSaving(false);
   }
@@ -746,22 +796,36 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                   </tr>
                 </thead>
                 <tbody>
-                  {viewLignes.map((l: any, i: number) => (
-                    <tr key={i} className="border-b border-ink-50">
-                      <td className="py-2.5 pr-2">
-                        <span className={cn("badge text-xs mr-1.5", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
-                          {l.type_branche === "service" ? "S" : "M"}
-                        </span>
-                        <span className="font-medium">{l.nom}</span>
-                        {l.kit_description && (
-                          <p className="text-xs text-ink-400 italic mt-0.5 ml-6">{l.kit_description}</p>
-                        )}
-                      </td>
-                      <td className="py-2.5 hidden md:table-cell text-ink-500 text-xs">{l.type_branche === "service" ? "Service" : "Matériau"}</td>
-                      <td className="py-2.5 text-right">{l.quantite}</td>
-                      <td className="py-2.5 text-right text-ink-500">{fmt(l.prix_unitaire)}</td>
-                      <td className="py-2.5 text-right font-semibold">{fmt(l.prix_unitaire * l.quantite)}</td>
-                    </tr>
+                  {grouperParPoste(viewLignes).map((b, bi, arr) => (
+                    <Fragment key={b.poste ?? "__hors_poste"}>
+                      {arr.some(x => x.poste !== null) && (
+                        <tr className="bg-ink-50 border-b border-ink-100">
+                          <td colSpan={5} className="py-2 px-2 text-xs font-semibold uppercase tracking-wide text-ink-700">
+                            <span className="flex justify-between gap-3">
+                              <span>{b.poste ?? "Autres prestations"}</span>
+                              <span className="text-ink-900">{fmt(totalItems(b.items))}</span>
+                            </span>
+                          </td>
+                        </tr>
+                      )}
+                      {b.items.map(({ l }, k) => (
+                        <tr key={k} className="border-b border-ink-50">
+                          <td className="py-2.5 pr-2">
+                            <span className={cn("badge text-xs mr-1.5", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
+                              {l.type_branche === "service" ? "S" : "M"}
+                            </span>
+                            <span className="font-medium">{l.nom}</span>
+                            {l.kit_description && (
+                              <p className="text-xs text-ink-400 italic mt-0.5 ml-6">{l.kit_description}</p>
+                            )}
+                          </td>
+                          <td className="py-2.5 hidden md:table-cell text-ink-500 text-xs">{l.type_branche === "service" ? "Service" : "Matériau"}</td>
+                          <td className="py-2.5 text-right">{l.quantite}</td>
+                          <td className="py-2.5 text-right text-ink-500">{fmt(l.prix_unitaire)}</td>
+                          <td className="py-2.5 text-right font-semibold">{fmt(l.prix_unitaire * l.quantite)}</td>
+                        </tr>
+                      ))}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
@@ -1077,47 +1141,12 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                 <div className="space-y-4">
                   <div className="card card-inner">
                     <h2 className="font-semibold text-ink-800 mb-3 text-sm uppercase tracking-wide">Lignes</h2>
-                    {lignes.length === 0 ? (
-                      <p className="text-sm text-ink-400 text-center py-8">Ajoutez des prestations</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {lignes.map((l, i) => (
-                          <div key={i} className="flex flex-col gap-1.5 p-2.5 rounded-xl bg-ink-50 border border-ink-100">
-                            <div className="flex items-start gap-2">
-                              {l.kit_ratio_service != null ? (
-                                <span className="inline-flex items-center gap-1 badge text-xs shrink-0 bg-purple-100 text-purple-700">
-                                  <Layers size={10} /> KIT
-                                </span>
-                              ) : (
-                                <span className={cn("badge text-xs shrink-0", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
-                                  {l.type_branche === "service" ? "S" : "M"}
-                                </span>
-                              )}
-                              <span className="text-xs text-ink-800 flex-1 min-w-0 break-words">{l.nom}</span>
-                              <button onClick={() => setLignes(p => p.filter((_, idx) => idx !== i))} className="text-ink-300 hover:text-red-500 transition-colors shrink-0"><X size={14} /></button>
-                            </div>
-                            <div className="flex items-center gap-2 pl-7">
-                              <input type="number" min="1" step="0.5" value={l.quantite}
-                                onChange={e => setLignes(prev => { const n = [...prev]; n[i] = { ...n[i], quantite: parseFloat(e.target.value) || 1 }; return n; })}
-                                className="w-14 shrink-0 text-center text-xs border border-ink-200 rounded-lg py-1 bg-white" />
-                              <span className="text-xs text-ink-400 shrink-0">×</span>
-                              <input type="number" min="0" step="0.5" value={l.prix_unitaire}
-                                onChange={e => setLignes(prev => { const n = [...prev]; n[i] = { ...n[i], prix_unitaire: parseFloat(e.target.value) || 0 }; return n; })}
-                                className="w-16 shrink-0 text-right text-xs border border-ink-200 rounded-lg py-1 bg-white" />
-                              <span className="text-xs font-semibold text-ink-900 ml-auto shrink-0">{fmt(l.prix_unitaire * l.quantite)}</span>
-                            </div>
-                            {l.kit_description && (
-                              <p className="text-xs text-ink-400 italic pl-7 truncate">{l.kit_description}</p>
-                            )}
-                            {l.kit_ratio_service != null && (
-                              <p className="text-xs text-purple-400 pl-7">
-                                Ventilation : {fmt(l.prix_unitaire * l.quantite * l.kit_ratio_service)} service · {fmt(l.prix_unitaire * l.quantite * (1 - l.kit_ratio_service))} matériaux
-                              </p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <PostesLignes
+                      lignes={lignes} setLignes={setLignes}
+                      postes={postes} setPostes={setPostes}
+                      posteActif={posteActif} setPosteActif={setPosteActif}
+                      texteVide="Ajoutez des prestations"
+                    />
                     {lignes.length > 0 && (
                       <div className="mt-4 pt-4 border-t border-ink-100 space-y-2">
                         <div className="flex justify-between text-xs text-ink-500"><span>Service</span><span>{fmt(totServiceBrut)}</span></div>
@@ -1154,7 +1183,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
 
             {tab === "apercu" && (
               <ApercuDocument
-                devis={devis} lignes={lignes} profil={profil} sigData={sigData} sigDate={sigDate}
+                devis={devis} lignes={ordonnerLignes(lignes, postes)} profil={profil} sigData={sigData} sigDate={sigDate}
                 totServiceBrut={totServiceBrut} totMateriauBrut={totMateriauBrut}
                 remiseService={remiseService} remiseMateriau={remiseMateriau}
                 remiseFideliteEur={remiseFideliteEur} remiseFidelitePct={remiseFidelitePct} totTTC={totTTC}
@@ -1214,7 +1243,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
             )}
 
             <div className="flex gap-3 mt-6">
-              <button onClick={() => { setMode("view"); setLignes((devis.lignes ?? []) as any); }} className="btn-ghost flex-1 justify-center">Annuler</button>
+              <button onClick={() => { setMode("view"); setLignes((devis.lignes ?? []) as any); setPostes(extrairePostes(devis.lignes ?? [])); setPosteActif(null); }} className="btn-ghost flex-1 justify-center">Annuler</button>
               <button onClick={saveEdit} disabled={saving} className="btn-volt flex-1 justify-center">
                 <Save size={15} /> {saving ? "Enregistrement…" : "Sauvegarder"}
               </button>
