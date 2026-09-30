@@ -468,7 +468,8 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       const client = devis.client as any;
       const tel = client?.telephone?.replace(/\s/g, "") ?? "";
       const msg = `Bonjour ${client?.prenom ?? ""}, veuillez signer votre devis ${devis.numero} ici : ${link}`;
-      window.location.href = `sms:${tel}?body=${encodeURIComponent(msg)}`;
+      const sep = /iPad|iPhone|iPod/.test(navigator.userAgent) ? "&" : "?";
+      window.location.href = `sms:${tel}${sep}body=${encodeURIComponent(msg)}`;
     } catch (e: any) {
       alert(e?.message || "Erreur lors de la génération du lien.");
     }
