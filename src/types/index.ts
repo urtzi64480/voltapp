@@ -160,6 +160,8 @@ export interface FactureLigne {
   unite: string;
   type_branche: TypeBranche;
   ordre?: number;
+  // Nom du poste (regroupement d'affichage, repris du devis) — absent = ligne hors poste.
+  poste?: string | null;
 }
 
 export interface Facture {
