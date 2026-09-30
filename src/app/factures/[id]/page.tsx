@@ -1,10 +1,11 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Facture, Profil } from "@/types";
 import { verifierConformiteFacture } from "@/lib/facturx";
 import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
+import { grouperParPoste, totalItems, trierParOrdre } from "@/lib/postes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Download, CheckCircle, Clock, Trash2, Plus, Save, X, AlertTriangle, Mail, FileCode, ShieldCheck } from "lucide-react";
@@ -63,7 +64,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
       });
 
     Promise.all([
-      supabase.from("factures").select("*, client:clients(*), lignes:facture_lignes(id, facture_id, nom, kit_description, quantite, prix_unitaire, unite, type_branche, ordre)").eq("id", id).single(),
+      supabase.from("factures").select("*, client:clients(*), lignes:facture_lignes(*)").eq("id", id).single(),
       supabase.from("apporteurs").select("id,nom,entreprise").eq("actif", true).order("nom"),
       supabase.from("acomptes").select("*").eq("facture_id", id).order("date_versement"),
       supabase.from("profil").select("*").maybeSingle(),
@@ -251,7 +252,9 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
 
   if (!facture) return <Shell><div className="p-8 text-center text-ink-400">Chargement…</div></Shell>;
 
-  const lignes = (facture.lignes ?? []) as any[];
+  const lignes = trierParOrdre((facture.lignes ?? []) as any[]);
+  const blocs = grouperParPoste(lignes);
+  const aDesPostes = blocs.some(b => b.poste !== null);
   const client = facture.client as any;
   const apporteurActuel = apporteurs.find(a => a.id === apporteurId);
 
@@ -371,21 +374,31 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
               </tr>
             </thead>
             <tbody>
-              {lignes.map((l: any, i: number) => (
-                <tr key={i} className="border-b border-ink-50">
-                  <td className="py-2.5 pr-2">
-                    <span className={cn("badge text-xs mr-1.5", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
-                      {l.type_branche === "service" ? "S" : "M"}
-                    </span>
-                    <span className="font-medium">{l.nom}</span>
-                    {l.kit_description && (
-                      <p className="text-xs text-ink-400 italic mt-0.5 ml-6">{l.kit_description}</p>
-                    )}
-                  </td>
-                  <td className="py-2.5 text-right">{l.quantite}</td>
-                  <td className="py-2.5 text-right text-ink-500">{fmt(l.prix_unitaire)}</td>
-                  <td className="py-2.5 text-right font-semibold">{fmt(l.prix_unitaire * l.quantite)}</td>
-                </tr>
+              {blocs.map(b => (
+                <Fragment key={b.poste ?? "__hors_poste"}>
+                  {aDesPostes && (
+                    <tr className="bg-ink-50 border-b border-ink-100">
+                      <td colSpan={3} className="py-2 px-2 text-xs font-semibold uppercase tracking-wide text-ink-700">{b.poste ?? "Autres prestations"}</td>
+                      <td className="py-2 text-right text-xs font-semibold text-ink-900">{fmt(totalItems(b.items))}</td>
+                    </tr>
+                  )}
+                  {b.items.map(({ l }, k) => (
+                    <tr key={k} className="border-b border-ink-50">
+                      <td className="py-2.5 pr-2">
+                        <span className={cn("badge text-xs mr-1.5", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
+                          {l.type_branche === "service" ? "S" : "M"}
+                        </span>
+                        <span className="font-medium">{l.nom}</span>
+                        {l.kit_description && (
+                          <p className="text-xs text-ink-400 italic mt-0.5 ml-6">{l.kit_description}</p>
+                        )}
+                      </td>
+                      <td className="py-2.5 text-right">{l.quantite}</td>
+                      <td className="py-2.5 text-right text-ink-500">{fmt(l.prix_unitaire)}</td>
+                      <td className="py-2.5 text-right font-semibold">{fmt(l.prix_unitaire * l.quantite)}</td>
+                    </tr>
+                  ))}
+                </Fragment>
               ))}
             </tbody>
           </table>
