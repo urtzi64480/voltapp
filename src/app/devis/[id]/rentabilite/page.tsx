@@ -102,7 +102,13 @@ export default function RentabiliteDevisPage({ params }: { params: { id: string 
   const tauxIrMateriau = profil?.taux_ir_materiau ?? 0;
 
   const lignesRentab = viewLignes.map((l: any) => {
-    const prixAchatUnitaire: number | null = l.prestation_id ? (prixAchatMap[l.prestation_id] ?? null) : null;
+    // Fournisseur retenu sur la ligne : on utilise SON prix d'achat (photo prise au choix du
+    // fournisseur) ; s'il n'en a pas, le coût reste inconnu plutôt que d'emprunter celui d'un
+    // autre fournisseur. Sans fournisseur : prix d'achat catalogue, comme avant.
+    const aFournisseur = !!l.fournisseur_id || l.prix_achat != null;
+    const prixAchatUnitaire: number | null = aFournisseur
+      ? (l.prix_achat ?? null)
+      : (l.prestation_id ? (prixAchatMap[l.prestation_id] ?? null) : null);
     const coutAchat = prixAchatUnitaire && prixAchatUnitaire > 0 ? prixAchatUnitaire * l.quantite : 0;
     const venteLigne = l.prix_unitaire * l.quantite;
     const margeLigne = coutAchat > 0 ? venteLigne - coutAchat : null;
