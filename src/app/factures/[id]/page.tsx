@@ -5,6 +5,7 @@ import { Facture, Profil } from "@/types";
 import { verifierConformiteFacture } from "@/lib/facturx";
 import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
+import LigneImage from "@/components/devis/LigneImage";
 import { grouperParPoste, totalItems, trierParOrdre } from "@/lib/postes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -388,7 +389,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
                         <span className={cn("badge text-xs mr-1.5", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
                           {l.type_branche === "service" ? "S" : "M"}
                         </span>
-                        <span className="font-medium">{l.nom}</span>
+                        <LigneImage url={(l as any).image_url} taille={28} className="inline-block align-middle mr-2" /><span className="font-medium">{l.nom}</span>
                         {l.kit_description && (
                           <p className="text-xs text-ink-400 italic mt-0.5 ml-6">{l.kit_description}</p>
                         )}
