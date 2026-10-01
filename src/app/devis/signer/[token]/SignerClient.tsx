@@ -3,6 +3,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Check, RotateCcw, PenLine, Download } from "lucide-react";
 import { grouperParPoste, totalItems, trierParOrdre } from "@/lib/postes";
+import LigneImage from "@/components/devis/LigneImage";
 
 // Page publique : toutes les données passent par deux fonctions SQL sécurisées (voir
 // supabase/migrations/004_signature_publique.sql) qui ne renvoient QUE ce qui sert à l'affichage et au
@@ -195,7 +196,7 @@ export default function SignerPage({ params }: { params: { token: string } }) {
                   )}
                   {b.items.map(({ l }, k) => (
                     <tr key={k} className="border-b border-gray-50">
-                      <td className="py-2 text-gray-700">{l.nom}</td>
+                      <td className="py-2 text-gray-700"><LigneImage url={l.image_url} taille={32} className="inline-block align-middle mr-2" />{l.nom}</td>
                       <td className="py-2 text-right text-gray-500">{l.quantite}</td>
                       <td className="py-2 text-right font-medium">{fmt(l.prix_unitaire * l.quantite)}</td>
                     </tr>
