@@ -14,7 +14,7 @@ import {
   ResultatPreDevis, BesoinApparie, OptionArticle, ChoixLigne,
 } from "@/lib/predevis-engine";
 import { attacherFournisseurs, libelleOffre, offrePrincipale, offresTriees, prixVenteOffre } from "@/lib/fournisseurs";
-import { colonnesFournisseur } from "@/lib/devis-lignes";
+import { colonnesFournisseur, colonnesImage } from "@/lib/devis-lignes";
 import ProduitPicker from "@/components/devis/ProduitPicker";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
@@ -75,6 +75,7 @@ function optionEffective(besoin: BesoinApparie, etat: EtatChoix, prestations: Pr
       type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire ?? null,
       quantiteMultiplicateur: multiplicateurPourArticle(besoin.sousCategorie, p.sous_categorie),
       sousCategorieArticle: p.sous_categorie ?? besoin.sousCategorie,
+      image_url: p.image_url ?? null,
     };
     return optionAvecOffre(base, p, offre);
   }
@@ -553,10 +554,11 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       // Colonnes fournisseur envoyées uniquement si au moins une ligne en porte (voir
       // colonnesFournisseur) — sinon l'insertion est identique à l'ancienne.
       const colFournisseur = colonnesFournisseur(lignesFinales as DevisLigne[]);
+      const colImage = colonnesImage(lignesFinales);
       const { error: errLignes } = await supabase.from("devis_lignes").insert(
         lignesFinales.map((l, i) => {
-          const { fournisseur_id, fournisseur_nom, prix_achat, ...reste } = l;
-          return { ...reste, devis_id: devis.id, ordre: i, ...colFournisseur(l as DevisLigne) };
+          const { fournisseur_id, fournisseur_nom, prix_achat, image_url, ...reste } = l;
+          return { ...reste, devis_id: devis.id, ordre: i, ...colFournisseur(l as DevisLigne), ...colImage(l) };
         })
       );
       if (errLignes) {
