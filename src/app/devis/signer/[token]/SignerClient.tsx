@@ -4,10 +4,9 @@ import { supabase } from "@/lib/supabase";
 import { Check, RotateCcw, PenLine, Download } from "lucide-react";
 import { grouperParPoste, totalItems, trierParOrdre } from "@/lib/postes";
 
-// Page publique : on ne demande QUE ce qui sert à l'affichage et au PDF du devis. Surtout pas de
-// `select *` : les lignes portent le fournisseur et le prix d'achat (privés), le devis porte les
-// notes internes et l'apporteur, le client sa fiche complète (code d'accès…).
-const SELECT_PUBLIC = "id, user_id, client_id, numero, objet, statut, date_emission, date_validite, total_service, total_materiau, total_ttc, remise_type, remise_valeur, remise_fidelite_pct, signe_le, signature_data, signature_token_expires_at, client:clients(id, nom, prenom, adresse, code_postal, ville, telephone, email), lignes:devis_lignes(id, devis_id, nom, description, kit_description, kit_ratio_service, quantite, prix_unitaire, unite, type_branche, ordre, poste)";
+// Page publique : toutes les données passent par deux fonctions SQL sécurisées (voir
+// supabase/migrations/004_signature_publique.sql) qui ne renvoient QUE ce qui sert à l'affichage et au
+// PDF — jamais de fournisseur, de prix d'achat, de notes internes ni de fiche client complète.
 
 function fmt(n: number) { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n); }
 
@@ -26,28 +25,14 @@ export default function SignerPage({ params }: { params: { token: string } }) {
 
   useEffect(() => {
     async function load() {
-      const { data, error: err } = await supabase
-        .from("devis")
-        .select(SELECT_PUBLIC)
-        .eq("signature_token", token)
-        .single();
+      const { data, error: err } = await supabase.rpc("get_devis_signature", { p_token: token });
 
       if (err || !data) { setError("Lien invalide ou expiré."); return; }
       if (data.signature_token_expires_at && new Date(data.signature_token_expires_at) < new Date()) {
         setError("Ce lien a expiré."); return;
       }
 
-      // Profil de l'artisan : fonction SECURITY DEFINER (accès anonyme, sans IBAN ni tokens).
-      // Repli sur la lecture directe si la fonction est absente (ex. artisan connecté qui teste son lien).
-      let p: any = null;
-      const rpcRes = await supabase.rpc("get_public_profil_by_devis_token", { p_token: token }).maybeSingle();
-      p = rpcRes.data ?? null;
-      if (!p) {
-        const direct = await supabase.from("profil").select("*").eq("id", data.user_id).maybeSingle();
-        p = direct.data ?? null;
-      }
-      setProfil(p);
-
+      setProfil(data.profil ?? null);
       if (data.statut === "signe") { setSigned(true); setDevis(data); return; }
       setDevis(data);
     }
@@ -90,20 +75,16 @@ export default function SignerPage({ params }: { params: { token: string } }) {
     if (!px.some(v => v !== 0)) { alert("Veuillez signer avant de valider."); return; }
     setSaving(true);
     const sigData = c.toDataURL("image/png");
-    await supabase.from("devis").update({
-      signature_data: sigData,
-      signe_le: new Date().toISOString(),
-      statut: "signe",
-      signature_token: null,
-      signature_token_expires_at: null,
-    }).eq("signature_token", token);
-    // Recharger le devis avec la signature pour le PDF
-    const { data } = await supabase
-      .from("devis")
-      .select(SELECT_PUBLIC)
-      .eq("id", devis.id)
-      .single();
-    if (data) setDevis(data);
+    // Enregistre la signature côté serveur (lien valide, non expiré, devis pas déjà signé) et
+    // renvoie le devis signé pour le PDF.
+    const { data, error: errSign } = await supabase.rpc("sign_devis", { p_token: token, p_signature: sigData });
+    if (errSign || !data) {
+      alert("La signature n'a pas pu être enregistrée (lien expiré ou devis déjà signé).");
+      setSaving(false);
+      return;
+    }
+    setDevis(data);
+    if (data.profil) setProfil(data.profil);
     setSigned(true);
     setSaving(false);
   }
