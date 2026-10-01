@@ -4,6 +4,11 @@ import { supabase } from "@/lib/supabase";
 import { Check, RotateCcw, PenLine, Download } from "lucide-react";
 import { grouperParPoste, totalItems, trierParOrdre } from "@/lib/postes";
 
+// Page publique : on ne demande QUE ce qui sert à l'affichage et au PDF du devis. Surtout pas de
+// `select *` : les lignes portent le fournisseur et le prix d'achat (privés), le devis porte les
+// notes internes et l'apporteur, le client sa fiche complète (code d'accès…).
+const SELECT_PUBLIC = "id, user_id, client_id, numero, objet, statut, date_emission, date_validite, total_service, total_materiau, total_ttc, remise_type, remise_valeur, remise_fidelite_pct, signe_le, signature_data, signature_token_expires_at, client:clients(id, nom, prenom, adresse, code_postal, ville, telephone, email), lignes:devis_lignes(id, devis_id, nom, description, kit_description, kit_ratio_service, quantite, prix_unitaire, unite, type_branche, ordre, poste)";
+
 function fmt(n: number) { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n); }
 
 export default function SignerPage({ params }: { params: { token: string } }) {
@@ -23,7 +28,7 @@ export default function SignerPage({ params }: { params: { token: string } }) {
     async function load() {
       const { data, error: err } = await supabase
         .from("devis")
-        .select("*, client:clients(*), lignes:devis_lignes(*)")
+        .select(SELECT_PUBLIC)
         .eq("signature_token", token)
         .single();
 
@@ -95,7 +100,7 @@ export default function SignerPage({ params }: { params: { token: string } }) {
     // Recharger le devis avec la signature pour le PDF
     const { data } = await supabase
       .from("devis")
-      .select("*, client:clients(*), lignes:devis_lignes(*)")
+      .select(SELECT_PUBLIC)
       .eq("id", devis.id)
       .single();
     if (data) setDevis(data);
