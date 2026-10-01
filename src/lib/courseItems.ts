@@ -50,3 +50,38 @@ export function buildCourseItems(lignes: any[]): CourseItem[] {
 
   return Array.from(map.values()).sort((a, b) => a.nom.localeCompare(b.nom));
 }
+
+// ─── Vue PRIVÉE par fournisseur (page artisan uniquement) ───────────────────
+// N'est utilisée que par /devis/[id]/courses (connecté). La liste publique envoyée au client et
+// les exports restent sur buildCourseItems : le client choisit lui-même où acheter.
+
+export interface GroupeFournisseur {
+  fournisseur: string | null;   // null = fournisseur non précisé (kits, anciennes lignes…)
+  items: CourseItem[];
+  // Coût d'achat total du groupe (TTC) — null si une ligne matériau n'a pas de prix d'achat.
+  achat: number | null;
+}
+
+export function buildCourseItemsParFournisseur(lignes: any[]): GroupeFournisseur[] {
+  const parNom = new Map<string, any[]>();
+  for (const l of lignes ?? []) {
+    const nom = String(l.fournisseur_nom ?? "").trim();
+    const liste = parNom.get(nom) ?? [];
+    liste.push(l);
+    parNom.set(nom, liste);
+  }
+  const groupes: GroupeFournisseur[] = [];
+  parNom.forEach((ls, nom) => {
+    const items = buildCourseItems(ls);
+    if (items.length === 0) return;
+    const matieres = ls.filter(l => l.type_branche === "materiau" && l.kit_ratio_service == null);
+    const complet = matieres.length > 0 && matieres.every(l => l.prix_achat != null);
+    const achat = complet ? matieres.reduce((a, l) => a + (l.prix_achat as number) * (l.quantite || 1), 0) : null;
+    groupes.push({ fournisseur: nom || null, items, achat });
+  });
+  return groupes.sort((a, b) => {
+    if (a.fournisseur === null) return 1;
+    if (b.fournisseur === null) return -1;
+    return a.fournisseur.localeCompare(b.fournisseur, "fr");
+  });
+}
