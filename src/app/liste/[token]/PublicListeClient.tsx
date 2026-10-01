@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { Check, ShoppingCart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buildCourseItems, CourseItem } from "@/lib/courseItems";
+import LigneImage from "@/components/devis/LigneImage";
 
 interface PublicListeRow {
   numero: string;
@@ -97,6 +98,7 @@ export default function PublicListeClient({ token }: { token: string }) {
                       )}>
                         {isChecked && <Check size={13} className="text-white" />}
                       </div>
+                      <LigneImage url={it.image} taille={36} />
                       <span className={cn("flex-1 text-sm", isChecked ? "text-ink-400 line-through" : "text-ink-800")}>
                         {it.nom}
                       </span>
