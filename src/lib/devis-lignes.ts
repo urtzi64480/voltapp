@@ -33,6 +33,7 @@ export function ligneDepuisArticle(p: Prestation, offre: PrestationFournisseur |
     type_branche: p.type_branche,
     prestation_id: p.id,
     poste,
+    image_url: p.image_url ?? null,
     ...champsFournisseur(o),
   };
 }
@@ -100,6 +101,7 @@ export function remplacerProduitLigne<T extends LigneEdition>(l: T, p: Prestatio
     unite: p.unite,
     type_branche: p.type_branche,
     prestation_id: p.id,
+    image_url: p.image_url ?? null,
     ...champsFournisseur(o),
   };
 }
@@ -113,4 +115,12 @@ export function colonnesFournisseur(lignes: DevisLigne[]): (l: DevisLigne) => Re
   return l => utilise
     ? { fournisseur_id: l.fournisseur_id ?? null, fournisseur_nom: l.fournisseur_nom ?? null, prix_achat: l.prix_achat ?? null }
     : {};
+}
+
+// Colonne image à écrire dans devis_lignes / facture_lignes. Comme pour les fournisseurs : envoyée
+// seulement si au moins une ligne a une image, et alors sur TOUTES les lignes (insertion homogène).
+// Un devis sans image s'enregistre exactement comme avant, même sans la migration 005.
+export function colonnesImage(lignes: { image_url?: string | null }[]): (l: { image_url?: string | null }) => Record<string, unknown> {
+  const utilise = lignes.some(l => !!l.image_url);
+  return l => utilise ? { image_url: l.image_url ?? null } : {};
 }

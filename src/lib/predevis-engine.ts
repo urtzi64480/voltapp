@@ -89,6 +89,8 @@ export interface OptionArticle {
   fournisseur_id?: string | null;
   fournisseur_nom?: string | null;
   prix_achat?: number | null;
+  // Image du produit (reprise sur la ligne de devis).
+  image_url?: string | null;
 }
 
 export interface BesoinApparie extends LigneBesoin {
@@ -443,6 +445,7 @@ function optionsPour(sousCategorie: string, prestations: Prestation[]): OptionAr
       prestation_id: p.id, nom: p.nom, prix_unitaire: prixVenteOffre(p, o), unite: p.unite,
       type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire ?? null,
       quantiteMultiplicateur: 1, sousCategorieArticle: sousCategorie,
+      image_url: p.image_url ?? null,
       ...champsFournisseurOption(o),
     };
   };
@@ -495,8 +498,8 @@ export interface ChoixLigne {
 }
 
 // Fournisseur de l'option → colonnes de la ligne de devis (photo du fournisseur retenu).
-function champsLigneDepuisOption(o: Pick<OptionArticle, "fournisseur_id" | "fournisseur_nom" | "prix_achat">): Pick<DevisLigne, "fournisseur_id" | "fournisseur_nom" | "prix_achat"> {
-  return { fournisseur_id: o.fournisseur_id ?? null, fournisseur_nom: o.fournisseur_nom ?? null, prix_achat: o.prix_achat ?? null };
+function champsLigneDepuisOption(o: Pick<OptionArticle, "fournisseur_id" | "fournisseur_nom" | "prix_achat"> & { image_url?: string | null }): Pick<DevisLigne, "fournisseur_id" | "fournisseur_nom" | "prix_achat" | "image_url"> {
+  return { fournisseur_id: o.fournisseur_id ?? null, fournisseur_nom: o.fournisseur_nom ?? null, prix_achat: o.prix_achat ?? null, image_url: o.image_url ?? null };
 }
 
 // Un câble/gaine/moulure choisi en bobine (longueur_unitaire défini) est décomposé en
@@ -539,7 +542,7 @@ function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArt
       lignes.push({
         nom: auMetre.nom, description: besoin.piece, quantite: Math.ceil(reliquat),
         prix_unitaire: prixVenteOffre(auMetre, offreAuMetre), unite: auMetre.unite, type_branche: auMetre.type_branche,
-        prestation_id: auMetre.id, ...champsLigneDepuisOption(champsFournisseurOption(offreAuMetre)),
+        prestation_id: auMetre.id, ...champsLigneDepuisOption({ ...champsFournisseurOption(offreAuMetre), image_url: auMetre.image_url ?? null }),
       });
     } else if (lignes.length > 0) {
       lignes[0].quantite += 1; // pas d'article "au mètre" pour ce reliquat — une bobine/rouleau de plus

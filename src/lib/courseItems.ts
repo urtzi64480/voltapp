@@ -3,6 +3,7 @@ export interface CourseItem {
   nom: string;
   qty: number;
   unite?: string;
+  image?: string;
 }
 
 // Termes désignant une prestation (main d'œuvre, déplacement, étude...) à exclure de la liste d'achat
@@ -31,19 +32,26 @@ export function buildCourseItems(lignes: any[]): CourseItem[] {
         if (SERVICE_REGEX.test(nom)) continue;
         const qty = qtyUnit * (l.quantite || 1);
         const key = nom.toLowerCase();
+        // Image : seulement pour une ligne « article » (pas un vrai kit, dont les composants n'ont pas d'image).
+        const image = l.kit_ratio_service == null && l.image_url ? String(l.image_url) : undefined;
         if (map.has(key)) {
-          map.get(key)!.qty += qty;
+          const ex = map.get(key)!;
+          ex.qty += qty;
+          if (!ex.image && image) ex.image = image;
         } else {
-          map.set(key, { key, nom, qty });
+          map.set(key, { key, nom, qty, image });
         }
       }
     } else if (l.type_branche === "materiau") {
       const key = l.nom.toLowerCase();
       const qty = l.quantite || 1;
+      const image = l.image_url ? String(l.image_url) : undefined;
       if (map.has(key)) {
-        map.get(key)!.qty += qty;
+        const ex = map.get(key)!;
+        ex.qty += qty;
+        if (!ex.image && image) ex.image = image;
       } else {
-        map.set(key, { key, nom: l.nom, qty, unite: l.unite });
+        map.set(key, { key, nom: l.nom, qty, unite: l.unite, image });
       }
     }
   }

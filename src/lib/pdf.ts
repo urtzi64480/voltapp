@@ -1,6 +1,7 @@
 "use client";
 import { Devis, Profil, Facture } from "@/types";
 import { fmt, fmtDate, fmtDatetime } from "./utils";
+import { chargerImagesPdf, ImagesPdf } from "./pdfImages";
 import { grouperParPoste, totalItems, trierParOrdre } from "./postes";
 import {
   buildFacturXml, assemblerFacturX, natureOperations, sirenFromSiret,
@@ -34,13 +35,40 @@ async function loadLogoBase64(logoUrl?: string | null): Promise<string | null> {
   }
 }
 
+// ─── Images produit dans le tableau des lignes ─────────────────────────────
+const IMG_BOX = 11; // mm : côté de la vignette
+
+// Cellule « Désignation » : si la ligne a une image chargée, on réserve la place à gauche pour la
+// vignette (dessinée ensuite par dessinerImageCellule) ; sinon cellule texte classique, inchangée.
+function celluleDesignation(l: { nom: string; kit_description?: string | null; image_url?: string | null }, images: ImagesPdf): any {
+  const texte = designationCell(l.nom, l.kit_description);
+  if (!l.image_url || !images.has(l.image_url)) return texte;
+  return {
+    content: texte, imgUrl: l.image_url,
+    styles: { cellPadding: { top: 2, bottom: 2, right: 2, left: IMG_BOX + 5 }, minCellHeight: IMG_BOX + 4, valign: "middle" },
+  };
+}
+
+function dessinerImageCellule(doc: any, data: any, images: ImagesPdf) {
+  if (data.section !== "body" || data.column.index !== 0) return;
+  const url = (data.cell.raw as any)?.imgUrl;
+  const img = url ? images.get(url) : undefined;
+  if (!img) return;
+  const ratio = Math.min(IMG_BOX / img.w, IMG_BOX / img.h);
+  const w = img.w * ratio;
+  const h = img.h * ratio;
+  try {
+    doc.addImage(img.data, "JPEG", data.cell.x + 2 + (IMG_BOX - w) / 2, data.cell.y + (data.cell.height - h) / 2, w, h);
+  } catch { /* image illisible : la ligne reste affichée sans vignette */ }
+}
+
 function designationCell(nom: string, description?: string | null): string {
   if (!nom) return "";
   if (!description || description.trim() === "") return nom;
   return `${nom}\n${description.trim()}`;
 }
 
-async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
+async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string, imagesInjectees?: ImagesPdf) {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
   const doc = new jsPDF({ unit: "mm", format: "a4" });
@@ -91,6 +119,7 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
   // Lignes triées par `ordre`, puis regroupées par poste (titre + sous-total par poste).
   // Sans aucun poste, le tableau reste identique à l'ancien (lignes à plat).
   const lignes = trierParOrdre(devis.lignes ?? []);
+  const images: ImagesPdf = imagesInjectees ?? await chargerImagesPdf(lignes.map((l: any) => l.image_url));
   const blocs = grouperParPoste(lignes);
   const aDesPostes = blocs.some(b => b.poste !== null);
   const body: any[] = [];
@@ -103,7 +132,7 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
       }]);
     }
     b.items.forEach(({ l }) => body.push([
-      designationCell(l.nom, l.kit_description),
+      celluleDesignation(l as any, images),
       l.type_branche === "service" ? "Service" : "Matériau",
       l.unite, l.quantite, fmt(l.prix_unitaire), fmt(l.prix_unitaire * l.quantite),
     ]));
@@ -119,12 +148,13 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
     head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
     body,
     headStyles: { fillColor: [28, 25, 23], textColor: [251, 191, 36], fontStyle: "bold", fontSize: 8 },
-    bodyStyles: { fontSize: 8.5, textColor: [44, 38, 34] },
+    bodyStyles: { fontSize: 8.5, textColor: [44, 38, 34], valign: "middle" },
     alternateRowStyles: aDesPostes ? {} : { fillColor: [250, 250, 249] },
     columnStyles: {
-      0: { cellWidth: 65 }, 1: { cellWidth: 22 }, 2: { cellWidth: 18 },
+      0: { cellWidth: images.size > 0 ? 72 : 65 }, 1: { cellWidth: 22 }, 2: { cellWidth: 18 },
       3: { cellWidth: 12, halign: "center" }, 4: { cellWidth: 25, halign: "right" }, 5: { cellWidth: 25, halign: "right" },
     },
+    didDrawCell: (data: any) => dessinerImageCellule(doc, data, images),
     margin: { left: M, right: M },
   });
 
@@ -197,7 +227,7 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string) {
 // Police embarquée (Liberation Sans, métriques Helvetica) — obligatoire pour PDF/A-3 / Factur-X
 const FX_FONT = "LiberationSans";
 
-async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acompte[] = [], pdfa = false) {
+async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acompte[] = [], pdfa = false, images: ImagesPdf = new Map()) {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
   const doc = new jsPDF({ unit: "mm", format: "a4", putOnlyUsedFonts: true });
@@ -295,7 +325,7 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
       }]);
     }
     b.items.forEach(({ l }) => body.push([
-      designationCell(l.nom, l.kit_description),
+      celluleDesignation(l as any, images),
       l.type_branche === "service" ? "Service" : "Matériau",
       l.unite, l.quantite, fmt(l.prix_unitaire), fmt(l.prix_unitaire * l.quantite),
     ]));
@@ -312,12 +342,13 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
     head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
     body,
     headStyles: { fillColor: [28, 25, 23], textColor: [251, 191, 36], fontStyle: "bold", fontSize: 8 },
-    bodyStyles: { fontSize: 8.5, textColor: [44, 38, 34] },
+    bodyStyles: { fontSize: 8.5, textColor: [44, 38, 34], valign: "middle" },
     alternateRowStyles: aDesPostes ? {} : { fillColor: [250, 250, 249] },
     columnStyles: {
-      0: { cellWidth: 65 }, 1: { cellWidth: 22 }, 2: { cellWidth: 18 },
+      0: { cellWidth: images.size > 0 ? 72 : 65 }, 1: { cellWidth: 22 }, 2: { cellWidth: 18 },
       3: { cellWidth: 12, halign: "center" }, 4: { cellWidth: 25, halign: "right" }, 5: { cellWidth: 25, halign: "right" },
     },
+    didDrawCell: (data: any) => dessinerImageCellule(doc, data, images),
     margin: { left: M, right: M },
   });
 
@@ -399,22 +430,23 @@ export async function genPDFDevis(devis: Devis, profil: Profil, sigData?: string
   doc.save(`Devis-${devis.numero}.pdf`);
 }
 
-export async function genPDFDevisBlob(devis: Devis, profil: Profil, sigData?: string): Promise<Blob> {
-  const doc = await buildDevisDoc(devis, profil, sigData);
+export async function genPDFDevisBlob(devis: Devis, profil: Profil, sigData?: string, imagesInjectees?: ImagesPdf): Promise<Blob> {
+  const doc = await buildDevisDoc(devis, profil, sigData, imagesInjectees);
   return doc.output("blob");
 }
 
 // Facture = Factur-X (PDF/A-3 lisible + XML EN 16931 embarqué).
 // Repli automatique sur le PDF classique si l'assemblage échoue, pour ne jamais bloquer l'envoi.
-async function buildFactureBytes(facture: Facture, profil: Profil, acomptes: Acompte[] = []): Promise<Uint8Array> {
+async function buildFactureBytes(facture: Facture, profil: Profil, acomptes: Acompte[] = [], imagesInjectees?: ImagesPdf): Promise<Uint8Array> {
+  const images: ImagesPdf = imagesInjectees ?? await chargerImagesPdf((facture.lignes ?? []).map((l: any) => l.image_url));
   try {
-    const doc = await buildFactureDoc(facture, profil, acomptes, true);
+    const doc = await buildFactureDoc(facture, profil, acomptes, true, images);
     const xml = buildFacturXml(facture, profil, acomptes);
     const auteur = profil.nom_entreprise || `${profil.prenom ?? ""} ${profil.nom ?? ""}`.trim() || "VoltApp";
     return await assemblerFacturX(doc.output("arraybuffer"), xml, { title: `Facture ${facture.numero}`, author: auteur });
   } catch (err) {
     console.error("Factur-X indisponible, PDF classique généré :", err);
-    const doc = await buildFactureDoc(facture, profil, acomptes, false);
+    const doc = await buildFactureDoc(facture, profil, acomptes, false, images);
     return new Uint8Array(doc.output("arraybuffer"));
   }
 }
@@ -435,8 +467,8 @@ export async function genPDFFacture(facture: Facture, profil: Profil, acomptes: 
   telecharger(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }), `Facture-${facture.numero}.pdf`);
 }
 
-export async function genPDFFactureBlob(facture: Facture, profil: Profil, acomptes: Acompte[] = []): Promise<Blob> {
-  const bytes = await buildFactureBytes(facture, profil, acomptes);
+export async function genPDFFactureBlob(facture: Facture, profil: Profil, acomptes: Acompte[] = [], imagesInjectees?: ImagesPdf): Promise<Blob> {
+  const bytes = await buildFactureBytes(facture, profil, acomptes, imagesInjectees);
   return new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
 }
 
