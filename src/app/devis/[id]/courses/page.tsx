@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Shell from "@/components/layout/Shell";
+import LigneImage from "@/components/devis/LigneImage";
 import Link from "next/link";
 import { ArrowLeft, Check, ShoppingCart, RotateCcw, Share2, Link2, MessageSquare, Mail, Copy, FileDown, Store } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -213,6 +214,7 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
         )}>
           {isChecked && <Check size={13} className="text-white" />}
         </div>
+        <LigneImage url={it.image} taille={36} />
         <span className={cn("flex-1 text-sm", isChecked ? "text-ink-400 line-through" : "text-ink-800")}>
           {it.nom}
         </span>
