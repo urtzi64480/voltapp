@@ -49,8 +49,9 @@ import {
   Breaker as TableauBreaker, BreakerRow, BREAKER_TYPES, CIRCUITS,
   effectiveSection, gaineRecommandee, uid,
 } from "./electrical-constants";
-import { Prestation, Gamme, DevisLigne } from "@/types";
+import { Prestation, Gamme, DevisLigne, PrestationFournisseur } from "@/types";
 import { nomAvecConditionnement } from "@/lib/utils";
+import { libelleOffre, offrePrincipale, offrePourFournisseur, prixVenteOffre } from "@/lib/fournisseurs";
 
 // ─── TYPES DE BESOIN ────────────────────────────────────────────────────────
 
@@ -83,6 +84,11 @@ export interface OptionArticle {
   // au catalogue, seuls cable_X et fil_X y figurent). Sert à retrouver le bon article "au
   // mètre" pour le reliquat lors de la décomposition en bobines (genererLignesDevis).
   sousCategorieArticle?: string;
+  // Fournisseur retenu pour cette option (offre de prestation_fournisseurs) — le prix_unitaire
+  // ci-dessus est DÉJÀ celui de ce fournisseur. Absent/null = produit sans offre fournisseur.
+  fournisseur_id?: string | null;
+  fournisseur_nom?: string | null;
+  prix_achat?: number | null;
 }
 
 export interface BesoinApparie extends LigneBesoin {
@@ -394,6 +400,31 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
   return { besoins: Array.from(cumul.values()), alertes };
 }
 
+// ─── FOURNISSEURS ───────────────────────────────────────────────────────────
+
+function champsFournisseurOption(o?: PrestationFournisseur | null): Pick<OptionArticle, "fournisseur_id" | "fournisseur_nom" | "prix_achat"> {
+  if (!o) return { fournisseur_id: null, fournisseur_nom: null, prix_achat: null };
+  return { fournisseur_id: o.id, fournisseur_nom: libelleOffre(o), prix_achat: o.prix_achat ?? null };
+}
+
+// Option re-tarifée chez un fournisseur donné (offre === null : retour à l'offre principale du
+// produit). Tout le reste de l'option (quantités, bobines, gamme…) est conservé.
+export function optionAvecOffre(opt: OptionArticle, p: Prestation, offre: PrestationFournisseur | null): OptionArticle {
+  const o = offre ?? offrePrincipale(p.fournisseurs) ?? null;
+  return { ...opt, prix_unitaire: prixVenteOffre(p, o), ...champsFournisseurOption(o) };
+}
+
+// Article « au mètre » qui complète un reliquat de bobine : on cherche d'abord SON offre chez le
+// même fournisseur que la bobine (même magasin = un seul passage), sinon son offre principale.
+function offreCompagnon(auMetre: Prestation, fournisseurNom?: string | null): PrestationFournisseur | null {
+  return offrePourFournisseur(auMetre, fournisseurNom) ?? offrePrincipale(auMetre.fournisseurs) ?? null;
+}
+
+// Prix de vente unitaire de l'article « au mètre » compagnon, pour les estimations de la page.
+export function prixCompagnonAuMetre(auMetre: Prestation, fournisseurNom?: string | null): number {
+  return prixVenteOffre(auMetre, offreCompagnon(auMetre, fournisseurNom));
+}
+
 // ─── PASSE 2 — APPARIEMENT CATALOGUE ────────────────────────────────────────
 
 // Exporté — réutilisé tel quel par la page pour la main d'œuvre (sous_categorie
@@ -405,11 +436,16 @@ export function optionsPourSousCategorie(sousCategorie: string, prestations: Pre
 function optionsPour(sousCategorie: string, prestations: Prestation[]): OptionArticle[] {
   const items = prestations.filter(p => p.actif !== false && p.sous_categorie === sousCategorie);
   const gammes: Gamme[] = ["entree", "moyenne", "haut"];
-  const versOption = (p: Prestation): OptionArticle => ({
-    prestation_id: p.id, nom: p.nom, prix_unitaire: p.prix_unitaire, unite: p.unite,
-    type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire ?? null,
-    quantiteMultiplicateur: 1, sousCategorieArticle: sousCategorie,
-  });
+  const versOption = (p: Prestation): OptionArticle => {
+    // Par défaut : l'offre principale du produit (celle recopiée dans prestations.prix_unitaire).
+    const o = offrePrincipale(p.fournisseurs);
+    return {
+      prestation_id: p.id, nom: p.nom, prix_unitaire: prixVenteOffre(p, o), unite: p.unite,
+      type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire ?? null,
+      quantiteMultiplicateur: 1, sousCategorieArticle: sousCategorie,
+      ...champsFournisseurOption(o),
+    };
+  };
   const gammees = gammes.map(g => items.find(p => p.gamme === g)).filter((p): p is Prestation => !!p).map(versOption);
   if (gammees.length > 0) return gammees;
   // Compatibilité : aucun article "gammé" pour cette sous-catégorie — on propose le
@@ -458,6 +494,11 @@ export interface ChoixLigne {
   libre?: { nom: string; prixUnitaire: number; unite: string; typeBranche: "service" | "materiau" };
 }
 
+// Fournisseur de l'option → colonnes de la ligne de devis (photo du fournisseur retenu).
+function champsLigneDepuisOption(o: Pick<OptionArticle, "fournisseur_id" | "fournisseur_nom" | "prix_achat">): Pick<DevisLigne, "fournisseur_id" | "fournisseur_nom" | "prix_achat"> {
+  return { fournisseur_id: o.fournisseur_id ?? null, fournisseur_nom: o.fournisseur_nom ?? null, prix_achat: o.prix_achat ?? null };
+}
+
 // Un câble/gaine/moulure choisi en bobine (longueur_unitaire défini) est décomposé en
 // bobines entières + un éventuel reliquat au mètre linéaire (autre article catalogue,
 // même sous_categorie, sans longueur_unitaire) — sinon arrondi à une bobine de plus. La
@@ -470,7 +511,7 @@ function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArt
     return [{
       nom: option.nom, description: besoin.piece, quantite: Math.ceil(quantiteReelle),
       prix_unitaire: option.prix_unitaire, unite: option.unite, type_branche: option.type_branche,
-      prestation_id: option.prestation_id,
+      prestation_id: option.prestation_id, ...champsLigneDepuisOption(option),
     }];
   }
   const L = option.longueur_unitaire;
@@ -487,17 +528,18 @@ function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArt
     lignes.push({
       nom: nomLigne, description: besoin.piece, quantite: nbBobines,
       prix_unitaire: option.prix_unitaire, unite: option.unite, type_branche: option.type_branche,
-      prestation_id: option.prestation_id,
+      prestation_id: option.prestation_id, ...champsLigneDepuisOption(option),
     });
   }
   if (reliquat > 0.01) {
     const auMetre = prestations.find(p => p.sous_categorie === sousCatArticle
       && (p.gamme ?? null) === (option.gamme ?? null) && !p.longueur_unitaire);
     if (auMetre) {
+      const offreAuMetre = offreCompagnon(auMetre, option.fournisseur_nom);
       lignes.push({
         nom: auMetre.nom, description: besoin.piece, quantite: Math.ceil(reliquat),
-        prix_unitaire: auMetre.prix_unitaire, unite: auMetre.unite, type_branche: auMetre.type_branche,
-        prestation_id: auMetre.id,
+        prix_unitaire: prixVenteOffre(auMetre, offreAuMetre), unite: auMetre.unite, type_branche: auMetre.type_branche,
+        prestation_id: auMetre.id, ...champsLigneDepuisOption(champsFournisseurOption(offreAuMetre)),
       });
     } else if (lignes.length > 0) {
       lignes[0].quantite += 1; // pas d'article "au mètre" pour ce reliquat — une bobine/rouleau de plus
@@ -505,7 +547,7 @@ function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArt
       lignes.push({
         nom: nomLigne, description: besoin.piece, quantite: 1,
         prix_unitaire: option.prix_unitaire, unite: option.unite, type_branche: option.type_branche,
-        prestation_id: option.prestation_id,
+        prestation_id: option.prestation_id, ...champsLigneDepuisOption(option),
       });
     }
   }
@@ -537,6 +579,7 @@ export function genererLignesDevis(choix: ChoixLigne[], prestations: Prestation[
         quantite: besoin.quantite * (optionCatalogue.quantiteMultiplicateur ?? 1),
         prix_unitaire: optionCatalogue.prix_unitaire, unite: optionCatalogue.unite,
         type_branche: optionCatalogue.type_branche, prestation_id: optionCatalogue.prestation_id,
+        ...champsLigneDepuisOption(optionCatalogue),
       });
     }
   });
