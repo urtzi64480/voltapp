@@ -10,12 +10,15 @@ import { Niveau } from "@/lib/maison-types";
 import { BreakerRow } from "@/lib/electrical-constants";
 import {
   calculerBesoinsBruts, apparierCatalogue, optionsPourSousCategorie, genererLignesDevis, estBobinable,
-  multiplicateurPourArticle, estPieceReelle,
+  multiplicateurPourArticle, estPieceReelle, optionAvecOffre, prixCompagnonAuMetre,
   ResultatPreDevis, BesoinApparie, OptionArticle, ChoixLigne,
 } from "@/lib/predevis-engine";
+import { attacherFournisseurs, libelleOffre, offrePrincipale, offresTriees, prixVenteOffre } from "@/lib/fournisseurs";
+import { colonnesFournisseur } from "@/lib/devis-lignes";
+import ProduitPicker from "@/components/devis/ProduitPicker";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { ArrowLeft, AlertTriangle, Search, X, Sparkles, Save, Cable } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Search, Sparkles, Save, Cable, RefreshCw } from "lucide-react";
 
 const LABEL_GAMME: Record<string, string> = { entree: "Entrée de gamme", moyenne: "Moyenne gamme", haut: "Haut de gamme" };
 
@@ -34,6 +37,9 @@ interface EtatChoix {
   librePrix: string;
   libreUnite: string;
   libreBranche: "service" | "materiau";
+  // Fournisseur retenu pour l'article choisi (id d'une offre de prestation_fournisseurs).
+  // "" = offre principale du produit. S'applique à l'option cochée / à l'article « autre ».
+  fournisseurId: string;
 }
 
 function etatParDefaut(besoin: BesoinApparie): EtatChoix {
@@ -45,7 +51,34 @@ function etatParDefaut(besoin: BesoinApparie): EtatChoix {
     librePrix: "",
     libreUnite: besoin.unite === "m" ? "ml" : besoin.unite === "heure" ? "heure" : "u",
     libreBranche: "materiau",
+    fournisseurId: "",
   };
+}
+
+// Option réellement retenue pour un besoin, avec le fournisseur choisi : c'est elle qui sert
+// au total affiché ET à la génération du devis (une seule source de vérité).
+function optionEffective(besoin: BesoinApparie, etat: EtatChoix, prestations: Prestation[]): OptionArticle | null {
+  if (etat.mode === "option") {
+    const base = besoin.options[etat.optionIndex];
+    if (!base) return null;
+    const p = prestations.find(x => x.id === base.prestation_id);
+    if (!p) return base;
+    const offre = etat.fournisseurId ? (p.fournisseurs ?? []).find(o => o.id === etat.fournisseurId) ?? null : null;
+    return offre ? optionAvecOffre(base, p, offre) : base;
+  }
+  if (etat.mode === "autre") {
+    const p = prestations.find(x => x.id === etat.autrePrestationId);
+    if (!p) return null;
+    const offre = etat.fournisseurId ? (p.fournisseurs ?? []).find(o => o.id === etat.fournisseurId) ?? null : null;
+    const base: OptionArticle = {
+      prestation_id: p.id, nom: p.nom, prix_unitaire: p.prix_unitaire, unite: p.unite,
+      type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire ?? null,
+      quantiteMultiplicateur: multiplicateurPourArticle(besoin.sousCategorie, p.sous_categorie),
+      sousCategorieArticle: p.sous_categorie ?? besoin.sousCategorie,
+    };
+    return optionAvecOffre(base, p, offre);
+  }
+  return null;
 }
 
 // Estime le total réellement facturable pour un besoin bobinable, en reproduisant EXACTEMENT
@@ -55,7 +88,7 @@ function etatParDefaut(besoin: BesoinApparie): EtatChoix {
 // proche et peut faire disparaître un reliquat important de l'affichage (ex. 29m avec des
 // bobines de 25m arrondissait à "1" au lieu de facturer les 4m restants) — d'où cette version
 // qui ne sous-estime jamais.
-function totalBobinable(besoin: BesoinApparie, option: { longueur_unitaire?: number | null; quantiteMultiplicateur?: number; prix_unitaire: number; gamme?: OptionArticle["gamme"]; sousCategorieArticle?: string }, prestations: Prestation[]): number {
+function totalBobinable(besoin: BesoinApparie, option: { longueur_unitaire?: number | null; quantiteMultiplicateur?: number; prix_unitaire: number; gamme?: OptionArticle["gamme"]; sousCategorieArticle?: string; fournisseur_nom?: string | null }, prestations: Prestation[]): number {
   const quantiteReelle = besoin.quantite * (option.quantiteMultiplicateur ?? 1);
   if (!option.longueur_unitaire || option.longueur_unitaire <= 0) {
     const q = besoin.unite === "m" ? Math.ceil(quantiteReelle) : quantiteReelle;
@@ -68,7 +101,7 @@ function totalBobinable(besoin: BesoinApparie, option: { longueur_unitaire?: num
   if (reliquat > 0.01) {
     const auMetre = prestations.find(p => p.sous_categorie === (option.sousCategorieArticle ?? besoin.sousCategorie)
       && (p.gamme ?? null) === (option.gamme ?? null) && !p.longueur_unitaire);
-    total += auMetre ? Math.ceil(reliquat) * auMetre.prix_unitaire : option.prix_unitaire; // bobine de plus si pas d'article au mètre
+    total += auMetre ? Math.ceil(reliquat) * prixCompagnonAuMetre(auMetre, option.fournisseur_nom) : option.prix_unitaire; // bobine de plus si pas d'article au mètre
   }
   return total;
 }
@@ -100,13 +133,37 @@ function decompositionLabel(besoin: BesoinApparie, option: { longueur_unitaire?:
 function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
   besoin: BesoinApparie; etat: EtatChoix; onChange: (e: EtatChoix) => void; prestations: Prestation[]; detail?: string;
 }) {
-  const [rechercheOuverte, setRechercheOuverte] = useState(false);
-  const [recherche, setRecherche] = useState("");
+  const [pickerOuvert, setPickerOuvert] = useState(false);
   const autrePrestation = prestations.find(p => p.id === etat.autrePrestationId);
+  const effective = optionEffective(besoin, etat, prestations);
 
-  const resultatsRecherche = recherche.trim().length >= 2
-    ? prestations.filter(p => !p.est_kit && (p.nom.toLowerCase().includes(recherche.toLowerCase()) || p.sous_categorie?.toLowerCase().includes(recherche.toLowerCase()))).slice(0, 20)
-    : [];
+  // Sélecteur de fournisseur pour l'article actuellement retenu (option cochée ou article « autre »).
+  function selecteurFournisseur(p: Prestation | undefined) {
+    const offres = offresTriees(p?.fournisseurs);
+    if (!p || offres.length < 2) {
+      return effective?.fournisseur_nom
+        ? <p className="text-[11px] text-ink-400 ml-6">Fournisseur : {effective.fournisseur_nom}</p>
+        : null;
+    }
+    const courant = offres.some(o => o.id === etat.fournisseurId) ? etat.fournisseurId : (offrePrincipale(offres)?.id ?? "");
+    return (
+      <label className="ml-6 flex items-center gap-1.5 text-xs text-ink-500">
+        <span className="shrink-0">Fournisseur</span>
+        <select value={courant} onChange={e => onChange({ ...etat, fournisseurId: e.target.value })}
+          className="min-w-0 max-w-full text-xs border border-ink-200 rounded-lg py-1 px-1.5 bg-white">
+          {offres.map(o => (
+            <option key={o.id} value={o.id}>{libelleOffre(o)} — {fmt(prixVenteOffre(p, o))}{o.principal ? " (principal)" : ""}</option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+
+  const prestationOptionCochee = etat.mode === "option"
+    ? prestations.find(p => p.id === besoin.options[etat.optionIndex]?.prestation_id)
+    : undefined;
+  const decomposition = (etat.mode === "option" || etat.mode === "autre") && effective
+    ? decompositionLabel(besoin, effective, prestations) : null;
 
   return (
     <div className="border border-ink-100 rounded-xl p-3 flex flex-col gap-2">
@@ -130,54 +187,43 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
       </label>
 
       <div className={`flex flex-col gap-1.5 ${etat.mode === "exclu" ? "opacity-40 pointer-events-none" : ""}`}>
-        {besoin.options.map((opt, i) => (
-          <label key={i} className="flex items-center gap-2 text-sm cursor-pointer">
-            <input type="radio" checked={etat.mode === "option" && etat.optionIndex === i}
-              onChange={() => onChange({ ...etat, mode: "option", optionIndex: i })} />
-            <span className="text-ink-700 flex-1 min-w-0 truncate">
-              {opt.gamme ? `${LABEL_GAMME[opt.gamme]} — ` : ""}{opt.nom}
-            </span>
-            <span className="text-ink-500 shrink-0">{fmt(opt.prix_unitaire)} / {opt.unite}</span>
-          </label>
-        ))}
-        {etat.mode === "option" && (() => {
-          const label = decompositionLabel(besoin, besoin.options[etat.optionIndex] ?? {}, prestations);
-          return label ? <p className="text-[11px] text-sky-600 font-mono ml-6">{label}</p> : null;
-        })()}
+        {besoin.options.map((opt, i) => {
+          const coche = etat.mode === "option" && etat.optionIndex === i;
+          const prix = coche && effective ? effective.prix_unitaire : opt.prix_unitaire;
+          return (
+            <label key={i} className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="radio" checked={coche}
+                onChange={() => onChange({ ...etat, mode: "option", optionIndex: i, fournisseurId: "" })} />
+              <span className="text-ink-700 flex-1 min-w-0 truncate">
+                {opt.gamme ? `${LABEL_GAMME[opt.gamme]} — ` : ""}{opt.nom}
+              </span>
+              <span className="text-ink-500 shrink-0">{fmt(prix)} / {opt.unite}</span>
+            </label>
+          );
+        })}
+        {etat.mode === "option" && selecteurFournisseur(prestationOptionCochee)}
 
         <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input type="radio" checked={etat.mode === "autre"} onChange={() => { onChange({ ...etat, mode: "autre" }); setRechercheOuverte(true); }} />
-          <span className="text-ink-500">Chercher un autre article au catalogue</span>
+          <input type="radio" checked={etat.mode === "autre"}
+            onChange={() => { onChange({ ...etat, mode: "autre", fournisseurId: etat.mode === "autre" ? etat.fournisseurId : "" }); if (!autrePrestation) setPickerOuvert(true); }} />
+          <span className="text-ink-500">Choisir un autre produit / fournisseur dans le catalogue</span>
         </label>
         {etat.mode === "autre" && (
           <div className="ml-6 flex flex-col gap-1.5">
-            {autrePrestation && !rechercheOuverte && (
+            {autrePrestation ? (
               <div className="flex items-center gap-2 text-xs bg-ink-50 rounded-lg px-2 py-1.5">
                 <span className="flex-1 truncate">{autrePrestation.nom}</span>
-                <span className="text-ink-400 shrink-0">{fmt(autrePrestation.prix_unitaire)} / {autrePrestation.unite}</span>
-                <button onClick={() => setRechercheOuverte(true)} className="text-volt-600 shrink-0">Changer</button>
+                <span className="text-ink-400 shrink-0">{fmt(effective?.prix_unitaire ?? autrePrestation.prix_unitaire)} / {autrePrestation.unite}</span>
+                <button onClick={() => setPickerOuvert(true)} className="inline-flex items-center gap-1 text-volt-600 font-medium shrink-0"><RefreshCw size={11} /> Changer</button>
               </div>
-            )}
-            {(rechercheOuverte || !autrePrestation) && (
-              <div className="relative">
-                <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-300" />
-                <input className="input !text-xs !py-1.5 !pl-7" placeholder="Rechercher dans le catalogue…"
-                  value={recherche} onChange={e => setRecherche(e.target.value)} />
-                {resultatsRecherche.length > 0 && (
-                  <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-white border border-ink-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                    {resultatsRecherche.map(p => (
-                      <button key={p.id} onClick={() => { onChange({ ...etat, mode: "autre", autrePrestationId: p.id }); setRecherche(""); setRechercheOuverte(false); }}
-                        className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left hover:bg-volt-50">
-                        <span className="flex-1 truncate">{p.nom}</span>
-                        <span className="text-ink-400 shrink-0">{fmt(p.prix_unitaire)}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+            ) : (
+              <button onClick={() => setPickerOuvert(true)} className="btn-ghost !py-1.5 text-xs justify-center"><Search size={12} /> Parcourir le catalogue</button>
             )}
           </div>
         )}
+        {etat.mode === "autre" && autrePrestation && selecteurFournisseur(autrePrestation)}
+
+        {decomposition && <p className="text-[11px] text-sky-600 font-mono ml-6">{decomposition}</p>}
 
         <label className="flex items-center gap-2 text-sm cursor-pointer">
           <input type="radio" checked={etat.mode === "libre"} onChange={() => onChange({ ...etat, mode: "libre" })} />
@@ -197,6 +243,21 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
           </div>
         )}
       </div>
+
+      {pickerOuvert && (
+        <ProduitPicker
+          prestations={prestations}
+          titre="Choisir un autre produit ou fournisseur"
+          sousTitre={`Besoin : ${besoin.label}`}
+          remplacement
+          inclureKits={false}
+          produitActuelId={etat.mode === "autre" ? etat.autrePrestationId : (besoin.options[etat.optionIndex]?.prestation_id ?? null)}
+          fournisseurPrefere={effective?.fournisseur_nom ?? null}
+          filtreInitial={prestations.some(p => p.sous_categorie === besoin.sousCategorie) ? { sousCat: besoin.sousCategorie } : {}}
+          onChoisir={(p, offre) => onChange({ ...etat, mode: "autre", autrePrestationId: p.id, fournisseurId: offre?.id ?? "" })}
+          onFermer={() => setPickerOuvert(false)}
+        />
+      )}
     </div>
   );
 }
@@ -254,8 +315,10 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const { data } = await supabase.from("profil").select("*").eq("id", session.user.id).single();
         prof = data;
       }
+      // Catalogue + offres fournisseurs : une offre = un fournisseur et ses prix pour un produit.
+      const prestAvecFournisseurs = await attacherFournisseurs((prest as Prestation[]) ?? []);
       setClient((c as any) ?? null);
-      setPrestations((prest as Prestation[]) ?? []);
+      setPrestations(prestAvecFournisseurs);
       setProfil(prof);
 
       let niveaux: Niveau[] = [];
@@ -278,23 +341,27 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       }
 
       const { besoins, alertes } = calculerBesoinsBruts(niveaux, rows);
-      const res = apparierCatalogue(besoins, (prest as Prestation[]) ?? []);
+      const res = apparierCatalogue(besoins, prestAvecFournisseurs);
       setResultat(res);
       setAlertesGeometrie(alertes);
 
       // Brouillon sauvegardé précédemment (voir sauvegarderBrouillon) — ne réapplique que
       // les choix dont la clé de besoin existe encore (le plan/tableau peut avoir changé
       // depuis la dernière sauvegarde) ; le reste repart sur les valeurs par défaut.
-      let brouillon: { choix?: Record<string, EtatChoix>; mainOeuvreHeures?: string; mainOeuvreIndex?: number; fraisGenerauxPct?: string; deplacementEur?: string } | null = null;
+      let brouillon: { choix?: Record<string, EtatChoix>; choixAgrege?: Record<string, EtatChoix>; mainOeuvreHeures?: string; mainOeuvreIndex?: number; fraisGenerauxPct?: string; deplacementEur?: string } | null = null;
       if (projet.predevis_config) {
         try { brouillon = JSON.parse(projet.predevis_config); } catch {}
       }
 
       const initChoix: Record<string, EtatChoix> = {};
       Object.values(res.parPiece).flat().forEach(b => {
-        initChoix[b.cle] = brouillon?.choix?.[b.cle] ?? etatParDefaut(b);
+        // Les champs absents d'un ancien brouillon (ex. fournisseurId) retombent sur le défaut.
+        initChoix[b.cle] = { ...etatParDefaut(b), ...(brouillon?.choix?.[b.cle] ?? {}) };
       });
       setChoix(initChoix);
+      // Choix des câbles/gaines/moulures (toutes pièces) : restaurés aussi — les compléter par
+      // défaut ensuite se fait dans l'effet qui suit besoinsAgreges, clé par clé.
+      if (brouillon?.choixAgrege) setChoixAgrege(brouillon.choixAgrege);
       if (brouillon) {
         if (brouillon.mainOeuvreHeures != null) setMainOeuvreHeures(brouillon.mainOeuvreHeures);
         if (brouillon.mainOeuvreIndex != null) setMainOeuvreIndex(brouillon.mainOeuvreIndex);
@@ -361,7 +428,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
-    const contenu = JSON.stringify({ choix, mainOeuvreHeures, mainOeuvreIndex, fraisGenerauxPct, deplacementEur });
+    const contenu = JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, mainOeuvreIndex, fraisGenerauxPct, deplacementEur });
     await modifierProjet(projet.id, { predevis_config: contenu });
     setSavingDraft(false);
     setDraftSaved(true);
@@ -379,20 +446,11 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // bobines) est recalculé à la génération finale.
   function totalLigneApprox(besoin: BesoinApparie, etat: EtatChoix): number {
     if (etat.mode === "exclu") return 0;
-    if (etat.mode === "option") {
-      const opt = besoin.options[etat.optionIndex];
+    if (etat.mode === "option" || etat.mode === "autre") {
+      const opt = optionEffective(besoin, etat, prestations);
       if (!opt) return 0;
       if (besoin.unite === "m" && estBobinable(besoin.sousCategorie)) return totalBobinable(besoin, opt, prestations);
       return besoin.quantite * (opt.quantiteMultiplicateur ?? 1) * opt.prix_unitaire;
-    }
-    if (etat.mode === "autre") {
-      const p = prestations.find(x => x.id === etat.autrePrestationId);
-      if (!p) return 0;
-      const mult = multiplicateurPourArticle(besoin.sousCategorie, p.sous_categorie);
-      if (besoin.unite === "m" && estBobinable(besoin.sousCategorie)) {
-        return totalBobinable(besoin, { longueur_unitaire: p.longueur_unitaire ?? null, quantiteMultiplicateur: mult, prix_unitaire: p.prix_unitaire, gamme: p.gamme ?? null, sousCategorieArticle: p.sous_categorie ?? undefined }, prestations);
-      }
-      return besoin.quantite * mult * p.prix_unitaire;
     }
     const prix = parseFloat(etat.librePrix) || 0;
     return (besoin.unite === "m" ? Math.ceil(besoin.quantite) : besoin.quantite) * prix;
@@ -421,21 +479,10 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       const tousLesBesoins = Object.values(parPieceFiltre).flat().filter(b => !estBobinable(b.sousCategorie));
       const construireChoixLigne = (besoin: BesoinApparie, etat: EtatChoix): ChoixLigne => {
         if (etat.mode === "exclu") return { besoin };
-        if (etat.mode === "option") {
-          return { besoin, optionCatalogue: besoin.options[etat.optionIndex] };
-        }
-        if (etat.mode === "autre") {
-          const p = prestations.find(x => x.id === etat.autrePrestationId);
-          if (!p) return { besoin };
-          return {
-            besoin,
-            optionCatalogue: {
-              prestation_id: p.id, nom: p.nom, prix_unitaire: p.prix_unitaire, unite: p.unite,
-              type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire ?? null,
-              quantiteMultiplicateur: multiplicateurPourArticle(besoin.sousCategorie, p.sous_categorie),
-              sousCategorieArticle: p.sous_categorie ?? besoin.sousCategorie,
-            },
-          };
+        if (etat.mode === "option" || etat.mode === "autre") {
+          // Option avec le fournisseur choisi (prix de vente + prix d'achat de CE fournisseur).
+          const opt = optionEffective(besoin, etat, prestations);
+          return opt ? { besoin, optionCatalogue: opt } : { besoin };
         }
         const prix = parseFloat(etat.librePrix) || 0;
         if (!etat.libreNom.trim() || prix <= 0) return { besoin };
@@ -503,8 +550,14 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       // coûts depuis devis_lignes). On échoue maintenant bruyamment, et on supprime le
       // devis orphelin plutôt que de laisser un document invalide et une rentabilité
       // faussée dans la base.
+      // Colonnes fournisseur envoyées uniquement si au moins une ligne en porte (voir
+      // colonnesFournisseur) — sinon l'insertion est identique à l'ancienne.
+      const colFournisseur = colonnesFournisseur(lignesFinales as DevisLigne[]);
       const { error: errLignes } = await supabase.from("devis_lignes").insert(
-        lignesFinales.map((l, i) => ({ ...l, devis_id: devis.id, ordre: i }))
+        lignesFinales.map((l, i) => {
+          const { fournisseur_id, fournisseur_nom, prix_achat, ...reste } = l;
+          return { ...reste, devis_id: devis.id, ordre: i, ...colFournisseur(l as DevisLigne) };
+        })
       );
       if (errLignes) {
         await supabase.from("devis").delete().eq("id", devis.id);
