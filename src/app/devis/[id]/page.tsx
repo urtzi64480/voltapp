@@ -2,13 +2,15 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Devis, DevisLigne, Prestation, Client, Profil } from "@/types";
-import { fmt, fmtDate, fmtDatetime, STATUT_LABELS, STATUT_COLORS, cn, nomAvecConditionnement } from "@/lib/utils";
+import { fmt, fmtDate, fmtDatetime, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import PostesLignes from "@/components/devis/PostesLignes";
 import { extrairePostes, grouperParPoste, ordonnerLignes, posteDe, totalItems, trierParOrdre } from "@/lib/postes";
+import { attacherFournisseurs } from "@/lib/fournisseurs";
+import { colonnesFournisseur } from "@/lib/devis-lignes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, X, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro, Search, Layers } from "lucide-react";
+import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, X, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro } from "lucide-react";
 
 type PrestationExt = Prestation & { est_kit?: boolean; kit_description?: string | null };
 type Mode = "view" | "edit";
@@ -247,22 +249,16 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const [prestations, setPrestations] = useState<PrestationExt[]>([]);
   const [paliers, setPaliers] = useState<Palier[]>([]);
   const [apporteurs, setApporteurs] = useState<Apporteur[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
-  const [activeCat, setActiveCat] = useState("Tous");
-  const [searchCatalogue, setSearchCatalogue] = useState("");
   const [clientId, setClientId] = useState("");
   const [apporteurId, setApporteurId] = useState("");
   const [objet, setObjet] = useState("");
   const [validite, setValidite] = useState(60);
   const [lignes, setLignes] = useState<DevisLigne[]>([]);
   const [postes, setPostes] = useState<string[]>([]);
-  const [posteActif, setPosteActif] = useState<string | null>(null);
   const [remise, setRemise] = useState<Remise>({ service_type: "pct", service_val: "", materiau_type: "pct", materiau_val: "" });
   const [showRemise, setShowRemise] = useState(false);
   const [remiseFidelitePct, setRemiseFidelitePct] = useState<number>(0);
   const [caClientPayé, setCaClientPayé] = useState<number>(0);
-  const [showLibre, setShowLibre] = useState(false);
-  const [libre, setLibre] = useState({ nom: "", prix_unitaire: "", unite: "forfait", type_branche: "service" });
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [sigData, setSigData] = useState<string | null>(null);
@@ -339,13 +335,13 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       supabase.from("paliers_fidelite").select("*").order("seuil_min"),
       supabase.from("apporteurs").select("id,nom,entreprise").eq("actif", true).order("nom"),
       supabase.from("profil").select("*").eq("id", "d506c94e-40c7-4bcd-a48c-97e86f4ea7c0").single(),
-    ]).then(([{ data: cls }, { data: pre }, { data: pal }, { data: ap }, { data: p }]) => {
+    ]).then(async ([{ data: cls }, { data: pre }, { data: pal }, { data: ap }, { data: p }]) => {
       setClients((cls ?? []) as any);
-      setPrestations((pre ?? []) as PrestationExt[]);
       setPaliers(pal ?? []);
       setApporteurs(ap ?? []);
-      setCategories([...new Set((pre ?? []).filter((p: any) => !p.est_kit).map((p: any) => p.categorie))].sort() as string[]);
       if (p) setProfil(p as Profil);
+      // Catalogue + offres fournisseurs : sert à changer le fournisseur / le produit d'une ligne.
+      setPrestations(await attacherFournisseurs((pre ?? []) as PrestationExt[]));
     });
   }, [id]);
 
@@ -483,70 +479,6 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     setTimeout(() => setLinkCopied(false), 2000);
   }
 
-  async function addPrestation(p: PrestationExt) {
-    // Poste cible au moment du clic : les nouvelles lignes vont dans le poste actif.
-    const cible = posteActif;
-    if (p.est_kit) {
-      const { data: composants } = await supabase
-        .from("kit_composants")
-        .select("*, prestation:composant_id(*)")
-        .eq("kit_id", p.id)
-        .order("ordre");
-
-      const comps = composants ?? [];
-      const totalComposants = comps.reduce((s: number, c: any) => s + (c.prestation?.prix_unitaire ?? 0) * c.quantite, 0);
-      const totalService = comps.filter((c: any) => c.prestation?.type_branche === "service")
-        .reduce((s: number, c: any) => s + (c.prestation?.prix_unitaire ?? 0) * c.quantite, 0);
-      const ratioService = totalComposants > 0 ? totalService / totalComposants : 0;
-
-      setLignes(prev => {
-        const ex = prev.findIndex(l => (l as any).prestation_id === p.id && posteDe(l) === cible);
-        if (ex >= 0) {
-          const n = [...prev];
-          n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 };
-          return n;
-        }
-        return [...prev, {
-          nom: p.nom,
-          prix_unitaire: totalComposants,
-          quantite: 1,
-          unite: "forfait",
-          type_branche: (ratioService >= 0.5 ? "service" : "materiau") as "service" | "materiau",
-          prestation_id: p.id,
-          kit_description: p.kit_description ?? null,
-          kit_ratio_service: ratioService,
-          poste: cible,
-        } as any];
-      });
-      return;
-    }
-
-    // Voir devis/nouveau/page.tsx addPrestation — même logique de nom enrichi
-    // (conditionnement + longueur) pour les articles vendus en longueur fixe.
-    const nomFinal = nomAvecConditionnement(p.nom, p.longueur_unitaire, p.sous_categorie);
-    setLignes(prev => {
-      const ex = prev.findIndex(l => l.nom === nomFinal && l.type_branche === p.type_branche && (l as any).kit_ratio_service == null && posteDe(l) === cible);
-      if (ex >= 0) { const n = [...prev]; n[ex] = { ...n[ex], quantite: n[ex].quantite + 1 }; return n; }
-      return [...prev, {
-        nom: nomFinal,
-        kit_description: p.description ?? null,
-        prix_unitaire: p.prix_unitaire,
-        quantite: 1,
-        unite: p.unite,
-        type_branche: p.type_branche,
-        prestation_id: p.id,
-        poste: cible,
-      } as any];
-    });
-  }
-
-  function addLibre() {
-    if (!libre.nom.trim() || !libre.prix_unitaire) return;
-    setLignes(prev => [...prev, { nom: libre.nom, prix_unitaire: parseFloat(libre.prix_unitaire), quantite: 1, unite: libre.unite, type_branche: libre.type_branche as any, poste: posteActif }]);
-    setLibre({ nom: "", prix_unitaire: "", unite: "forfait", type_branche: "service" });
-    setShowLibre(false);
-  }
-
   const totServiceBrut = lignes.reduce((a, l) => {
     const total = l.prix_unitaire * l.quantite;
     if (l.kit_ratio_service != null) return a + total * l.kit_ratio_service;
@@ -568,20 +500,6 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
 
   const palierActuelClient = [...paliers].reverse().find(p => caClientPayé >= p.seuil_min) ?? null;
 
-  const kitsFiltered = prestations.filter(p => {
-    if (!p.est_kit) return false;
-    const q = searchCatalogue.trim().toLowerCase();
-    return !q || p.nom.toLowerCase().includes(q) || (p.kit_description ?? "").toLowerCase().includes(q);
-  });
-  const prestsFiltered = prestations.filter(p => {
-    if (p.est_kit) return false;
-    const matchCat = activeCat === "Tous" || p.categorie === activeCat;
-    const q = searchCatalogue.trim().toLowerCase();
-    const matchSearch = !q || p.nom.toLowerCase().includes(q) || p.categorie.toLowerCase().includes(q);
-    return matchCat && matchSearch;
-  });
-  const filteredPrests = [...kitsFiltered, ...prestsFiltered];
-
   async function saveEdit() {
     if (!devis) return;
     setSaving(true);
@@ -594,12 +512,14 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     const { data: anciennes } = await supabase.from("devis_lignes").select("id").eq("devis_id", id);
     const anciensIds = (anciennes ?? []).map((r: any) => r.id as string);
     const utilisePostes = lignes.some(l => posteDe(l) !== null);
+    const colFournisseur = colonnesFournisseur(lignes);
     if (lignes.length > 0) {
       const { error: errLignes } = await supabase.from("devis_lignes").insert(
         ordonnerLignes(lignes, postes).map((l, i) => ({
           devis_id: id,
           ordre: i,
           nom: l.nom,
+          description: l.description ?? null,
           kit_description: (l as any).kit_description ?? null,
           quantite: l.quantite,
           prix_unitaire: l.prix_unitaire,
@@ -609,6 +529,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
           kit_groupe: (l as any).kit_groupe ?? null,
           kit_ratio_service: (l as any).kit_ratio_service ?? null,
           ...(utilisePostes ? { poste: posteDe(l) } : {}),
+          ...colFournisseur(l),
         }))
       );
       if (errLignes) {
@@ -749,7 +670,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
 
   return (
     <Shell>
-      <div className="p-4 md:p-8 max-w-3xl mx-auto">
+      <div className={cn("p-4 md:p-8 mx-auto", mode === "edit" ? "max-w-6xl" : "max-w-3xl")}>
 
         {confirmDelete && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -822,6 +743,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                               {l.type_branche === "service" ? "S" : "M"}
                             </span>
                             <span className="font-medium">{l.nom}</span>
+                            {l.fournisseur_nom && <span className="text-xs text-ink-400 ml-1.5">· {l.fournisseur_nom}</span>}
                             {l.kit_description && (
                               <p className="text-xs text-ink-400 italic mt-0.5 ml-6">{l.kit_description}</p>
                             )}
@@ -1007,184 +929,100 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
             </div>
 
             {tab === "edition" && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                <div className="space-y-4">
+              <div className="space-y-5">
+                <div className="card card-inner">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div>
+                      <label className="label">Client</label>
+                      <select className="input" value={clientId} onChange={e => setClientId(e.target.value)}>
+                        <option value="">— Sans client —</option>
+                        {clients.map(c => <option key={c.id} value={c.id}>{c.prenom ? `${c.prenom} ${c.nom}` : c.nom}</option>)}
+                      </select>
+                    </div>
+                    <div className="lg:col-span-2">
+                      <label className="label">Objet</label>
+                      <input className="input" value={objet} onChange={e => setObjet(e.target.value)} placeholder="Ex : Pose borne IRVE" />
+                    </div>
+                    <div>
+                      <label className="label">Validité</label>
+                      <select className="input" value={validite} onChange={e => setValidite(parseInt(e.target.value))}>
+                        <option value={30}>30 jours</option>
+                        <option value={60}>60 jours</option>
+                        <option value={90}>90 jours</option>
+                      </select>
+                    </div>
+                    {apporteurs.length > 0 && (
+                      <div>
+                        <label className="label">Apporteur d'affaires <span className="text-ink-300 font-normal">(interne)</span></label>
+                        <select className="input" value={apporteurId} onChange={e => setApporteurId(e.target.value)}>
+                          <option value="">— Aucun apporteur —</option>
+                          {apporteurs.map(a => <option key={a.id} value={a.id}>{a.nom}{a.entreprise ? ` — ${a.entreprise}` : ""}</option>)}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                  {palierActuelClient && lignes.length > 0 && totServiceApresRemise > 0 && (
+                    <div className={cn("mt-3 rounded-xl border px-3 py-2.5 text-sm transition-all",
+                      remiseFidelitePct > 0 ? "bg-emerald-50 border-emerald-300" : "bg-amber-50 border-amber-300")}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <Gift size={14} className={remiseFidelitePct > 0 ? "text-emerald-600" : "text-amber-600"} />
+                          <span className={cn("text-xs font-semibold", remiseFidelitePct > 0 ? "text-emerald-700" : "text-amber-700")}>
+                            Remise fidélité {palierActuelClient.label} — {palierActuelClient.remise_pct}% sur services
+                          </span>
+                        </div>
+                        {remiseFidelitePct > 0 ? (
+                          <button onClick={() => setRemiseFidelitePct(0)} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium underline shrink-0">Retirer</button>
+                        ) : (
+                          <button onClick={() => setRemiseFidelitePct(palierActuelClient.remise_pct)} className="text-xs bg-amber-600 hover:bg-amber-700 text-white font-semibold px-2.5 py-1 rounded-lg transition-colors shrink-0">Appliquer</button>
+                        )}
+                      </div>
+                      {remiseFidelitePct > 0 && <p className="text-xs text-emerald-600 mt-1 pl-5">− {fmt(remiseFideliteEur)} appliqué sur la branche service</p>}
+                    </div>
+                  )}
+                </div>
+
+                <div className="card card-inner">
+                  <h2 className="font-semibold text-ink-800 mb-3 text-sm uppercase tracking-wide">Prestations</h2>
+                  <PostesLignes
+                    lignes={lignes} setLignes={setLignes}
+                    postes={postes} setPostes={setPostes}
+                    prestations={prestations}
+                    showUnite texteVide="Page vierge — ajoute un poste ou un produit"
+                  />
+                </div>
+
+                {lignes.length > 0 && (
                   <div className="card card-inner">
-                    <h2 className="font-semibold text-ink-800 mb-3 text-sm uppercase tracking-wide">Client & objet</h2>
-                    <div className="space-y-3">
-                      <div>
-                        <label className="label">Client</label>
-                        <select className="input" value={clientId} onChange={e => setClientId(e.target.value)}>
-                          <option value="">— Sans client —</option>
-                          {clients.map(c => <option key={c.id} value={c.id}>{c.prenom ? `${c.prenom} ${c.nom}` : c.nom}</option>)}
-                        </select>
-                      </div>
-                      {apporteurs.length > 0 && (
-                        <div>
-                          <label className="label">Apporteur d'affaires <span className="text-ink-300 font-normal">(usage interne)</span></label>
-                          <select className="input" value={apporteurId} onChange={e => setApporteurId(e.target.value)}>
-                            <option value="">— Aucun apporteur —</option>
-                            {apporteurs.map(a => <option key={a.id} value={a.id}>{a.nom}{a.entreprise ? ` — ${a.entreprise}` : ""}</option>)}
-                          </select>
+                    <div className="md:ml-auto md:max-w-md space-y-2">
+                      <div className="flex justify-between text-xs text-ink-500"><span>Service</span><span>{fmt(totServiceBrut)}</span></div>
+                      <div className="flex justify-between text-xs text-ink-500"><span>Matériaux</span><span>{fmt(totMateriauBrut)}</span></div>
+                      <button onClick={() => setShowRemise(!showRemise)} className="w-full flex items-center gap-2 text-xs text-ink-500 hover:text-ink-700 py-1">
+                        <Tag size={12} /><span>Remise</span>
+                        {hasRemise && <span className="ml-1 px-1.5 py-0.5 rounded-md bg-red-100 text-red-600 text-xs font-medium">− {fmt(remiseService + remiseMateriau)}</span>}
+                        <ChevronDown size={12} className={cn("ml-auto transition-transform", showRemise && "rotate-180")} />
+                      </button>
+                      {showRemise && (
+                        <div className="p-3 bg-ink-50 rounded-xl border border-ink-100 space-y-2">
+                          <RemiseLine label="Sur services" type={remise.service_type} val={remise.service_val}
+                            onType={t => setRemise(r => ({ ...r, service_type: t }))}
+                            onVal={v => setRemise(r => ({ ...r, service_val: v }))} base={totServiceBrut} />
+                          <RemiseLine label="Sur matériaux" type={remise.materiau_type} val={remise.materiau_val}
+                            onType={t => setRemise(r => ({ ...r, materiau_type: t }))}
+                            onVal={v => setRemise(r => ({ ...r, materiau_val: v }))} base={totMateriauBrut} />
                         </div>
                       )}
-                      {palierActuelClient && lignes.length > 0 && totServiceApresRemise > 0 && (
-                        <div className={cn("rounded-xl border px-3 py-2.5 text-sm transition-all",
-                          remiseFidelitePct > 0 ? "bg-emerald-50 border-emerald-300" : "bg-amber-50 border-amber-300")}>
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <Gift size={14} className={remiseFidelitePct > 0 ? "text-emerald-600" : "text-amber-600"} />
-                              <span className={cn("text-xs font-semibold", remiseFidelitePct > 0 ? "text-emerald-700" : "text-amber-700")}>
-                                Remise fidélité {palierActuelClient.label} — {palierActuelClient.remise_pct}% sur services
-                              </span>
-                            </div>
-                            {remiseFidelitePct > 0 ? (
-                              <button onClick={() => setRemiseFidelitePct(0)} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium underline shrink-0">Retirer</button>
-                            ) : (
-                              <button onClick={() => setRemiseFidelitePct(palierActuelClient.remise_pct)} className="text-xs bg-amber-600 hover:bg-amber-700 text-white font-semibold px-2.5 py-1 rounded-lg transition-colors shrink-0">Appliquer</button>
-                            )}
-                          </div>
-                          {remiseFidelitePct > 0 && <p className="text-xs text-emerald-600 mt-1 pl-5">− {fmt(remiseFideliteEur)} appliqué sur la branche service</p>}
+                      {remiseService > 0 && <div className="flex justify-between text-xs text-red-500"><span>Remise services</span><span>− {fmt(remiseService)}</span></div>}
+                      {remiseMateriau > 0 && <div className="flex justify-between text-xs text-red-500"><span>Remise matériaux</span><span>− {fmt(remiseMateriau)}</span></div>}
+                      {remiseFideliteEur > 0 && (
+                        <div className="flex justify-between text-xs text-emerald-600 font-medium">
+                          <span>🎁 Fidélité ({remiseFidelitePct}% service)</span><span>− {fmt(remiseFideliteEur)}</span>
                         </div>
                       )}
-                      <div>
-                        <label className="label">Objet</label>
-                        <input className="input" value={objet} onChange={e => setObjet(e.target.value)} placeholder="Ex : Pose borne IRVE" />
-                      </div>
-                      <div>
-                        <label className="label">Validité</label>
-                        <select className="input" value={validite} onChange={e => setValidite(parseInt(e.target.value))}>
-                          <option value={30}>30 jours</option>
-                          <option value={60}>60 jours</option>
-                          <option value={90}>90 jours</option>
-                        </select>
-                      </div>
+                      <div className="flex justify-between font-bold text-volt-600 pt-2 border-t border-ink-200"><span>Total</span><span>{fmt(totTTC)}</span></div>
                     </div>
                   </div>
-
-                  <div className="card card-inner">
-                    <h2 className="font-semibold text-ink-800 mb-3 text-sm uppercase tracking-wide">Catalogue</h2>
-                    {prestations.length === 0 ? (
-                      <p className="text-ink-400 text-sm text-center py-4">Catalogue vide.</p>
-                    ) : (
-                      <>
-                        <div className="relative mb-3">
-                          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400 pointer-events-none" />
-                          <input type="text" placeholder="Rechercher une prestation ou un kit…"
-                            value={searchCatalogue}
-                            onChange={e => { setSearchCatalogue(e.target.value); if (e.target.value) setActiveCat("Tous"); }}
-                            className="input pl-8 text-sm py-1.5" />
-                          {searchCatalogue && (
-                            <button onClick={() => setSearchCatalogue("")}
-                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-300 hover:text-ink-600 transition-colors">
-                              <X size={13} />
-                            </button>
-                          )}
-                        </div>
-
-                        {!searchCatalogue && (
-                          <div className="flex gap-1.5 flex-wrap mb-3">
-                            {["Tous", ...categories].map(cat => (
-                              <button key={cat} onClick={() => setActiveCat(cat)}
-                                className={cn("px-2.5 py-1 rounded-lg text-xs font-medium border transition-all",
-                                  activeCat === cat ? "bg-ink-900 text-volt-400 border-ink-900" : "bg-white border-ink-200 text-ink-500 hover:bg-ink-50")}>
-                                {cat}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-
-                        <div className="space-y-1 max-h-56 overflow-y-auto">
-                          {filteredPrests.length === 0 ? (
-                            <p className="text-center text-xs text-ink-400 py-6">Aucune prestation trouvée pour « {searchCatalogue} »</p>
-                          ) : filteredPrests.map(p => (
-                            <button key={p.id} onClick={() => addPrestation(p)}
-                              className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-ink-100 hover:border-volt-400 hover:bg-volt-50 bg-white transition-all text-left">
-                              {p.est_kit ? (
-                                <span className="inline-flex items-center gap-1 badge text-xs shrink-0 bg-purple-100 text-purple-700">
-                                  <Layers size={10} /> KIT
-                                </span>
-                              ) : (
-                                <span className={cn("badge text-xs shrink-0", p.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
-                                  {p.type_branche === "service" ? "S" : "M"}
-                                </span>
-                              )}
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm text-ink-800 truncate">{p.nom}</p>
-                                {p.est_kit && p.kit_description && (
-                                  <p className="text-xs text-ink-400 italic truncate">{p.kit_description}</p>
-                                )}
-                              </div>
-                              <span className="text-sm font-semibold text-ink-900 shrink-0">{fmt(p.prix_unitaire)}</span>
-                              <Plus size={14} className="text-ink-300 shrink-0" />
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                    <button onClick={() => setShowLibre(!showLibre)} className="mt-3 w-full flex items-center gap-2 text-xs text-ink-500 hover:text-ink-700 py-1.5">
-                      <Plus size={13} /> Ligne personnalisée
-                      <ChevronDown size={12} className={cn("ml-auto transition-transform", showLibre && "rotate-180")} />
-                    </button>
-                    {showLibre && (
-                      <div className="mt-2 p-3 bg-ink-50 rounded-xl border border-ink-100 space-y-2">
-                        <input className="input text-sm" placeholder="Désignation" value={libre.nom} onChange={e => setLibre(l => ({ ...l, nom: e.target.value }))} />
-                        <div className="grid grid-cols-3 gap-2">
-                          <input className="input text-sm" type="number" placeholder="Prix €" value={libre.prix_unitaire} onChange={e => setLibre(l => ({ ...l, prix_unitaire: e.target.value }))} />
-                          <select className="input text-sm" value={libre.unite} onChange={e => setLibre(l => ({ ...l, unite: e.target.value }))}>
-                            {["forfait","heure","u","ml","m2"].map(u => <option key={u}>{u}</option>)}
-                          </select>
-                          <select className="input text-sm" value={libre.type_branche} onChange={e => setLibre(l => ({ ...l, type_branche: e.target.value }))}>
-                            <option value="service">Service</option>
-                            <option value="materiau">Matériau</option>
-                          </select>
-                        </div>
-                        <button onClick={addLibre} className="btn-volt w-full justify-center text-sm"><Plus size={14} /> Ajouter</button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="card card-inner">
-                    <h2 className="font-semibold text-ink-800 mb-3 text-sm uppercase tracking-wide">Lignes</h2>
-                    <PostesLignes
-                      lignes={lignes} setLignes={setLignes}
-                      postes={postes} setPostes={setPostes}
-                      posteActif={posteActif} setPosteActif={setPosteActif}
-                      texteVide="Ajoutez des prestations"
-                    />
-                    {lignes.length > 0 && (
-                      <div className="mt-4 pt-4 border-t border-ink-100 space-y-2">
-                        <div className="flex justify-between text-xs text-ink-500"><span>Service</span><span>{fmt(totServiceBrut)}</span></div>
-                        <div className="flex justify-between text-xs text-ink-500"><span>Matériaux</span><span>{fmt(totMateriauBrut)}</span></div>
-                        <button onClick={() => setShowRemise(!showRemise)} className="w-full flex items-center gap-2 text-xs text-ink-500 hover:text-ink-700 py-1">
-                          <Tag size={12} /><span>Remise</span>
-                          {hasRemise && <span className="ml-1 px-1.5 py-0.5 rounded-md bg-red-100 text-red-600 text-xs font-medium">− {fmt(remiseService + remiseMateriau)}</span>}
-                          <ChevronDown size={12} className={cn("ml-auto transition-transform", showRemise && "rotate-180")} />
-                        </button>
-                        {showRemise && (
-                          <div className="p-3 bg-ink-50 rounded-xl border border-ink-100 space-y-2">
-                            <RemiseLine label="Sur services" type={remise.service_type} val={remise.service_val}
-                              onType={t => setRemise(r => ({ ...r, service_type: t }))}
-                              onVal={v => setRemise(r => ({ ...r, service_val: v }))} base={totServiceBrut} />
-                            <RemiseLine label="Sur matériaux" type={remise.materiau_type} val={remise.materiau_val}
-                              onType={t => setRemise(r => ({ ...r, materiau_type: t }))}
-                              onVal={v => setRemise(r => ({ ...r, materiau_val: v }))} base={totMateriauBrut} />
-                          </div>
-                        )}
-                        {remiseService > 0 && <div className="flex justify-between text-xs text-red-500"><span>Remise services</span><span>− {fmt(remiseService)}</span></div>}
-                        {remiseMateriau > 0 && <div className="flex justify-between text-xs text-red-500"><span>Remise matériaux</span><span>− {fmt(remiseMateriau)}</span></div>}
-                        {remiseFideliteEur > 0 && (
-                          <div className="flex justify-between text-xs text-emerald-600 font-medium">
-                            <span>🎁 Fidélité ({remiseFidelitePct}% service)</span><span>− {fmt(remiseFideliteEur)}</span>
-                          </div>
-                        )}
-                        <div className="flex justify-between font-bold text-volt-600 pt-2 border-t border-ink-200"><span>Total</span><span>{fmt(totTTC)}</span></div>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                )}
               </div>
             )}
 
@@ -1250,7 +1088,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
             )}
 
             <div className="flex gap-3 mt-6">
-              <button onClick={() => { setMode("view"); setLignes((devis.lignes ?? []) as any); setPostes(extrairePostes(devis.lignes ?? [])); setPosteActif(null); }} className="btn-ghost flex-1 justify-center">Annuler</button>
+              <button onClick={() => { setMode("view"); setLignes((devis.lignes ?? []) as any); setPostes(extrairePostes(devis.lignes ?? [])); }} className="btn-ghost flex-1 justify-center">Annuler</button>
               <button onClick={saveEdit} disabled={saving} className="btn-volt flex-1 justify-center">
                 <Save size={15} /> {saving ? "Enregistrement…" : "Sauvegarder"}
               </button>
