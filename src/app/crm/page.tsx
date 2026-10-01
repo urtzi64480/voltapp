@@ -247,7 +247,7 @@ export default function CRMPage() {
         // l'embed échoue silencieusement et le coût d'achat reste à 0.
         const { data: lignesAchat, error: errLignes } = await supabase
           .from("devis_lignes")
-          .select("devis_id,quantite,prestation_id")
+          .select("*")
           .in("devis_id", devisIds)
           .not("prestation_id", "is", null);
         if (errLignes) console.error("Erreur récupération devis_lignes (rentabilité) :", errLignes);
@@ -264,7 +264,9 @@ export default function CRMPage() {
         }
 
         (lignesAchat ?? []).forEach((l: any) => {
-          const prixAchat = prixAchatParPrestation[l.prestation_id] ?? 0;
+          // Fournisseur retenu sur la ligne → son prix d'achat ; sinon prix d'achat catalogue.
+          const aFournisseur = !!l.fournisseur_id || l.prix_achat != null;
+          const prixAchat = aFournisseur ? (l.prix_achat ?? 0) : (prixAchatParPrestation[l.prestation_id] ?? 0);
           if (prixAchat > 0) {
             coutParDevis[l.devis_id] = (coutParDevis[l.devis_id] ?? 0) + (l.quantite ?? 0) * prixAchat;
           }
