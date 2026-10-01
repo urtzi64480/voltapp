@@ -5,9 +5,10 @@ import { Client, DevisLigne, Prestation } from "@/types";
 import { fmt, genNumero, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import PostesLignes from "@/components/devis/PostesLignes";
+import LigneImage from "@/components/devis/LigneImage";
 import { grouperParPoste, ordonnerLignes, posteDe, totalItems } from "@/lib/postes";
 import { attacherFournisseurs } from "@/lib/fournisseurs";
-import { colonnesFournisseur } from "@/lib/devis-lignes";
+import { colonnesFournisseur, colonnesImage } from "@/lib/devis-lignes";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Save, Eye, PenLine, Plus, RotateCcw, Check, Download, ChevronDown, Tag, Gift, Layers } from "lucide-react";
 import Link from "next/link";
@@ -205,6 +206,7 @@ function NouveauDevisPage() {
       // utilise des postes : un devis sans poste s'enregistre exactement comme avant.
       const utilisePostes = lignes.some(l => posteDe(l) !== null);
       const colFournisseur = colonnesFournisseur(lignes);
+      const colImage = colonnesImage(lignes);
       const { error: errLignes } = await supabase.from("devis_lignes").insert(
         ordonnerLignes(lignes, postes).map((l, i) => ({
           devis_id: dv.id,
@@ -219,6 +221,7 @@ function NouveauDevisPage() {
           prestation_id: l.prestation_id ?? null,
           ...(utilisePostes ? { poste: posteDe(l) } : {}),
           ...colFournisseur(l),
+          ...colImage(l),
         }))
       );
       if (errLignes) {
@@ -451,7 +454,7 @@ function NouveauDevisPage() {
                           {b.items.map(({ l, i }) => (
                             <tr key={i} className="border-b border-ink-100">
                               <td className="py-2.5 pr-2">
-                                <p>{l.nom}</p>
+                                <p><LigneImage url={l.image_url} taille={28} className="inline-block align-middle mr-2" />{l.nom}</p>
                                 {l.kit_description && (
                                   <p className="text-xs text-ink-400 italic mt-0.5">{l.kit_description}</p>
                                 )}
