@@ -5,9 +5,10 @@ import { Devis, DevisLigne, Prestation, Client, Profil } from "@/types";
 import { fmt, fmtDate, fmtDatetime, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import PostesLignes from "@/components/devis/PostesLignes";
+import LigneImage from "@/components/devis/LigneImage";
 import { extrairePostes, grouperParPoste, ordonnerLignes, posteDe, totalItems, trierParOrdre } from "@/lib/postes";
 import { attacherFournisseurs } from "@/lib/fournisseurs";
-import { colonnesFournisseur } from "@/lib/devis-lignes";
+import { colonnesFournisseur, colonnesImage } from "@/lib/devis-lignes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, X, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro } from "lucide-react";
@@ -162,7 +163,7 @@ function ApercuDocument({
                   {b.items.map(({ l, i }) => (
                     <tr key={i} className={cn("border-t border-ink-100", i % 2 === 1 ? "bg-ink-50/50" : "bg-white")}>
                       <td className="px-4 py-2.5 text-ink-900">
-                        <span className="font-medium">{l.nom}</span>
+                        <LigneImage url={(l as any).image_url} taille={32} className="inline-block align-middle mr-2" /><span className="font-medium">{l.nom}</span>
                         {(l as any).kit_description && (
                           <p className="text-xs text-ink-400 italic mt-0.5">{(l as any).kit_description}</p>
                         )}
@@ -513,6 +514,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     const anciensIds = (anciennes ?? []).map((r: any) => r.id as string);
     const utilisePostes = lignes.some(l => posteDe(l) !== null);
     const colFournisseur = colonnesFournisseur(lignes);
+    const colImage = colonnesImage(lignes);
     if (lignes.length > 0) {
       const { error: errLignes } = await supabase.from("devis_lignes").insert(
         ordonnerLignes(lignes, postes).map((l, i) => ({
@@ -530,6 +532,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
           kit_ratio_service: (l as any).kit_ratio_service ?? null,
           ...(utilisePostes ? { poste: posteDe(l) } : {}),
           ...colFournisseur(l),
+          ...colImage(l),
         }))
       );
       if (errLignes) {
@@ -603,6 +606,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       const lignesDevis = trierParOrdre(devis.lignes as any[]);
       const lignesFacture = ordonnerLignes(lignesDevis, extrairePostes(lignesDevis));
       const facturePostes = lignesFacture.some(l => posteDe(l) !== null);
+      const colImageFacture = colonnesImage(lignesFacture as any[]);
       await supabase.from("facture_lignes").insert(lignesFacture.map((l: any, i: number) => ({
         facture_id: f.id,
         nom: l.nom,
@@ -613,6 +617,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         type_branche: l.type_branche,
         ordre: i,
         ...(facturePostes ? { poste: posteDe(l) } : {}),
+        ...colImageFacture(l),
       })));
       await supabase.from("profil").update({ compteur_facture: (p?.compteur_facture ?? 0) + 1 }).eq("id", user.id);
       await supabase.from("devis").update({ statut: "signe" }).eq("id", devis.id);
@@ -742,7 +747,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                             <span className={cn("badge text-xs mr-1.5", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
                               {l.type_branche === "service" ? "S" : "M"}
                             </span>
-                            <span className="font-medium">{l.nom}</span>
+                            <LigneImage url={l.image_url} taille={28} className="inline-block align-middle mr-2" /><span className="font-medium">{l.nom}</span>
                             {l.fournisseur_nom && <span className="text-xs text-ink-400 ml-1.5">· {l.fournisseur_nom}</span>}
                             {l.kit_description && (
                               <p className="text-xs text-ink-400 italic mt-0.5 ml-6">{l.kit_description}</p>
