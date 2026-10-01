@@ -148,6 +148,8 @@ export interface DevisLigne {
   fournisseur_id?: string | null;
   fournisseur_nom?: string | null;
   prix_achat?: number | null;
+  // Image du produit au moment de l'ajout (photo, reprise sur la facture).
+  image_url?: string | null;
 }
 
 export interface Devis {
@@ -189,6 +191,7 @@ export interface FactureLigne {
   ordre?: number;
   // Nom du poste (regroupement d'affichage, repris du devis) — absent = ligne hors poste.
   poste?: string | null;
+  image_url?: string | null;
 }
 
 export interface Facture {
