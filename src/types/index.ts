@@ -102,7 +102,29 @@ export interface Prestation {
   // n'existe pas réellement dans la table `prestations` mais évite de dupliquer le type
   // localement dans le module pré-devis.
   est_kit?: boolean;
+  // Offres fournisseurs (table prestation_fournisseurs) — rempli côté client uniquement par
+  // attacherFournisseurs() (src/lib/fournisseurs.ts). Absent = pas encore chargé / aucun.
+  fournisseurs?: PrestationFournisseur[];
   created_at: string;
+}
+
+// Une offre fournisseur pour un même produit : un fournisseur, un prix d'achat (TTC, comme
+// prestations.prix_achat) et un prix de vente HT. prix_vente null = on garde le prix de vente
+// de la prestation. Une seule offre est « principale » : elle est recopiée dans
+// prestations.prix_achat / prix_unitaire / liens_fournisseurs, pour que tout le code qui lit
+// ces colonnes (CRM, rentabilité, moteur pré-devis) continue de fonctionner tel quel.
+export interface PrestationFournisseur {
+  id: string;
+  user_id?: string;
+  prestation_id: string;
+  fournisseur: string;
+  reference?: string | null;
+  url?: string | null;
+  prix_achat?: number | null;
+  prix_vente?: number | null;
+  principal: boolean;
+  ordre?: number | null;
+  created_at?: string;
 }
 
 export interface DevisLigne {
@@ -111,9 +133,9 @@ export interface DevisLigne {
   prestation_id?: string;
   nom: string;
   description?: string;
-  kit_description?: string;
+  kit_description?: string | null;
   kit_groupe?: string;
-  kit_ratio_service?: number;
+  kit_ratio_service?: number | null;
   quantite: number;
   prix_unitaire: number;
   unite: string;
@@ -121,6 +143,11 @@ export interface DevisLigne {
   ordre?: number;
   // Nom du poste (regroupement libre dans le devis) — null/absent = ligne hors poste.
   poste?: string | null;
+  // Fournisseur retenu pour cette ligne (photo au moment du choix) : le prix d'achat est
+  // celui de CE fournisseur, utilisé par la rentabilité à la place du prix_achat catalogue.
+  fournisseur_id?: string | null;
+  fournisseur_nom?: string | null;
+  prix_achat?: number | null;
 }
 
 export interface Devis {
