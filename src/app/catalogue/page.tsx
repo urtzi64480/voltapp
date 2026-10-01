@@ -1,13 +1,18 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { Prestation } from "@/types";
+import { Prestation, PrestationFournisseur } from "@/types";
+import {
+  attacherOffres, chargerOffres, draftsDepuisLegacy, draftsPourProduit, libelleOffre, miroirPrestation,
+  normaliserDrafts, nouvelleOffreDraft, offrePrincipale, offresDe, offresTriees, prixVenteOffre,
+  synchroniserOffres, rattacherParNom, OffreDraft, OffreNormalisee,
+} from "@/lib/fournisseurs";
 import { fmt, UNITES, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import {
   Plus, Trash2, Save, Pencil, X, ChevronDown, ChevronUp,
   Link, Wrench, Package, Search, Download, Upload, AlertCircle,
-  CheckCircle2, TrendingUp, Gift, Layers, RefreshCw
+  CheckCircle2, TrendingUp, Gift, Layers, RefreshCw, ExternalLink
 } from "lucide-react";
 
 type PrestationExt = Prestation & { prix_achat?: number | null; est_kit?: boolean; kit_description?: string | null };
@@ -64,7 +69,8 @@ function gainNetUrssaf(prixAchat: number, prixVente: number): number {
 function matchSearch(p: PrestationExt, q: string): boolean {
   if (!q.trim()) return true;
   const lower = q.toLowerCase();
-  return [p.nom, p.description, p.marque, p.sous_categorie, p.categorie]
+  return [p.nom, p.description, p.marque, p.sous_categorie, p.categorie,
+    ...(p.fournisseurs ?? []).flatMap(o => [o.fournisseur, o.reference])]
     .some(v => v?.toLowerCase().includes(lower));
 }
 function genKitDescription(composants: KitComposant[]): string {
@@ -239,37 +245,69 @@ function MargeFields({ prixAchat, prixVente, onPrixAchatChange, onPrixVenteChang
   );
 }
 
-function LiensFournisseurs({ liens, setLiens }: { liens: string[]; setLiens: (l: string[]) => void }) {
-  const [newLien, setNewLien] = useState("");
-  function addLien() {
-    if (!newLien.trim()) return;
-    let url = newLien.trim();
-    if (!url.startsWith("http")) url = "https://" + url;
-    setLiens([...liens, url]);
-    setNewLien("");
-  }
+// Plusieurs fournisseurs pour un même produit : chacun avec sa référence, son lien et ses propres
+// prix d'achat / de vente. L'offre « principale » donne le prix par défaut (recopié dans le produit
+// et utilisé par le pré-devis tant qu'on n'en choisit pas une autre).
+function FournisseursEditor({ offres, setOffres, fournisseursConnus }: {
+  offres: OffreDraft[]; setOffres: (fn: (prev: OffreDraft[]) => OffreDraft[]) => void; fournisseursConnus: string[];
+}) {
+  const maj = (cle: string, patch: Partial<OffreDraft>) =>
+    setOffres(prev => prev.map(o => (o.cle === cle ? { ...o, ...patch } : o)));
+  const definirPrincipal = (cle: string) => setOffres(prev => prev.map(o => ({ ...o, principal: o.cle === cle })));
+  const ajouter = () => setOffres(prev => [...prev, nouvelleOffreDraft(prev.length === 0)]);
+  const retirer = (cle: string) => setOffres(prev => {
+    const n = prev.filter(o => o.cle !== cle);
+    if (n.length === 0) return [nouvelleOffreDraft(true)];
+    return n.some(o => o.principal) ? n : n.map((o, i) => (i === 0 ? { ...o, principal: true } : o));
+  });
+  const groupe = `principal-${offres[0]?.cle ?? "x"}`;
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap gap-2">
-        {liens.map((url, i) => {
-          const favicon = getFavicon(url);
-          const label = getLinkLabel(url);
-          return (
-            <div key={i} className="flex items-center gap-1.5 px-2 py-1 bg-ink-50 border border-ink-200 rounded-lg">
-              {favicon && <img src={favicon} alt={label} className="w-4 h-4 object-contain" />}
-              <span className="text-xs text-ink-600">{label}</span>
-              <button onClick={() => setLiens(liens.filter((_, idx) => idx !== i))}
-                className="text-ink-300 hover:text-red-500 transition-colors ml-1"><X size={12} /></button>
+    <div className="md:col-span-2 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <label className="label mb-0">Fournisseurs & prix</label>
+          <p className="text-xs text-ink-400">Un prix d'achat et de vente par fournisseur. Prix de vente vide = prix de l'offre principale.</p>
+        </div>
+        <button type="button" onClick={ajouter} className="btn-ghost !px-3 text-xs shrink-0"><Plus size={13} /> Fournisseur</button>
+      </div>
+      <datalist id="fournisseurs-connus">
+        {fournisseursConnus.map(f => <option key={f} value={f} />)}
+      </datalist>
+      {offres.map(o => (
+        <div key={o.cle} className={cn("rounded-xl border p-3 space-y-3", o.principal ? "border-volt-400 bg-volt-50/30" : "border-ink-200 bg-white")}>
+          <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr] gap-2">
+            <div>
+              <label className="label">Fournisseur</label>
+              <input className="input text-sm" list="fournisseurs-connus" placeholder="Ex : Rexel, Leroy Merlin…"
+                value={o.fournisseur} onChange={e => maj(o.cle, { fournisseur: e.target.value })} />
             </div>
-          );
-        })}
-      </div>
-      <div className="flex gap-2">
-        <input className="input text-sm flex-1" placeholder="https://www.leroymerlin.fr/…"
-          value={newLien} onChange={e => setNewLien(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && addLien()} />
-        <button onClick={addLien} className="btn-ghost !px-3 text-xs shrink-0"><Plus size={13} /> Ajouter</button>
-      </div>
+            <div>
+              <label className="label">Référence</label>
+              <input className="input text-sm" placeholder="Réf. fournisseur"
+                value={o.reference} onChange={e => maj(o.cle, { reference: e.target.value })} />
+            </div>
+          </div>
+          <div>
+            <label className="label">Lien du produit chez ce fournisseur</label>
+            <input className="input text-sm" placeholder="https://www.leroymerlin.fr/…"
+              value={o.url} onChange={e => maj(o.cle, { url: e.target.value })} />
+          </div>
+          <MargeFields prixAchat={o.prixAchat} prixVente={o.prixVente} typeBranche="materiau"
+            onPrixAchatChange={v => maj(o.cle, { prixAchat: v })}
+            onPrixVenteChange={v => maj(o.cle, { prixVente: v })} />
+          <div className="flex items-center justify-between gap-3">
+            <label className="flex items-center gap-2 text-xs text-ink-600 cursor-pointer">
+              <input type="radio" name={groupe} checked={o.principal} onChange={() => definirPrincipal(o.cle)} />
+              Offre principale (prix par défaut)
+            </label>
+            {offres.length > 1 && (
+              <button type="button" onClick={() => retirer(o.cle)} className="text-xs text-red-500 hover:text-red-700 inline-flex items-center gap-1">
+                <Trash2 size={12} /> Retirer
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -674,8 +712,26 @@ function KitModal({
 
 const CSV_HEADERS = [
   "nom", "description", "type_branche", "categorie", "sous_categorie",
-  "marque", "unite", "prix_achat", "prix_unitaire", "gamme", "longueur_unitaire", "image_url", "liens_fournisseurs"
+  "marque", "unite", "prix_achat", "prix_unitaire", "gamme", "longueur_unitaire", "image_url", "liens_fournisseurs", "fournisseurs"
 ];
+
+// Colonne « fournisseurs » : offres séparées par |, champs séparés par ^ → nom^référence^lien^prix_achat^prix_vente
+// (la première offre est la principale).
+function nettoyerChampCSV(v: string): string { return v.replace(/[|^]/g, " ").trim(); }
+function fournisseursVersCSV(p: PrestationExt): string {
+  return offresTriees(p.fournisseurs).map(o => [
+    nettoyerChampCSV(libelleOffre(o)), nettoyerChampCSV(o.reference ?? ""), nettoyerChampCSV(o.url ?? ""),
+    o.prix_achat ?? "", o.prix_vente ?? "",
+  ].join("^")).join("|");
+}
+function fournisseursDepuisCSV(cell: string): OffreNormalisee[] {
+  if (!cell || !cell.trim()) return [];
+  const drafts: OffreDraft[] = cell.split("|").map(e => e.trim()).filter(Boolean).map((e, i) => {
+    const [nom = "", ref = "", url = "", pa = "", pv = ""] = e.split("^").map(x => x.trim());
+    return { ...nouvelleOffreDraft(i === 0), fournisseur: nom, reference: ref, url, prixAchat: pa, prixVente: pv };
+  });
+  return normaliserDrafts(drafts);
+}
 
 function exportCSV(prestations: PrestationExt[]) {
   const rows = [
@@ -684,7 +740,7 @@ function exportCSV(prestations: PrestationExt[]) {
       p.nom, p.description ?? "", p.type_branche, p.categorie,
       p.sous_categorie ?? "", p.marque ?? "", p.unite,
       p.prix_achat ?? "", p.prix_unitaire, (p as any).gamme ?? "", (p as any).longueur_unitaire ?? "", p.image_url ?? "",
-      (p.liens_fournisseurs ?? []).join("|"),
+      (p.liens_fournisseurs ?? []).join("|"), fournisseursVersCSV(p),
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(";"))
   ];
   const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
@@ -698,7 +754,7 @@ type ImportRow = {
   nom: string; description: string; type_branche: string; categorie: string;
   sous_categorie: string; marque: string; unite: string;
   prix_achat: string; prix_unitaire: string; gamme: string; longueur_unitaire: string;
-  image_url: string; liens_fournisseurs: string;
+  image_url: string; liens_fournisseurs: string; fournisseurs: string;
   _valid: boolean; _errors: string[];
 };
 
@@ -731,6 +787,7 @@ function parseCSV(text: string): ImportRow[] {
       prix_achat: row.prix_achat ?? "", prix_unitaire: row.prix_unitaire ?? "",
       gamme: row.gamme ?? "", longueur_unitaire: row.longueur_unitaire ?? "",
       image_url: row.image_url ?? "", liens_fournisseurs: row.liens_fournisseurs ?? "",
+      fournisseurs: row.fournisseurs ?? "",
       _valid: errors.length === 0, _errors: errors,
     };
   });
@@ -775,6 +832,7 @@ function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (ro
                 <p>Colonnes : <code className="text-xs bg-ink-200 px-1 rounded">{CSV_HEADERS.join(" · ")}</code></p>
                 <p>• <code>type_branche</code> : <strong>service</strong> ou <strong>materiau</strong></p>
                 <p>• <code>liens_fournisseurs</code> : URLs séparées par <strong>|</strong></p>
+                <p>• <code>fournisseurs</code> : <code>nom^référence^lien^prix_achat^prix_vente</code>, une offre par fournisseur séparées par <strong>|</strong> (la première est la principale)</p>
                 <p>• <code>prix_achat</code> : toujours en TTC (ajoute la TVA à 20% avant d'exporter si tu pars d'un prix HT)</p>
               </div>
               <div>
@@ -844,14 +902,15 @@ function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (ro
 // ─── CategorieBlock ───────────────────────────────────────────────────────────
 
 function CategorieBlock({
-  cat, items, branche, editId, editData, editNewCat, editCatMode, editLiens,
-  editPrixAchat, editPrixVente, categories, marques, collapsed,
+  cat, items, branche, editId, editData, editNewCat, editCatMode, editOffres,
+  editPrixVente, categories, marques, collapsed, fournisseursConnus,
   toggleCollapse, delCategorie, startEdit, saveEdit, del, onEditKit,
-  setEditId, setEditData, setEditNewCat, setEditCatMode, setEditLiens,
-  setEditPrixAchat, setEditPrixVente,
+  setEditId, setEditData, setEditNewCat, setEditCatMode, setEditOffres,
+  setEditPrixVente,
 }: any) {
   const isOpen = !collapsed;
   const [collapsedMarques, setCollapsedMarques] = useState<Record<string, boolean>>({});
+  const [offresOuvertes, setOffresOuvertes] = useState<Record<string, boolean>>({});
 
   return (
     <div className="card overflow-hidden">
@@ -937,7 +996,11 @@ function CategorieBlock({
                     </button>
                   )}
                   {(mq === "__sans__" || !collapsedMarques[mq]) && itemsMq.map((p: PrestationExt) => {
-                    const liens: string[] = p.liens_fournisseurs ?? [];
+                    const offres: PrestationFournisseur[] = offresTriees(p.fournisseurs);
+                    const liens: string[] = offres.length > 0
+                      ? offres.map(o => o.url).filter((u): u is string => !!u)
+                      : (p.liens_fournisseurs ?? []);
+                    const prixOffres = offres.map(o => prixVenteOffre(p, o));
                     const marque: string = p.marque ?? "";
                     const sousCat: string = p.sous_categorie ?? "";
                     return (
@@ -997,12 +1060,7 @@ function CategorieBlock({
                                   value={(editData as any).longueur_unitaire ?? p.longueur_unitaire ?? ""}
                                   onChange={e => setEditData((d: any) => ({ ...d, longueur_unitaire: e.target.value ? parseFloat(e.target.value) : null }))} /></div>
                             </div>
-                            <MargeFields prixAchat={editPrixAchat} prixVente={editPrixVente}
-                              onPrixAchatChange={setEditPrixAchat}
-                              onPrixVenteChange={v => { setEditPrixVente(v); setEditData((d: any) => ({ ...d, prix_unitaire: parseFloat(v) || 0 })); }}
-                              typeBranche={(editData as any).type_branche ?? p.type_branche} />
-                            <div><label className="label">Liens fournisseurs</label>
-                              <LiensFournisseurs liens={editLiens} setLiens={setEditLiens} /></div>
+                            <FournisseursEditor offres={editOffres} setOffres={setEditOffres} fournisseursConnus={fournisseursConnus} />
                             <div><label className="label">Image du produit (URL)</label>
                               <input className="input text-sm" placeholder="https://…/image-produit.jpg"
                                 value={(editData as any).image_url ?? p.image_url ?? ""}
@@ -1026,6 +1084,16 @@ function CategorieBlock({
                                 <div className="min-w-0">
                                   <p className="font-medium text-ink-900 text-sm truncate">{p.nom}</p>
                                   <p className="text-xs text-ink-400 truncate">{[marque, sousCat, p.description].filter(Boolean).join(" · ")}</p>
+                                  {offres.length > 0 && (
+                                    <button type="button" onClick={() => setOffresOuvertes(o => ({ ...o, [p.id]: !o[p.id] }))}
+                                      className="inline-flex items-center gap-1 text-[11px] text-volt-600 font-medium hover:underline mt-0.5">
+                                      {offres.length} fournisseur{offres.length > 1 ? "s" : ""}
+                                      {offres.length > 1
+                                        ? ` · ${fmt(Math.min(...prixOffres))}${Math.min(...prixOffres) !== Math.max(...prixOffres) ? ` – ${fmt(Math.max(...prixOffres))}` : ""}`
+                                        : ` · ${libelleOffre(offres[0])}`}
+                                      {offresOuvertes[p.id] ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                               {liens.length > 0 && (
@@ -1073,6 +1141,31 @@ function CategorieBlock({
                               <button onClick={() => startEdit(p)} className="p-1.5 rounded-lg text-ink-400 hover:bg-ink-100 hover:text-ink-700"><Pencil size={13} /></button>
                               <button onClick={() => del(p.id)} className="p-1.5 rounded-lg text-ink-300 hover:bg-red-50 hover:text-red-600"><Trash2 size={13} /></button>
                             </div>
+                          </div>
+                        )}
+                        {editId !== p.id && offresOuvertes[p.id] && offres.length > 0 && (
+                          <div className="mt-2 rounded-xl border border-ink-100 divide-y divide-ink-100 bg-ink-50/50">
+                            {offres.map(o => {
+                              const pv = prixVenteOffre(p, o);
+                              return (
+                                <div key={o.id} className="flex items-center gap-3 px-3 py-2 text-xs">
+                                  <div className="flex-1 min-w-0">
+                                    <p className="font-medium text-ink-800 truncate">
+                                      {libelleOffre(o)}
+                                      {o.principal && <span className="ml-1.5 badge text-[10px] bg-volt-100 text-volt-700">Principal</span>}
+                                    </p>
+                                    {o.reference && <p className="text-ink-400 truncate">réf. {o.reference}</p>}
+                                  </div>
+                                  <span className="text-ink-400 shrink-0">{o.prix_achat != null ? `PA ${fmt(o.prix_achat)}` : "PA —"}</span>
+                                  <MargeTag prixAchat={o.prix_achat} prixVente={pv} />
+                                  <span className="font-semibold text-ink-900 shrink-0 w-20 text-right">{fmt(pv)}</span>
+                                  {o.url ? (
+                                    <a href={o.url} target="_blank" rel="noopener noreferrer" title="Vérifier le prix chez ce fournisseur"
+                                      className="text-ink-300 hover:text-volt-600 shrink-0"><ExternalLink size={13} /></a>
+                                  ) : <span className="w-[13px] shrink-0" />}
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -1180,15 +1273,14 @@ export default function CataloguePage() {
   const [editData, setEditData] = useState<Partial<PrestationExt>>({});
   const [editNewCat, setEditNewCat] = useState("");
   const [editCatMode, setEditCatMode] = useState<"select" | "new">("select");
-  const [editLiens, setEditLiens] = useState<string[]>([]);
-  const [editPrixAchat, setEditPrixAchat] = useState("");
+  const [editOffres, setEditOffres] = useState<OffreDraft[]>([]);
   const [editPrixVente, setEditPrixVente] = useState("");
 
   const [showForm, setShowForm] = useState(false);
   const [newCat, setNewCat] = useState("");
-  const [formLiens, setFormLiens] = useState<string[]>([]);
-  const [formPrixAchat, setFormPrixAchat] = useState("");
+  const [formOffres, setFormOffres] = useState<OffreDraft[]>(() => [nouvelleOffreDraft(true)]);
   const [formPrixVente, setFormPrixVente] = useState("");
+  const [offresOk, setOffresOk] = useState(true);
   const [formLongueurUnitaire, setFormLongueurUnitaire] = useState("");
   const [form, setForm] = useState({
     nom: "", description: "", unite: "forfait",
@@ -1210,7 +1302,10 @@ export default function CataloguePage() {
       .eq("actif", true)
       .order("categorie")
       .order("nom");
-    const prests: PrestationExt[] = data ?? [];
+    // Offres fournisseurs (plusieurs fournisseurs / prix par produit)
+    const { offres, ok } = await chargerOffres();
+    setOffresOk(ok);
+    const prests: PrestationExt[] = attacherOffres((data ?? []) as PrestationExt[], offres);
     setPrestations(prests);
     const cats = [...new Set(prests.map(p => p.categorie))].sort();
     setCategories(cats);
@@ -1226,30 +1321,51 @@ export default function CataloguePage() {
   useEffect(() => { load(); }, []);
 
   async function add() {
-    const prixVente = parseFloat(formPrixVente);
     if (!form.nom.trim()) { alert("Le nom est obligatoire."); return; }
-    if (isNaN(prixVente) || prixVente < 0) { alert("Le prix de vente est obligatoire."); return; }
     const cat = newCat.trim() || form.categorie || "Divers";
-    const prixAchatNum = formPrixAchat !== "" ? parseFloat(formPrixAchat) : null;
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) { alert("Session expirée."); return; }
+    const estMateriau = form.type_branche === "materiau";
+    let prixVente = 0;
+    let prixAchatNum: number | null = null;
+    let liens: string[] = [];
+    let offresN: OffreNormalisee[] = [];
+    if (estMateriau) {
+      offresN = normaliserDrafts(formOffres);
+      const principale = offresN.find(o => o.principal);
+      if (!principale || principale.prix_vente == null || principale.prix_vente < 0) {
+        alert("Le prix de vente de l'offre principale est obligatoire."); return;
+      }
+      const m = miroirPrestation(offresN, principale.prix_vente);
+      prixVente = m.prix_unitaire; prixAchatNum = m.prix_achat; liens = m.liens_fournisseurs;
+    } else {
+      prixVente = parseFloat(formPrixVente);
+      if (isNaN(prixVente) || prixVente < 0) { alert("Le prix de vente est obligatoire."); return; }
+    }
     const { data, error } = await supabase.from("prestations").insert({
       user_id: session.user.id, nom: form.nom,
       description: form.description || null, prix_unitaire: prixVente,
       prix_achat: prixAchatNum, unite: form.unite, type_branche: form.type_branche,
       categorie: cat, actif: true, sous_categorie: form.sous_categorie || null,
-      marque: form.marque || null, liens_fournisseurs: formLiens.filter(l => l.trim()),
+      marque: form.marque || null, liens_fournisseurs: liens,
       image_url: form.image_url || null, gamme: form.gamme || null,
       longueur_unitaire: formLongueurUnitaire !== "" ? parseFloat(formLongueurUnitaire) : null,
     }).select().single();
     if (error) { alert("Erreur : " + error.message); return; }
     if (data) {
-      setPrestations(p => [...p, data].sort((a, b) => a.categorie.localeCompare(b.categorie) || a.nom.localeCompare(b.nom)));
+      let fournisseurs: PrestationFournisseur[] = [];
+      if (estMateriau && offresN.length > 0) {
+        const err = await synchroniserOffres(session.user.id, data.id, offresN);
+        if (err) alert("Produit créé, mais fournisseurs non enregistrés : " + err);
+        else fournisseurs = await offresDe(data.id);
+      }
+      const nouveau = { ...data, fournisseurs } as PrestationExt;
+      setPrestations(p => [...p, nouveau].sort((a, b) => a.categorie.localeCompare(b.categorie) || a.nom.localeCompare(b.nom)));
       if (!categories.includes(cat)) setCategories(c => [...c, cat].sort());
     }
     if (form.marque && !marques.includes(form.marque)) setMarques(m => [...m, form.marque].sort());
     setForm({ nom: "", description: "", unite: "forfait", type_branche: "service", categorie: "", sous_categorie: "", marque: "", image_url: "", gamme: "" });
-    setNewCat(""); setFormLiens([]); setFormPrixAchat(""); setFormPrixVente(""); setFormLongueurUnitaire(""); setShowForm(false);
+    setNewCat(""); setFormOffres([nouvelleOffreDraft(true)]); setFormPrixVente(""); setFormLongueurUnitaire(""); setShowForm(false);
   }
 
   async function del(id: string) {
@@ -1264,24 +1380,62 @@ export default function CataloguePage() {
   }
 
   async function saveEdit(id: string) {
+    const orig = prestations.find(p => p.id === id);
+    if (!orig) return;
+    const typeFinal = ((editData as any).type_branche ?? orig.type_branche) as "service" | "materiau";
     const finalCat = (editCatMode === "new" && editNewCat.trim() ? editNewCat.trim() : editData.categorie) ?? "Divers";
-    const prixVenteNum = parseFloat(editPrixVente);
-    const prixAchatNum = editPrixAchat !== "" ? parseFloat(editPrixAchat) : null;
-    const dataToSave = {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) { alert("Session expirée."); return; }
+
+    const dataToSave: any = {
       ...editData, categorie: finalCat,
-      liens_fournisseurs: editLiens.filter(l => l.trim()),
-      prix_unitaire: isNaN(prixVenteNum) ? editData.prix_unitaire : prixVenteNum,
-      prix_achat: prixAchatNum,
       gamme: (editData as any).gamme || null,
       longueur_unitaire: (editData as any).longueur_unitaire ?? null,
     };
-    await supabase.from("prestations").update(dataToSave as any).eq("id", id);
-    setPrestations(p => p.map(x => x.id === id ? { ...x, ...dataToSave } as PrestationExt : x));
+    // null = on ne touche pas aux offres ; tableau = état voulu des offres du produit.
+    let offresN: OffreNormalisee[] | null = null;
+
+    if (typeFinal === "materiau") {
+      offresN = normaliserDrafts(editOffres);
+      if (offresN.length > 0) {
+        const principale = offresN.find(o => o.principal);
+        if (!principale || principale.prix_vente == null || principale.prix_vente < 0) {
+          alert("Le prix de vente de l'offre principale est obligatoire."); return;
+        }
+        const m = miroirPrestation(offresN, principale.prix_vente);
+        dataToSave.prix_unitaire = m.prix_unitaire;
+        dataToSave.prix_achat = m.prix_achat;
+        dataToSave.liens_fournisseurs = m.liens_fournisseurs;
+      } else {
+        dataToSave.prix_achat = null;
+        dataToSave.liens_fournisseurs = [];
+      }
+    } else {
+      const prixVenteNum = parseFloat(editPrixVente);
+      dataToSave.prix_unitaire = isNaN(prixVenteNum) ? (editData.prix_unitaire ?? orig.prix_unitaire) : prixVenteNum;
+      if (orig.type_branche === "materiau") {
+        // Passage matériau → service : plus de fournisseurs ni de prix d'achat.
+        dataToSave.prix_achat = null;
+        dataToSave.liens_fournisseurs = [];
+        offresN = [];
+      }
+    }
+
+    const { error } = await supabase.from("prestations").update(dataToSave).eq("id", id);
+    if (error) { alert("Erreur : " + error.message); return; }
+
+    let fournisseurs: PrestationFournisseur[] = orig.fournisseurs ?? [];
+    if (offresN !== null && (offresN.length > 0 || fournisseurs.length > 0)) {
+      const err = await synchroniserOffres(session.user.id, id, offresN);
+      if (err) alert("Produit enregistré, mais fournisseurs non enregistrés : " + err);
+      else fournisseurs = await offresDe(id);
+    }
+    setPrestations(p => p.map(x => x.id === id ? { ...x, ...dataToSave, fournisseurs } as PrestationExt : x));
     if (finalCat && !categories.includes(finalCat)) setCategories(c => [...c, finalCat].sort());
-    const savedMarque = (dataToSave as any).marque as string | undefined;
+    const savedMarque = dataToSave.marque as string | undefined;
     if (savedMarque && !marques.includes(savedMarque)) setMarques(m => [...m, savedMarque].sort());
-    setEditId(null); setEditNewCat(""); setEditCatMode("select"); setEditLiens([]);
-    setEditPrixAchat(""); setEditPrixVente("");
+    setEditId(null); setEditNewCat(""); setEditCatMode("select"); setEditOffres([]);
+    setEditPrixVente("");
   }
 
   function startEdit(p: PrestationExt) {
@@ -1294,18 +1448,23 @@ export default function CataloguePage() {
       gamme: (p as any).gamme ?? undefined, longueur_unitaire: (p as any).longueur_unitaire ?? undefined,
     } as any);
     setEditCatMode("select"); setEditNewCat("");
-    setEditLiens(p.liens_fournisseurs ?? []);
-    setEditPrixAchat(p.prix_achat != null ? String(p.prix_achat) : "");
+    // Offres du produit (ou reconstruites depuis les anciens champs prix d'achat / liens).
+    setEditOffres(draftsPourProduit(p));
     setEditPrixVente(String(p.prix_unitaire));
   }
 
   async function handleImport(rows: ImportRow[]) {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return;
-    const toInsert: object[] = [];
-    const toUpdate: { id: string; data: object }[] = [];
+    const uid = session.user.id;
+    const erreurs: string[] = [];
+    const toInsert: { payload: any; offres: OffreNormalisee[] }[] = [];
+    const toUpdate: { id: string; data: any; offres: OffreNormalisee[] | null; principale?: PrestationFournisseur }[] = [];
+
     for (const r of rows) {
-      const payload = {
+      const estMateriau = r.type_branche === "materiau";
+      const offresCsv = estMateriau ? fournisseursDepuisCSV(r.fournisseurs) : [];
+      let payload: any = {
         nom: r.nom, description: r.description || null,
         type_branche: r.type_branche as "service" | "materiau",
         categorie: r.categorie || "Divers", sous_categorie: r.sous_categorie || null,
@@ -1317,12 +1476,54 @@ export default function CataloguePage() {
         liens_fournisseurs: r.liens_fournisseurs ? r.liens_fournisseurs.split("|").filter(Boolean) : [],
         actif: true,
       };
+      if (offresCsv.length > 0) {
+        // Les offres du CSV font foi : l'offre principale est recopiée dans le produit.
+        const m = miroirPrestation(offresCsv, payload.prix_unitaire);
+        payload = { ...payload, prix_unitaire: m.prix_unitaire, prix_achat: m.prix_achat, liens_fournisseurs: m.liens_fournisseurs };
+      }
+      // Offres reconstruites depuis les colonnes prix_achat / liens quand le CSV n'a pas de colonne fournisseurs.
+      const offresLegacy = estMateriau && offresCsv.length === 0
+        ? normaliserDrafts(draftsDepuisLegacy({ prix_unitaire: payload.prix_unitaire, prix_achat: payload.prix_achat, liens_fournisseurs: payload.liens_fournisseurs } as Prestation))
+            .filter(o => o.url || o.prix_achat != null)
+        : [];
       const existing = prestations.find(p => p.nom.trim().toLowerCase() === r.nom.trim().toLowerCase() && p.type_branche === r.type_branche);
-      if (existing) toUpdate.push({ id: existing.id, data: payload });
-      else toInsert.push({ user_id: session.user.id, ...payload });
+      if (existing) {
+        const aDejaDesOffres = (existing.fournisseurs ?? []).length > 0;
+        if (offresCsv.length > 0) toUpdate.push({ id: existing.id, data: payload, offres: offresCsv });
+        else if (estMateriau && !aDejaDesOffres) toUpdate.push({ id: existing.id, data: payload, offres: offresLegacy });
+        else toUpdate.push({ id: existing.id, data: payload, offres: null, principale: estMateriau ? offrePrincipale(existing.fournisseurs) : undefined });
+      } else {
+        toInsert.push({ payload: { user_id: uid, ...payload }, offres: offresCsv.length > 0 ? offresCsv : offresLegacy });
+      }
     }
-    if (toInsert.length > 0) await supabase.from("prestations").insert(toInsert);
-    for (const { id, data } of toUpdate) await supabase.from("prestations").update(data).eq("id", id);
+
+    if (toInsert.length > 0) {
+      const { data: ins, error } = await supabase.from("prestations").insert(toInsert.map(t => t.payload)).select("id,nom,type_branche");
+      if (error) { alert("Erreur d'import : " + error.message); return; }
+      for (let i = 0; i < toInsert.length; i++) {
+        const t = toInsert[i];
+        if (t.offres.length === 0) continue;
+        const cree = (ins ?? [])[i]?.nom === t.payload.nom ? (ins ?? [])[i]
+          : (ins ?? []).find((x: any) => x.nom === t.payload.nom && x.type_branche === t.payload.type_branche);
+        if (!cree) continue;
+        const err = await synchroniserOffres(uid, cree.id, t.offres);
+        if (err) erreurs.push(`${t.payload.nom} : ${err}`);
+      }
+    }
+    for (const u of toUpdate) {
+      const { error } = await supabase.from("prestations").update(u.data).eq("id", u.id);
+      if (error) { erreurs.push(`${u.data.nom} : ${error.message}`); continue; }
+      if (u.offres !== null) {
+        if (u.offres.length === 0) continue;
+        const existantes = prestations.find(p => p.id === u.id)?.fournisseurs ?? [];
+        const err = await synchroniserOffres(uid, u.id, rattacherParNom(existantes, u.offres));
+        if (err) erreurs.push(`${u.data.nom} : ${err}`);
+      } else if (u.principale) {
+        // Import « ancien format » sur un produit qui a des fournisseurs : on aligne l'offre principale.
+        await supabase.from("prestation_fournisseurs").update({ prix_achat: u.data.prix_achat, prix_vente: u.data.prix_unitaire }).eq("id", u.principale.id);
+      }
+    }
+    if (erreurs.length > 0) alert("Import terminé avec des erreurs :\n" + erreurs.slice(0, 5).join("\n"));
     await load();
   }
 
@@ -1339,11 +1540,13 @@ export default function CataloguePage() {
   const byCatServices = catServices.reduce((acc, cat) => { acc[cat] = servicesPrests.filter(p => p.categorie === cat); return acc; }, {} as Record<string, PrestationExt[]>);
   const byCatMateriaux = catMateriaux.reduce((acc, cat) => { acc[cat] = materiauxPrests.filter(p => p.categorie === cat); return acc; }, {} as Record<string, PrestationExt[]>);
 
+  const fournisseursConnus = Array.from(new Set(prestations.flatMap(p => (p.fournisseurs ?? []).map(libelleOffre)))).sort();
+
   const sharedProps = {
-    editId, editData, editNewCat, editCatMode, editLiens, editPrixAchat, editPrixVente,
-    categories, marques, delCategorie, startEdit, saveEdit, del,
-    setEditId, setEditData, setEditNewCat, setEditCatMode, setEditLiens,
-    setEditPrixAchat, setEditPrixVente,
+    editId, editData, editNewCat, editCatMode, editOffres, editPrixVente,
+    categories, marques, fournisseursConnus, delCategorie, startEdit, saveEdit, del,
+    setEditId, setEditData, setEditNewCat, setEditCatMode, setEditOffres,
+    setEditPrixVente,
     onEditKit: (p: PrestationExt) => setKitModal(p),
   };
 
@@ -1381,6 +1584,13 @@ export default function CataloguePage() {
             </button>
           )}
         </div>
+
+        {!loading && !offresOk && (
+          <div className="mb-4 flex items-start gap-2 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl px-4 py-3 text-sm">
+            <AlertCircle size={16} className="shrink-0 mt-0.5" />
+            <p>Les fournisseurs multiples ne sont pas encore activés : exécute la migration <strong>003_fournisseurs_produits.sql</strong> dans Supabase (SQL Editor, un bloc à la fois).</p>
+          </div>
+        )}
 
         {showForm && (
           <div className="card card-inner mb-6 border-volt-400">
@@ -1440,14 +1650,10 @@ export default function CataloguePage() {
                   <input className="input" type="number" step="0.5" placeholder="0.00"
                     value={formPrixVente} onChange={e => setFormPrixVente(e.target.value)} /></div>
               ) : (
-                <MargeFields prixAchat={formPrixAchat} prixVente={formPrixVente}
-                  onPrixAchatChange={setFormPrixAchat} onPrixVenteChange={setFormPrixVente}
-                  typeBranche={form.type_branche} />
+                <FournisseursEditor offres={formOffres} setOffres={setFormOffres} fournisseursConnus={fournisseursConnus} />
               )}
               {form.type_branche === "materiau" && (
                 <>
-                  <div className="md:col-span-2"><label className="label">Liens fournisseurs</label>
-                    <LiensFournisseurs liens={formLiens} setLiens={setFormLiens} /></div>
                   <div className="md:col-span-2"><label className="label">Image du produit (URL)</label>
                     <input className="input" placeholder="https://…/image-produit.jpg"
                       value={form.image_url ?? ""} onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))} />
@@ -1458,7 +1664,7 @@ export default function CataloguePage() {
               )}
             </div>
             <div className="flex gap-3 mt-4">
-              <button onClick={() => { setShowForm(false); setFormLiens([]); setFormPrixAchat(""); setFormPrixVente(""); setFormLongueurUnitaire(""); }}
+              <button onClick={() => { setShowForm(false); setFormOffres([nouvelleOffreDraft(true)]); setFormPrixVente(""); setFormLongueurUnitaire(""); }}
                 className="btn-ghost flex-1 justify-center">Annuler</button>
               <button onClick={add} className="btn-volt flex-1 justify-center"><Save size={15} /> Enregistrer</button>
             </div>
