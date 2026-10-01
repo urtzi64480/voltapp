@@ -3,9 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { ArrowLeft, Check, ShoppingCart, RotateCcw, Share2, Link2, MessageSquare, Mail, Copy, FileDown } from "lucide-react";
+import { ArrowLeft, Check, ShoppingCart, RotateCcw, Share2, Link2, MessageSquare, Mail, Copy, FileDown, Store } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { buildCourseItems, CourseItem } from "@/lib/courseItems";
+import { buildCourseItems, buildCourseItemsParFournisseur, CourseItem } from "@/lib/courseItems";
 import { buildCourseText, genPDFListeCourses, courseFileName } from "@/lib/courseExport";
 
 export default function ListeCoursesPage({ params }: { params: { id: string } }) {
@@ -13,6 +13,8 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   const [loading, setLoading] = useState(true);
   const [devisInfo, setDevisInfo] = useState<{ numero: string; statut: string; objet?: string; client?: any; liste_courses_token?: string } | null>(null);
   const [items, setItems] = useState<CourseItem[]>([]);
+  const [lignesBrutes, setLignesBrutes] = useState<any[]>([]);
+  const [parFournisseur, setParFournisseur] = useState(false);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -34,7 +36,11 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
       .then(({ data }) => {
         if (data) {
           setDevisInfo(data as any);
-          setItems(buildCourseItems((data as any).lignes ?? []));
+          const lignes = (data as any).lignes ?? [];
+          setItems(buildCourseItems(lignes));
+          setLignesBrutes(lignes);
+          // Vue par fournisseur proposée (et activée) dès qu'une ligne en porte un.
+          setParFournisseur(lignes.some((l: any) => String(l.fournisseur_nom ?? "").trim() !== ""));
           setChecked(((data as any).liste_courses_checked as Record<string, boolean>) || {});
         }
         setLoading(false);
@@ -187,6 +193,35 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   }
 
   const totalChecked = items.filter(it => checked[it.key]).length;
+  const aDesFournisseurs = lignesBrutes.some(l => String(l.fournisseur_nom ?? "").trim() !== "");
+  const groupes = parFournisseur && aDesFournisseurs ? buildCourseItemsParFournisseur(lignesBrutes) : null;
+
+  function renderItem(it: CourseItem, cle: string) {
+    const isChecked = !!checked[it.key];
+    return (
+      <button
+        key={cle}
+        onClick={() => toggle(it.key)}
+        className={cn(
+          "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left",
+          isChecked ? "bg-emerald-50 border-emerald-200" : "bg-white border-ink-100 hover:border-ink-200"
+        )}
+      >
+        <div className={cn(
+          "w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-colors",
+          isChecked ? "bg-emerald-500 border-emerald-500" : "border-ink-300 bg-white"
+        )}>
+          {isChecked && <Check size={13} className="text-white" />}
+        </div>
+        <span className={cn("flex-1 text-sm", isChecked ? "text-ink-400 line-through" : "text-ink-800")}>
+          {it.nom}
+        </span>
+        <span className={cn("text-sm font-semibold shrink-0", isChecked ? "text-ink-300" : "text-ink-900")}>
+          {it.qty}{it.unite && it.unite !== "u" && it.unite !== "forfait" ? ` ${it.unite}` : "×"}
+        </span>
+      </button>
+    );
+  }
 
   if (loading) {
     return <Shell><div className="p-8 text-center text-ink-400">Chargement…</div></Shell>;
@@ -281,36 +316,41 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
               </div>
             </div>
 
-            <div className="card card-inner">
-              <div className="space-y-1">
-                {items.map(it => {
-                  const isChecked = !!checked[it.key];
-                  return (
-                    <button
-                      key={it.key}
-                      onClick={() => toggle(it.key)}
-                      className={cn(
-                        "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left",
-                        isChecked ? "bg-emerald-50 border-emerald-200" : "bg-white border-ink-100 hover:border-ink-200"
-                      )}
-                    >
-                      <div className={cn(
-                        "w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-colors",
-                        isChecked ? "bg-emerald-500 border-emerald-500" : "border-ink-300 bg-white"
-                      )}>
-                        {isChecked && <Check size={13} className="text-white" />}
-                      </div>
-                      <span className={cn("flex-1 text-sm", isChecked ? "text-ink-400 line-through" : "text-ink-800")}>
-                        {it.nom}
-                      </span>
-                      <span className={cn("text-sm font-semibold shrink-0", isChecked ? "text-ink-300" : "text-ink-900")}>
-                        {it.qty}{it.unite && it.unite !== "u" && it.unite !== "forfait" ? ` ${it.unite}` : "×"}
-                      </span>
-                    </button>
-                  );
-                })}
+            {aDesFournisseurs && (
+              <div className="flex items-center gap-2 mb-3">
+                <button onClick={() => setParFournisseur(v => !v)}
+                  className={cn("inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all",
+                    parFournisseur ? "bg-ink-900 text-volt-400 border-ink-900" : "bg-white border-ink-200 text-ink-600 hover:bg-ink-50")}>
+                  <Store size={13} /> Par fournisseur
+                </button>
+                {parFournisseur && <span className="text-[11px] text-ink-400">Vue perso — le lien et les exports envoyés au client restent sans fournisseur.</span>}
               </div>
-            </div>
+            )}
+
+            {groupes ? (
+              <div className="space-y-4">
+                {groupes.map(g => (
+                  <div key={g.fournisseur ?? "__sans"} className="card card-inner">
+                    <div className="flex items-baseline justify-between gap-3 mb-2">
+                      <h2 className="font-semibold text-ink-900 text-sm">{g.fournisseur ?? "Fournisseur non précisé"}</h2>
+                      <span className="text-xs text-ink-400 shrink-0">
+                        {g.items.filter(it => checked[it.key]).length} / {g.items.length}
+                        {g.achat !== null && ` · achat ${g.achat.toLocaleString("fr-FR", { style: "currency", currency: "EUR" })}`}
+                      </span>
+                    </div>
+                    <div className="space-y-1">
+                      {g.items.map(it => renderItem(it, `${g.fournisseur ?? "_"}-${it.key}`))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="card card-inner">
+                <div className="space-y-1">
+                  {items.map(it => renderItem(it, it.key))}
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
