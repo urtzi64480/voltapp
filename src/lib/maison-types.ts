@@ -230,6 +230,9 @@ export interface LiaisonWaypoint {
   // Pose de la SECTION qui ARRIVE à ce coude (du point précédent jusqu'ici) — la section peut ainsi
   // changer de pose d'un coude à l'autre : encastrée sur une partie, apparente sur une autre.
   poseType?: PoseTroncon;
+  // Hauteur (cm) de la SECTION qui arrive à ce coude : le câble y court à plat à cette hauteur, avec une montée /
+  // descente verticale à chaque bout. Absent = pente directe entre les hauteurs des deux points (comportement historique).
+  hauteurSection?: number;
 }
 // Pose d'une section de circuit : encastrée (dans le doublage / la structure — gaine) ou apparente (moulure).
 export type PoseTroncon = "encastre" | "apparent";
@@ -340,6 +343,8 @@ export interface Niveau {
   // le dernier coude). Les autres sections portent leur pose sur le coude où elles aboutissent
   // (LiaisonWaypoint.poseType) ; la dernière n'a pas de coude, d'où ce champ. Voir lib/pose-circuits.ts.
   poseFinLiaison?: Record<string, PoseTroncon>;
+  // Hauteur (cm) de la DERNIÈRE section de chaque liaison (même principe que poseFinLiaison).
+  hauteurFinLiaison?: Record<string, number>;
   circuitsManuels?: CircuitManuel[];
   // Couleur imposée par circuit AUTOMATIQUE (non manuel), indexée par le label généré
   // (déterministe tant que la composition du plan ne change pas) — les circuits manuels
@@ -1043,7 +1048,12 @@ export const COULEURS_APPAREILLAGE: { nom: string; hex: string }[] = [
 // Épaisseurs en cm. epaisseur = structure (parpaing, brique, pierre, cloison) centrée sur l'axe
 // du contour ; doublage = isolant + plaque côté intérieur de la pièce (0 = aucun).
 export type MurType = "exterieur" | "interieur";
-export interface MurSpec { type?: MurType; epaisseur: number; doublage: number; } // type : ancien champ, ignoré (déduit de la géométrie)
-export const MUR_DEFAUT: MurSpec = { epaisseur: 10, doublage: 0 };
+// UN MUR = 3 COUCHES, de l'intérieur de la pièce vers l'extérieur (épaisseurs en cm, 0 = couche absente) :
+//   1 · finition   (plaque de plâtre, enduit, parement…)  → champ finition
+//   2 · doublage   (isolant, vide technique) — les circuits y passent par défaut → champ doublage
+//   3 · structure  (maçonnerie, ossature, cloison)          → champ epaisseur
+// (Les noms de champs epaisseur / doublage sont ceux des plans déjà enregistrés ; finition est nouveau, 0 par défaut.)
+export interface MurSpec { type?: MurType; epaisseur: number; doublage: number; finition?: number; } // type : ancien champ, ignoré
+export const MUR_DEFAUT: MurSpec = { epaisseur: 10, doublage: 0, finition: 0 };
 export const PRESETS_MUR: { nom: string; spec: MurSpec }[] = [
 ];

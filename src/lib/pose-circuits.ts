@@ -22,6 +22,13 @@ export function posesTroncons(niveau: Niveau, cle: string, coudes: LiaisonWaypoi
   return poses;
 }
 
+// Hauteur (cm) de chacune des (coudes + 1) sections, ou undefined = non réglée (pente directe entre les points).
+export function hauteursTroncons(niveau: Niveau, cle: string, coudes: LiaisonWaypoint[]): (number | undefined)[] {
+  const h: (number | undefined)[] = coudes.map(c => c.hauteurSection);
+  h.push(niveau.hauteurFinLiaison?.[cle]);
+  return h;
+}
+
 // Ids des appareillages dont la section de circuit qui les touche est apparente : ils sont alors montés
 // en saillie, avec goulotte (vue 3D).
 export function appareillagesEnPoseApparente(
