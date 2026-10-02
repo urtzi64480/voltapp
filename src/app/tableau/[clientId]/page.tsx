@@ -133,7 +133,7 @@ function checkNFC(rows: BreakerRow[]) {
         chauffage_16: 16, chauffage_20: 20,
         clim: 20, seche_serviette: 16, congelateur: 20,
         irve: 32, piscine: 20, vmc: 10, alarme: 6,
-        exterieur: 16, garage: 16,
+        exterieur: 16, garage: 16, volets_roulants: 16,
       };
       const minReq = calibreMin[b.circuit];
       if (minReq && b.amperes < minReq) {
