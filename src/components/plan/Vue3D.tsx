@@ -14,21 +14,11 @@ import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle }
 import * as THREE from "three";
 import { Niveau, PIECE_TYPES, centroide, AppareillageType, OuvertureEffective, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
-import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet } from "@/components/plan/Modeles3D";
+import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
 import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
+import { parametresMur3D, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT } from "@/lib/murs";
+import { appareillagesEnPoseApparente, posesTroncons } from "@/lib/pose-circuits";
 
-const EPAISSEUR_MUR = 0.1; // mètres
-
-// Hauteur d'installation par défaut (mètres) quand l'appareillage n'a pas de hauteur saisie.
-const HAUTEUR_DEFAUT: Partial<Record<AppareillageType, number>> = {
-  prise: 0.3, prise_commandee: 0.3,
-  interrupteur: 1.1, va_et_vient: 1.1, telerupteur: 1.1,
-  applique: 1.8,
-  four: 0.6, plaque: 0.9, lave_linge: 0.85, lave_vaisselle: 0.85, seche_linge: 0.85,
-  chauffe_eau: 1.8, chauffage: 0.3, clim: 2.0, seche_serviette: 1.2, congelateur: 0.85,
-  irve: 1.0, piscine: 0.3, vmc: 2.2, alarme: 2.0,
-  volet_roulant: 2.15, // centre du coffre, juste sous le plafond (le tablier descend en dessous)
-};
 
 // Hauteur d'installation par défaut du tableau électrique (mètres) quand non précisée.
 const HAUTEUR_TABLEAU_DEFAUT = 1.5;
@@ -98,10 +88,16 @@ function creerEtiquetteSprite(texte: string, couleurFond: string): THREE.Sprite 
 // un linteau plein au-dessus de l'ouverture jusqu'au plafond, une allège pleine
 // en dessous pour une fenêtre (une porte va jusqu'au sol, pas d'allège), et les
 // pans de mur pleins entre deux ouvertures ou jusqu'aux extrémités du segment.
-function construireMurAvecOuvertures(
+export function construireMurAvecOuvertures(
   a: { x: number; y: number }, b: { x: number; y: number }, hauteurMur: number,
   ouvertures: OuvertureEffective[], epaisseur: number, murMat: THREE.Material, scene: THREE.Scene,
+  // Une COUCHE de mur (structure ou doublage) : decalage = écart du centre de la couche à l'axe,
+  // le long de la normale gauche ; extDebut/extFin = prolongement aux extrémités (comble le coin
+  // avec le mur voisin) ; avecContenu = dessiner aussi vitrage / panneau coulissant (une seule
+  // couche par mur). Toutes les couches reçoivent les MÊMES trous : une ouverture perce tout.
+  opts: { decalage?: number; extDebut?: number; extFin?: number; avecContenu?: boolean } = {},
 ): void {
+  const { decalage = 0, extDebut = 0, extFin = 0, avecContenu = true } = opts;
   const dx = b.x - a.x, dy = b.y - a.y;
   const longueur = Math.hypot(dx, dy);
   if (longueur < 0.01) return;
@@ -113,7 +109,7 @@ function construireMurAvecOuvertures(
     if (largeur < 0.005 || hauteur < 0.005) return;
     const geo = new THREE.BoxGeometry(largeur, hauteur, epaisseur);
     const mesh = new THREE.Mesh(geo, murMat);
-    mesh.position.set(a.x + ux * centreLong, centreHauteur, a.y + uy * centreLong);
+    mesh.position.set(a.x + ux * centreLong + nx * decalage, centreHauteur, a.y + uy * centreLong + ny * decalage);
     mesh.rotation.y = -angle;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -125,7 +121,7 @@ function construireMurAvecOuvertures(
     .sort((s1, s2) => s1.centre - s2.centre);
 
   if (segs.length === 0) {
-    ajouterPan(longueur / 2, longueur, hauteurMur / 2, hauteurMur);
+    ajouterPan((longueur + extFin - extDebut) / 2, longueur + extDebut + extFin, hauteurMur / 2, hauteurMur);
     return;
   }
 
@@ -134,7 +130,10 @@ function construireMurAvecOuvertures(
     const debut = Math.max(curseur, centre - larg / 2);
     const fin = Math.min(longueur, centre + larg / 2);
     if (fin <= debut) return; // ouvertures qui se chevauchent — on ignore le chevauchement
-    if (debut > curseur) ajouterPan((curseur + debut) / 2, debut - curseur, hauteurMur / 2, hauteurMur);
+    if (debut > curseur) {
+      const depart = curseur === 0 ? -extDebut : curseur; // premier pan : prolongé jusqu'au coin
+      ajouterPan((depart + debut) / 2, debut - depart, hauteurMur / 2, hauteurMur);
+    }
 
     const hAllege = (o.allege ?? 0) / 100;
     const hOuverture = (o.hauteur ?? (o.type === "porte" || o.type === "porte_coulissante" ? 204 : 120)) / 100;
@@ -145,7 +144,7 @@ function construireMurAvecOuvertures(
     if (hLinteauBas < hauteurMur - 0.01) ajouterPan((debut + fin) / 2, fin - debut, (hLinteauBas + hauteurMur) / 2, hauteurMur - hLinteauBas);
     if (hAllege > 0.01) ajouterPan((debut + fin) / 2, fin - debut, hAllege / 2, hAllege);
 
-    if (o.proprietaire && o.type === "fenetre") {
+    if (avecContenu && o.proprietaire && o.type === "fenetre") {
       const vitreGeo = new THREE.BoxGeometry(fin - debut, hOuverture, 0.01);
       const vitreMat = new THREE.MeshStandardMaterial({ color: 0xBAE6FD, transparent: true, opacity: 0.35 });
       const vitre = new THREE.Mesh(vitreGeo, vitreMat);
@@ -154,7 +153,7 @@ function construireMurAvecOuvertures(
       scene.add(vitre);
     }
 
-    if (o.proprietaire && o.type === "porte_coulissante") {
+    if (avecContenu && o.proprietaire && o.type === "porte_coulissante") {
       // Panneau "garé" contre le mur adjacent, du côté choisi — pas de vantail qui bat.
       const cote = o.coulisseVers === "gauche" ? -1 : 1;
       const centrePanneau = cote > 0 ? fin + larg / 2 : debut - larg / 2;
@@ -170,7 +169,7 @@ function construireMurAvecOuvertures(
     }
     curseur = fin;
   });
-  if (curseur < longueur) ajouterPan((curseur + longueur) / 2, longueur - curseur, hauteurMur / 2, hauteurMur);
+  if (curseur < longueur) ajouterPan((curseur + longueur + extFin) / 2, longueur + extFin - curseur, hauteurMur / 2, hauteurMur);
 }
 
 export interface Vue3DHandle {
@@ -190,6 +189,9 @@ const Vue3D = forwardRef<Vue3DHandle, {
   const lumiereLightsRef = useRef<Map<number, { light: THREE.PointLight | THREE.SpotLight; mat: THREE.MeshStandardMaterial }>>(new Map());
 
   const [nightMode, setNightMode] = useState(false);
+  // « Coupe » : rend le doublage translucide pour voir passer les câbles encastrés qu'il contient.
+  const [coupeDoublage, setCoupeDoublage] = useState(false);
+  const doublageMatsRef = useRef<THREE.MeshStandardMaterial[]>([]);
   const [interrupteursOn, setInterrupteursOn] = useState<Record<number, boolean>>({});
   // Ouverture des volets roulants (0 fermé … 100 ouvert) forcée depuis le panneau 3D — simple
   // état de VUE, jamais écrit dans le plan ; sans entrée, c'est la valeur enregistrée
@@ -249,6 +251,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
     sceneRef.current = scene;
     lumiereLightsRef.current.clear();
     voletsRef.current.clear();
+    doublageMatsRef.current = [];
 
     const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.05, 200);
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -282,6 +285,9 @@ const Vue3D = forwardRef<Vue3DHandle, {
     // une modification se voit tout de suite, sans régénérer les circuits.
     const liveParId = new Map<number, AppareillagePlace>();
     niveau.pieces.forEach(p => p.appareillages.forEach(a => liveParId.set(a.id, a)));
+    // Appareillages dont la liaison de circuit est réglée « Apparent » (coudes) : montés en saillie
+    // avec goulotte — les mêmes dont les tronçons donnent de la moulure au pré-devis.
+    const appareilsApparents = appareillagesEnPoseApparente(niveau, niveauResultat.pieces.flatMap(p => p.appareillages), resultat);
 
     // Sol + murs par pièce
     niveauResultat.pieces.forEach(piece => {
@@ -300,12 +306,23 @@ const Vue3D = forwardRef<Vue3DHandle, {
       // Murs (un ou plusieurs pans de boîte par arête du contour, troués aux ouvertures) —
       // hauteur propre à la pièce si définie
       const hauteurMurs = piece.hauteurPlafond ?? hauteurPlafond;
-      // Murs en beige clair (et non blanc) pour que l'appareillage, blanc, ressorte dessus.
+      // Murs en teintes beige (et non blanc) pour que l'appareillage, blanc, ressorte dessus :
+      // cloisons beige clair, murs extérieurs plus soutenus (enduit), doublage plus clair.
       const murMat = new THREE.MeshStandardMaterial({ color: 0xe3dccf });
+      const murExtMat = new THREE.MeshStandardMaterial({ color: 0xcdc4b3 });
+      const doublageMat = new THREE.MeshStandardMaterial({ color: 0xece8de });
+      doublageMatsRef.current.push(doublageMat);
       piece.contour.forEach((a, i) => {
         const b = piece.contour[(i + 1) % piece.contour.length];
         const ouverturesSegment = ouverturesEffectivesMur(niveauResultat.pieces, piece, i);
-        construireMurAvecOuvertures(a, b, hauteurMurs, ouverturesSegment, EPAISSEUR_MUR, murMat, scene);
+        const m = parametresMur3D(piece, i);
+        // Structure centrée sur l'axe, puis doublage côté intérieur : mêmes ouvertures sur les deux.
+        construireMurAvecOuvertures(a, b, hauteurMurs, ouverturesSegment, m.e, m.type === "exterieur" ? murExtMat : murMat, scene,
+          { extDebut: m.extDebut, extFin: m.extFin });
+        if (m.d > 0) {
+          construireMurAvecOuvertures(a, b, hauteurMurs - 0.003, ouverturesSegment, m.d, doublageMat, scene,
+            { decalage: m.signeInterieur * (m.e / 2 + m.d / 2), avecContenu: false });
+        }
       });
 
       // Appareillages — modèles 3D ressemblants (voir Modeles3D.ts), posés sur la FACE
@@ -322,10 +339,11 @@ const Vue3D = forwardRef<Vue3DHandle, {
           const pieceLive = niveau.pieces.find(p => p.id === piece.id) ?? piece;
           const baie = baieDuVolet({ x: live.x, y: live.y }, pieceLive, niveau.pieces);
           const nxv = baie.ancrage?.normale.x ?? 0, nzv = baie.ancrage?.normale.y ?? 1;
-          const recul = EPAISSEUR_MUR / 2 + 0.002;
+          const segV = baie.ancrage?.segIndex ?? 0;
+          const recul = faceInterieureM(pieceLive, segV) + 0.002;   // face intérieure FINIE (après doublage)
           const vol = creerVoletRoulant({
             largeur: baie.largeur, hauteur: baie.hauteur, allege: baie.allege,
-            caisson: live.caisson ?? "interieur", epaisseurMur: EPAISSEUR_MUR + 0.004, plafond: hauteurMurs,
+            caisson: live.caisson ?? "interieur", epaisseurMur: epaisseurTotaleM(pieceLive, segV) + 0.004, plafond: hauteurMurs,
             ouvertPct: live.voletOuvertPct ?? 0, couleur: live.voletCouleur, couleurCircuit: couleurCircuitApp,
           });
           const pxv = baie.centre.x + nxv * recul, pzv = baie.centre.y + nzv * recul;
@@ -339,22 +357,40 @@ const Vue3D = forwardRef<Vue3DHandle, {
         const modele = creerModeleAppareillage(app.type, couleurCircuitApp, liveParId.get(app.id)?.couleur);
         let px = app.x, pz = app.y, py = hCable, rotY = 0;
         let nx = 0, nz = 0; // direction "vers l'intérieur" (monde), pour décaler les lumières
+        let murPose: ReturnType<typeof parametresMur3D> | null = null; // mur d'accueil (pose des câbles, doublage)
         if (modele.montage === "plafond") {
           py = hCable;
         } else {
           const anc = ancrageMurLePlusProche({ x: app.x, y: app.y }, piece.contour);
           if (anc) {
-            const recul = EPAISSEUR_MUR / 2 + 0.002; // face intérieure du mur (mur centré sur le contour)
+            const recul = faceInterieureM(piece, anc.segIndex) + 0.002; // face intérieure FINIE du mur (après doublage)
             px = anc.pied.x + anc.normale.x * recul;
             pz = anc.pied.y + anc.normale.y * recul;
             nx = anc.normale.x; nz = anc.normale.y;
             rotY = Math.atan2(anc.normale.x, anc.normale.y); // +z local → normale intérieure
+            murPose = parametresMur3D(piece, anc.segIndex);
           }
           py = modele.montage === "sol_mur" ? 0 : Math.max(hCable, modele.demiHauteur);
         }
-        modele.groupe.position.set(px, py, pz);
-        modele.groupe.rotation.y = rotY;
-        scene.add(modele.groupe);
+        // Pose du CIRCUIT : "apparent" → boîtier en saillie + goulotte jusqu'au plafond ;
+        // "encastre" (défaut) → appareil à fleur, et (circuit affiché) câble dessiné DANS le doublage
+        // (ou la structure sans doublage) — masqué par le mur, visible en mode « Coupe ».
+        const apparent = appareilsApparents.has(app.id) && TYPES_POSE_APPARENTE.includes(app.type);
+        const racine = apparent && murPose ? habillerEnSaillie(modele, py, hauteurMurs) : modele.groupe;
+        if (murPose && !apparent && TYPES_POSE_APPARENTE.includes(app.type) && couleurCircuitApp) {
+          const profondeur = murPose.d > 0 ? murPose.d / 2 : 0.025;        // milieu du doublage, sinon saignée de 2,5 cm
+          const longueurCable = Math.max(0, hauteurMurs - 0.05 - (py + 0.04));
+          if (longueurCable > 0.02) {
+            const cable = new THREE.Mesh(
+              new THREE.CylinderGeometry(0.005, 0.005, longueurCable, 8),
+              new THREE.MeshStandardMaterial({ color: couleurCircuitApp, emissive: couleurCircuitApp, emissiveIntensity: 0.35 }));
+            cable.position.set(0, 0.04 + longueurCable / 2, -profondeur - 0.002);
+            racine.add(cable);
+          }
+        }
+        racine.position.set(px, py, pz);
+        racine.rotation.y = rotY;
+        scene.add(racine);
         // Extrémité des câbles : au point de raccordement (hauteur d'installation), sur le mur.
         posApp.set(String(app.id), new THREE.Vector3(px, hCable, pz));
 
@@ -482,6 +518,21 @@ const Vue3D = forwardRef<Vue3DHandle, {
           // en 2D — reste rattachée au circuit tout en se distinguant du reste du tracé.
           const mat = new THREE.LineBasicMaterial({ color: seg.type === "navette" ? assombrirCouleur(color) : color });
           scene.add(new THREE.Line(geo, mat));
+          // Sections APPARENTES (le câble sort du mur) : moulure PVC 20 × 14 mm le long de la section,
+          // translucide pour laisser voir le câble coloré à l'intérieur. Encastré = rien de plus.
+          const poses = posesTroncons(niveau, cle, coudes);
+          for (let j = 0; j < pts3D.length - 1; j++) {
+            if (poses[j] !== "apparent") continue;
+            const p0 = pts3D[j], p1 = pts3D[j + 1];
+            const longueur = p0.distanceTo(p1);
+            if (longueur < 0.02) continue;
+            const moulure = new THREE.Mesh(
+              new THREE.BoxGeometry(0.02, 0.014, longueur),
+              new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 }));
+            moulure.position.copy(p0).add(p1).multiplyScalar(0.5);
+            moulure.lookAt(p1);   // l'axe long de la boîte (z) suit la section
+            scene.add(moulure);
+          }
         });
 
         // Boîte(s) de dérivation — un petit repère cubique par boîte nommée, à la hauteur
@@ -651,6 +702,16 @@ const Vue3D = forwardRef<Vue3DHandle, {
     });
   }, [nightMode, lumieresAllumeesIds, niveauResultat, showCircuits]);
 
+  // Mode « Coupe » : doublage translucide, pour voir les câbles encastrés qu'il abrite.
+  useEffect(() => {
+    doublageMatsRef.current.forEach(mat => {
+      mat.transparent = coupeDoublage;
+      mat.opacity = coupeDoublage ? 0.18 : 1;
+      mat.depthWrite = !coupeDoublage;
+      mat.needsUpdate = true;
+    });
+  }, [coupeDoublage, niveau, resultat, showCircuits, niveauResultat]);
+
   // Volets roulants du niveau (état vivant) — alimente le panneau 3D.
   const volets = useMemo(
     () => niveau.pieces.flatMap(p => p.appareillages
@@ -668,6 +729,13 @@ const Vue3D = forwardRef<Vue3DHandle, {
   return (
     <div className="relative w-full h-full">
       <div ref={containerRef} className="w-full h-full" style={{ touchAction: "none", cursor: "grab" }} />
+
+      {/* Coupe : doublage translucide → câbles encastrés visibles dans l'épaisseur du mur */}
+      <button onClick={() => setCoupeDoublage(c => !c)}
+        className={`absolute top-3 right-3 btn-ghost !text-xs backdrop-blur ${coupeDoublage ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}
+        title="Rend le doublage translucide pour voir passer les câbles encastrés (circuits affichés)">
+        {coupeDoublage ? "Doublage opaque" : "Coupe du doublage"}
+      </button>
 
       {(interrupteurs.length > 0 || volets.length > 0) && (
         <div className="absolute inset-x-0 bottom-0 p-3 flex flex-col gap-2 pointer-events-none">
