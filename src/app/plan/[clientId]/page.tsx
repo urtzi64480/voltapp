@@ -14,12 +14,13 @@ import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
   GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt, Box,
+  Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
   Ouverture, OuvertureType, nouvelleOuverture, positionSurSegment, OuvertureEffective, ouverturesEffectivesMur,
   NIVEAU_TYPES, estAnnexe, origineCircuits, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, ajusterLongueurContour,
-  distanceAuSegment, positionnerADistanceDuSegment,
+  distanceAuSegment, positionnerADistanceDuSegment, pointDansPolygone,
   CircuitManuel, FamilleCircuitManuel,
   nouveauNiveau, nouvellePiece, nouvelAppareillage, uidMaison, reamorcerCompteurId, dedupliquerIds,
   LiaisonWaypoint, cleSegmentLiaison,
@@ -28,6 +29,7 @@ import {
   MeubleSimple, nouveauMeuble, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
 } from "@/lib/maison-types";
 import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
+import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece";
 import { ancrageMurLePlusProche, aimanterSurMur, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote } from "@/lib/appareillage-mur";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
@@ -212,12 +214,8 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
 
   niveauResultat.pieces.forEach(p => {
     const pts = p.contour.map(toPx).map(pt => `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(" ");
-    const c = toPx(centroide(p.contour));
-    const surf = aireDuPolygone(p.contour).toFixed(1);
     const spec = PIECE_TYPES[p.type];
     s += `<polygon points="${pts}" fill="${spec.color}" stroke="#333" stroke-width="1.5"/>`;
-    s += `<text x="${c.x.toFixed(1)}" y="${c.y.toFixed(1)}" font-size="10" text-anchor="middle" font-family="monospace" fill="#111">${escapeXml(p.nom || spec.label)}</text>`;
-    s += `<text x="${c.x.toFixed(1)}" y="${(c.y + 12).toFixed(1)}" font-size="8" text-anchor="middle" font-family="monospace" fill="#555">${surf} m²</text>`;
     p.contour.forEach((pt, i) => {
       const next = p.contour[(i + 1) % p.contour.length];
       const len = distance(pt, next);
@@ -357,6 +355,36 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
     }
   }
 
+  // Étiquettes des pièces (nom + surface), au-dessus de tout, avec halo blanc : position déplacée
+  // à la main (Piece.nomDecalage) si elle existe, sinon placement automatique à l'endroit le plus
+  // libre — même logique que sur le plan. Lue sur les pièces VIVANTES (pas sur le résultat figé).
+  pieces.forEach(p => {
+    const spec = PIECE_TYPES[p.type];
+    const nom = p.nom || spec.label;
+    const surf = `${aireDuPolygone(p.contour).toFixed(1)} m²`;
+    const w = Math.max(nom.length * 6, surf.length * 4.9) + 8, h = 22;
+    const cW = centroide(p.contour), cPx = toPx(cW);
+    let pos: Point;
+    if (p.nomDecalage) {
+      pos = toPx({ x: cW.x + p.nomDecalage.x, y: cW.y + p.nomDecalage.y });
+    } else {
+      const obstacles: RectPx[] = p.appareillages.map(a => carreAutour(toPx({ x: a.x, y: a.y }), 13));
+      (p.ouvertures ?? []).forEach(o => {
+        const a0 = p.contour[o.segIndex], b0 = p.contour[(o.segIndex + 1) % p.contour.length];
+        if (!a0 || !b0) return;
+        obstacles.push(carreAutour(toPx({ x: a0.x + (b0.x - a0.x) * o.position, y: a0.y + (b0.y - a0.y) * o.position }), (o.largeur / 100) * scale * (o.type === "fenetre" ? 0.5 : 0.75) + 3));
+      });
+      if (n.tableauPos && pointDansPolygone(n.tableauPos, p.contour)) obstacles.push(carreAutour(toPx(n.tableauPos), 12));
+      pos = placerEtiquettePiece(p.contour.map(toPx), cPx, { w, h }, obstacles);
+    }
+    const tf = `text-anchor="middle" font-family="monospace"`;
+    s += `<g ${tf}>`
+      + `<text x="${pos.x.toFixed(1)}" y="${(pos.y - 2).toFixed(1)}" font-size="10" font-weight="bold" fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="round">${escapeXml(nom)}</text>`
+      + `<text x="${pos.x.toFixed(1)}" y="${(pos.y - 2).toFixed(1)}" font-size="10" font-weight="bold" fill="#111">${escapeXml(nom)}</text>`
+      + `<text x="${pos.x.toFixed(1)}" y="${(pos.y + 9).toFixed(1)}" font-size="8" fill="none" stroke="#fff" stroke-width="2.6" stroke-linejoin="round">${surf}</text>`
+      + `<text x="${pos.x.toFixed(1)}" y="${(pos.y + 9).toFixed(1)}" font-size="8" fill="#555">${surf}</text></g>`;
+  });
+
   // Cotes d'implantation (option d'impression) : une cote par appareillage mural — sa distance
   // au coin le plus proche — en écartant celles qui se chevaucheraient, pour rester lisible.
   if (showCotes) {
@@ -456,6 +484,7 @@ type DragMode =
   | { kind: "pan"; startX: number; startY: number; startPan: Point }
   | { kind: "vertex"; pieceId: number; vertexIndex: number }
   | { kind: "piece"; pieceId: number; startX: number; startY: number; startContour: Point[] }
+  | { kind: "nomPiece"; pieceId: number; startX: number; startY: number; startOffset: Point }
   | { kind: "appareillage"; pieceId: number; appareillageId: number }
   | { kind: "meuble"; pieceId: number; meubleId: number }
   | { kind: "ouverture"; pieceId: number; ouvertureId: number }
@@ -1058,6 +1087,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // le plan quand on n'en a pas besoin. Se replie ne laisse jamais un mode de placement/
   // dessin en cours orphelin (voir toggleToolbar) : on repart toujours de "Sélection".
   const [toolbarOuvert, setToolbarOuvert] = useState(true);
+  // Espace de travail agrandi : plein écran (masque le menu latéral de l'appli) + palette
+  // d'appareillages repliable. Échap quitte le plein écran.
+  const [modeFocus, setModeFocus] = useState(false);
+  const [paletteReduite, setPaletteReduite] = useState(false);
+  const [, setLayoutTick] = useState(0);
   const [alertesOuvertes, setAlertesOuvertes] = useState(false);
 
   const [resultat, setResultat] = useState<ResultatGeneration | null>(null);
@@ -1208,6 +1242,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             ...p, appareillages: p.appareillages.map(a => a.id === dragMode.appareillageId ? { ...a, x: m.x, y: m.y } : a),
           }),
         }));
+      } else if (dragMode.kind === "nomPiece") {
+        // Étiquette (nom + surface) déplacée librement — pas d'accroche à la grille : on la pose
+        // où l'on veut. Stockée en décalage par rapport au centre de la pièce.
+        const dxM = (e.clientX - dragMode.startX) / (PX_PER_M * zoom);
+        const dyM = (e.clientY - dragMode.startY) / (PX_PER_M * zoom);
+        updateNiveauActif(n => ({
+          ...n,
+          pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : { ...p, nomDecalage: { x: dragMode.startOffset.x + dxM, y: dragMode.startOffset.y + dyM } }),
+        }));
       } else if (dragMode.kind === "meuble") {
         // Aligné sur la grille du plan, comme une pièce (arrondiGrille) — pas de snap
         // d'alignement sur les murs/autres points, pas assez pertinent pour du mobilier.
@@ -1298,7 +1341,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       // (porte/fenêtre), "boite" et "pointArrivee" (purement cosmétiques/informatifs) ne
       // changent jamais la composition électrique du plan — les exclure évite de
       // réinitialiser les circuits générés à chaque simple clic ou déplacement de ces éléments.
-      if (!["liaison", "pan", "ouverture", "boite", "pointArrivee", "meuble"].includes(dragMode.kind)) invalidateResultat();
+      if (!["liaison", "pan", "ouverture", "boite", "pointArrivee", "meuble", "nomPiece"].includes(dragMode.kind)) invalidateResultat();
       setDragEndTick(t => t + 1);
       setDragMode({ kind: "none" });
       setSnapGuide(null);
@@ -1370,6 +1413,24 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       return !o;
     });
   };
+
+  // Quitter le plein écran avec Échap — sans toucher aux autres usages d'Échap (modes de
+  // placement/dessin) : on ne réagit que si aucun champ de saisie n'a le focus.
+  useEffect(() => {
+    if (!modeFocus) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key === "Escape" && !(t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT"))) setModeFocus(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [modeFocus]);
+  // La taille du plan (grille, cadrage) est lue sur le DOM au rendu : on re-rend une fois la
+  // mise en page appliquée, sinon la zone agrandie garderait l'ancienne taille.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setLayoutTick(t => t + 1));
+    return () => cancelAnimationFrame(id);
+  }, [modeFocus, paletteReduite, toolbarOuvert, vue3D]);
 
   const entrerModeDessiner = () => {
     setMode("dessiner"); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
@@ -1457,6 +1518,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const supprimerSommetPiece = (pieceId: number, index: number) => {
     const piece = niveauActif?.pieces.find(p => p.id === pieceId);
     if (!piece) return;
+    if (piece.verrouillee) {
+      setPlacementError("Pièce verrouillée : déverrouille-la pour modifier ses sommets.");
+      setTimeout(() => setPlacementError(null), 2000);
+      return;
+    }
     const n = piece.contour.length;
     if (n <= 3) {
       setPlacementError("Une pièce doit garder au moins 3 sommets.");
@@ -2132,6 +2198,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (cheminementDessin || liaisonLumiereMode || mode === "dessiner" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) return;
     e.stopPropagation();
     if (selectedPieceId === piece.id) {
+      if (piece.verrouillee) return; // pièce verrouillée : sélectionnée mais jamais déplacée
       setDragMode({ kind: "piece", pieceId: piece.id, startX: e.clientX, startY: e.clientY, startContour: piece.contour });
     } else {
       setSelectedPieceId(piece.id);
@@ -2147,6 +2214,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const onVertexDown = (pieceId: number, index: number, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
     e.stopPropagation();
+    if (niveauActif?.pieces.find(p => p.id === pieceId)?.verrouillee) return;
     setDragMode({ kind: "vertex", pieceId, vertexIndex: index });
   };
 
@@ -2184,6 +2252,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setSelectedPointArrivee(false);
     setSelectedMeubleId(null);
     setPanelResetTick(t => t + 1);
+    if (piece.verrouillee) return; // sélectionné (panneau accessible) mais non déplaçable
     setDragMode({ kind: "appareillage", pieceId: piece.id, appareillageId: a.id });
   };
 
@@ -2199,7 +2268,30 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setSelectedWaypoint(null);
     setSelectedPointArrivee(false);
     setPanelResetTick(t => t + 1);
+    if (piece.verrouillee) return;
     setDragMode({ kind: "meuble", pieceId: piece.id, meubleId: m.id });
+  };
+
+  // Verrouillage d'une pièce (ou de toutes celles du niveau actif) — voir Piece.verrouillee.
+  const verrouillerPiece = (pieceId: number, verrouillee: boolean) => {
+    updateNiveauActif(n => ({ ...n, pieces: n.pieces.map(p => p.id === pieceId ? { ...p, verrouillee: verrouillee || undefined } : p) }));
+  };
+  const verrouillerToutLeNiveau = (verrouillee: boolean) => {
+    updateNiveauActif(n => ({ ...n, pieces: n.pieces.map(p => ({ ...p, verrouillee: verrouillee || undefined })) }));
+  };
+
+  // Poignée ✥ de l'étiquette d'une pièce : démarre son déplacement à la main. offsetDepart =
+  // décalage actuel (m) par rapport au centre de la pièce — y compris quand la position affichée
+  // vient du placement automatique, pour que l'étiquette ne « saute » pas au premier mouvement.
+  const onNomPieceDown = (piece: Piece, offsetDepart: Point, e: React.PointerEvent) => {
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) { e.stopPropagation(); return; }
+    e.stopPropagation();
+    if (piece.verrouillee) return;
+    setDragMode({ kind: "nomPiece", pieceId: piece.id, startX: e.clientX, startY: e.clientY, startOffset: offsetDepart });
+  };
+  // Double-clic sur la poignée (ou bouton du panneau) : retour au placement automatique.
+  const reinitialiserNomPiece = (pieceId: number) => {
+    updateNiveauActif(n => ({ ...n, pieces: n.pieces.map(p => p.id === pieceId ? { ...p, nomDecalage: undefined } : p) }));
   };
 
   const onTableauPointerDown = (e: React.PointerEvent) => {
@@ -2245,6 +2337,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setSelectedPointArrivee(false);
     setSelectedMeubleId(null);
     setPanelResetTick(t => t + 1);
+    if (piece.verrouillee) return;
     setDragMode({ kind: "ouverture", pieceId: piece.id, ouvertureId: o.id });
   };
 
@@ -2526,6 +2619,40 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const symSize = Math.min(30, Math.max(16, 20 * zoom));
   const boxSize = symSize + 8;
 
+  // Étiquette (nom + surface) de chaque pièce : position manuelle si l'utilisateur l'a déplacée,
+  // sinon placement automatique à l'endroit le plus libre — centre si rien n'y est, sinon le point
+  // le plus proche du centre qui évite appareillages, meubles, tableau et débattement des portes.
+  // Dessinée au-dessus de tout (halo blanc) : toujours lisible, même en dernier recours.
+  const etiquettesPieces = (niveauActif?.pieces ?? []).map(piece => {
+    const nom = piece.nom || PIECE_TYPES[piece.type].label;
+    const surf = `${aireDuPolygone(piece.contour).toFixed(1)} m²`;
+    const w = Math.max(nom.length * 7.4, surf.length * 6.2) + 14, h = 32;
+    const cW = centroide(piece.contour), cPx = toScreen(cW);
+    let pos: Point;
+    if (piece.nomDecalage) {
+      pos = toScreen({ x: cW.x + piece.nomDecalage.x, y: cW.y + piece.nomDecalage.y });
+    } else {
+      const obstacles: RectPx[] = [];
+      piece.appareillages.forEach(a => {
+        const pa = toScreen({ x: a.x, y: a.y });
+        const prochedumur = estMural(a.type) && (ancrageMurLePlusProche({ x: a.x, y: a.y }, piece.contour)?.distance ?? 9) <= TOLERANCE_MUR_M;
+        obstacles.push(carreAutour(pa, prochedumur ? boxSize * 1.05 : symSize / 2 + 6));
+      });
+      (piece.meubles ?? []).forEach(mb => obstacles.push(carreAutour(toScreen({ x: mb.x, y: mb.y }), Math.hypot(mb.largeur, mb.profondeur) / 2 * PX_PER_M * zoom)));
+      (piece.ouvertures ?? []).forEach(o => {
+        const a0 = piece.contour[o.segIndex], b0 = piece.contour[(o.segIndex + 1) % piece.contour.length];
+        if (!a0 || !b0) return;
+        const pc = toScreen({ x: a0.x + (b0.x - a0.x) * o.position, y: a0.y + (b0.y - a0.y) * o.position });
+        obstacles.push(carreAutour(pc, (o.largeur / 100) * PX_PER_M * zoom * (o.type === "fenetre" ? 0.5 : 0.75) + 4));
+      });
+      if (niveauActif?.tableauPos && pointDansPolygone(niveauActif.tableauPos, piece.contour)) {
+        obstacles.push(carreAutour(toScreen(niveauActif.tableauPos), 22));
+      }
+      pos = placerEtiquettePiece(piece.contour.map(toScreen), cPx, { w, h }, obstacles);
+    }
+    return { piece, nom, surf, w, h, x: pos.x, y: pos.y, centrePx: cPx };
+  });
+
   const circuitsNiveauActif = niveauActif
     ? resultat?.breakers.filter(b => b.pieces.some(pc => niveauActif.pieces.some(p => p.nom === pc.nom))) ?? []
     : [];
@@ -2558,18 +2685,24 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   return (
     <Shell>
-      <div className="flex flex-col h-[calc(100vh-4rem)] md:h-screen overflow-hidden">
-        <div className="flex items-center justify-between px-4 md:px-6 py-3 border-b border-ink-200 bg-white shrink-0 gap-3 flex-wrap relative z-10">
+      <div className={modeFocus
+        ? "fixed inset-0 z-[45] flex flex-col bg-white overflow-hidden"
+        : "flex flex-col h-[calc(100vh-4rem)] md:h-screen overflow-hidden"}>
+        <div className={`flex items-center justify-between px-4 md:px-6 ${modeFocus ? "py-1.5" : "py-3"} border-b border-ink-200 bg-white shrink-0 gap-3 flex-wrap relative z-10`}>
           <div className="flex items-center gap-3">
             <Link href={`/clients/${clientId}`} className="btn-ghost !px-2 !py-1.5 text-ink-400"><ArrowLeft size={16} /></Link>
             <div>
-              <h1 className="font-display text-lg text-ink-900 leading-tight">Plan de circuits</h1>
-              {client && <p className="text-xs text-ink-400">{client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</p>}
+              <h1 className={`font-display ${modeFocus ? "text-base" : "text-lg"} text-ink-900 leading-tight`}>Plan de circuits</h1>
+              {client && !modeFocus && <p className="text-xs text-ink-400">{client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</p>}
             </div>
             <ProjetSwitcher clientId={clientId} projets={projets} projetId={projet.id}
               avantChangement={handleSave} onSelect={onSelect} onChanged={onChanged} compact />
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <button onClick={() => setModeFocus(f => !f)} className={`btn-ghost !px-2 !py-1.5 ${modeFocus ? "!bg-ink-900 !text-volt-400" : ""}`}
+              title={modeFocus ? "Quitter le plein écran (Échap)" : "Agrandir l'espace de travail (plein écran, masque le menu)"}>
+              {modeFocus ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            </button>
             {!vue3D && (
               <button onClick={toggleToolbar} className="btn-ghost !px-2 !py-1.5" title={toolbarOuvert ? "Replier la barre d'outils" : "Déplier la barre d'outils"}>
                 {toolbarOuvert ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
@@ -2702,6 +2835,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           <button onClick={() => setShowLongueurs(s => !s)} disabled={!resultat || !showCircuits} className="btn-ghost !text-xs disabled:opacity-40">
             📏 Longueurs des circuits
           </button>
+          {niveauActif && niveauActif.pieces.length > 0 && (() => {
+            const toutVerrouille = niveauActif.pieces.every(pc => pc.verrouillee);
+            return (
+              <button onClick={() => verrouillerToutLeNiveau(!toutVerrouille)} className={`${toutVerrouille ? "btn-volt" : "btn-ghost"} !text-xs`}
+                title={toutVerrouille ? "Déverrouiller toutes les pièces de ce niveau" : "Verrouiller toutes les pièces de ce niveau (aucun déplacement par erreur)"}>
+                {toutVerrouille ? <Lock size={13} /> : <Unlock size={13} />} {toutVerrouille ? "Niveau verrouillé" : "Verrouiller le niveau"}
+              </button>
+            );
+          })()}
           <button onClick={() => setShowCotes(s => !s)} className={`${showCotes ? "btn-volt" : "btn-ghost"} !text-xs`}
             title="Afficher les cotes de tous les appareillages (cm, depuis le coin le plus proche). L'appareillage sélectionné affiche toujours les siennes.">
             📐 Cotes
@@ -2783,13 +2925,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 const spec = PIECE_TYPES[piece.type];
                 const pts = piece.contour.map(toScreen).map(p => `${p.x},${p.y}`).join(" ");
                 const isSelected = piece.id === selectedPieceId;
-                const c = toScreen(centroide(piece.contour));
-                const surf = aireDuPolygone(piece.contour).toFixed(1);
                 return (
                   <g key={piece.id}>
                     <polygon points={pts} fill={spec.color} fillOpacity={0.85}
                       stroke={isSelected ? "#F59E0B" : spec.stroke} strokeWidth={isSelected ? 2.5 : 1.5}
-                      style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture ? "move" : "default" }}
+                      style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture && !piece.verrouillee ? "move" : "default" }}
                       onPointerDown={e => onPieceDown(piece, e)} />
                     {niveauActif && piece.contour.flatMap((pt, i) => {
                       const next = piece.contour[(i + 1) % piece.contour.length];
@@ -2810,13 +2950,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         );
                       });
                     })}
-                    <text x={c.x} y={c.y - 4} textAnchor="middle" fontSize={12} fontFamily="monospace" fontWeight={700} fill="#1c1917" style={{ pointerEvents: "none" }}>
-                      {piece.nom || spec.label}
-                    </text>
-                    <text x={c.x} y={c.y + 12} textAnchor="middle" fontSize={10} fontFamily="monospace" fill="#78716c" style={{ pointerEvents: "none" }}>
-                      {surf} m²
-                    </text>
-                    {isSelected && mode === "select" && piece.contour.map((pt, i) => {
+                    {isSelected && mode === "select" && !piece.verrouillee && piece.contour.map((pt, i) => {
                       const p = toScreen(pt);
                       const peutSupprimer = piece.contour.length > 3;
                       return (
@@ -2833,7 +2967,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       const len = distance(pt, next);
                       return (
                         <EtiquetteLongueur key={`seg${i}`} aPx={toScreen(pt)} bPx={toScreen(next)} texte={`${len.toFixed(2)} m`}
-                          onClick={mode === "select" && !placementType && !placingTableau && !placingOuverture ? () => setEditingSegment({ pieceId: piece.id, segIndex: i }) : undefined}
+                          onClick={mode === "select" && !placementType && !placingTableau && !placingOuverture && !piece.verrouillee ? () => setEditingSegment({ pieceId: piece.id, segIndex: i }) : undefined}
                           actif={editingSegment?.pieceId === piece.id && editingSegment?.segIndex === i} />
                       );
                     })}
@@ -2884,7 +3018,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
                       return (
                         <g key={`ouv-${o.id}`} onPointerDown={e => onOuverturePointerDown(piece, o, e)}
-                          style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture ? "grab" : "default" }}>
+                          style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture ? (piece.verrouillee ? "pointer" : "grab") : "default" }}>
                           <g transform={`translate(${pC.x}, ${pC.y}) rotate(${angleDeg})`}>
                             <rect x={-largeurPx / 2} y={-4} width={largeurPx} height={8} fill="#fff" />
                             <rect x={-largeurPx / 2 - 4} y={-11} width={largeurPx + 8} height={22} fill="transparent" />
@@ -3056,7 +3190,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   <g key={`meuble-${m.id}`}
                     onPointerDown={e => onMeublePointerDown(piece, m, e)}
                     transform={`translate(${p.x}, ${p.y}) rotate(${m.rotation ?? 0})`}
-                    style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingMeuble ? (isSel ? "grab" : "pointer") : "default" }}>
+                    style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingMeuble ? (isSel && !piece.verrouillee ? "grab" : "pointer") : "default" }}>
                     <rect x={-wPx / 2} y={-dPx / 2} width={wPx} height={dPx} rx={3}
                       fill={couleur} fillOpacity={0.35} stroke={isSel ? "#F59E0B" : couleur} strokeWidth={isSel ? 2 : 1.2}
                       strokeDasharray={isSel ? undefined : "4,2"} />
@@ -3109,7 +3243,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 return (
                   <g key={a.id}
                     onPointerDown={e => onAppareillagePointerDown(piece, a, e)}
-                    style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture ? (isSel ? "grab" : "pointer") : "default" }}>
+                    style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture ? (isSel && !piece.verrouillee ? "grab" : "pointer") : "default" }}>
                     {traitVolet && (
                       <line {...traitVolet} stroke={color} strokeWidth={2.4} strokeDasharray="7,3" strokeLinecap="round" opacity={0.85} style={{ pointerEvents: "none" }} />
                     )}
@@ -3128,6 +3262,35 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         <circle cx={0} cy={0} r={6.5} fill="#EF4444" stroke="#fff" strokeWidth={1.5} />
                         <text x={0} y={2.8} textAnchor="middle" fontSize={9} fontWeight={800} fill="#fff">!</text>
                       </g>
+                    )}
+                  </g>
+                );
+              })}
+
+              {etiquettesPieces.map(({ piece, nom, surf, w, h, x, y, centrePx }) => {
+                const poigneeActive = piece.id === selectedPieceId && mode === "select";
+                return (
+                  <g key={`etiq-${piece.id}`}>
+                    <g style={{ pointerEvents: "none" }} textAnchor="middle" fontFamily="monospace">
+                      <text x={x} y={y - 3} fontSize={12} fontWeight={700} fill="none" stroke="#fff" strokeWidth={4} strokeLinejoin="round">{nom}</text>
+                      <text x={x} y={y - 3} fontSize={12} fontWeight={700} fill="#1c1917">{nom}</text>
+                      <text x={x} y={y + 11} fontSize={10} fill="none" stroke="#fff" strokeWidth={3.5} strokeLinejoin="round">{surf}</text>
+                      <text x={x} y={y + 11} fontSize={10} fill="#78716c">{surf}</text>
+                    </g>
+                    {piece.verrouillee && (
+                      <text x={x + w / 2 - 2} y={y - h / 2 + 4} textAnchor="end" fontSize={11} style={{ pointerEvents: "none" }}>🔒</text>
+                    )}
+                    {poigneeActive && !piece.verrouillee && (
+                      <>
+                        <rect x={x - w / 2} y={y - h / 2} width={w} height={h} rx={4} fill="none" stroke="#F59E0B" strokeWidth={1} strokeDasharray="3,2" style={{ pointerEvents: "none" }} />
+                        <g style={{ cursor: "grab" }}
+                          onPointerDown={e => onNomPieceDown(piece, { x: (x - centrePx.x) / (PX_PER_M * zoom), y: (y - centrePx.y) / (PX_PER_M * zoom) }, e)}
+                          onDoubleClick={e => { e.stopPropagation(); reinitialiserNomPiece(piece.id); }}>
+                          <circle cx={x - w / 2} cy={y - h / 2} r={8} fill="#fff" stroke="#F59E0B" strokeWidth={1.8} />
+                          <text x={x - w / 2} y={y - h / 2 + 3.5} textAnchor="middle" fontSize={10} fill="#B45309" style={{ pointerEvents: "none" }}>✥</text>
+                          <title>Glisser pour déplacer le nom · double-clic : replacer automatiquement</title>
+                        </g>
+                      </>
                     )}
                   </g>
                 );
@@ -3295,6 +3458,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   <p className="text-sm font-semibold text-ink-900">{selectedPiece.nom || PIECE_TYPES[selectedPiece.type].label}</p>
                   <p className="text-xs text-ink-400">{PIECE_TYPES[selectedPiece.type].label} · {aireDuPolygone(selectedPiece.contour).toFixed(1)} m² · {selectedPiece.appareillages.length} appareillage(s) · {selectedPiece.contour.length} sommets</p>
                 </div>
+                <button onClick={() => verrouillerPiece(selectedPiece.id, !selectedPiece.verrouillee)}
+                  className={`${selectedPiece.verrouillee ? "btn-volt" : "btn-ghost"} !px-2 !py-1.5 !text-xs`}
+                  title={selectedPiece.verrouillee ? "Pièce verrouillée — cliquer pour déverrouiller" : "Verrouiller la pièce : plus aucun déplacement (pièce, sommets, murs, appareillages, meubles, portes/fenêtres, nom)"}>
+                  {selectedPiece.verrouillee ? <><Lock size={13} /> Verrouillée</> : <><Unlock size={13} /> Verrouiller</>}
+                </button>
+                {selectedPiece.nomDecalage && !selectedPiece.verrouillee && (
+                  <button onClick={() => reinitialiserNomPiece(selectedPiece.id)} className="btn-ghost !px-2 !py-1.5 !text-xs" title="Replacer le nom et la surface automatiquement">↺ Nom</button>
+                )}
                 <button onClick={() => zoomSurPiece(selectedPiece)} className="btn-ghost !px-2 !py-1.5" title="Zoomer sur la pièce"><Search size={13} /></button>
                 <button onClick={() => setEditingPiece(selectedPiece)} className="btn-ghost !px-2 !py-1.5"><Pencil size={13} /></button>
               </DraggablePanel>
@@ -3314,6 +3485,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     <span className="shrink-0">Pièce</span>
                     <select className="input !py-1 !text-xs flex-1"
                       value={pieceDeSelectedAppareillage?.id ?? ""}
+                      disabled={!!pieceDeSelectedAppareillage?.verrouillee}
                       onChange={e => deplacerAppareillageVersPiece(selectedAppareillage.id, Number(e.target.value))}>
                       {niveauActif.pieces.map(p => <option key={p.id} value={p.id}>{p.nom || PIECE_TYPES[p.type].label}</option>)}
                     </select>
@@ -3393,10 +3565,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 <div className="flex items-center gap-2 text-xs text-ink-500">
                   <span className="shrink-0 w-16">Position X/Y</span>
                   <input type="number" step="0.01" className="input !py-1 !text-xs !w-20"
+                    disabled={!!pieceDeSelectedAppareillage?.verrouillee}
                     key={`${selectedAppareillage.id}-x-${dragEndTick}`}
                     defaultValue={selectedAppareillage.x.toFixed(2)}
                     onChange={e => { if (e.target.value !== "") modifierPositionExacte(selectedAppareillage.id, Number(e.target.value), selectedAppareillage.y); }} />
                   <input type="number" step="0.01" className="input !py-1 !text-xs !w-20"
+                    disabled={!!pieceDeSelectedAppareillage?.verrouillee}
                     key={`${selectedAppareillage.id}-y-${dragEndTick}`}
                     defaultValue={selectedAppareillage.y.toFixed(2)}
                     onChange={e => { if (e.target.value !== "") modifierPositionExacte(selectedAppareillage.id, selectedAppareillage.x, Number(e.target.value)); }} />
@@ -3416,6 +3590,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                               Mur
                             </span>
                             <input type="number" min={0} className="input !py-0.5 !text-xs !w-20"
+                              disabled={!!pieceDeSelectedAppareillage.verrouillee}
                               key={`${selectedAppareillage.id}-mur${i}-${dragEndTick}`}
                               defaultValue={Math.round(d * 100)}
                               onChange={e => {
@@ -3637,12 +3812,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         <div className="flex items-center gap-2 text-xs text-ink-500">
                           <span className="shrink-0 w-24">Depuis mur début</span>
                           <input type="number" min={0} className="input !py-1 !text-xs !w-20"
+                            disabled={!!piece.verrouillee}
                             key={`ouv-${o.id}-distA-${dragEndTick}`} defaultValue={Math.round(distA)}
                             onChange={e => { if (e.target.value !== "") modifierDistanceBordOuverture(piece, o, "A", Number(e.target.value)); }} />
                         </div>
                         <div className="flex items-center gap-2 text-xs text-ink-500">
                           <span className="shrink-0 w-24">Depuis mur fin</span>
                           <input type="number" min={0} className="input !py-1 !text-xs !w-20"
+                            disabled={!!piece.verrouillee}
                             key={`ouv-${o.id}-distB-${dragEndTick}`} defaultValue={Math.round(distB)}
                             onChange={e => { if (e.target.value !== "") modifierDistanceBordOuverture(piece, o, "B", Number(e.target.value)); }} />
                         </div>
@@ -3944,12 +4121,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             )}
           </div>
 
-          {!vue3D && (
+          {!vue3D && (paletteReduite ? (
+          <div className="hidden lg:flex lg:flex-col items-center w-9 border-l border-ink-200 bg-white shrink-0 py-2 gap-2">
+            <button onClick={() => setPaletteReduite(false)} className="btn-ghost !px-1.5 !py-1.5" title="Déplier la palette d'appareillages"><ChevronLeft size={15} /></button>
+            <span className="text-[10px] font-semibold text-ink-400 uppercase tracking-wide" style={{ writingMode: "vertical-rl" }}>Appareillages</span>
+          </div>
+          ) : (
           <div className="hidden lg:flex lg:flex-col w-56 border-l border-ink-200 bg-white overflow-y-auto shrink-0 p-3">
-            <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">Appareillages</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide">Appareillages</p>
+              <button onClick={() => setPaletteReduite(true)} className="btn-ghost !px-1.5 !py-1" title="Replier la palette (plus de place pour le plan)"><ChevronRight size={14} /></button>
+            </div>
             <PaletteBoutons placementType={placementType} onSelect={armerPlacement} />
           </div>
-          )}
+          ))}
 
           {!vue3D && paletteOpen && (
             <div className="lg:hidden fixed inset-0 z-40 flex justify-end" onClick={() => setPaletteOpen(false)}>
@@ -3965,7 +4150,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           )}
         </div>
 
-        <div className="px-4 py-1.5 bg-ink-50 border-t border-ink-100 text-[11px] text-ink-400 hidden md:block shrink-0">
+        <div className={`px-4 py-1.5 bg-ink-50 border-t border-ink-100 text-[11px] text-ink-400 ${modeFocus ? "hidden" : "hidden md:block"} shrink-0`}>
           {vue3D
             ? "Glisser = tourner la caméra · Clic droit (ou Maj + glisser) = déplacer la vue · Molette = zoom"
             : "Molette = zoom · Glisser le fond = déplacer la vue · En dessin : clic = ajouter un point, clic près du 1er point = fermer la pièce · Pièce sélectionnée : double-clic sur un sommet (rond orange) pour le supprimer (min. 3 sommets)"}
@@ -3994,7 +4179,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             setEditingPiece(null);
           }}
           onCancel={() => setEditingPiece(null)}
-          onDelete={() => {
+          onDelete={editingPiece.verrouillee ? undefined : () => {
             updateNiveauActif(n => ({ ...n, pieces: n.pieces.filter(p => p.id !== editingPiece.id) }));
             setSelectedPieceId(null);
             setEditingPiece(null);
