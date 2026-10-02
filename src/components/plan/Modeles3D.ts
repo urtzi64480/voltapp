@@ -66,37 +66,54 @@ function tore(r: number, tube: number, mat: THREE.Material, x = 0, y = 0, z = 0,
 
 const T_PLAQUE = 0.011; // épaisseur de plaque saillante (mm → m)
 
-function plaque(g: THREE.Group): void {
-  g.add(boite(0.08, 0.08, T_PLAQUE, m(BLANC), 0, 0, T_PLAQUE / 2));
+// Teinte d'une prise/commande : plaque + face dans la couleur choisie (blanc pur par défaut),
+// accessoires un peu plus sombres, et alvéoles/fente en noir ou en clair selon la luminance
+// de la teinte (un noir sur anthracite ne se verrait pas).
+function teinte(hex?: string) {
+  const blanc = !hex || hex.toLowerCase() === "#ffffff";
+  const col = blanc ? new THREE.Color(BLANC) : new THREE.Color(hex);
+  const lum = 0.299 * col.r + 0.587 * col.g + 0.114 * col.b;
+  return {
+    plaque: blanc ? m(BLANC) : m(col.getHex(), { roughness: 0.5 }),
+    accent: blanc ? m(GRIS_CLAIR) : m(col.clone().multiplyScalar(0.8).getHex(), { roughness: 0.5 }),
+    contraste: lum > 0.4 ? NOIR : 0xe5e7eb,
+  };
 }
 
-function modelePrise(commandee: boolean): THREE.Group {
+function plaque(g: THREE.Group, mat: THREE.Material): void {
+  g.add(boite(0.08, 0.08, T_PLAQUE, mat, 0, 0, T_PLAQUE / 2));
+}
+
+function modelePrise(commandee: boolean, couleur?: string): THREE.Group {
   const g = new THREE.Group();
-  plaque(g);
+  const t = teinte(couleur);
+  plaque(g, t.plaque);
   const z = T_PLAQUE;
-  g.add(cylZ(0.031, 0.004, m(GRIS_CLAIR), 0, 0, z + 0.002));          // collerette
-  g.add(cylZ(0.026, 0.006, m(BLANC), 0, 0, z + 0.004));              // face de la prise
-  g.add(cylZ(0.0045, 0.003, m(NOIR), -0.011, 0, z + 0.0075));        // alvéole phase
-  g.add(cylZ(0.0045, 0.003, m(NOIR), 0.011, 0, z + 0.0075));         // alvéole neutre
+  g.add(cylZ(0.031, 0.004, t.accent, 0, 0, z + 0.002));                // collerette
+  g.add(cylZ(0.026, 0.006, t.plaque, 0, 0, z + 0.004));                // face de la prise
+  const alveole = m(t.contraste);
+  g.add(cylZ(0.0045, 0.003, alveole, -0.011, 0, z + 0.0075));          // alvéole phase
+  g.add(cylZ(0.0045, 0.003, alveole, 0.011, 0, z + 0.0075));           // alvéole neutre
   g.add(cylZ(0.0035, 0.012, m(INOX, { metalness: 0.7 }), 0, 0.019, z + 0.008)); // broche de terre
   if (commandee) g.add(cylZ(0.004, 0.004, m(0xf97316, { emissive: 0xf97316, emissiveIntensity: 0.5 }), 0.03, -0.03, z + 0.002));
   return g;
 }
 
-function modeleInterrupteur(type: "interrupteur" | "va_et_vient" | "telerupteur"): THREE.Group {
+function modeleInterrupteur(type: "interrupteur" | "va_et_vient" | "telerupteur", couleur?: string): THREE.Group {
   const g = new THREE.Group();
-  plaque(g);
+  const t = teinte(couleur);
+  plaque(g, t.plaque);
   const z = T_PLAQUE;
   if (type === "telerupteur") {
-    g.add(cylZ(0.019, 0.004, m(GRIS_CLAIR), 0, 0, z + 0.002));
-    g.add(cylZ(0.015, 0.008, m(BLANC), 0, 0, z + 0.006));            // bouton poussoir rond
+    g.add(cylZ(0.019, 0.004, t.accent, 0, 0, z + 0.002));
+    g.add(cylZ(0.015, 0.008, t.plaque, 0, 0, z + 0.006));            // bouton poussoir rond
     g.add(cylZ(0.0035, 0.002, m(0xfbbf24, { emissive: 0xfbbf24, emissiveIntensity: 0.5 }), 0, 0.027, z + 0.001));
   } else {
-    const bascule = boite(0.036, 0.054, 0.007, m(BLANC), 0, 0, z + 0.0035);
+    const bascule = boite(0.036, 0.054, 0.007, t.plaque, 0, 0, z + 0.0035);
     bascule.rotation.x = -0.12;                                      // bascule légèrement inclinée
     g.add(bascule);
-    g.add(boite(0.038, 0.002, 0.008, m(GRIS_CLAIR), 0, 0, z + 0.004)); // fente centrale
-    if (type === "va_et_vient") g.add(cylZ(0.0035, 0.002, m(NOIR), 0, 0.037, z + 0.001)); // repère va-et-vient
+    g.add(boite(0.038, 0.002, 0.008, t.accent, 0, 0, z + 0.004));    // fente centrale
+    if (type === "va_et_vient") g.add(cylZ(0.0035, 0.002, m(t.contraste), 0, 0.037, z + 0.001)); // repère va-et-vient
   }
   return g;
 }
@@ -255,6 +272,7 @@ export interface OptsVolet {
   caisson: "interieur" | "exterieur";
   epaisseurMur: number; plafond: number;               // mètres
   ouvertPct: number;                                    // 0 fermé … 100 ouvert
+  couleur?: string;                                     // hex du volet — blanc par défaut
   couleurCircuit?: string;
 }
 export interface ModeleVolet {
@@ -273,23 +291,29 @@ export function creerVoletRoulant(o: OptsVolet): ModeleVolet {
   const s = ext ? -1 : 1;                                           // sens de saillie du volet
   const z0 = ext ? -(o.epaisseurMur + 0.004) : 0;                   // plan du mur côté volet
 
-  g.add(boite(W + 0.12, coffreH, prof, m(BLANC), 0, yHaut + coffreH / 2, z0 + s * prof / 2));      // coffre
-  g.add(boite(W + 0.12, 0.012, prof + 0.002, m(GRIS_CLAIR), 0, yHaut + 0.006, z0 + s * prof / 2)); // trappe / sous-face
-  const rail = m(GRIS_CLAIR);
+  // Blanc = matériau blanc pur du reste de l'appareillage ; autre teinte = matériau mat sans
+  // émissif (qui éclaircirait une couleur foncée). Les accessoires (trappe, coulisses, lame
+  // finale) sont la même teinte, légèrement assombrie, comme sur un volet réel.
+  const estBlanc = !o.couleur || o.couleur.toLowerCase() === "#ffffff";
+  const base = estBlanc ? m(BLANC) : m(o.couleur!, { roughness: 0.6 });
+  const accessoire = estBlanc ? m(GRIS_CLAIR) : m(new THREE.Color(o.couleur!).multiplyScalar(0.82).getHex(), { roughness: 0.6 });
+  g.add(boite(W + 0.12, coffreH, prof, base, 0, yHaut + coffreH / 2, z0 + s * prof / 2));            // coffre
+  g.add(boite(W + 0.12, 0.012, prof + 0.002, accessoire, 0, yHaut + 0.006, z0 + s * prof / 2));     // trappe / sous-face
+  const rail = accessoire;
   g.add(boite(0.03, H, 0.04, rail, -(W / 2 + 0.04), o.allege + H / 2, z0 + s * 0.02));            // coulisses
   g.add(boite(0.03, H, 0.04, rail, W / 2 + 0.04, o.allege + H / 2, z0 + s * 0.02));
 
   const nb = Math.max(1, Math.round(H / 0.045));
   const pas = H / nb;                                               // pas de lame (≈ 4,5 cm), tablier fermé = H exactement
   const lameGeo = new THREE.BoxGeometry(W + 0.04, pas - 0.004, 0.012);
-  const lameMat = m(BLANC);
+  const lameMat = base;
   const lames: THREE.Mesh[] = [];
   for (let i = 0; i < nb; i++) {
     const lame = new THREE.Mesh(lameGeo, lameMat);
     lame.position.set(0, yHaut - (i + 0.5) * pas, z0 + s * 0.03);
     g.add(lame); lames.push(lame);
   }
-  const finale = boite(W + 0.04, 0.04, 0.02, m(GRIS_CLAIR), 0, 0, z0 + s * 0.03);                  // lame finale
+  const finale = boite(W + 0.04, 0.04, 0.02, accessoire, 0, 0, z0 + s * 0.03);                  // lame finale
   g.add(finale);
 
   if (o.couleurCircuit) {
@@ -329,13 +353,13 @@ const SOMMET: Partial<Record<AppareillageType, number>> = {
   irve: 0.18, vmc: 0.08, alarme: 0.2, volet_roulant: 0.1,
 };
 
-export function creerModeleAppareillage(type: AppareillageType, couleurCircuit?: string): ModeleAppareillage {
+export function creerModeleAppareillage(type: AppareillageType, couleurCircuit?: string, couleur?: string): ModeleAppareillage {
   let groupe: THREE.Group;
   let ampoule: THREE.MeshStandardMaterial | undefined;
   switch (type) {
-    case "prise": groupe = modelePrise(false); break;
-    case "prise_commandee": groupe = modelePrise(true); break;
-    case "interrupteur": case "va_et_vient": case "telerupteur": groupe = modeleInterrupteur(type); break;
+    case "prise": groupe = modelePrise(false, couleur); break;
+    case "prise_commandee": groupe = modelePrise(true, couleur); break;
+    case "interrupteur": case "va_et_vient": case "telerupteur": groupe = modeleInterrupteur(type, couleur); break;
     case "applique": { const r = modeleApplique(); groupe = r.g; ampoule = r.verre; break; }
     case "point_lumineux": { const r = modelePlafonnier(); groupe = r.g; ampoule = r.verre; break; }
     case "lave_linge": groupe = modeleLaveLinge(BLANC); break;

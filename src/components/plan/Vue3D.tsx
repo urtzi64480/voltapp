@@ -326,7 +326,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
           const vol = creerVoletRoulant({
             largeur: baie.largeur, hauteur: baie.hauteur, allege: baie.allege,
             caisson: live.caisson ?? "interieur", epaisseurMur: EPAISSEUR_MUR + 0.004, plafond: hauteurMurs,
-            ouvertPct: live.voletOuvertPct ?? 0, couleurCircuit: couleurCircuitApp,
+            ouvertPct: live.voletOuvertPct ?? 0, couleur: live.voletCouleur, couleurCircuit: couleurCircuitApp,
           });
           const pxv = baie.centre.x + nxv * recul, pzv = baie.centre.y + nzv * recul;
           vol.groupe.position.set(pxv, 0, pzv);
@@ -336,7 +336,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
           posApp.set(String(app.id), new THREE.Vector3(pxv, vol.hautMoteur, pzv)); // câble → moteur
           return;
         }
-        const modele = creerModeleAppareillage(app.type, couleurCircuitApp);
+        const modele = creerModeleAppareillage(app.type, couleurCircuitApp, liveParId.get(app.id)?.couleur);
         let px = app.x, pz = app.y, py = hCable, rotY = 0;
         let nx = 0, nz = 0; // direction "vers l'intérieur" (monde), pour décaler les lumières
         if (modele.montage === "plafond") {
