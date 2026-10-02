@@ -15,8 +15,9 @@
 //    ou une liaison "navette" entre deux va-et-vient, est toujours en 1.5mm² (retour/
 //    navette), quelle que soit la section du reste du circuit.
 //  - Un tronçon "domotique" (AppareillagePlace.domotique) ne consomme aucun câble.
-//  - La pose (encastré/apparent) d'un tronçon suit le LiaisonWaypoint.poseType du coude
-//    qui le termine ; par défaut (aucun coude) : encastré.
+//  - La pose (encastré/apparent) d'une section suit le LiaisonWaypoint.poseType du coude où elle
+//    aboutit, ou Niveau.poseFinLiaison pour la dernière section (voir pose-circuits.ts) ; par
+//    défaut : encastré. Un même circuit peut mélanger sections encastrées et apparentes.
 //  - Un mètre de câble encastré nécessite un mètre de gaine assortie (calibrée via
 //    gaineRecommandee, comme le fait déjà le module Tableau) ; un mètre de câble apparent
 //    nécessite un mètre de moulure (article générique, non calibré).
@@ -49,6 +50,7 @@ import {
   Breaker as TableauBreaker, BreakerRow, BREAKER_TYPES, CIRCUITS,
   effectiveSection, gaineRecommandee, uid,
 } from "./electrical-constants";
+import { posesTroncons } from "./pose-circuits";
 import { Prestation, Gamme, DevisLigne, PrestationFournisseur } from "@/types";
 import { nomAvecConditionnement } from "@/lib/utils";
 import { libelleOffre, offrePrincipale, offrePourFournisseur, prixVenteOffre } from "@/lib/fournisseurs";
@@ -312,10 +314,11 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         const cle = cleSegmentLiaison(seg.aId, seg.bId);
         const coudes = niveau.liaisonWaypoints?.[cle] ?? [];
         const chemin = cheminSegment(seg, niveau.liaisonWaypoints);
+        const poses = posesTroncons(niveau, cle, coudes); // pose de CHAQUE section (dernière incluse)
         for (let j = 0; j < chemin.length - 1; j++) {
           const legLength = distance(chemin[j], chemin[j + 1]);
           if (legLength <= 0) continue;
-          const pose = coudes[j]?.poseType ?? "encastre";
+          const pose = poses[j] ?? "encastre";
           // Attribution à la pièce : point médian du tronçon testé contre les polygones
           // des pièces du niveau — la longueur d'un même circuit se répartit ainsi
           // naturellement entre les pièces qu'il traverse.

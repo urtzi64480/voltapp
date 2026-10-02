@@ -122,24 +122,35 @@ export interface Cote {
   a: Point; b: Point;      // mur : coin → pied sur le mur · perp : appareillage → pied sur le mur
   valeurCm: number;
   normale?: Point;         // kind "mur" : normale intérieure (sert à décaler la cote hors de la pièce)
+  decalageM?: number;      // kind "mur" : épaisseur de mur à franchir avant de poser la ligne de cote (m)
+  interieur?: boolean;     // true : la ligne de cote se pose À L'INTÉRIEUR de la pièce (cote de pièce)
+  rang?: number;           // « couloir » de la ligne de cote : 0 = le plus proche du mur, 1, 2… = plus loin (cotes en chaîne)
 }
+// Repère « faces finies » : les cotes se lisent d'un angle intérieur à l'autre (ce que l'on mesure
+// avec un mètre sur place), pas d'axe à axe. utile = contour de la face intérieure finie.
+export interface RepereCotes { utile: Point[]; epaisseurTotaleM: (segIndex: number) => number; }
 
 // detail = true : les deux cotes le long du mur (coin gauche et coin droit) — utile pour
 // caler un appareillage sélectionné ; false : une seule cote, vers le coin le plus proche.
-export function cotesAppareillage(pt: Point, contour: Point[], type: AppareillageType, detail: boolean): Cote[] {
+export function cotesAppareillage(pt: Point, contour: Point[], type: AppareillageType, detail: boolean, repere?: RepereCotes): Cote[] {
   const out: Cote[] = [];
   const n = contour.length;
   if (n < 3) return out;
   const anc = estMural(type) ? ancrageMurLePlusProche(pt, contour) : null;
   if (anc && anc.distance <= TOLERANCE_MUR_M) {
-    const A = contour[anc.segIndex], B = contour[(anc.segIndex + 1) % n];
-    const dA = Math.hypot(anc.pied.x - A.x, anc.pied.y - A.y), dB = Math.hypot(anc.pied.x - B.x, anc.pied.y - B.y);
-    const mk = (coin: Point, d: number): Cote => ({ kind: "mur", a: coin, b: anc.pied, valeurCm: Math.round(d * 100), normale: anc.normale });
+    // Avec un repère : coins et pied pris sur la face intérieure finie du mur ; sinon, sur l'axe.
+    const A = repere ? repere.utile[anc.segIndex] : contour[anc.segIndex];
+    const B = repere ? repere.utile[(anc.segIndex + 1) % n] : contour[(anc.segIndex + 1) % n];
+    const pied = repere ? projeterSurSegment(pt, A, B) : anc.pied;
+    const dA = Math.hypot(pied.x - A.x, pied.y - A.y), dB = Math.hypot(pied.x - B.x, pied.y - B.y);
+    const decalageM = repere ? repere.epaisseurTotaleM(anc.segIndex) : 0;
+    const mk = (coin: Point, d: number): Cote => ({ kind: "mur", a: coin, b: pied, valeurCm: Math.round(d * 100), normale: anc.normale, decalageM });
     if (detail) { out.push(mk(A, dA), mk(B, dB)); } else { out.push(dA <= dB ? mk(A, dA) : mk(B, dB)); }
     return out;
   }
-  const murs = contour.map((a, i) => {
-    const b = contour[(i + 1) % n];
+  const base = repere ? repere.utile : contour;
+  const murs = base.map((a, i) => {
+    const b = base[(i + 1) % n];
     const pied = projeterSurSegment(pt, a, b);
     const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
     return { pied, d: Math.hypot(pt.x - pied.x, pt.y - pied.y), ux: (b.x - a.x) / l, uy: (b.y - a.y) / l };
@@ -187,7 +198,12 @@ export function geometrieCote(c: Cote, toS: (p: Point) => Point, decalagePx: num
   if (c.kind === "mur" && c.normale) {
     const pb = toS(c.b), pn = toS({ x: c.b.x + c.normale.x * 0.1, y: c.b.y + c.normale.y * 0.1 });
     const l = Math.hypot(pn.x - pb.x, pn.y - pb.y) || 1;
-    ox = -(pn.x - pb.x) / l * decalagePx; oy = -(pn.y - pb.y) / l * decalagePx;
+    const o0 = toS({ x: 0, y: 0 }), o1 = toS({ x: 1, y: 0 });
+    const pxParM = Math.hypot(o1.x - o0.x, o1.y - o0.y);
+    // Cote de mur : hors de la pièce, au-delà de l'épaisseur du mur ; cote de pièce (interieur) : dedans.
+    const dist = (c.interieur ? decalagePx : decalagePx + (c.decalageM ?? 0) * pxParM) * (1 + (c.rang ?? 0));
+    const sens = c.interieur ? 1 : -1;
+    ox = sens * (pn.x - pb.x) / l * dist; oy = sens * (pn.y - pb.y) / l * dist;
   }
   const a2 = { x: A.x + ox, y: A.y + oy }, b2 = { x: B.x + ox, y: B.y + oy };
   let angle = Math.atan2(b2.y - a2.y, b2.x - a2.x) * 180 / Math.PI;

@@ -192,6 +192,10 @@ export interface Piece {
   // meubles, portes/fenêtres et son étiquette ne peuvent être déplacés ou redimensionnés au
   // glisser (protection contre les fausses manipulations). Les propriétés restent éditables.
   verrouillee?: boolean;
+  // Murs de la pièce : un par côté du contour (murs[i] = mur du sommet i au sommet i+1). Le contour
+  // est l'AXE de la structure ; le doublage s'ajoute côté intérieur de la pièce. Absent / incomplet
+  // = mur par défaut (cloison de 10 cm, sans doublage — l'ancien rendu). Voir lib/murs.ts.
+  murs?: MurSpec[];
   // Mobilier simple (vue 3D uniquement) — voir MeubleSimple ci-dessous.
   meubles?: MeubleSimple[];
 }
@@ -223,8 +227,12 @@ export interface LiaisonWaypoint {
   // Mode de pose de la gaine/câble à ce point : encastrée dans le mur/la cloison (défaut si
   // non renseigné) ou posée en apparent (goulotte, moulure) sur la surface du mur. Affiché
   // sur l'impression technique quand "Afficher les hauteurs d'implantation" est coché.
-  poseType?: "encastre" | "apparent";
+  // Pose de la SECTION qui ARRIVE à ce coude (du point précédent jusqu'ici) — la section peut ainsi
+  // changer de pose d'un coude à l'autre : encastrée sur une partie, apparente sur une autre.
+  poseType?: PoseTroncon;
 }
+// Pose d'une section de circuit : encastrée (dans le doublage / la structure — gaine) ou apparente (moulure).
+export type PoseTroncon = "encastre" | "apparent";
 export type LiaisonWaypoints = Record<string, LiaisonWaypoint[]>;
 
 // Boîte de dérivation d'un circuit d'éclairage — nommée, positionnée et déplaçable
@@ -328,6 +336,10 @@ export interface Niveau {
   liaisonsDirectesLumiere?: Record<string, [number, number][]>;
   hauteurPlafond?: number; // mètres — pour la vue 3D (2.5 par défaut)
   liaisonWaypoints?: LiaisonWaypoints;
+  // Pose de la DERNIÈRE section de chaque liaison (celle qui arrive à l'appareillage / à la boîte, après
+  // le dernier coude). Les autres sections portent leur pose sur le coude où elles aboutissent
+  // (LiaisonWaypoint.poseType) ; la dernière n'a pas de coude, d'où ce champ. Voir lib/pose-circuits.ts.
+  poseFinLiaison?: Record<string, PoseTroncon>;
   circuitsManuels?: CircuitManuel[];
   // Couleur imposée par circuit AUTOMATIQUE (non manuel), indexée par le label généré
   // (déterministe tant que la composition du plan ne change pas) — les circuits manuels
@@ -1025,4 +1037,19 @@ export const COULEURS_APPAREILLAGE: { nom: string; hex: string }[] = [
   { nom: "Anthracite", hex: "#3d434a" },
   { nom: "Noir", hex: "#1f2023" },
   { nom: "Laiton", hex: "#b79a5b" },
+];
+
+// ─── MURS ───────────────────────────────────────────────────────────────────────
+// Épaisseurs en cm. epaisseur = structure (parpaing, brique, pierre, cloison) centrée sur l'axe
+// du contour ; doublage = isolant + plaque côté intérieur de la pièce (0 = aucun).
+export type MurType = "exterieur" | "interieur";
+export interface MurSpec { type: MurType; epaisseur: number; doublage: number; }
+export const MUR_DEFAUT: MurSpec = { type: "interieur", epaisseur: 10, doublage: 0 };
+export const PRESETS_MUR: { nom: string; spec: MurSpec }[] = [
+  { nom: "Extérieur 20 + doublage 10", spec: { type: "exterieur", epaisseur: 20, doublage: 10 } },
+  { nom: "Extérieur 30 + doublage 10", spec: { type: "exterieur", epaisseur: 30, doublage: 10 } },
+  { nom: "Extérieur pierre 50 + doublage 10", spec: { type: "exterieur", epaisseur: 50, doublage: 10 } },
+  { nom: "Cloison 10", spec: { type: "interieur", epaisseur: 10, doublage: 0 } },
+  { nom: "Cloison 7", spec: { type: "interieur", epaisseur: 7, doublage: 0 } },
+  { nom: "Mur porteur 20", spec: { type: "interieur", epaisseur: 20, doublage: 0 } },
 ];
