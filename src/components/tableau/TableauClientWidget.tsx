@@ -47,6 +47,7 @@ const CIRCUITS: Record<string, { label: string; icon: string; ampMax: number; di
   piscine:         { label: "Piscine/PAC",     icon: "🏊", ampMax: 20,  diffType: "F"  },
   vmc:             { label: "VMC",             icon: "💨", ampMax: 10,  diffType: "AC" },
   alarme:          { label: "Alarme",          icon: "🔔", ampMax: 6,   diffType: "AC" },
+  volets_roulants: { label: "Volets roulants", icon: "🪟", ampMax: 16,  diffType: "AC" },
   exterieur:       { label: "Extérieur",       icon: "🌿", ampMax: 16,  diffType: "AC" },
   garage:          { label: "Garage",          icon: "🏠", ampMax: 16,  diffType: "AC" },
   general:         { label: "Général",         icon: "⚡", ampMax: 63,  diffType: null },
