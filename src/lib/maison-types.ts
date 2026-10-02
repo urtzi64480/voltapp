@@ -184,6 +184,14 @@ export interface Piece {
   appareillages: AppareillagePlace[];
   ouvertures?: Ouverture[];
   hauteurPlafond?: number; // mètres — remplace la hauteur du niveau pour cette pièce si définie (vue 3D)
+  // Étiquette (nom + surface) déplacée à la main : décalage en mètres PAR RAPPORT AU CENTRE de la
+  // pièce (suit donc la pièce quand on la déplace). Absent = placement automatique, qui évite les
+  // appareillages (voir placerEtiquettePiece, etiquette-piece.ts).
+  nomDecalage?: Point;
+  // Pièce verrouillée : ni elle, ni ses sommets, ni ses murs (longueurs), ni ses appareillages,
+  // meubles, portes/fenêtres et son étiquette ne peuvent être déplacés ou redimensionnés au
+  // glisser (protection contre les fausses manipulations). Les propriétés restent éditables.
+  verrouillee?: boolean;
   // Mobilier simple (vue 3D uniquement) — voir MeubleSimple ci-dessous.
   meubles?: MeubleSimple[];
 }
