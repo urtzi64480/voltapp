@@ -2355,7 +2355,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       return { ...n, poseFinLiaison: { ...(n.poseFinLiaison ?? {}), [cle]: poseType } };
     });
   };
-  // Hauteur (cm) d'UNE section de circuit — vide = non réglée (pente directe entre les hauteurs des points).
+  // Hauteur (cm) d'UNE section de circuit — vide = non réglée (hauteur du coude, sinon hauteur de gaine par défaut sous plafond).
   const modifierHauteurTroncon = (cle: string, index: number, hauteurCm: number | undefined) => {
     updateNiveauActif(n => {
       const coudes = n.liaisonWaypoints?.[cle] ?? [];
@@ -4483,7 +4483,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     <ChampHauteurTroncon cle={`${selectedTroncon.cle}-${selectedTroncon.index}`} valeur={hauteursTroncons(niveauActif, selectedTroncon.cle, coudes)[selectedTroncon.index]}
                       onChange={v => modifierHauteurTroncon(selectedTroncon.cle, selectedTroncon.index, v)} />
                   </div>
-                  <p className="text-[10px] text-ink-400">Encastré : dans la couche 2 du mur (gaine). Apparent : le câble sort du mur, sous moulure. Hauteur : le câble court à plat à cette hauteur (vide = pente directe). Tire sur le tracé pour le déformer.</p>
+                  <p className="text-[10px] text-ink-400">Encastré : dans la couche 2 du mur (gaine). Apparent : le câble sort du mur, sous moulure. Hauteur : le câble court à plat à cette hauteur (vide = hauteur de gaine par défaut, sous plafond). Tire sur le tracé pour le déformer.</p>
                 </DraggablePanel>
               );
             })()}
