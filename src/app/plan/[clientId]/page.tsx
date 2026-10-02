@@ -31,7 +31,7 @@ import {
 } from "@/lib/maison-types";
 import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
 import { cotesOuvertures, cotesExterieures, coteHorsTout } from "@/lib/cotes-archi";
-import { posesTroncons } from "@/lib/pose-circuits";
+import { posesTroncons, hauteursTroncons } from "@/lib/pose-circuits";
 import { preparerMurs, definirMitoyens, mitoyensDe, longueursUtilesCm, geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
 import { enCm, estRectangle, redimensionnerMur, redimensionnerMurUtile, reporterAppareillages, propagerSommetsPartages } from "@/lib/dimensions-piece";
 import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece";
@@ -239,7 +239,8 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
     };
     quads.filter(q => q.type !== "exterieur").forEach(struct);   // cloisons d'abord,
     quads.filter(q => q.type === "exterieur").forEach(struct);   // murs extérieurs par-dessus (jonctions propres)
-    quads.forEach(q => { if (q.doublage) s += `<polygon points="${ptsPx(q.doublage)}" fill="#e7e5e4" stroke="#a8a29e" stroke-width="0.5"/>`; });
+    quads.forEach(q => { if (q.doublage) s += `<polygon points="${ptsPx(q.doublage)}" fill="#d9dee4" stroke="#94a3b8" stroke-width="0.5"/>`; });
+    quads.forEach(q => { if (q.finition) s += `<polygon points="${ptsPx(q.finition)}" fill="#fafaf9" stroke="#a8a29e" stroke-width="0.5"/>`; });
   }
   niveauResultat.pieces.forEach(p => {
     p.contour.forEach((_, i) => {
@@ -456,9 +457,9 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       const cx = (qs[0].x + qs[1].x + qs[2].x + qs[3].x) / 4, cy = (qs[0].y + qs[1].y + qs[2].y + qs[3].y) / 4;
       const dx = (qs[1].x + qs[2].x) / 2 - (qs[0].x + qs[3].x) / 2, dy = (qs[1].y + qs[2].y) / 2 - (qs[0].y + qs[3].y) / 2;
       const A = { x: cx - dx / 2, y: cy - dy / 2 }, B = { x: cx + dx / 2, y: cy + dy / 2 };
-      if ((sp.epaisseur / 100) * scale < 7 || Math.hypot(B.x - A.x, B.y - A.y) < 30) return;
+      if (((sp.epaisseur + sp.doublage + (sp.finition ?? 0)) / 100) * scale < 7 || Math.hypot(B.x - A.x, B.y - A.y) < 30) return;
       let ang = Math.atan2(B.y - A.y, B.x - A.x) * 180 / Math.PI; if (ang > 90 || ang < -90) ang += 180;
-      const txt = sp.doublage > 0 ? `${sp.epaisseur}+${sp.doublage}` : `${sp.epaisseur}`;
+      const txt = [sp.finition ?? 0, sp.doublage, sp.epaisseur].filter(v => v > 0).join("+");
       s += `<text transform="translate(${((A.x + B.x) / 2).toFixed(1)} ${((A.y + B.y) / 2).toFixed(1)}) rotate(${ang.toFixed(1)})" text-anchor="middle" dominant-baseline="central" font-size="5" font-weight="bold" font-family="monospace" fill="#fff" stroke="${sp.type === "exterieur" ? "#44403c" : "#78716c"}" stroke-width="1.6" paint-order="stroke">${txt}</text>`;
     }));
     s += `<text x="4" y="${showCotes ? 18 : 10}" font-size="6" font-family="monospace" fill="${COULEUR_COTE}">Cotes des pièces en cm — dimensions intérieures (faces finies) · épaisseurs : structure+doublage</text>`;
@@ -664,7 +665,7 @@ function PieceForm({ initialNom, initialType, initialHauteurPlafond, initialCont
             )}
           </div>
           <div className="border-t border-ink-100 pt-3">
-            <label className="label">Épaisseur des murs (cm)</label>
+            <label className="label">Murs : 3 couches (cm), de l&apos;intérieur vers l&apos;extérieur</label>
             {verrouillee ? (
               <p className="text-xs text-amber-600">🔒 Pièce verrouillée : déverrouille-la pour modifier ses murs.</p>
             ) : (
@@ -680,11 +681,11 @@ function PieceForm({ initialNom, initialType, initialHauteurPlafond, initialCont
                 {saisiesMurs.length > 1 && (
                   <button type="button" className="text-[11px] text-volt-600 underline mt-1.5"
                     onClick={() => setSaisiesMurs(arr => arr.map(() => ({ ...arr[0] })))}>
-                    Appliquer les épaisseurs du mur 1 à tous les murs
+                    Appliquer les couches du mur 1 à tous les murs
                   </button>
                 )}
                 <p className="text-[11px] text-ink-400 mt-1.5">
-                  Structure = le mur porteur / la cloison ; doublage = isolant + plaque, côté pièce. Les couches s&apos;ajoutent vers l&apos;extérieur : les dimensions de la pièce ne changent pas. Les ouvertures percent toutes les couches.
+                  1 = finition (côté pièce), 2 = doublage (les circuits y passent par défaut), 3 = structure. Les couches s&apos;ajoutent vers l&apos;extérieur : les dimensions de la pièce ne changent pas. Les ouvertures percent les 3 couches.
                 </p>
               </>
             )}
@@ -801,28 +802,43 @@ function EtiquetteLongueur({ aPx, bPx, texte, onClick, actif, normale }: {
   );
 }
 
-// Champs d'édition d'UN mur : épaisseur de la structure et du doublage (cm). Saisies en texte pour laisser
-// taper librement ; valeurs invalides entourées en rouge.
-type SaisieMur = { epaisseur: string; doublage: string };
-const saisieDepuisMur = (m: MurSpec): SaisieMur => ({ epaisseur: String(m.epaisseur), doublage: String(m.doublage) });
+// Hauteur (cm) d'une section de circuit : vide = non réglée ; validée à la sortie du champ (Entrée / clic ailleurs).
+function ChampHauteurTroncon({ valeur, onChange, cle }: { valeur: number | undefined; onChange: (cm: number | undefined) => void; cle: string }) {
+  return (
+    <input key={`${cle}-${valeur ?? "auto"}`} className="input !py-1 !text-xs !w-16" inputMode="numeric" placeholder="auto" defaultValue={valeur ?? ""}
+      onBlur={e => { const t = e.target.value.trim().replace(",", "."); const v = t === "" ? undefined : parseFloat(t); onChange(v != null && v >= 0 && v <= 400 ? Math.round(v) : undefined); }}
+      onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+  );
+}
+
+// Champs d'édition d'UN mur : les 3 couches, de l'intérieur de la pièce vers l'extérieur (cm).
+// 1 = finition, 2 = doublage (les circuits y passent par défaut), 3 = structure. 0 = couche absente.
+type SaisieMur = { finition: string; doublage: string; epaisseur: string };
+const saisieDepuisMur = (m: MurSpec): SaisieMur => ({ finition: String(m.finition ?? 0), doublage: String(m.doublage), epaisseur: String(m.epaisseur) });
 function murDepuisSaisie(s: SaisieMur): MurSpec | null {
-  const e = parseFloat(s.epaisseur.replace(",", ".")), d = s.doublage.trim() === "" ? 0 : parseFloat(s.doublage.replace(",", "."));
-  if (!(e >= 1 && e <= 200) || !(d >= 0 && d <= 100)) return null;
-  return { epaisseur: Math.round(e), doublage: Math.round(d) };
+  const num = (t: string) => t.trim() === "" ? 0 : parseFloat(t.replace(",", "."));
+  const f = num(s.finition), d = num(s.doublage), e = num(s.epaisseur);
+  if (!(e >= 1 && e <= 200) || !(d >= 0 && d <= 100) || !(f >= 0 && f <= 50)) return null;
+  return { epaisseur: Math.round(e * 10) / 10, doublage: Math.round(d * 10) / 10, finition: Math.round(f * 10) / 10 };
 }
 function ChampsMur({ valeur, onChange, disabled }: {
   valeur: SaisieMur; onChange: (v: SaisieMur) => void; disabled?: boolean; compact?: boolean;
 }) {
   const ok = murDepuisSaisie(valeur) != null;
-  const cls = `input !py-1 !text-xs !w-16 ${ok ? "" : "!border-red-400"}`;
+  const cls = `input !py-1 !text-xs !w-14 ${ok ? "" : "!border-red-400"}`;
+  const champs: [keyof SaisieMur, string, string][] = [
+    ["finition", "1 · Finition", "Couche 1, côté pièce : plaque de plâtre, enduit, parement…"],
+    ["doublage", "2 · Doublage", "Couche 2 : isolant / vide technique — les circuits y passent par défaut"],
+    ["epaisseur", "3 · Structure", "Couche 3, côté extérieur : maçonnerie, ossature, cloison"],
+  ];
   return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <label className="flex items-center gap-1 text-[11px] text-ink-500">Structure
-        <input className={cls} inputMode="numeric" disabled={disabled} value={valeur.epaisseur} onChange={e => onChange({ ...valeur, epaisseur: e.target.value })} />
-      </label>
-      <label className="flex items-center gap-1 text-[11px] text-ink-500">Doublage
-        <input className={cls} inputMode="numeric" disabled={disabled} value={valeur.doublage} onChange={e => onChange({ ...valeur, doublage: e.target.value })} />
-      </label>
+    <div className="flex items-end gap-2 flex-wrap">
+      {champs.map(([k, lib, aide]) => (
+        <label key={k} className="flex flex-col gap-0.5 text-[10px] text-ink-500" title={aide}>
+          {lib}
+          <input className={cls} inputMode="decimal" disabled={disabled} value={valeur[k]} onChange={e => onChange({ ...valeur, [k]: e.target.value })} />
+        </label>
+      ))}
     </div>
   );
 }
@@ -853,9 +869,9 @@ function SegmentLengthForm({ longueurActuelle, murActuel, onValidate, onCancel }
               onKeyDown={e => { if (e.key === "Enter" && valide && mur) onValidate(num, mur); }} />
           </div>
           <div>
-            <label className="label">Épaisseur du mur (cm)</label>
+            <label className="label">Les 3 couches du mur (cm), de l&apos;intérieur vers l&apos;extérieur</label>
             <ChampsMur valeur={saisieMur} onChange={setSaisieMur} />
-            <p className="text-[11px] text-ink-400 mt-1.5">Longueur mesurée de face finie à face finie (doublage compris). Les couches s&apos;ajoutent vers l&apos;extérieur.</p>
+            <p className="text-[11px] text-ink-400 mt-1.5">Longueur mesurée de face finie à face finie. Les couches s&apos;ajoutent vers l&apos;extérieur ; les circuits passent par défaut dans la couche 2.</p>
           </div>
         </div>
         <div className="flex gap-2 p-4 border-t border-ink-200">
@@ -2294,16 +2310,23 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // apresIndex = position dans la liste existante des coudes après laquelle insérer
   // (0 = avant le premier coude existant, longueur actuelle = après le dernier).
-  const ajouterWaypoint = (cle: string, apresIndex: number, point: Point) => {
+  const ajouterWaypoint = (cle: string, apresIndex: number, point: Point): number => {
+    const id = uidMaison();
     updateNiveauActif(n => {
       const existants = n.liaisonWaypoints?.[cle] ?? [];
-      // Couper une section en deux : les deux moitiés gardent sa pose (le nouveau coude porte celle de la
-      // moitié qui y aboutit ; l'autre moitié garde la pose portée par son coude / la fin de liaison).
+      // Couper une section en deux : les deux moitiés gardent sa pose ET sa hauteur (le nouveau coude porte celles
+      // de la moitié qui y aboutit ; l'autre moitié garde ce que porte son coude / la fin de liaison).
       const poseCoupee = posesTroncons(n, cle, existants)[apresIndex];
-      const nouveau: LiaisonWaypoint = { id: uidMaison(), point, ...(poseCoupee === "apparent" ? { poseType: "apparent" as const } : {}) };
+      const hauteurCoupee = hauteursTroncons(n, cle, existants)[apresIndex];
+      const nouveau: LiaisonWaypoint = {
+        id, point,
+        ...(poseCoupee === "apparent" ? { poseType: "apparent" as const } : {}),
+        ...(hauteurCoupee != null ? { hauteurSection: hauteurCoupee } : {}),
+      };
       const maj = [...existants.slice(0, apresIndex), nouveau, ...existants.slice(apresIndex)];
       return { ...n, liaisonWaypoints: { ...(n.liaisonWaypoints ?? {}), [cle]: maj } };
     });
+    return id;
   };
   const supprimerWaypoint = (cle: string, waypointId: number) => {
     updateNiveauActif(n => ({
@@ -2330,6 +2353,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         return { ...n, liaisonWaypoints: { ...(n.liaisonWaypoints ?? {}), [cle]: coudes.map((w, k) => k === index ? { ...w, poseType } : w) } };
       }
       return { ...n, poseFinLiaison: { ...(n.poseFinLiaison ?? {}), [cle]: poseType } };
+    });
+  };
+  // Hauteur (cm) d'UNE section de circuit — vide = non réglée (pente directe entre les hauteurs des points).
+  const modifierHauteurTroncon = (cle: string, index: number, hauteurCm: number | undefined) => {
+    updateNiveauActif(n => {
+      const coudes = n.liaisonWaypoints?.[cle] ?? [];
+      if (index < coudes.length) {
+        return { ...n, liaisonWaypoints: { ...(n.liaisonWaypoints ?? {}), [cle]: coudes.map((w, k) => k === index ? { ...w, hauteurSection: hauteurCm } : w) } };
+      }
+      const fin = { ...(n.hauteurFinLiaison ?? {}) };
+      if (hauteurCm == null) delete fin[cle]; else fin[cle] = hauteurCm;
+      return { ...n, hauteurFinLiaison: fin };
     });
   };
   // Mode de pose (encastré dans le mur / apparent en goulotte) du passage de gaine à ce
@@ -2942,11 +2977,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       const centre = { x: (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4, y: (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4 };
       const dirL = { x: (pts[1].x + pts[2].x) / 2 - (pts[0].x + pts[3].x) / 2, y: (pts[1].y + pts[2].y) / 2 - (pts[0].y + pts[3].y) / 2 };
       const A = { x: centre.x - dirL.x / 2, y: centre.y - dirL.y / 2 }, B = { x: centre.x + dirL.x / 2, y: centre.y + dirL.y / 2 };
-      const epPx = (sp.epaisseur / 100) * PX_PER_M * zoom;
+      const epPx = ((sp.epaisseur + sp.doublage + (sp.finition ?? 0)) / 100) * PX_PER_M * zoom;
       if (epPx < 9 || Math.hypot(B.x - A.x, B.y - A.y) < 40) return [];
       let ang = Math.atan2(B.y - A.y, B.x - A.x) * 180 / Math.PI;
       if (ang > 90 || ang < -90) ang += 180;
-      return [{ key: `ep-${pc.id}-${q.i}`, x: (A.x + B.x) / 2, y: (A.y + B.y) / 2, ang, txt: sp.doublage > 0 ? `${sp.epaisseur}+${sp.doublage}` : `${sp.epaisseur}`, ext: sp.type === "exterieur" }];
+      return [{ key: `ep-${pc.id}-${q.i}`, x: (A.x + B.x) / 2, y: (A.y + B.y) / 2, ang, txt: [sp.finition ?? 0, sp.doublage, sp.epaisseur].filter(v => v > 0).join("+"), ext: sp.type === "exterieur" }];
     });
   }) : [];
 
@@ -3039,6 +3074,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 <button onClick={() => zoomBtn(1)} className="btn-ghost !px-2 !py-1" title="Zoom avant"><ZoomIn size={14} /></button>
               </>
             )}
+            <button onClick={handleGenerer} className="btn-ghost !px-2 !py-1 !text-xs" title="Générer les circuits"><Sparkles size={13} /> Générer</button>
+            <button onClick={() => setShowCircuits(v => !v)} disabled={!resultat} className={`btn-ghost !px-2 !py-1 !text-xs disabled:opacity-40 ${resultat && showCircuits ? "!bg-ink-900 !text-volt-400" : ""}`} title="Afficher / masquer les circuits"><Eye size={13} /> Circuits</button>
             <button onClick={() => setVue3D(v => !v)} className={`btn-ghost !px-2 !py-1 !text-xs ${vue3D ? "!bg-ink-900 !text-volt-400" : ""}`}>{vue3D ? "Vue 2D" : "Vue 3D"}</button>
             <button onClick={() => setModeFocus(f => !f)} className={`btn-ghost !px-2 !py-1 ${modeFocus ? "!bg-ink-900 !text-volt-400" : ""}`}
               title={modeFocus ? "Quitter le plein écran (Échap)" : "Plein écran"}>
@@ -3291,6 +3328,27 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
         <div className="flex-1 flex overflow-hidden">
           <div className="flex-1 relative overflow-hidden bg-white">
+            {/* Circuits : ils ne sont jamais enregistrés avec le plan, il faut les générer (ou les ré-afficher) à
+                chaque ouverture. Ce bandeau est visible en 2D comme en 3D, barre d'outils repliée ou non. */}
+            {niveauActif && niveauActif.pieces.some(pc => pc.appareillages.length > 0) && (() => {
+              const origine = origineCircuits(niveauActif);
+              if (resultat && showCircuits && origine) return null;
+              return (
+                <div className="absolute top-3 left-3 z-20 flex flex-col gap-1.5 max-w-xs">
+                  {!resultat && (
+                    <button onClick={handleGenerer} className="btn-volt !text-xs shadow-lg"><Sparkles size={13} /> Circuits non affichés — Générer les circuits</button>
+                  )}
+                  {resultat && !showCircuits && (
+                    <button onClick={() => setShowCircuits(true)} className="btn-volt !text-xs shadow-lg"><Eye size={13} /> Afficher les circuits</button>
+                  )}
+                  {resultat && showCircuits && !origine && (
+                    <div className="bg-amber-50 border border-amber-300 text-amber-800 text-xs rounded-lg px-3 py-2 shadow">
+                      Aucun point de départ sur ce niveau : pose le <strong>tableau</strong> (⚡ Position tableau) ou le point d&apos;arrivée des gaines pour tracer les circuits.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             {vue3D ? (
               niveauActif ? (
                 <Vue3D ref={vue3DRef} niveau={niveauActif} resultat={resultat} showCircuits={showCircuits} />
@@ -3337,7 +3395,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     {quads.filter(q => q.type !== "exterieur").map(struct)}
                     {quads.filter(q => q.type === "exterieur").map(struct)}
                     {quads.filter(q => q.doublage).map(q => (
-                      <polygon key={`d-${q.cle}`} points={toPts(q.doublage!)} fill="#e7e5e4" stroke="#a8a29e" strokeWidth={0.8} strokeLinejoin="round" />
+                      <polygon key={`d-${q.cle}`} points={toPts(q.doublage!)} fill="#d9dee4" stroke="#94a3b8" strokeWidth={0.8} strokeLinejoin="round" />
+                    ))}
+                    {quads.filter(q => q.finition).map(q => (
+                      <polygon key={`f-${q.cle}`} points={toPts(q.finition!)} fill="#fafaf9" stroke="#a8a29e" strokeWidth={0.8} strokeLinejoin="round" />
                     ))}
                   </g>
                 );
@@ -3508,6 +3569,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       if (apparente) {
                         elements.push(<line key={`${cle}-${j}-moulure`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#d6d3d1" strokeWidth={8} strokeLinecap="round" opacity={0.9} style={{ pointerEvents: "none" }} />);
                       }
+                      const hSec = hauteursTroncons(niveauActif, cle, coudes)[j];
+                      if (hSec != null && !estDomotique) {
+                        const mx = (aPx.x + bPx.x) / 2, my = (aPx.y + bPx.y) / 2;
+                        elements.push(
+                          <g key={`${cle}-${j}-h`} style={{ pointerEvents: "none" }}>
+                            <rect x={mx - 16} y={my - 7} width={32} height={14} rx={4} fill="#fff" stroke={couleurSegment} strokeWidth={1} />
+                            <text x={mx} y={my + 3.5} textAnchor="middle" fontSize={9} fontWeight={700} fontFamily="monospace" fill="#1c1917">↕{hSec}</text>
+                          </g>);
+                      }
                       if (sectionSel) {
                         elements.push(<line key={`${cle}-${j}-sel`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#F59E0B" strokeWidth={11} strokeLinecap="round" opacity={0.35} style={{ pointerEvents: "none" }} />);
                       }
@@ -3540,7 +3610,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                               const rect = svgRef.current?.getBoundingClientRect();
                               if (!rect) return;
                               const m = toMeters(e.clientX - rect.left, e.clientY - rect.top);
-                              ajouterWaypoint(cle, j, m);
+                              // Appui + glisser sur un tracé = nouveau point que l'on tire aussitôt : on déforme le circuit
+                              // d'un seul geste. (Un simple clic sans bouger ajoute juste le point.)
+                              const nouveauId = ajouterWaypoint(cle, j, m);
+                              setSelectedWaypoint({ cle, waypointId: nouveauId });
+                              setSelectedTroncon(null); setSelectedPieceId(null); setSelectedAppareillageId(null);
+                              setSelectedTableau(false); setSelectedBoite(null); setSelectedMeubleId(null);
+                              setPanelResetTick(t => t + 1);
+                              setDragMode({ kind: "liaison", cle, waypointId: nouveauId });
                             }} />
                         );
                       }
@@ -4359,6 +4436,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         {([["Section avant", rang], ["Section après", rang + 1]] as [string, number][]).map(([lib, idx]) => (
                           <div key={lib} className="flex items-center gap-2 text-xs text-ink-500">
                             <span className="shrink-0 w-20">{lib}</span>
+                            <ChampHauteurTroncon cle={`${selectedWaypoint.cle}-${idx}`} valeur={hauteursTroncons(niveauActif, selectedWaypoint.cle, coudes)[idx]}
+                              onChange={v => modifierHauteurTroncon(selectedWaypoint.cle, idx, v)} />
                             <div className="flex gap-1 flex-1">
                               {(["encastre", "apparent"] as const).map(pose => (
                                 <button key={pose} onClick={() => modifierPoseTroncon(selectedWaypoint.cle, idx, pose)}
@@ -4371,7 +4450,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                             </div>
                           </div>
                         ))}
-                        <p className="text-[10px] text-ink-400">Apparent = le câble sort du mur : moulure au pré-devis. Un circuit peut être encastré sur une partie et apparent sur une autre.</p>
+                        <p className="text-[10px] text-ink-400">Pour chaque section : hauteur (cm, vide = auto) puis pose. Apparent = le câble sort du mur : moulure au pré-devis. Un circuit peut être encastré sur une partie et apparent sur une autre.</p>
                       </>
                     );
                   })()}
@@ -4399,7 +4478,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       </button>
                     ))}
                   </div>
-                  <p className="text-[10px] text-ink-400">Encastré : dans le mur (gaine). Apparent : le câble sort du mur, sous moulure. Ajoute un point sur le tracé (clic) pour découper une section.</p>
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0">Hauteur (cm)</span>
+                    <ChampHauteurTroncon cle={`${selectedTroncon.cle}-${selectedTroncon.index}`} valeur={hauteursTroncons(niveauActif, selectedTroncon.cle, coudes)[selectedTroncon.index]}
+                      onChange={v => modifierHauteurTroncon(selectedTroncon.cle, selectedTroncon.index, v)} />
+                  </div>
+                  <p className="text-[10px] text-ink-400">Encastré : dans la couche 2 du mur (gaine). Apparent : le câble sort du mur, sous moulure. Hauteur : le câble court à plat à cette hauteur (vide = pente directe). Tire sur le tracé pour le déformer.</p>
                 </DraggablePanel>
               );
             })()}
