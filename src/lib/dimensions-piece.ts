@@ -4,7 +4,8 @@
 // de 10 cm ; ces fonctions servent à AFFINER ensuite, mur par mur, depuis les paramètres de
 // la pièce. Fonctions pures sur des contours en mètres.
 
-import { AppareillagePlace, Point } from "@/lib/maison-types";
+import { AppareillagePlace, Piece, Point } from "@/lib/maison-types";
+import { longueurUtileCm, definirMitoyens, mitoyensDe } from "@/lib/murs";
 import { ancrageMurLePlusProche, estMural, TOLERANCE_MUR_M } from "@/lib/appareillage-mur";
 
 export const enCm = (m: number) => Math.round(m * 100);
@@ -69,5 +70,45 @@ export function reporterAppareillages(ancien: Point[], nouveau: Point[], apps: A
     const nouveauPied = { x: A1.x + t * (B1.x - A1.x), y: A1.y + t * (B1.y - A1.y) };
     const mx = nouveauPied.x - anc.pied.x, my = nouveauPied.y - anc.pied.y;
     return Math.abs(mx) < 1e-9 && Math.abs(my) < 1e-9 ? a : { ...a, x: a.x + mx, y: a.y + my };
+  });
+}
+
+// Fixe la longueur UTILE (face intérieure finie à face intérieure finie, cm) du mur segIndex : c'est la
+// dimension que l'on mesure sur place. Le contour est ajusté en conséquence (sur un mur mitoyen, il est à
+// l'axe de la cloison, donc plus long que l'intérieur ; sur un mur extérieur il coïncide avec lui). Deux
+// passes pour rester exact quand les angles ne sont pas droits.
+export function redimensionnerMurUtile(piece: Piece, segIndex: number, utileCm: number): Point[] {
+  let courant = piece;
+  for (let k = 0; k < 2; k++) {
+    const a = courant.contour[segIndex], b = courant.contour[(segIndex + 1) % courant.contour.length];
+    const L = Math.hypot(b.x - a.x, b.y - a.y);
+    const ecartCm = utileCm - longueurUtileCm(courant, segIndex);
+    if (ecartCm === 0) break;
+    const mitoyens = mitoyensDe(courant);   // le caractère mitoyen ne change pas pendant l'ajustement
+    courant = { ...courant, contour: redimensionnerMur(courant.contour, segIndex, L + ecartCm / 100) };
+    definirMitoyens(courant, mitoyens);
+  }
+  return courant.contour;
+}
+
+// Les sommets que la pièce partage avec une AUTRE pièce (cloison mitoyenne) suivent quand on les déplace :
+// la cloison reste une seule et même cloison, l'enveloppe extérieure du bâtiment ne bouge pas ailleurs.
+// (Les appareillages posés sur les murs de la pièce voisine suivent aussi leur mur.)
+export function propagerSommetsPartages(pieces: Piece[], pieceId: number, ancien: Point[], nouveau: Point[]): Piece[] {
+  const proche = (p: Point, q: Point) => Math.hypot(p.x - q.x, p.y - q.y) < 0.03;
+  const deplaces = ancien
+    .map((o, i) => ({ o, n: nouveau[i] }))
+    .filter(d => d.n && Math.hypot(d.n.x - d.o.x, d.n.y - d.o.y) > 1e-6);
+  if (deplaces.length === 0) return pieces;
+  return pieces.map(p => {
+    if (p.id === pieceId) return p;
+    let change = false;
+    const contour = p.contour.map(pt => {
+      const d = deplaces.find(dd => proche(pt, dd.o));
+      if (!d) return pt;
+      change = true;
+      return { x: d.n.x, y: d.n.y };
+    });
+    return change ? { ...p, contour, appareillages: reporterAppareillages(p.contour, contour, p.appareillages) } : p;
   });
 }

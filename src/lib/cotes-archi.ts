@@ -5,7 +5,7 @@
 // mètres ; l'affichage est le même que les autres cotes (CoteSvg / coteSvgString).
 
 import { Piece, Point, ouverturesEffectivesMur } from "@/lib/maison-types";
-import { geometrieMurs, murDe, normaleInterieure } from "@/lib/murs";
+import { geometrieMurs, typeMur, normaleInterieure } from "@/lib/murs";
 import { Cote } from "@/lib/appareillage-mur";
 
 const RANG_OUVERTURES = 2;   // couloir intérieur le plus éloigné (au-delà des cotes de pièce)
@@ -57,7 +57,7 @@ export function cotesExterieures(pieces: Piece[]): Cote[] {
   pieces.forEach(p => {
     const { exterieur } = geometrieMurs(p);
     p.contour.forEach((_, i) => {
-      if (murDe(p, i).type !== "exterieur") return;
+      if (typeMur(p, i) !== "exterieur") return;
       const a = exterieur[i], b = exterieur[(i + 1) % exterieur.length];
       out.push({
         kind: "mur", a, b, valeurCm: Math.round(Math.hypot(b.x - a.x, b.y - a.y) * 100),

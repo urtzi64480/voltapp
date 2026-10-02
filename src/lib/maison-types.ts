@@ -1043,13 +1043,7 @@ export const COULEURS_APPAREILLAGE: { nom: string; hex: string }[] = [
 // Épaisseurs en cm. epaisseur = structure (parpaing, brique, pierre, cloison) centrée sur l'axe
 // du contour ; doublage = isolant + plaque côté intérieur de la pièce (0 = aucun).
 export type MurType = "exterieur" | "interieur";
-export interface MurSpec { type: MurType; epaisseur: number; doublage: number; }
-export const MUR_DEFAUT: MurSpec = { type: "interieur", epaisseur: 10, doublage: 0 };
+export interface MurSpec { type?: MurType; epaisseur: number; doublage: number; } // type : ancien champ, ignoré (déduit de la géométrie)
+export const MUR_DEFAUT: MurSpec = { epaisseur: 10, doublage: 0 };
 export const PRESETS_MUR: { nom: string; spec: MurSpec }[] = [
-  { nom: "Extérieur 20 + doublage 10", spec: { type: "exterieur", epaisseur: 20, doublage: 10 } },
-  { nom: "Extérieur 30 + doublage 10", spec: { type: "exterieur", epaisseur: 30, doublage: 10 } },
-  { nom: "Extérieur pierre 50 + doublage 10", spec: { type: "exterieur", epaisseur: 50, doublage: 10 } },
-  { nom: "Cloison 10", spec: { type: "interieur", epaisseur: 10, doublage: 0 } },
-  { nom: "Cloison 7", spec: { type: "interieur", epaisseur: 7, doublage: 0 } },
-  { nom: "Mur porteur 20", spec: { type: "interieur", epaisseur: 20, doublage: 0 } },
 ];
