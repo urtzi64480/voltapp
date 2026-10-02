@@ -14,7 +14,7 @@ import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
   GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt, Box,
-  Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight,
+  Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -1091,6 +1091,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // d'appareillages repliable. Échap quitte le plein écran.
   const [modeFocus, setModeFocus] = useState(false);
   const [paletteReduite, setPaletteReduite] = useState(false);
+  // Menu du haut (en-tête + niveaux + barre d'outils) masquable d'un clic, comme la palette :
+  // il est alors remplacé par une fine barre avec l'essentiel (niveau, zoom, 2D/3D, sauvegarde).
+  const [menuHautReduit, setMenuHautReduit] = useState(false);
   const [, setLayoutTick] = useState(0);
   const [alertesOuvertes, setAlertesOuvertes] = useState(false);
 
@@ -1414,6 +1417,40 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     });
   };
 
+  // Préférences d'agencement mémorisées sur cet appareil (palette repliée, menu du haut masqué).
+  // Lues après le montage (jamais au rendu serveur → pas de décalage d'hydratation). Le plein
+  // écran n'est volontairement pas mémorisé : on repart toujours d'une page normale.
+  useEffect(() => {
+    try {
+      setPaletteReduite(localStorage.getItem("voltapp.plan.paletteReduite") === "1");
+      setMenuHautReduit(localStorage.getItem("voltapp.plan.menuHautReduit") === "1");
+    } catch { /* stockage indisponible : on garde les valeurs par défaut */ }
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem("voltapp.plan.paletteReduite", paletteReduite ? "1" : "0");
+      localStorage.setItem("voltapp.plan.menuHautReduit", menuHautReduit ? "1" : "0");
+    } catch { /* idem */ }
+  }, [paletteReduite, menuHautReduit]);
+
+  // Masquer le menu du haut annule tout mode de placement/dessin lié à la barre d'outils (comme
+  // le repli de la barre : jamais de bouton « Terminer » orphelin caché) ; l'afficher ne change rien.
+  const reduireMenuHaut = (reduire: boolean) => {
+    if (reduire) {
+      setMode("select"); setDrawingPoints([]);
+      setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null);
+      setPlacingPointArrivee(false); setSelectedPointArrivee(false); setPlacingMeuble(false);
+      setCheminementDessin(null); setLiaisonLumiereMode(null);
+    }
+    setMenuHautReduit(reduire);
+  };
+  // Changement de niveau (onglets du menu et mini-barre) : repart d'une sélection vide.
+  const changerNiveau = (id: number) => {
+    setNiveauActifId(id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false);
+    setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedPointArrivee(false); setSelectedMeubleId(null);
+    setCheminementDessin(null); setLiaisonLumiereMode(null);
+  };
+
   // Quitter le plein écran avec Échap — sans toucher aux autres usages d'Échap (modes de
   // placement/dessin) : on ne réagit que si aucun champ de saisie n'a le focus.
   useEffect(() => {
@@ -1430,7 +1467,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   useEffect(() => {
     const id = requestAnimationFrame(() => setLayoutTick(t => t + 1));
     return () => cancelAnimationFrame(id);
-  }, [modeFocus, paletteReduite, toolbarOuvert, vue3D]);
+  }, [modeFocus, paletteReduite, menuHautReduit, toolbarOuvert, vue3D]);
 
   const entrerModeDessiner = () => {
     setMode("dessiner"); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
@@ -2688,6 +2725,38 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       <div className={modeFocus
         ? "fixed inset-0 z-[45] flex flex-col bg-white overflow-hidden"
         : "flex flex-col h-[calc(100vh-4rem)] md:h-screen overflow-hidden"}>
+        {menuHautReduit ? (
+        <div className="flex items-center gap-2 px-3 py-1 border-b border-ink-200 bg-white shrink-0 relative z-10">
+          <button onClick={() => reduireMenuHaut(false)} className="btn-ghost !px-2 !py-1 !text-xs" title="Afficher le menu du haut">
+            <PanelTopOpen size={15} /> Menu
+          </button>
+          {niveaux.length > 1 ? (
+            <select className="input !py-0.5 !text-xs !w-auto max-w-[10rem]" value={niveauActifId ?? ""} onChange={e => changerNiveau(Number(e.target.value))}>
+              {[...niveaux].sort((a, b) => a.ordre - b.ordre).map(n => <option key={n.id} value={n.id}>{n.nom || NIVEAU_TYPES[n.type]}</option>)}
+            </select>
+          ) : (
+            <span className="text-xs font-semibold text-ink-700 truncate">{niveauActif ? (niveauActif.nom || NIVEAU_TYPES[niveauActif.type]) : ""}</span>
+          )}
+          <div className="ml-auto flex items-center gap-1">
+            {!vue3D && (
+              <>
+                <button onClick={() => zoomBtn(-1)} className="btn-ghost !px-2 !py-1" title="Zoom arrière"><ZoomOut size={14} /></button>
+                <span className="text-xs font-mono text-ink-400 w-10 text-center">{Math.round(zoom * 100)}%</span>
+                <button onClick={() => zoomBtn(1)} className="btn-ghost !px-2 !py-1" title="Zoom avant"><ZoomIn size={14} /></button>
+              </>
+            )}
+            <button onClick={() => setVue3D(v => !v)} className={`btn-ghost !px-2 !py-1 !text-xs ${vue3D ? "!bg-ink-900 !text-volt-400" : ""}`}>{vue3D ? "Vue 2D" : "Vue 3D"}</button>
+            <button onClick={() => setModeFocus(f => !f)} className={`btn-ghost !px-2 !py-1 ${modeFocus ? "!bg-ink-900 !text-volt-400" : ""}`}
+              title={modeFocus ? "Quitter le plein écran (Échap)" : "Plein écran"}>
+              {modeFocus ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </button>
+            <button onClick={handleSave} disabled={saving} className={`btn-volt !px-3 !py-1 !text-xs ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
+              <Save size={13} />{saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
+            </button>
+          </div>
+        </div>
+        ) : (
+        <>
         <div className={`flex items-center justify-between px-4 md:px-6 ${modeFocus ? "py-1.5" : "py-3"} border-b border-ink-200 bg-white shrink-0 gap-3 flex-wrap relative z-10`}>
           <div className="flex items-center gap-3">
             <Link href={`/clients/${clientId}`} className="btn-ghost !px-2 !py-1.5 text-ink-400"><ArrowLeft size={16} /></Link>
@@ -2699,6 +2768,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               avantChangement={handleSave} onSelect={onSelect} onChanged={onChanged} compact />
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <button onClick={() => reduireMenuHaut(true)} className="btn-ghost !px-2 !py-1.5" title="Masquer le menu du haut (plus de place pour le plan)">
+              <PanelTopClose size={15} />
+            </button>
             <button onClick={() => setModeFocus(f => !f)} className={`btn-ghost !px-2 !py-1.5 ${modeFocus ? "!bg-ink-900 !text-volt-400" : ""}`}
               title={modeFocus ? "Quitter le plein écran (Échap)" : "Agrandir l'espace de travail (plein écran, masque le menu)"}>
               {modeFocus ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
@@ -2736,7 +2808,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     <span className="text-[10px] font-bold uppercase tracking-wide text-amber-600">Annexes</span>
                   </span>
                 )}
-                <button onClick={() => { setNiveauActifId(n.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedPointArrivee(false); setSelectedMeubleId(null); setCheminementDessin(null); setLiaisonLumiereMode(null); }}
+                <button onClick={() => changerNiveau(n.id)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
                     annexe
                       ? (actif ? "bg-amber-500 text-white" : "bg-amber-50 border border-amber-300 text-amber-700 hover:border-amber-500")
@@ -2893,6 +2965,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <button onClick={() => zoomBtn(1)} className="btn-ghost !px-2 !py-1.5"><ZoomIn size={14} /></button>
           </div>
         </div>
+        )}
+        </>
         )}
 
         <div className="flex-1 flex overflow-hidden">
