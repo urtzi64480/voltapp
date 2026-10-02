@@ -14,6 +14,7 @@ import {
   AppareillagePlace, LiaisonWaypoint, Niveau, PoseTroncon, cleSegmentLiaison, origineCircuits,
 } from "@/lib/maison-types";
 import { ResultatGeneration, segmentsPourCircuit } from "@/lib/maison-engine";
+import { hauteurCourseSection } from "@/lib/chemin-3d";
 
 // Pose de chacune des (coudes + 1) sections d'une liaison, dans l'ordre du tracé.
 export function posesTroncons(niveau: Niveau, cle: string, coudes: LiaisonWaypoint[]): PoseTroncon[] {
@@ -22,19 +23,20 @@ export function posesTroncons(niveau: Niveau, cle: string, coudes: LiaisonWaypoi
   return poses;
 }
 
-// Hauteur (cm) de chacune des (coudes + 1) sections, ou undefined = non réglée (pente directe entre les points).
+// Hauteur (cm) de chacune des (coudes + 1) sections, ou undefined = non réglée (le câble court alors à la hauteur du coude, sinon à la hauteur de gaine par défaut).
 export function hauteursTroncons(niveau: Niveau, cle: string, coudes: LiaisonWaypoint[]): (number | undefined)[] {
   const h: (number | undefined)[] = coudes.map(c => c.hauteurSection);
   h.push(niveau.hauteurFinLiaison?.[cle]);
   return h;
 }
 
-// Ids des appareillages dont la section de circuit qui les touche est apparente : ils sont alors montés
-// en saillie, avec goulotte (vue 3D).
+// Appareillages dont la section de circuit qui les touche est apparente : ils sont alors montés en saillie, avec
+// goulotte (vue 3D). Renvoie, pour chacun, la hauteur (m) jusqu'où monte la goulotte = hauteur de course de cette
+// section (la même que celle du câble tracé), pour que boîtier, goulotte et câble coïncident.
 export function appareillagesEnPoseApparente(
-  niveau: Niveau, appareils: AppareillagePlace[], resultat: ResultatGeneration | null,
-): Set<number> {
-  const res = new Set<number>();
+  niveau: Niveau, appareils: AppareillagePlace[], resultat: ResultatGeneration | null, hauteurGaine: number,
+): Map<number, number> {
+  const res = new Map<number, number>();
   const origine = origineCircuits(niveau);
   if (!resultat || !origine) return res;
   const parCircuit = new Map<number, AppareillagePlace[]>();
@@ -47,10 +49,19 @@ export function appareillagesEnPoseApparente(
     const breaker = resultat.breakers.find(b => b.id === circuitId);
     if (!breaker) return;
     segmentsPourCircuit(breaker, points, niveau, origine).forEach(seg => {
+      if (seg.type === "domotique") return; // liaison sans fil : aucune goulotte
       const cle = cleSegmentLiaison(seg.aId, seg.bId);
-      const poses = posesTroncons(niveau, cle, niveau.liaisonWaypoints?.[cle] ?? []);
-      if (poses[0] === "apparent" && ids.has(seg.aId)) res.add(Number(seg.aId));
-      if (poses[poses.length - 1] === "apparent" && ids.has(seg.bId)) res.add(Number(seg.bId));
+      const coudes = niveau.liaisonWaypoints?.[cle] ?? [];
+      const poses = posesTroncons(niveau, cle, coudes);
+      const hauteurs = hauteursTroncons(niveau, cle, coudes);
+      const entrees = coudes.map(c => ({ point: c.point, hauteurCm: c.hauteur }));
+      if (poses[0] === "apparent" && ids.has(seg.aId)) {
+        res.set(Number(seg.aId), Math.max(res.get(Number(seg.aId)) ?? 0, hauteurCourseSection(0, entrees, hauteurs, hauteurGaine)));
+      }
+      const dernier = poses.length - 1;
+      if (poses[dernier] === "apparent" && ids.has(seg.bId)) {
+        res.set(Number(seg.bId), Math.max(res.get(Number(seg.bId)) ?? 0, hauteurCourseSection(dernier, entrees, hauteurs, hauteurGaine)));
+      }
     });
   });
   return res;

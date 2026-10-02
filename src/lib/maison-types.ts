@@ -231,7 +231,7 @@ export interface LiaisonWaypoint {
   // changer de pose d'un coude à l'autre : encastrée sur une partie, apparente sur une autre.
   poseType?: PoseTroncon;
   // Hauteur (cm) de la SECTION qui arrive à ce coude : le câble y court à plat à cette hauteur, avec une montée /
-  // descente verticale à chaque bout. Absent = pente directe entre les hauteurs des deux points (comportement historique).
+  // descente verticale à chaque bout. Absent = hauteur du coude, sinon hauteur de gaine par défaut (sous plafond) : le câble ne part jamais en pente.
   hauteurSection?: number;
 }
 // Pose d'une section de circuit : encastrée (dans le doublage / la structure — gaine) ou apparente (moulure).
