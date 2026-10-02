@@ -18,6 +18,7 @@ import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSail
 import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
 import { parametresMur3D, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT, preparerMurs, pointDansCouche2 } from "@/lib/murs";
 import { appareillagesEnPoseApparente, posesTroncons, hauteursTroncons } from "@/lib/pose-circuits";
+import { construireChemin3D, hauteurGaineNiveau } from "@/lib/chemin-3d";
 
 
 // Hauteur d'installation par défaut du tableau électrique (mètres) quand non précisée.
@@ -246,6 +247,8 @@ const Vue3D = forwardRef<Vue3DHandle, {
     if (!container) return;
 
     const hauteurPlafond = niveau.hauteurPlafond ?? 2.5;
+    // Hauteur de gaine par défaut (sous le plafond le plus bas du niveau) : celle à laquelle courent les câbles non réglés.
+    const hauteurGaine = hauteurGaineNiveau(hauteurPlafond, niveauResultat.pieces.map(p => p.hauteurPlafond));
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#e7e5e4");
     sceneRef.current = scene;
@@ -287,7 +290,9 @@ const Vue3D = forwardRef<Vue3DHandle, {
     niveau.pieces.forEach(p => p.appareillages.forEach(a => liveParId.set(a.id, a)));
     // Appareillages dont la liaison de circuit est réglée « Apparent » (coudes) : montés en saillie
     // avec goulotte — les mêmes dont les tronçons donnent de la moulure au pré-devis.
-    const appareilsApparents = appareillagesEnPoseApparente(niveau, niveauResultat.pieces.flatMap(p => p.appareillages), resultat);
+    const appareilsApparents = appareillagesEnPoseApparente(niveau, niveauResultat.pieces.flatMap(p => p.appareillages), resultat, hauteurGaine);
+    // Appareillages effectivement habillés d'un boîtier en saillie + goulotte : leur montée est déjà dessinée par le modèle.
+    const habilles = new Set<number>();
 
     // Murs extérieurs / mitoyens : à déduire de TOUTES les pièces du niveau, avant de bâtir les murs.
     preparerMurs(niveauResultat.pieces);
@@ -383,23 +388,14 @@ const Vue3D = forwardRef<Vue3DHandle, {
         // "encastre" (défaut) → appareil à fleur, et (circuit affiché) câble dessiné DANS le doublage
         // (ou la structure sans doublage) — masqué par le mur, visible en mode « Coupe ».
         const apparent = appareilsApparents.has(app.id) && TYPES_POSE_APPARENTE.includes(app.type);
-        const racine = apparent && murPose ? habillerEnSaillie(modele, py, hauteurMurs) : modele.groupe;
-        if (murPose && !apparent && TYPES_POSE_APPARENTE.includes(app.type) && couleurCircuitApp) {
-          const profondeur = murPose.profondeurCables;       // milieu de la couche 2 (doublage) — passage par défaut
-          const longueurCable = Math.max(0, hauteurMurs - 0.05 - (py + 0.04));
-          if (longueurCable > 0.02) {
-            const cable = new THREE.Mesh(
-              new THREE.CylinderGeometry(0.005, 0.005, longueurCable, 8),
-              new THREE.MeshStandardMaterial({ color: couleurCircuitApp, emissive: couleurCircuitApp, emissiveIntensity: 0.35 }));
-            cable.position.set(0, 0.04 + longueurCable / 2, -profondeur - 0.002);
-            racine.add(cable);
-          }
-        }
+        const racine = apparent && murPose ? habillerEnSaillie(modele, py, appareilsApparents.get(app.id) ?? hauteurGaine) : modele.groupe;
+        if (apparent && murPose) habilles.add(app.id);
         racine.position.set(px, py, pz);
         racine.rotation.y = rotY;
         scene.add(racine);
         // Extrémité des câbles : au point de raccordement (hauteur d'installation), sur le mur.
-        posApp.set(String(app.id), new THREE.Vector3(px, hCable, pz));
+        // Un luminaire de plafond se raccorde dans le plafond, à la hauteur de gaine : pas de petite montée parasite à chaque lampe.
+        posApp.set(String(app.id), new THREE.Vector3(px, modele.montage === "plafond" ? Math.min(hCable, hauteurGaine) : hCable, pz));
 
         // Point lumineux/applique : lumière réelle en plus du modèle, éteinte par défaut —
         // allumée/éteinte via le panneau de simulation (voir lumiereLightsRef, syncEclairage).
@@ -471,7 +467,6 @@ const Vue3D = forwardRef<Vue3DHandle, {
       // origineCalcul), sinon le tableau directement.
       const tableauPos = origineCircuits(niveau)!;
       const hauteurTableau = niveau.tableauHauteur != null ? niveau.tableauHauteur / 100 : HAUTEUR_TABLEAU_DEFAUT;
-      const hauteurCoudeParDefaut = hauteurPlafond - 0.1;
       const tousAppareils = niveauResultat.pieces.flatMap(p => p.appareillages);
       const parCircuit = new Map<number, typeof tousAppareils>();
       tousAppareils.forEach(a => {
@@ -482,19 +477,27 @@ const Vue3D = forwardRef<Vue3DHandle, {
       });
       const hauteurAncre = (id: string): number => {
         if (id === "tableau") return hauteurTableau;
-        if (id === "boite" || id.startsWith("boite-")) return hauteurCoudeParDefaut;
+        if (id === "boite" || id.startsWith("boite-")) return hauteurGaine;
         const pa = posApp.get(id);
         return pa ? pa.y : 1.0;
       };
+      // Plusieurs circuits partent du MÊME tableau : on écarte légèrement leurs montées (≈ 1 cm) pour qu'elles ne
+      // se superposent pas (deux tubes confondus de couleurs différentes scintillent).
+      const nbCircuits = Array.from(parCircuit.keys()).filter(id => resultat.breakers.some(b => b.id === id)).length;
+      let rang = 0;
       // Point 3D d'une ancre : l'appareillage lui-même (sur son mur) s'il existe, sinon le
       // point plan brut (tableau, boîtes de dérivation).
-      const ancre3D = (id: string, pt: { x: number; y: number }): THREE.Vector3 => {
+      const ancre3D = (id: string, pt: { x: number; y: number }, decalageTableau: number): THREE.Vector3 => {
         const pa = posApp.get(id);
-        return pa ? pa.clone() : new THREE.Vector3(pt.x, hauteurAncre(id), pt.y);
+        if (pa) return pa.clone();
+        return new THREE.Vector3(pt.x + (id === "tableau" ? decalageTableau : 0), hauteurAncre(id), pt.y);
       };
+      const couche2 = (p: { x: number; y: number }) => pointDansCouche2(niveau.pieces, p);
       parCircuit.forEach((points, circuitId) => {
         const breaker = resultat.breakers.find(b => b.id === circuitId);
         if (!breaker) return;
+        const decalageTableau = Math.max(-0.18, Math.min(0.18, (rang - (nbCircuits - 1) / 2) * 0.011));
+        rang++;
         const color = colorMap.get(circuitId) ?? "#666666";
         const segments = segmentsPourCircuit(breaker, points, niveau, tableauPos);
         segments.forEach(seg => {
@@ -514,50 +517,44 @@ const Vue3D = forwardRef<Vue3DHandle, {
           }
           const cle = cleSegmentLiaison(seg.aId, seg.bId);
           const coudes = niveau.liaisonWaypoints?.[cle] ?? [];
-          const pts3D: THREE.Vector3[] = [ancre3D(seg.aId, seg.aPoint)];
-          coudes.forEach(c => {
-            const h = c.hauteur != null ? c.hauteur / 100 : hauteurCoudeParDefaut;
-            pts3D.push(new THREE.Vector3(c.point.x, h, c.point.y));
+          const depart = ancre3D(seg.aId, seg.aPoint, decalageTableau);
+          const arrivee = ancre3D(seg.bId, seg.bPoint, decalageTableau);
+          // Tracé : chaque section court à plat à UNE hauteur (réglée, sinon celle du coude, sinon la gaine par défaut),
+          // reliée par des montées verticales — jamais de pente, jamais de trait en double (voir lib/chemin-3d.ts).
+          const jambes = construireChemin3D({
+            depart: { x: depart.x, y: depart.y, z: depart.z },
+            arrivee: { x: arrivee.x, y: arrivee.y, z: arrivee.z },
+            coudes: coudes.map(c => ({ point: c.point, hauteurCm: c.hauteur })),
+            poses: posesTroncons(niveau, cle, coudes),
+            hauteursSection: hauteursTroncons(niveau, cle, coudes),
+            hauteurGaine,
+            couche2,
           });
-          pts3D.push(ancre3D(seg.bId, seg.bPoint));
-          const poses = posesTroncons(niveau, cle, coudes);
-          const hSections = hauteursTroncons(niveau, cle, coudes);
           const teinte = seg.type === "navette" ? assombrirCouleur(color) : color;   // navette : couleur du circuit assombrie
           const matCable = new THREE.MeshStandardMaterial({ color: teinte, emissive: teinte, emissiveIntensity: 0.45 });
-          // Chaque SECTION est tracée à part : tube coloré (visible, contrairement à un trait de 1 px), à plat à sa
-          // hauteur réglée (montées / descentes verticales aux extrémités) ou en pente directe si non réglée ;
-          // encastrée et longeant un mur → au milieu de la couche 2 de ce mur (visible en mode « Coupe »).
-          const tube = (p0: THREE.Vector3, p1: THREE.Vector3, rayon: number, mat: THREE.Material) => {
-            const l = p0.distanceTo(p1);
-            if (l < 0.005) return;
-            const m = new THREE.Mesh(new THREE.CylinderGeometry(rayon, rayon, l, 8), mat);
-            m.position.copy(p0).add(p1).multiplyScalar(0.5);
-            m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), p1.clone().sub(p0).normalize());
-            scene.add(m);
-          };
-          for (let j = 0; j < pts3D.length - 1; j++) {
-            let p0 = pts3D[j].clone(), p1 = pts3D[j + 1].clone();
-            if (poses[j] !== "apparent") {
-              const m0 = pointDansCouche2(niveau.pieces, { x: p0.x, y: p0.z }), m1 = pointDansCouche2(niveau.pieces, { x: p1.x, y: p1.z });
-              if (m0 && m1 && m0.pieceId === m1.pieceId && m0.i === m1.i) {
-                p0 = new THREE.Vector3(m0.point.x, p0.y, m0.point.y); p1 = new THREE.Vector3(m1.point.x, p1.y, m1.point.y);
-              }
+          // Moulure PVC 20 × 14 mm autour d'une section APPARENTE, translucide pour laisser voir le câble.
+          const matMoulure = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 });
+          jambes.forEach(jb => {
+            const p0 = new THREE.Vector3(jb.a.x, jb.a.y, jb.a.z), p1 = new THREE.Vector3(jb.b.x, jb.b.y, jb.b.z);
+            // Montée d'un appareillage déjà habillé (boîtier en saillie + goulotte) : la goulotte du modèle la
+            // dessine déjà, la redessiner la doublerait.
+            if (jb.extremite && jb.pose === "apparent") {
+              const idAncre = jb.extremite === "depart" ? seg.aId : seg.bId;
+              if (habilles.has(Number(idAncre))) return;
             }
-            const hs = hSections[j] != null ? hSections[j]! / 100 : null;
-            const chemin = hs == null ? [p0, p1] : [p0, new THREE.Vector3(p0.x, hs, p0.z), new THREE.Vector3(p1.x, hs, p1.z), p1];
-            for (let k = 0; k < chemin.length - 1; k++) {
-              tube(chemin[k], chemin[k + 1], 0.006, matCable);
-              // Section APPARENTE : moulure PVC 20 × 14 mm autour du tube, translucide pour laisser voir le câble.
-              if (poses[j] === "apparent") {
-                const longueur = chemin[k].distanceTo(chemin[k + 1]);
-                if (longueur < 0.02) continue;
-                const moulure = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.014, longueur), new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 }));
-                moulure.position.copy(chemin[k]).add(chemin[k + 1]).multiplyScalar(0.5);
-                moulure.lookAt(chemin[k + 1]);   // l'axe long de la boîte (z) suit la section
-                scene.add(moulure);
-              }
+            const longueur = p0.distanceTo(p1);
+            if (longueur < 0.005) return;
+            const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, longueur, 8), matCable);
+            tube.position.copy(p0).add(p1).multiplyScalar(0.5);
+            tube.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), p1.clone().sub(p0).normalize());
+            scene.add(tube);
+            if (jb.pose === "apparent" && longueur >= 0.02) {
+              const moulure = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.014, longueur), matMoulure);
+              moulure.position.copy(tube.position);
+              moulure.lookAt(p1);   // l'axe long de la boîte (z) suit la section
+              scene.add(moulure);
             }
-          }
+          });
         });
 
         // Boîte(s) de dérivation — un petit repère cubique par boîte nommée, à la hauteur

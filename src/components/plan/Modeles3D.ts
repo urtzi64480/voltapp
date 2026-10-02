@@ -404,7 +404,8 @@ export function creerModeleAppareillage(type: AppareillageType, couleurCircuit?:
 // racine dans le MÊME repère local (z = vers l'intérieur de la pièce, y = vers le haut) à la place
 // du groupe du modèle. hauteurAppareil : y monde du centre de l'appareil ; plafond : hauteur du mur.
 export const TYPES_POSE_APPARENTE: AppareillageType[] = ["prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur", "applique"];
-export function habillerEnSaillie(modele: ModeleAppareillage, hauteurAppareil: number, plafond: number): THREE.Group {
+// hauteurMontee = hauteur (m) jusqu'où monte la goulotte : celle à laquelle le câble court à plat.
+export function habillerEnSaillie(modele: ModeleAppareillage, hauteurAppareil: number, hauteurMontee: number): THREE.Group {
   const racine = new THREE.Group();
   const SAILLIE = 0.03;
   modele.groupe.position.z += SAILLIE;                                       // l'appareil recule d'autant
@@ -412,7 +413,7 @@ export function habillerEnSaillie(modele: ModeleAppareillage, hauteurAppareil: n
   const pvc = m(BLANC);
   racine.add(boite(0.086, 0.086, SAILLIE, pvc, 0, 0, SAILLIE / 2));            // boîtier en saillie
   const haut = 0.043;                                                        // bas de la goulotte = haut du boîtier
-  const longueur = Math.max(0, plafond - hauteurAppareil - haut - 0.02);
+  const longueur = Math.max(0, hauteurMontee - hauteurAppareil - haut);
   if (longueur > 0.02) racine.add(boite(0.02, longueur, 0.014, pvc, 0, haut + longueur / 2, 0.007)); // goulotte
   racine.traverse(o => { if (o instanceof THREE.Mesh && o !== undefined) { o.castShadow = false; } });
   return racine;
