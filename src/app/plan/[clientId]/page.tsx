@@ -18,8 +18,9 @@ import {
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
+  MurSpec, MUR_DEFAUT, PRESETS_MUR,
   Ouverture, OuvertureType, nouvelleOuverture, positionSurSegment, OuvertureEffective, ouverturesEffectivesMur,
-  NIVEAU_TYPES, estAnnexe, origineCircuits, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, ajusterLongueurContour,
+  NIVEAU_TYPES, estAnnexe, origineCircuits, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance,
   distanceAuSegment, positionnerADistanceDuSegment, pointDansPolygone,
   CircuitManuel, FamilleCircuitManuel,
   nouveauNiveau, nouvellePiece, nouvelAppareillage, uidMaison, reamorcerCompteurId, dedupliquerIds,
@@ -29,8 +30,12 @@ import {
   MeubleSimple, nouveauMeuble, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
 } from "@/lib/maison-types";
 import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
+import { cotesOuvertures, cotesExterieures, coteHorsTout } from "@/lib/cotes-archi";
+import { posesTroncons } from "@/lib/pose-circuits";
+import { geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
+import { enCm, longueursMursCm, estRectangle, redimensionnerMur, reporterAppareillages } from "@/lib/dimensions-piece";
 import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece";
-import { ancrageMurLePlusProche, aimanterSurMur, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote } from "@/lib/appareillage-mur";
+import { ancrageMurLePlusProche, aimanterSurMur, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker } from "@/lib/electrical-constants";
@@ -121,6 +126,11 @@ function snapAvecAlignement(m: Point, candidats: Point[], seuilM: number): Resul
   return { point: { x, y }, guideX, guideY };
 }
 
+// Repère de lecture des cotes d'une pièce : face intérieure finie des murs (ce qu'on mesure sur place).
+function repereCotes(piece: Piece): RepereCotes {
+  return { utile: geometrieMurs(piece).utile, epaisseurTotaleM: i => epaisseurTotaleM(piece, i) };
+}
+
 // Rendu d'une cote sur le plan 2D : ligne de cote décalée hors de la pièce (appareillage au
 // mur) avec traits d'attache et repères en bout, ou simple trait appareillage → mur
 // (appareillage libre) ; valeur en cm au milieu, jamais à l'envers, sur halo blanc.
@@ -185,7 +195,7 @@ function escapeXml(str: string): string {
 
 // ─── IMPRESSION ─────────────────────────────────────────────────────────────────
 
-function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, showCircuits: boolean, showHauteurs: boolean, showLongueurs: boolean, piecesSelectionnees: Set<number> | null, showCotes: boolean): string {
+function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, showCircuits: boolean, showHauteurs: boolean, showLongueurs: boolean, piecesSelectionnees: Set<number> | null, showCotes: boolean, showCotesPieces: boolean, showCotesExt: boolean, showCotesOuv: boolean): string {
   const pieces = piecesSelectionnees ? n.pieces.filter(p => piecesSelectionnees.has(p.id)) : n.pieces;
   const allPts = [
     ...pieces.flatMap(p => p.contour),
@@ -212,10 +222,38 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
   let s = `<svg width="${W.toFixed(0)}" height="${H.toFixed(0)}" viewBox="0 0 ${W.toFixed(0)} ${H.toFixed(0)}" xmlns="http://www.w3.org/2000/svg">`;
   s += `<rect width="${W.toFixed(0)}" height="${H.toFixed(0)}" fill="#fff"/>`;
 
+  const ptsPx = (poly: Point[]) => poly.map(toPx).map(pt => `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(" ");
+  // 1) fonds de pièces, 2) murs en vraie épaisseur (structure + doublage), 3) ouvertures qui percent
+  // toutes les épaisseurs — dans cet ordre pour que les murs ne soient jamais recouverts par le fond d'une voisine.
   niveauResultat.pieces.forEach(p => {
-    const pts = p.contour.map(toPx).map(pt => `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(" ");
-    const spec = PIECE_TYPES[p.type];
-    s += `<polygon points="${pts}" fill="${spec.color}" stroke="#333" stroke-width="1.5"/>`;
+    s += `<polygon points="${ptsPx(p.contour)}" fill="${PIECE_TYPES[p.type].color}" stroke="none"/>`;
+  });
+  {
+    const quads = niveauResultat.pieces.flatMap(p => geometrieMurs(p).quads);
+    const struct = (q: (typeof quads)[number]) => {
+      const col = q.type === "exterieur" ? "#44403c" : "#78716c";
+      s += `<polygon points="${ptsPx(q.structure)}" fill="${col}" stroke="${col}" stroke-width="0.4"/>`;
+    };
+    quads.filter(q => q.type !== "exterieur").forEach(struct);   // cloisons d'abord,
+    quads.filter(q => q.type === "exterieur").forEach(struct);   // murs extérieurs par-dessus (jonctions propres)
+    quads.forEach(q => { if (q.doublage) s += `<polygon points="${ptsPx(q.doublage)}" fill="#e7e5e4" stroke="#a8a29e" stroke-width="0.5"/>`; });
+  }
+  niveauResultat.pieces.forEach(p => {
+    p.contour.forEach((_, i) => {
+      ouverturesEffectivesMur(niveauResultat.pieces, p, i).forEach(e => {
+        s += `<polygon points="${ptsPx(decoupeOuverture(p, i, e.position, e.largeur))}" fill="#fff" stroke="none"/>`;
+        if (e.proprietaire) {
+          const a = p.contour[i], b = p.contour[(i + 1) % p.contour.length];
+          const u = { x: (b.x - a.x), y: (b.y - a.y) }, L = Math.hypot(u.x, u.y) || 1;
+          const c0 = { x: a.x + u.x * e.position - u.x / L * e.largeur / 200, y: a.y + u.y * e.position - u.y / L * e.largeur / 200 };
+          const c1 = { x: a.x + u.x * e.position + u.x / L * e.largeur / 200, y: a.y + u.y * e.position + u.y / L * e.largeur / 200 };
+          const col = e.type === "porte" || e.type === "porte_coulissante" ? "#92400E" : e.type === "fenetre" ? "#0369A1" : "#78716c";
+          s += `<line x1="${toPx(c0).x.toFixed(1)}" y1="${toPx(c0).y.toFixed(1)}" x2="${toPx(c1).x.toFixed(1)}" y2="${toPx(c1).y.toFixed(1)}" stroke="${col}" stroke-width="1.2"/>`;
+        }
+      });
+    });
+  });
+  niveauResultat.pieces.forEach(p => {
     p.contour.forEach((pt, i) => {
       const next = p.contour[(i + 1) % p.contour.length];
       const len = distance(pt, next);
@@ -224,7 +262,9 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       const dx = bPx.x - aPx.x, dy = bPx.y - aPx.y;
       const l = Math.hypot(dx, dy) || 1;
       const nx = -dy / l, ny = dx / l;
-      const lx = mx + nx * 7, ly = my + ny * 7;
+      // Longueur à l'AXE, posée hors du mur (au-delà de sa demi-épaisseur) pour ne pas le recouvrir.
+      const dec = 7 + (murDe(p, i).epaisseur / 200) * scale;
+      const lx = mx + nx * dec, ly = my + ny * dec;
       s += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" font-size="6" text-anchor="middle" font-family="monospace" fill="#444">${len.toFixed(2)}m</text>`;
     });
   });
@@ -248,6 +288,13 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
         const chemin = cheminM.map(toPx);
         const couleurSegment = seg.type === "navette" ? assombrirCouleur(color) : color;
         if (showCircuits) {
+          // Sections apparentes : bande grise (moulure) sous le tracé — repérables à l'impression.
+          const cleImp = cleSegmentLiaison(seg.aId, seg.bId);
+          const posesImp = posesTroncons(n, cleImp, n.liaisonWaypoints?.[cleImp] ?? []);
+          for (let j = 0; j < chemin.length - 1; j++) {
+            if (posesImp[j] !== "apparent") continue;
+            s += `<line x1="${chemin[j].x.toFixed(1)}" y1="${chemin[j].y.toFixed(1)}" x2="${chemin[j + 1].x.toFixed(1)}" y2="${chemin[j + 1].y.toFixed(1)}" stroke="#d6d3d1" stroke-width="4" stroke-linecap="round"/>`;
+          }
           const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
           s += `<path d="${d}" fill="none" stroke="${couleurSegment}" stroke-width="1.2" stroke-dasharray="3,2" opacity="0.85"/>`;
           if (showLongueurs) {
@@ -313,7 +360,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
         const pn = toPx({ x: ancP.pied.x + ancP.normale.x * 0.1, y: ancP.pied.y + ancP.normale.y * 0.1 });
         const ln = Math.hypot(pn.x - pf.x, pn.y - pf.y) || 1;
         const nxp = (pn.x - pf.x) / ln, nyp = (pn.y - pf.y) / ln;
-        const demiP = TAILLE_SYM * 0.75 + 0.8;
+        const demiP = TAILLE_SYM * 0.75 + Math.max(0.8, faceInterieureM(p, ancP.segIndex) * scale);
         cxP = pf.x + nxp * demiP; cyP = pf.y + nyp * demiP;
         rotP = Math.atan2(nxp, -nyp) * 180 / Math.PI;
       }
@@ -390,9 +437,37 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
   if (showCotes) {
     const cotes = niveauResultat.pieces.flatMap(pc => pc.appareillages
       .filter(a => estMural(a.type))
-      .flatMap(a => cotesAppareillage({ x: a.x, y: a.y }, pc.contour, a.type, false)));
+      .flatMap(a => cotesAppareillage({ x: a.x, y: a.y }, pc.contour, a.type, false, repereCotes(pc))));
     filtrerCotesLisibles(cotes, toPx, [], 12, 22).forEach(c => { s += coteSvgString(c, toPx); });
-    s += `<text x="4" y="10" font-size="6" font-family="monospace" fill="${COULEUR_COTE}">Cotes en cm — distance de l'appareillage au coin le plus proche</text>`;
+    s += `<text x="4" y="10" font-size="6" font-family="monospace" fill="${COULEUR_COTE}">Cotes en cm — distance de l'appareillage au coin intérieur le plus proche</text>`;
+  }
+  // Cotes des pièces : dimension intérieure de chaque mur (face finie à face finie) + épaisseurs.
+  if (showCotesPieces) {
+    const cotesP: Cote[] = niveauResultat.pieces.flatMap(pc => {
+      const { utile } = geometrieMurs(pc);
+      return pc.contour.map((_, i): Cote => {
+        const a = utile[i], b = utile[(i + 1) % utile.length];
+        return { kind: "mur", a, b, valeurCm: Math.round(Math.hypot(b.x - a.x, b.y - a.y) * 100), normale: normaleInterieure(pc.contour, i), interieur: true, decalageM: 0 };
+      });
+    });
+    filtrerCotesLisibles(cotesP, toPx, [], 12, 22).forEach(c => { s += coteSvgString(c, toPx); });
+    niveauResultat.pieces.forEach(pc => pc.contour.forEach((_, i) => {
+      const sp = murDe(pc, i);
+      const A = toPx(pc.contour[i]), B = toPx(pc.contour[(i + 1) % pc.contour.length]);
+      if ((sp.epaisseur / 100) * scale < 7 || Math.hypot(B.x - A.x, B.y - A.y) < 30) return;
+      let ang = Math.atan2(B.y - A.y, B.x - A.x) * 180 / Math.PI; if (ang > 90 || ang < -90) ang += 180;
+      const txt = sp.doublage > 0 ? `${sp.epaisseur}+${sp.doublage}` : `${sp.epaisseur}`;
+      s += `<text transform="translate(${((A.x + B.x) / 2).toFixed(1)} ${((A.y + B.y) / 2).toFixed(1)}) rotate(${ang.toFixed(1)})" text-anchor="middle" dominant-baseline="central" font-size="5" font-weight="bold" font-family="monospace" fill="#fff" stroke="${sp.type === "exterieur" ? "#44403c" : "#78716c"}" stroke-width="1.6" paint-order="stroke">${txt}</text>`;
+    }));
+    s += `<text x="4" y="${showCotes ? 18 : 10}" font-size="6" font-family="monospace" fill="${COULEUR_COTE}">Cotes des pièces en cm — dimensions intérieures (faces finies) · épaisseurs : structure+doublage</text>`;
+  }
+  // Cotes d'ouvertures (chaîne le long de la face intérieure) et cotes extérieures / hors-tout.
+  if (showCotesOuv || showCotesExt) {
+    const cotesA: Cote[] = [
+      ...(showCotesOuv ? niveauResultat.pieces.flatMap(pc => cotesOuvertures(pc, niveauResultat.pieces)) : []),
+      ...(showCotesExt ? [...cotesExterieures(niveauResultat.pieces), ...coteHorsTout(niveauResultat.pieces)] : []),
+    ];
+    filtrerCotesLisibles(cotesA, toPx, [], 10, 20).forEach(c => { s += coteSvgString(c, toPx); });
   }
   s += `</svg>`;
   return s;
@@ -444,7 +519,7 @@ function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau
 
 function imprimerPlan(
   niveaux: Niveau[], clientName: string, resultat: ResultatGeneration | null,
-  showCircuits: boolean, showLongueurs: boolean, showHauteurs: boolean, piecesSelectionnees: Set<number> | null, showCotes: boolean,
+  showCircuits: boolean, showLongueurs: boolean, showHauteurs: boolean, piecesSelectionnees: Set<number> | null, showCotes: boolean, showCotesPieces: boolean, showCotesExt: boolean, showCotesOuv: boolean,
 ) {
   const w = window.open("", "_blank");
   if (!w) return;
@@ -462,7 +537,7 @@ function imprimerPlan(
     const niveauResultatComplet = resultat?.maison.niveaux.find(rn => rn.id === n.id) ?? n;
     const niveauResultat: Niveau = { ...niveauResultatComplet, pieces: niveauResultatComplet.pieces.filter(p => piecesFiltrees.some(pf => pf.id === p.id)) };
     html += `<h2>${escapeXml(n.nom || NIVEAU_TYPES[n.type])}</h2><div class="meta">${piecesFiltrees.length} pièce${piecesFiltrees.length > 1 ? "s" : ""}</div>`;
-    html += rendreSVGImprimable(n, resultat, showCircuits, showHauteurs, showLongueurs, piecesSelectionnees, showCotes);
+    html += rendreSVGImprimable(n, resultat, showCircuits, showHauteurs, showLongueurs, piecesSelectionnees, showCotes, showCotesPieces, showCotesExt, showCotesOuv);
     if (showCircuits) {
       html += legendeCircuitsHtml(resultat, niveauResultat, showLongueurs, n);
     }
@@ -495,23 +570,53 @@ type DragMode =
 
 // ─── FORMULAIRES ────────────────────────────────────────────────────────────────
 
-function PieceForm({ initialNom, initialType, initialHauteurPlafond, onValidate, onCancel, onDelete }: {
+function PieceForm({ initialNom, initialType, initialHauteurPlafond, initialContour, initialMurs, verrouillee, onValidate, onCancel, onDelete }: {
   initialNom: string; initialType: PieceType; initialHauteurPlafond?: number;
-  onValidate: (nom: string, type: PieceType, hauteurPlafond: number | undefined) => void;
+  initialContour: Point[]; initialMurs: MurSpec[]; verrouillee?: boolean;
+  onValidate: (nom: string, type: PieceType, hauteurPlafond: number | undefined, contour: Point[], murs: MurSpec[]) => void;
   onCancel: () => void;
   onDelete?: () => void;
 }) {
   const [nom, setNom] = useState(initialNom);
   const [type, setType] = useState<PieceType>(initialType);
   const [hauteurPlafond, setHauteurPlafond] = useState(initialHauteurPlafond != null ? String(initialHauteurPlafond) : "");
+
+  // Dimensions au centimètre : le dessin à la main reste calé sur la grille de 10 cm, ici on
+  // affine mur par mur. Rectangle → 2 champs (largeur, longueur) ; autre forme → un champ par mur.
+  const rectangle = estRectangle(initialContour);
+  const longueursInit = longueursMursCm(initialContour);
+  const indices = rectangle ? [0, 1] : initialContour.map((_, i) => i);
+  const etiquette = (i: number) => rectangle ? (i === 0 ? "Largeur" : "Longueur") : `Mur ${i + 1}`;
+  const [saisies, setSaisies] = useState<string[]>(longueursInit.map(String));
+  const valeurValide = (i: number) => { const v = parseFloat((saisies[i] ?? "").replace(",", ".")); return v >= 1 ? Math.round(v) : null; };
+  // Contour résultant : on applique, mur après mur, uniquement les longueurs réellement changées.
+  const contourApercu = indices.reduce((c, i) => {
+    const v = valeurValide(i);
+    return v != null && v !== longueursInit[i] ? redimensionnerMur(c, i, v / 100) : c;
+  }, initialContour);
+  const dimensionsValides = indices.every(i => valeurValide(i) != null);
+  const aire = aireDuPolygone(contourApercu);
+  const modifie = contourApercu !== initialContour;
+
+  // Murs : un jeu de saisies par côté. Surface utile = intérieur des faces finies (après doublage).
+  const [saisiesMurs, setSaisiesMurs] = useState<SaisieMur[]>(initialMurs.map(saisieDepuisMur));
+  const mursApercu = saisiesMurs.map((sm, i) => murDepuisSaisie(sm) ?? initialMurs[i]);
+  const mursValides = saisiesMurs.every(sm => murDepuisSaisie(sm) != null);
+  const pieceApercu = { contour: contourApercu, murs: mursApercu } as Piece;
+  const aireUtile = surfaceUtile(pieceApercu);
+  const appliquerPreset = (k: number) => {
+    const sp = PRESETS_MUR[k]?.spec;
+    if (sp) setSaisiesMurs(saisiesMurs.map(() => saisieDepuisMur(sp)));
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
-      <div className="card w-full max-w-sm" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-4 border-b border-ink-200">
+      <div className="card w-full max-w-sm max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-ink-200 shrink-0">
           <p className="font-semibold text-ink-900">Pièce</p>
           <button onClick={onCancel} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={16} /></button>
         </div>
-        <div className="p-4 flex flex-col gap-3">
+        <div className="p-4 flex flex-col gap-3 overflow-y-auto">
           <div>
             <label className="label">Nom</label>
             <input autoFocus className="input" placeholder="Ex: Chambre 1, Séjour…" value={nom} onChange={e => setNom(e.target.value)} />
@@ -526,9 +631,69 @@ function PieceForm({ initialNom, initialType, initialHauteurPlafond, onValidate,
             <label className="label">Hauteur sous plafond (m) — vide = hauteur du niveau</label>
             <input className="input" inputMode="decimal" placeholder="Ex: 2.50" value={hauteurPlafond} onChange={e => setHauteurPlafond(e.target.value)} />
           </div>
+          <div className="border-t border-ink-100 pt-3">
+            <label className="label">Dimensions (cm){rectangle ? "" : " — par mur"}</label>
+            {verrouillee ? (
+              <p className="text-xs text-amber-600">🔒 Pièce verrouillée : déverrouille-la pour modifier ses dimensions.</p>
+            ) : (
+              <>
+                <div className={`grid gap-2 ${rectangle ? "grid-cols-2" : "grid-cols-2"}`}>
+                  {indices.map(i => {
+                    const ok = valeurValide(i) != null;
+                    return (
+                      <label key={i} className="flex items-center gap-2 text-xs text-ink-500">
+                        <span className="w-16 shrink-0">{etiquette(i)}</span>
+                        <input className={`input !py-1 !text-xs ${ok ? "" : "!border-red-400"}`} inputMode="numeric" value={saisies[i] ?? ""}
+                          onChange={e => setSaisies(sv => sv.map((x, k) => k === i ? e.target.value : x))} />
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-ink-500 mt-2">
+                  Surface à l&apos;axe : <span className="font-semibold text-ink-900">{aire.toFixed(2)} m²</span>
+                  {modifie && <span className="text-volt-600"> (modifiée)</span>}
+                </p>
+                <p className="text-xs text-ink-500">
+                  Surface utile (faces finies) : <span className="font-semibold text-ink-900">{aireUtile != null ? `${aireUtile.toFixed(2)} m²` : "—"}</span>
+                  {rectangle && aireUtile != null && (
+                    <span> · {longueurUtileCm(pieceApercu, 0)} × {longueurUtileCm(pieceApercu, 1)} cm</span>
+                  )}
+                </p>
+                <p className="text-[11px] text-ink-400 mt-1">
+                  Les dimensions ci-dessus sont à l&apos;axe des murs. Le coin de départ reste fixe, les angles droits sont conservés ; appareillages, portes et fenêtres posés au mur gardent leur place sur le mur.
+                </p>
+              </>
+            )}
+          </div>
+          <div className="border-t border-ink-100 pt-3">
+            <label className="label">Murs (épaisseurs en cm)</label>
+            {verrouillee ? (
+              <p className="text-xs text-amber-600">🔒 Pièce verrouillée : déverrouille-la pour modifier ses murs.</p>
+            ) : (
+              <>
+                <select className="input !py-1 !text-xs mb-2" value="" onChange={e => e.target.value !== "" && appliquerPreset(Number(e.target.value))}>
+                  <option value="">Appliquer à tous les murs…</option>
+                  {PRESETS_MUR.map((pr, k) => <option key={k} value={k}>{pr.nom}</option>)}
+                </select>
+                <div className="flex flex-col gap-1.5">
+                  {saisiesMurs.map((sm, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="text-[11px] text-ink-500 w-10 shrink-0">Mur {i + 1}</span>
+                      <ChampsMur compact valeur={sm} onChange={v => setSaisiesMurs(arr => arr.map((x, k) => k === i ? v : x))} />
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[11px] text-ink-400 mt-1.5">
+                  Structure centrée sur l&apos;axe ; le doublage (isolant + plaque) s&apos;ajoute côté intérieur. Un mur mitoyen reporte son type et son épaisseur sur la pièce voisine. Les ouvertures percent toutes les épaisseurs.
+                </p>
+              </>
+            )}
+          </div>
         </div>
-        <div className="flex gap-2 p-4 border-t border-ink-200">
-          <button onClick={() => onValidate(nom, type, hauteurPlafond.trim() === "" ? undefined : (parseFloat(hauteurPlafond.replace(",", ".")) || undefined))} className="btn-volt flex-1"><Save size={14} /> Valider</button>
+        <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
+          <button disabled={!verrouillee && (!dimensionsValides || !mursValides)}
+            onClick={() => onValidate(nom, type, hauteurPlafond.trim() === "" ? undefined : (parseFloat(hauteurPlafond.replace(",", ".")) || undefined), verrouillee ? initialContour : contourApercu, verrouillee ? initialMurs : mursApercu)}
+            className="btn-volt flex-1 disabled:opacity-40"><Save size={14} /> Valider</button>
           {onDelete && <button onClick={onDelete} className="btn-danger !px-3"><Trash2 size={14} /></button>}
         </div>
       </div>
@@ -635,27 +800,70 @@ function EtiquetteLongueur({ aPx, bPx, texte, onClick, actif }: {
   );
 }
 
-function SegmentLengthForm({ longueurActuelle, onValidate, onCancel }: {
-  longueurActuelle: number; onValidate: (nouvelleLongueur: number) => void; onCancel: () => void;
+// Champs d'édition d'UN mur : type, épaisseur de la structure, doublage (cm). Saisies en texte pour
+// laisser taper librement ; valeurs invalides entourées en rouge (voir valeurMurValide).
+type SaisieMur = { type: MurSpec["type"]; epaisseur: string; doublage: string };
+const saisieDepuisMur = (m: MurSpec): SaisieMur => ({ type: m.type, epaisseur: String(m.epaisseur), doublage: String(m.doublage) });
+function murDepuisSaisie(s: SaisieMur): MurSpec | null {
+  const e = parseFloat(s.epaisseur.replace(",", ".")), d = s.doublage.trim() === "" ? 0 : parseFloat(s.doublage.replace(",", "."));
+  if (!(e >= 1 && e <= 200) || !(d >= 0 && d <= 100)) return null;
+  return { type: s.type, epaisseur: Math.round(e), doublage: Math.round(d) };
+}
+function ChampsMur({ valeur, onChange, disabled, compact }: {
+  valeur: SaisieMur; onChange: (v: SaisieMur) => void; disabled?: boolean; compact?: boolean;
 }) {
-  const [valeur, setValeur] = useState(longueurActuelle.toFixed(2));
-  const num = parseFloat(valeur.replace(",", "."));
-  const valide = !isNaN(num) && num > 0;
+  const ok = murDepuisSaisie(valeur) != null;
+  const cls = `input !py-1 !text-xs ${ok ? "" : "!border-red-400"}`;
+  return (
+    <div className={`flex items-center gap-1.5 ${compact ? "" : "flex-wrap"}`}>
+      <select className="input !py-1 !text-xs !w-auto" disabled={disabled} value={valeur.type}
+        onChange={e => onChange({ ...valeur, type: e.target.value as MurSpec["type"] })}>
+        <option value="exterieur">Extérieur</option>
+        <option value="interieur">Intérieur</option>
+      </select>
+      <label className="flex items-center gap-1 text-[11px] text-ink-500">Ép.
+        <input className={`${cls} !w-14`} inputMode="numeric" disabled={disabled} value={valeur.epaisseur} onChange={e => onChange({ ...valeur, epaisseur: e.target.value })} />
+      </label>
+      <label className="flex items-center gap-1 text-[11px] text-ink-500">Doubl.
+        <input className={`${cls} !w-14`} inputMode="numeric" disabled={disabled} value={valeur.doublage} onChange={e => onChange({ ...valeur, doublage: e.target.value })} />
+      </label>
+    </div>
+  );
+}
+
+function SegmentLengthForm({ longueurActuelle, murActuel, onValidate, onCancel }: {
+  longueurActuelle: number; murActuel: MurSpec;
+  onValidate: (nouvelleLongueur: number, mur: MurSpec) => void; onCancel: () => void;
+}) {
+  // Longueur en centimètres entiers (précision au cm), renvoyée en mètres ; + type / épaisseur / doublage du mur.
+  const [valeur, setValeur] = useState(String(enCm(longueurActuelle)));
+  const [saisieMur, setSaisieMur] = useState<SaisieMur>(saisieDepuisMur(murActuel));
+  const cm = parseFloat(valeur.replace(",", "."));
+  const mur = murDepuisSaisie(saisieMur);
+  const valide = !isNaN(cm) && cm >= 1 && mur != null;
+  const num = Math.round(cm) / 100;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
       <div className="card w-full max-w-xs" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
-          <p className="font-semibold text-ink-900">Longueur du segment</p>
+          <p className="font-semibold text-ink-900">Mur</p>
           <button onClick={onCancel} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={16} /></button>
         </div>
-        <div className="p-4">
-          <label className="label">Longueur (mètres)</label>
-          <input autoFocus className="input" inputMode="decimal" value={valeur}
-            onChange={e => setValeur(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter" && valide) onValidate(num); }} />
+        <div className="p-4 flex flex-col gap-3">
+          <div>
+            <label className="label">Longueur à l&apos;axe (cm)</label>
+            <input autoFocus className="input" inputMode="numeric" value={valeur}
+              onChange={e => setValeur(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && valide && mur) onValidate(num, mur); }} />
+          </div>
+          <div>
+            <label className="label">Type et épaisseurs (cm)</label>
+            <ChampsMur valeur={saisieMur} onChange={setSaisieMur} />
+            <p className="text-[11px] text-ink-400 mt-1.5">Structure centrée sur l&apos;axe ; le doublage s&apos;ajoute côté intérieur de la pièce.</p>
+          </div>
         </div>
         <div className="flex gap-2 p-4 border-t border-ink-200">
-          <button disabled={!valide} onClick={() => onValidate(num)} className="btn-volt flex-1 disabled:opacity-40">Valider</button>
+          <button disabled={!valide} onClick={() => mur && onValidate(num, mur)} className="btn-volt flex-1 disabled:opacity-40">Valider</button>
         </div>
       </div>
     </div>
@@ -893,7 +1101,7 @@ function PaletteBoutons({ placementType, onSelect }: { placementType: Appareilla
 
 function PrintForm({ niveaux, resultatDisponible, onValider, onCancel }: {
   niveaux: Niveau[]; resultatDisponible: boolean;
-  onValider: (piecesSelectionnees: Set<number> | null, avecCircuits: boolean, avecLongueurs: boolean, avecHauteurs: boolean, avecCotes: boolean) => void;
+  onValider: (piecesSelectionnees: Set<number> | null, avecCircuits: boolean, avecLongueurs: boolean, avecHauteurs: boolean, avecCotes: boolean, avecCotesPieces: boolean, avecCotesExt: boolean, avecCotesOuv: boolean) => void;
   onCancel: () => void;
 }) {
   const toutesPieces = niveaux.flatMap(n => n.pieces.map(p => p.id));
@@ -902,6 +1110,9 @@ function PrintForm({ niveaux, resultatDisponible, onValider, onCancel }: {
   const [avecLongueurs, setAvecLongueurs] = useState(false);
   const [avecHauteurs, setAvecHauteurs] = useState(false);
   const [avecCotes, setAvecCotes] = useState(false);
+  const [avecCotesPieces, setAvecCotesPieces] = useState(false);
+  const [avecCotesExt, setAvecCotesExt] = useState(false);
+  const [avecCotesOuv, setAvecCotesOuv] = useState(false);
   const toutSelectionne = selection.size === toutesPieces.length;
 
   const toggle = (id: number) => setSelection(s => {
@@ -947,7 +1158,19 @@ function PrintForm({ niveaux, resultatDisponible, onValider, onCancel }: {
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={avecCotes} onChange={e => setAvecCotes(e.target.checked)} />
-              <span className="text-sm text-ink-700">Afficher les cotes des appareillages (cm, depuis le coin le plus proche)</span>
+              <span className="text-sm text-ink-700">Afficher les cotes des appareillages (cm, depuis le coin intérieur le plus proche)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={avecCotesPieces} onChange={e => setAvecCotesPieces(e.target.checked)} />
+              <span className="text-sm text-ink-700">Afficher les cotes des pièces (dimensions intérieures + épaisseurs de murs)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={avecCotesOuv} onChange={e => setAvecCotesOuv(e.target.checked)} />
+              <span className="text-sm text-ink-700">Afficher les cotes des ouvertures (chaîne coin → baie → coin)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={avecCotesExt} onChange={e => setAvecCotesExt(e.target.checked)} />
+              <span className="text-sm text-ink-700">Afficher les cotes extérieures (murs extérieurs + hors-tout)</span>
             </label>
             {resultatDisponible && (
               <>
@@ -966,7 +1189,7 @@ function PrintForm({ niveaux, resultatDisponible, onValider, onCancel }: {
         </div>
         <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
           <button disabled={selection.size === 0}
-            onClick={() => onValider(toutSelectionne ? null : selection, avecCircuits, avecLongueurs, avecHauteurs, avecCotes)}
+            onClick={() => onValider(toutSelectionne ? null : selection, avecCircuits, avecLongueurs, avecHauteurs, avecCotes, avecCotesPieces, avecCotesExt, avecCotesOuv)}
             className="btn-volt flex-1 disabled:opacity-40">
             <Printer size={14} /> Imprimer ({selection.size} pièce{selection.size > 1 ? "s" : ""})
           </button>
@@ -1081,6 +1304,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // (null tant qu'aucun n'a été choisi pour cette paire).
   const [liaisonLumiereMode, setLiaisonLumiereMode] = useState<{ label: string; premierId: number | null } | null>(null);
   const [selectedWaypoint, setSelectedWaypoint] = useState<{ cle: string; waypointId: number } | null>(null);
+  // Section de circuit sélectionnée (Maj + clic sur le tracé) : index = rang de la section dans la liaison.
+  const [selectedTroncon, setSelectedTroncon] = useState<{ cle: string; index: number } | null>(null);
   const [placementError, setPlacementError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   // Barre d'outils (dessin + circuits) repliable — pour libérer un maximum de hauteur pour
@@ -1102,6 +1327,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Cotes d'implantation : par défaut aucune (plan propre) ; l'appareillage sélectionné affiche
   // toujours les siennes ; ce bouton affiche une cote par appareillage mural (lisibilité filtrée).
   const [showCotes, setShowCotes] = useState(false);
+  // Cotes des pièces : dimensions intérieures de chaque mur + épaisseurs (structure + doublage).
+  const [showCotesPieces, setShowCotesPieces] = useState(false);
+  const [showCotesExt, setShowCotesExt] = useState(false);   // cotes extérieures des murs + hors-tout
+  const [showCotesOuv, setShowCotesOuv] = useState(false);   // chaîne de cotes des ouvertures
+  const [menuCotesOuvert, setMenuCotesOuvert] = useState(false);
   const [showLongueurs, setShowLongueurs] = useState(false);
   // Ids de breakers actuellement affichés sur le plan (sous-ensemble de resultat.breakers) —
   // permet d'isoler un ou plusieurs circuits à l'écran pour vérifier leur tracé avant de les
@@ -1582,7 +1812,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             return { ...o, segIndex: nouveauSegIndex };
           })
           .filter((o): o is Ouverture => o !== null);
-        return { ...p, contour: nouveauContour, ouvertures: nouvellesOuvertures };
+        return { ...p, contour: nouveauContour, ouvertures: nouvellesOuvertures, murs: murAfterSuppressionSommet(p.murs, index) };
       }),
     }));
     if (editingSegment?.pieceId === pieceId) setEditingSegment(null);
@@ -2064,7 +2294,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const ajouterWaypoint = (cle: string, apresIndex: number, point: Point) => {
     updateNiveauActif(n => {
       const existants = n.liaisonWaypoints?.[cle] ?? [];
-      const nouveau: LiaisonWaypoint = { id: uidMaison(), point };
+      // Couper une section en deux : les deux moitiés gardent sa pose (le nouveau coude porte celle de la
+      // moitié qui y aboutit ; l'autre moitié garde la pose portée par son coude / la fin de liaison).
+      const poseCoupee = posesTroncons(n, cle, existants)[apresIndex];
+      const nouveau: LiaisonWaypoint = { id: uidMaison(), point, ...(poseCoupee === "apparent" ? { poseType: "apparent" as const } : {}) };
       const maj = [...existants.slice(0, apresIndex), nouveau, ...existants.slice(apresIndex)];
       return { ...n, liaisonWaypoints: { ...(n.liaisonWaypoints ?? {}), [cle]: maj } };
     });
@@ -2084,6 +2317,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         [cle]: (n.liaisonWaypoints?.[cle] ?? []).map(w => w.id === waypointId ? { ...w, hauteur } : w),
       },
     }));
+  };
+  // Pose d'UNE section de circuit (index = rang dans la liaison, 0 = depuis le point de départ). Les sections
+  // portent leur pose sur le coude où elles aboutissent ; la dernière (après le dernier coude) sur la liaison.
+  const modifierPoseTroncon = (cle: string, index: number, poseType: "encastre" | "apparent") => {
+    updateNiveauActif(n => {
+      const coudes = n.liaisonWaypoints?.[cle] ?? [];
+      if (index < coudes.length) {
+        return { ...n, liaisonWaypoints: { ...(n.liaisonWaypoints ?? {}), [cle]: coudes.map((w, k) => k === index ? { ...w, poseType } : w) } };
+      }
+      return { ...n, poseFinLiaison: { ...(n.poseFinLiaison ?? {}), [cle]: poseType } };
+    });
   };
   // Mode de pose (encastré dans le mur / apparent en goulotte) du passage de gaine à ce
   // coude — affiché avec la hauteur sur l'impression technique (option "hauteurs d'implantation").
@@ -2109,14 +2353,19 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     invalidateResultat();
   };
 
-  const appliquerLongueurSegment = (nouvelleLongueur: number) => {
+  const appliquerLongueurSegment = (nouvelleLongueur: number, mur: MurSpec) => {
     if (!editingSegment) return;
-    updateNiveauActif(n => ({
-      ...n,
-      pieces: n.pieces.map(p => p.id !== editingSegment.pieceId ? p : {
-        ...p, contour: ajusterLongueurContour(p.contour, editingSegment.segIndex, nouvelleLongueur),
-      }),
-    }));
+    updateNiveauActif(n => {
+      const pieces = n.pieces.map(p => {
+        if (p.id !== editingSegment.pieceId) return p;
+        const contour = redimensionnerMur(p.contour, editingSegment.segIndex, nouvelleLongueur);
+        return { ...p, contour, appareillages: reporterAppareillages(p.contour, contour, p.appareillages) };
+      });
+      // Type + épaisseur sont reportés sur le côté mitoyen de la pièce voisine (voir appliquerMurs).
+      const murs = mursDe(pieces.find(p => p.id === editingSegment.pieceId)!);
+      murs[editingSegment.segIndex] = mur;
+      return { ...n, pieces: appliquerMurs(pieces, editingSegment.pieceId, murs) };
+    });
     setEditingSegment(null);
     invalidateResultat();
   };
@@ -2636,14 +2885,27 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const cotesAffichees: GeoCote[] = (() => {
     if (!niveauActif) return [];
     const prioritaires = selectedAppareillage && pieceDeSelectedAppareillage && mode === "select"
-      ? cotesAppareillage({ x: selectedAppareillage.x, y: selectedAppareillage.y }, pieceDeSelectedAppareillage.contour, selectedAppareillage.type, true)
+      ? cotesAppareillage({ x: selectedAppareillage.x, y: selectedAppareillage.y }, pieceDeSelectedAppareillage.contour, selectedAppareillage.type, true, repereCotes(pieceDeSelectedAppareillage))
+      : [];
+    const cotesPieces: Cote[] = showCotesPieces
+      ? niveauActif.pieces.flatMap(pc => {
+          const { utile } = geometrieMurs(pc);
+          return pc.contour.map((_, i): Cote => {
+            const a = utile[i], b = utile[(i + 1) % utile.length];
+            return { kind: "mur", a, b, valeurCm: Math.round(Math.hypot(b.x - a.x, b.y - a.y) * 100), normale: normaleInterieure(pc.contour, i), interieur: true, decalageM: 0 };
+          });
+        })
       : [];
     const autres = showCotes
       ? niveauActif.pieces.flatMap(pc => pc.appareillages
           .filter(a => a.id !== selectedAppareillageId && estMural(a.type))
-          .flatMap(a => cotesAppareillage({ x: a.x, y: a.y }, pc.contour, a.type, false)))
+          .flatMap(a => cotesAppareillage({ x: a.x, y: a.y }, pc.contour, a.type, false, repereCotes(pc))))
       : [];
-    return filtrerCotesLisibles(autres, toScreen, prioritaires)
+    const cotesArchi: Cote[] = [
+      ...(showCotesOuv ? niveauActif.pieces.flatMap(pc => cotesOuvertures(pc, niveauActif.pieces)) : []),
+      ...(showCotesExt ? [...cotesExterieures(niveauActif.pieces), ...coteHorsTout(niveauActif.pieces)] : []),
+    ];
+    return filtrerCotesLisibles([...cotesPieces, ...cotesArchi, ...autres], toScreen, prioritaires)
       .map(c => geometrieCote(c, toScreen, 14))
       .filter((g): g is GeoCote => g != null);
   })();
@@ -2655,6 +2917,22 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // lui, reste lisible à tous les zooms (plus grand qu'avant : 16→30 px au lieu de 11→28).
   const symSize = Math.min(30, Math.max(16, 20 * zoom));
   const boxSize = symSize + 8;
+
+  // Épaisseur de chaque mur (cm) — structure, + doublage — posée sur le mur, uniquement si le trait
+  // est assez épais à l'écran pour la porter (sinon elle ne servirait qu'à encombrer).
+  const epaisseursMurs = showCotesPieces && niveauActif ? niveauActif.pieces.flatMap(pc => {
+    const g = geometrieMurs(pc);
+    return g.quads.flatMap(q => {
+      const sp = murDe(pc, q.i);
+      const pts = q.structure.map(toScreen);
+      const A = toScreen(pc.contour[q.i]), B = toScreen(pc.contour[(q.i + 1) % pc.contour.length]);
+      const epPx = (sp.epaisseur / 100) * PX_PER_M * zoom;
+      if (epPx < 9 || Math.hypot(B.x - A.x, B.y - A.y) < 40) return [];
+      let ang = Math.atan2(B.y - A.y, B.x - A.x) * 180 / Math.PI;
+      if (ang > 90 || ang < -90) ang += 180;
+      return [{ key: `ep-${pc.id}-${q.i}`, x: (A.x + B.x) / 2, y: (A.y + B.y) / 2, ang, txt: sp.doublage > 0 ? `${sp.epaisseur}+${sp.doublage}` : `${sp.epaisseur}`, ext: sp.type === "exterieur" }];
+    });
+  }) : [];
 
   // Étiquette (nom + surface) de chaque pièce : position manuelle si l'utilisateur l'a déplacée,
   // sinon placement automatique à l'endroit le plus libre — centre si rien n'y est, sinon le point
@@ -2916,10 +3194,36 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               </button>
             );
           })()}
-          <button onClick={() => setShowCotes(s => !s)} className={`${showCotes ? "btn-volt" : "btn-ghost"} !text-xs`}
-            title="Afficher les cotes de tous les appareillages (cm, depuis le coin le plus proche). L'appareillage sélectionné affiche toujours les siennes.">
-            📐 Cotes
-          </button>
+          <div className="relative">
+            {(() => {
+              const nb = [showCotes, showCotesPieces, showCotesExt, showCotesOuv].filter(Boolean).length;
+              return (
+                <button onClick={() => setMenuCotesOuvert(o => !o)} className={`${nb > 0 ? "btn-volt" : "btn-ghost"} !text-xs`}
+                  title="Cotes d'architecte : à afficher selon le besoin">
+                  📐 Cotes{nb > 0 ? ` (${nb})` : ""} <ChevronDown size={12} />
+                </button>
+              );
+            })()}
+            {menuCotesOuvert && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setMenuCotesOuvert(false)} />
+                <div className="absolute left-0 top-full mt-1 z-40 w-72 card p-3 flex flex-col gap-2 shadow-lg">
+                  {([
+                    ["Appareillages", "distance de chaque prise / interrupteur au coin intérieur", showCotes, setShowCotes],
+                    ["Pièces et murs", "dimensions intérieures de chaque mur + épaisseurs", showCotesPieces, setShowCotesPieces],
+                    ["Ouvertures", "chaîne coin → baie → coin le long de chaque mur percé", showCotesOuv, setShowCotesOuv],
+                    ["Extérieures", "longueur de chaque mur extérieur + dimensions hors-tout", showCotesExt, setShowCotesExt],
+                  ] as [string, string, boolean, (v: boolean) => void][]).map(([nom, aide, val, set]) => (
+                    <label key={nom} className="flex items-start gap-2 cursor-pointer">
+                      <input type="checkbox" className="mt-0.5" checked={val} onChange={e => set(e.target.checked)} />
+                      <span className="text-xs text-ink-700"><span className="font-semibold">{nom}</span><br /><span className="text-ink-400">{aide}</span></span>
+                    </label>
+                  ))}
+                  <p className="text-[11px] text-ink-400 border-t border-ink-100 pt-2">Cotes en cm. L&apos;appareillage sélectionné affiche toujours les siennes.</p>
+                </div>
+              </>
+            )}
+          </div>
           <button onClick={handlePousserVersTableau} disabled={!resultat || pushing} className="btn-ghost !text-xs disabled:opacity-40">
             <ArrowRightCircle size={13} /> {pushing ? "…" : "Pousser vers le tableau"}
           </button>
@@ -2995,35 +3299,51 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 return <line key={`gy${y}`} x1={0} y1={p.y} x2={W} y2={p.y} stroke={y === 0 ? "#c4c4c0" : "#e7e7e3"} strokeWidth={y === 0 ? 1.5 : 1} />;
               })}
 
+              {/* Couche 1 — fonds de pièces (clic = sélection, glisser = déplacement) */}
+              {niveauActif?.pieces.map(piece => (
+                <polygon key={`fond-${piece.id}`} points={piece.contour.map(toScreen).map(q => `${q.x},${q.y}`).join(" ")}
+                  fill={PIECE_TYPES[piece.type].color} fillOpacity={0.85} stroke="none"
+                  style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture && !piece.verrouillee ? "move" : "default" }}
+                  onPointerDown={e => onPieceDown(piece, e)} />
+              ))}
+
+              {/* Couche 2 — murs en vraie épaisseur : structure (pleine) puis doublage (clair, côté intérieur).
+                  Ordre : cloisons, puis murs extérieurs par-dessus (jonctions propres), puis doublages. */}
+              {niveauActif && (() => {
+                const toPts = (poly: Point[]) => poly.map(toScreen).map(q => `${q.x},${q.y}`).join(" ");
+                const quads = niveauActif.pieces.flatMap(pc => geometrieMurs(pc).quads.map(q => ({ ...q, cle: `${pc.id}-${q.i}` })));
+                const struct = (q: typeof quads[number]) => {
+                  const col = q.type === "exterieur" ? "#44403c" : "#78716c";
+                  return <polygon key={`s-${q.cle}`} points={toPts(q.structure)} fill={col} stroke={col} strokeWidth={0.6} strokeLinejoin="round" />;
+                };
+                return (
+                  <g style={{ pointerEvents: "none" }}>
+                    {quads.filter(q => q.type !== "exterieur").map(struct)}
+                    {quads.filter(q => q.type === "exterieur").map(struct)}
+                    {quads.filter(q => q.doublage).map(q => (
+                      <polygon key={`d-${q.cle}`} points={toPts(q.doublage!)} fill="#e7e5e4" stroke="#a8a29e" strokeWidth={0.8} strokeLinejoin="round" />
+                    ))}
+                  </g>
+                );
+              })()}
+
+              {/* Couche 3 — ouvertures : percent TOUTES les épaisseurs du mur (structure + doublage),
+                  y compris vues depuis la pièce voisine sur un mur mitoyen */}
+              {niveauActif && niveauActif.pieces.flatMap(piece => piece.contour.flatMap((_, i) =>
+                ouverturesEffectivesMur(niveauActif.pieces, piece, i).map((e, k) => (
+                  <polygon key={`decoupe-${piece.id}-${i}-${k}`} fill="#fff" stroke="none" style={{ pointerEvents: "none" }}
+                    points={decoupeOuverture(piece, i, e.position, e.largeur).map(toScreen).map(q => `${q.x},${q.y}`).join(" ")} />
+                ))
+              ))}
+
               {niveauActif?.pieces.map(piece => {
-                const spec = PIECE_TYPES[piece.type];
                 const pts = piece.contour.map(toScreen).map(p => `${p.x},${p.y}`).join(" ");
                 const isSelected = piece.id === selectedPieceId;
                 return (
                   <g key={piece.id}>
-                    <polygon points={pts} fill={spec.color} fillOpacity={0.85}
-                      stroke={isSelected ? "#F59E0B" : spec.stroke} strokeWidth={isSelected ? 2.5 : 1.5}
-                      style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture && !piece.verrouillee ? "move" : "default" }}
-                      onPointerDown={e => onPieceDown(piece, e)} />
-                    {niveauActif && piece.contour.flatMap((pt, i) => {
-                      const next = piece.contour[(i + 1) % piece.contour.length];
-                      // Ouvertures posées sur le mur mitoyen d'une AUTRE pièce, projetées ici en
-                      // simple trouée (pas de vantail/vitrage — déjà dessinés côté propriétaire) :
-                      // c'est ce qui fait que percer une porte d'un côté "perce" aussi la vue de
-                      // la pièce voisine, sans dupliquer la donnée de l'ouverture.
-                      const projetees = ouverturesEffectivesMur(niveauActif.pieces, piece, i).filter(e => !e.proprietaire);
-                      return projetees.map((e, k) => {
-                        const centreM = { x: pt.x + (next.x - pt.x) * e.position, y: pt.y + (next.y - pt.y) * e.position };
-                        const pC = toScreen(centreM), pA = toScreen(pt), pB = toScreen(next);
-                        const angleDeg = Math.atan2(pB.y - pA.y, pB.x - pA.x) * 180 / Math.PI;
-                        const largeurPx = Math.max(10, (e.largeur / 100) * PX_PER_M * zoom);
-                        return (
-                          <g key={`jumeau-${i}-${k}`} transform={`translate(${pC.x}, ${pC.y}) rotate(${angleDeg})`} style={{ pointerEvents: "none" }}>
-                            <rect x={-largeurPx / 2} y={-4} width={largeurPx} height={8} fill="#fff" />
-                          </g>
-                        );
-                      });
-                    })}
+                    {isSelected && (
+                      <polygon points={pts} fill="none" stroke="#F59E0B" strokeWidth={2.5} strokeLinejoin="round" style={{ pointerEvents: "none" }} />
+                    )}
                     {isSelected && mode === "select" && !piece.verrouillee && piece.contour.map((pt, i) => {
                       const p = toScreen(pt);
                       const peutSupprimer = piece.contour.length > 3;
@@ -3154,9 +3474,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     const couleurSegment = seg.type === "navette" ? assombrirCouleur(color) : color;
                     // Sous-chaîne du segment : point de départ, coudes existants, point d'arrivée.
                     const sousChaine = [seg.aPoint, ...coudes.map(c => c.point), seg.bPoint];
+                    const posesSections = posesTroncons(niveauActif, cle, coudes);
                     for (let j = 0; j < sousChaine.length - 1; j++) {
                       const ptA = sousChaine[j], ptB = sousChaine[j + 1];
                       const aPx = toScreen(ptA), bPx = toScreen(ptB);
+                      const apparente = !estDomotique && posesSections[j] === "apparent";
+                      const sectionSel = selectedTroncon?.cle === cle && selectedTroncon?.index === j;
+                      // Section APPARENTE (le câble sort du mur) : trait plein sur une bande grise = moulure.
+                      // Section ENCASTRÉE : pointillé, comme avant (câble caché dans le mur).
+                      if (apparente) {
+                        elements.push(<line key={`${cle}-${j}-moulure`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#d6d3d1" strokeWidth={8} strokeLinecap="round" opacity={0.9} style={{ pointerEvents: "none" }} />);
+                      }
+                      if (sectionSel) {
+                        elements.push(<line key={`${cle}-${j}-sel`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#F59E0B" strokeWidth={11} strokeLinecap="round" opacity={0.35} style={{ pointerEvents: "none" }} />);
+                      }
                       if (estDomotique) {
                         // Liaison "particulière" (domotique/sans fil) : symbole d'onde plutôt
                         // qu'un trait plein, pour tous les types d'interrupteur.
@@ -3164,7 +3495,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         const dOnde = wavePts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
                         elements.push(<polyline key={`${cle}-${j}`} points={dOnde} fill="none" stroke={couleurSegment} strokeWidth={1.8} opacity={0.85} />);
                       } else {
-                        elements.push(<line key={`${cle}-${j}`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={couleurSegment} strokeWidth={2} strokeDasharray="6,4" opacity={0.8} />);
+                        elements.push(<line key={`${cle}-${j}`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={couleurSegment} strokeWidth={apparente ? 2.4 : 2} strokeDasharray={apparente ? undefined : "6,4"} opacity={apparente ? 1 : 0.8} />);
                       }
                       if (showLongueurs) {
                         elements.push(<EtiquetteLongueur key={`${cle}-${j}-lg`} aPx={aPx} bPx={bPx} texte={`${distance(ptA, ptB).toFixed(2)}m`} />);
@@ -3175,6 +3506,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                             style={{ cursor: "copy" }}
                             onPointerDown={e => {
                               e.stopPropagation();
+                              // Maj + clic : choisir la SECTION (pour régler sa pose) ; clic simple : ajouter un point.
+                              if (e.shiftKey) {
+                                setSelectedTroncon({ cle, index: j });
+                                setSelectedWaypoint(null); setSelectedPieceId(null); setSelectedAppareillageId(null);
+                                setSelectedTableau(false); setSelectedBoite(null); setSelectedMeubleId(null);
+                                setPanelResetTick(t => t + 1);
+                                return;
+                              }
                               const rect = svgRef.current?.getBoundingClientRect();
                               if (!rect) return;
                               const m = toMeters(e.clientX - rect.left, e.clientY - rect.top);
@@ -3283,13 +3622,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 const isSel = a.id === selectedAppareillageId;
                 const color = showCircuits && a.circuitId != null && circuitsVisibles.has(a.circuitId) ? (colorMap.get(a.circuitId) ?? "#1c1917") : (isSel ? "#F59E0B" : "#1c1917");
                 const anc = estMural(a.type) ? ancrageMurLePlusProche({ x: a.x, y: a.y }, piece.contour) : null;
-                let cx = p.x, cy = p.y, rot = 0, nxs = 0, nys = 0;
+                let cx = p.x, cy = p.y, rot = 0, nxs = 0, nys = 0, facePx = 2;
                 if (anc && anc.distance <= TOLERANCE_MUR_M) {
+                  // Le point stocké est sur l'AXE du mur ; l'appareillage se pose sur sa face intérieure finie.
+                  facePx = Math.max(2, faceInterieureM(piece, anc.segIndex) * PX_PER_M * zoom);
                   const pPied = toScreen(anc.pied);
                   const pN = toScreen({ x: anc.pied.x + anc.normale.x * 0.1, y: anc.pied.y + anc.normale.y * 0.1 });
                   const lenN = Math.hypot(pN.x - pPied.x, pN.y - pPied.y) || 1;
                   nxs = (pN.x - pPied.x) / lenN; nys = (pN.y - pPied.y) / lenN;
-                  const demi = boxSize / 2 + 2; // +2 px : demi-épaisseur du trait de mur
+                  const demi = boxSize / 2 + facePx; // carré tangent à la face intérieure finie du mur
                   cx = pPied.x + nxs * demi; cy = pPied.y + nys * demi;
                   rot = Math.atan2(nxs, -nys) * 180 / Math.PI;
                 }
@@ -3306,7 +3647,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     const ux = (sg.x - sa.x) / lg, uy = (sg.y - sa.y) / lg;
                     const e1 = toScreen({ x: baie.centre.x - ux * baie.largeur / 2, y: baie.centre.y - uy * baie.largeur / 2 });
                     const e2 = toScreen({ x: baie.centre.x + ux * baie.largeur / 2, y: baie.centre.y + uy * baie.largeur / 2 });
-                    traitVolet = { x1: e1.x + nxs * 4, y1: e1.y + nys * 4, x2: e2.x + nxs * 4, y2: e2.y + nys * 4 };
+                    traitVolet = { x1: e1.x + nxs * (facePx + 4), y1: e1.y + nys * (facePx + 4), x2: e2.x + nxs * (facePx + 4), y2: e2.y + nys * (facePx + 4) };
                   }
                 }
                 // Pastille d'alerte directement sur le plan — un appareillage sans circuit
@@ -3371,6 +3712,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               })}
 
               {cotesAffichees.map((g, i) => <CoteSvg key={`cote-${i}`} g={g} />)}
+              {epaisseursMurs.map(t => (
+                <g key={t.key} transform={`translate(${t.x} ${t.y}) rotate(${t.ang})`} style={{ pointerEvents: "none" }} textAnchor="middle" fontFamily="monospace" fontSize={8} fontWeight={700}>
+                  <text dominantBaseline="central" fill="none" stroke={t.ext ? "#44403c" : "#78716c"} strokeWidth={3} strokeLinejoin="round">{t.txt}</text>
+                  <text dominantBaseline="central" fill="#fff">{t.txt}</text>
+                </g>
+              ))}
 
               {pieceDeSelectedAppareillage && mode === "select" && pieceDeSelectedAppareillage.contour.map((pt, i) => {
                 const next = pieceDeSelectedAppareillage.contour[(i + 1) % pieceDeSelectedAppareillage.contour.length];
@@ -3980,19 +4327,56 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       onChange={e => modifierHauteurWaypoint(selectedWaypoint.cle, selectedWaypoint.waypointId, e.target.value ? Number(e.target.value) : undefined)} />
                     <button onClick={() => supprimerWaypoint(selectedWaypoint.cle, selectedWaypoint.waypointId)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-ink-500">
-                    <span className="shrink-0">Pose</span>
-                    <div className="flex gap-1 flex-1">
-                      {(["encastre", "apparent"] as const).map(pose => (
-                        <button key={pose} onClick={() => modifierPoseWaypoint(selectedWaypoint.cle, selectedWaypoint.waypointId, pose)}
-                          className={`flex-1 !text-xs px-2 py-1 rounded-md border transition-colors ${
-                            (wp.poseType ?? "encastre") === pose ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"
-                          }`}>
-                          {pose === "encastre" ? "Encastré" : "Apparent"}
-                        </button>
-                      ))}
-                    </div>
+                  {(() => {
+                    const coudes = niveauActif.liaisonWaypoints?.[selectedWaypoint.cle] ?? [];
+                    const rang = coudes.findIndex(w => w.id === selectedWaypoint.waypointId);
+                    const poses = posesTroncons(niveauActif, selectedWaypoint.cle, coudes);
+                    return (
+                      <>
+                        {([["Section avant", rang], ["Section après", rang + 1]] as [string, number][]).map(([lib, idx]) => (
+                          <div key={lib} className="flex items-center gap-2 text-xs text-ink-500">
+                            <span className="shrink-0 w-20">{lib}</span>
+                            <div className="flex gap-1 flex-1">
+                              {(["encastre", "apparent"] as const).map(pose => (
+                                <button key={pose} onClick={() => modifierPoseTroncon(selectedWaypoint.cle, idx, pose)}
+                                  className={`flex-1 !text-xs px-2 py-1 rounded-md border transition-colors ${
+                                    poses[idx] === pose ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"
+                                  }`}>
+                                  {pose === "encastre" ? "Encastré" : "Apparent"}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                        <p className="text-[10px] text-ink-400">Apparent = le câble sort du mur : moulure au pré-devis. Un circuit peut être encastré sur une partie et apparent sur une autre.</p>
+                      </>
+                    );
+                  })()}
+                </DraggablePanel>
+              );
+            })()}
+
+            {selectedTroncon && niveauActif && mode === "select" && (() => {
+              const coudes = niveauActif.liaisonWaypoints?.[selectedTroncon.cle] ?? [];
+              const poses = posesTroncons(niveauActif, selectedTroncon.cle, coudes);
+              if (selectedTroncon.index >= poses.length) return null;
+              return (
+                <DraggablePanel key={`troncon-${selectedTroncon.cle}-${selectedTroncon.index}-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-ink-700 font-semibold flex-1">Section {selectedTroncon.index + 1} / {poses.length} du circuit</span>
+                    <button onClick={() => setSelectedTroncon(null)} className="btn-ghost !px-1.5 !py-1"><X size={13} /></button>
                   </div>
+                  <div className="flex gap-1">
+                    {(["encastre", "apparent"] as const).map(pose => (
+                      <button key={pose} onClick={() => modifierPoseTroncon(selectedTroncon.cle, selectedTroncon.index, pose)}
+                        className={`flex-1 !text-xs px-2 py-1 rounded-md border transition-colors ${
+                          poses[selectedTroncon.index] === pose ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"
+                        }`}>
+                        {pose === "encastre" ? "Encastré" : "Apparent"}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-ink-400">Encastré : dans le mur (gaine). Apparent : le câble sort du mur, sous moulure. Ajoute un point sur le tracé (clic) pour découper une section.</p>
                 </DraggablePanel>
               );
             })()}
@@ -4227,17 +4611,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         <div className={`px-4 py-1.5 bg-ink-50 border-t border-ink-100 text-[11px] text-ink-400 ${modeFocus ? "hidden" : "hidden md:block"} shrink-0`}>
           {vue3D
             ? "Glisser = tourner la caméra · Clic droit (ou Maj + glisser) = déplacer la vue · Molette = zoom"
-            : "Molette = zoom · Glisser le fond = déplacer la vue · En dessin : clic = ajouter un point, clic près du 1er point = fermer la pièce · Pièce sélectionnée : double-clic sur un sommet (rond orange) pour le supprimer (min. 3 sommets)"}
+            : "Molette = zoom · Glisser le fond = déplacer la vue · En dessin : clic = ajouter un point, clic près du 1er point = fermer la pièce · Pièce sélectionnée : double-clic sur un sommet (rond orange) pour le supprimer (min. 3 sommets) · Tracé de circuit : clic = ajouter un point, Maj + clic = choisir une section (encastré / apparent)"}
         </div>
       </div>
 
       {pendingContour && (
         <PieceForm
-          initialNom="" initialType="autre"
-          onValidate={(nom, type, hauteurPlafond) => {
-            const nouvelle = nouvellePiece(pendingContour, nom, type);
+          initialNom="" initialType="autre" initialContour={pendingContour} initialMurs={pendingContour.map(() => ({ ...MUR_DEFAUT }))}
+          onValidate={(nom, type, hauteurPlafond, contour, murs) => {
+            // Dimensions affinables au cm dès la création (le tracé reste calé sur 10 cm) ; murs paramétrables.
+            const nouvelle = nouvellePiece(contour, nom, type);
             nouvelle.hauteurPlafond = hauteurPlafond;
-            updateNiveauActif(n => ({ ...n, pieces: [...n.pieces, nouvelle] }));
+            updateNiveauActif(n => ({ ...n, pieces: appliquerMurs([...n.pieces, nouvelle], nouvelle.id, murs) }));
             setPendingContour(null);
             invalidateResultat();
           }}
@@ -4248,8 +4633,21 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       {editingPiece && (
         <PieceForm
           initialNom={editingPiece.nom} initialType={editingPiece.type} initialHauteurPlafond={editingPiece.hauteurPlafond}
-          onValidate={(nom, type, hauteurPlafond) => {
-            updateNiveauActif(n => ({ ...n, pieces: n.pieces.map(p => p.id === editingPiece.id ? { ...p, nom, type, hauteurPlafond } : p) }));
+          initialContour={editingPiece.contour} initialMurs={mursDe(editingPiece)} verrouillee={editingPiece.verrouillee}
+          onValidate={(nom, type, hauteurPlafond, contour, murs) => {
+            // Si les dimensions ont changé : les appareillages posés au mur suivent leur mur, et le
+            // résultat de génération (longueurs de câbles, quantités…) n'est plus à jour.
+            const dimensionsModifiees = contour !== editingPiece.contour;
+            const mursModifies = JSON.stringify(murs) !== JSON.stringify(mursDe(editingPiece));
+            updateNiveauActif(n => {
+              const pieces = n.pieces.map(p => p.id !== editingPiece.id ? p : {
+                ...p, nom, type, hauteurPlafond,
+                ...(dimensionsModifiees ? { contour, appareillages: reporterAppareillages(p.contour, contour, p.appareillages) } : {}),
+              });
+              // Type + épaisseur des murs sont reportés sur les côtés mitoyens des pièces voisines.
+              return { ...n, pieces: mursModifies ? appliquerMurs(pieces, editingPiece.id, murs) : pieces };
+            });
+            if (dimensionsModifiees || mursModifies) invalidateResultat();
             setEditingPiece(null);
           }}
           onCancel={() => setEditingPiece(null)}
@@ -4318,7 +4716,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         if (!a || !b) return null;
         return (
           <SegmentLengthForm
-            longueurActuelle={distance(a, b)}
+            longueurActuelle={distance(a, b)} murActuel={murDe(piece, editingSegment.segIndex)}
             onValidate={appliquerLongueurSegment}
             onCancel={() => setEditingSegment(null)}
           />
@@ -4328,9 +4726,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       {showPrintForm && (
         <PrintForm
           niveaux={niveaux} resultatDisponible={!!resultat}
-          onValider={(piecesSelectionnees, avecCircuits, avecLongueurs, avecHauteurs, avecCotes) => {
+          onValider={(piecesSelectionnees, avecCircuits, avecLongueurs, avecHauteurs, avecCotes, avecCotesPieces, avecCotesExt, avecCotesOuv) => {
             setShowPrintForm(false);
-            imprimerPlan(niveaux, client?.nom ?? "", resultat, avecCircuits, avecLongueurs, avecHauteurs, piecesSelectionnees, avecCotes);
+            imprimerPlan(niveaux, client?.nom ?? "", resultat, avecCircuits, avecLongueurs, avecHauteurs, piecesSelectionnees, avecCotes, avecCotesPieces, avecCotesExt, avecCotesOuv);
           }}
           onCancel={() => setShowPrintForm(false)}
         />
