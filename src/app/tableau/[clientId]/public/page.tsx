@@ -85,6 +85,7 @@ const CIRCUITS: Record<string, { label: string; icon: string; section: string | 
   piscine:         { label: "Piscine/PAC",      icon: "🏊", section: "2.5" },
   vmc:             { label: "VMC",              icon: "💨", section: "1.5" },
   alarme:          { label: "Alarme",           icon: "🔔", section: "1.5" },
+  volets_roulants: { label: "Volets roulants",  icon: "🪟", section: "1.5" },
   exterieur:       { label: "Extérieur",        icon: "🌿", section: "1.5" },
   garage:          { label: "Garage",           icon: "🏠", section: "1.5" },
   general:         { label: "Général / Arrivée",icon: "⚡", section: "10.0" },
