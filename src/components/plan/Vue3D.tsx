@@ -12,9 +12,10 @@
 
 import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { Niveau, PIECE_TYPES, centroide, AppareillageType, OuvertureEffective, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, centroide, AppareillageType, OuvertureEffective, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
-import { initialesAppareillage } from "@/components/plan/AppareillageSymbols";
+import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet } from "@/components/plan/Modeles3D";
+import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
 
 const EPAISSEUR_MUR = 0.1; // mètres
 
@@ -26,6 +27,7 @@ const HAUTEUR_DEFAUT: Partial<Record<AppareillageType, number>> = {
   four: 0.6, plaque: 0.9, lave_linge: 0.85, lave_vaisselle: 0.85, seche_linge: 0.85,
   chauffe_eau: 1.8, chauffage: 0.3, clim: 2.0, seche_serviette: 1.2, congelateur: 0.85,
   irve: 1.0, piscine: 0.3, vmc: 2.2, alarme: 2.0,
+  volet_roulant: 2.15, // centre du coffre, juste sous le plafond (le tablier descend en dessous)
 };
 
 // Hauteur d'installation par défaut du tableau électrique (mètres) quand non précisée.
@@ -51,39 +53,12 @@ interface InterrupteurUI {
   lumiereIds: number[];
 }
 
-// ─── IDENTITÉ VISUELLE 3D DES APPAREILLAGES ────────────────────────────────────
-// Chaque appareillage a, en plus de sa position/hauteur réelles, une forme et une
-// couleur propres à son type (au lieu d'un simple point noir) + une étiquette
-// (initiales) toujours face caméra pour l'identifier sans ambiguïté.
-
-type FormeMarqueur = "plaque" | "ampoule" | "boite" | "cylindre";
-
-const FORME_PAR_TYPE: Record<AppareillageType, FormeMarqueur> = {
-  prise: "plaque", prise_commandee: "plaque",
-  interrupteur: "plaque", va_et_vient: "plaque", telerupteur: "plaque",
-  point_lumineux: "ampoule", applique: "ampoule",
-  four: "boite", plaque: "boite", lave_linge: "boite", lave_vaisselle: "boite", seche_linge: "boite",
-  chauffe_eau: "boite", chauffage: "boite", clim: "boite", seche_serviette: "boite", congelateur: "boite",
-  irve: "cylindre", piscine: "cylindre", vmc: "cylindre", alarme: "cylindre",
-};
-
-const COULEUR_PAR_TYPE: Record<AppareillageType, string> = {
-  prise: "#F59E0B", prise_commandee: "#D97706",
-  point_lumineux: "#FDE68A", applique: "#FCD34D",
-  interrupteur: "#3B82F6", va_et_vient: "#2563EB", telerupteur: "#1D4ED8",
-  four: "#DC2626", plaque: "#EA580C", lave_linge: "#0EA5E9", lave_vaisselle: "#0284C7",
-  seche_linge: "#0369A1", chauffe_eau: "#F97316", chauffage: "#EF4444", clim: "#06B6D4",
-  seche_serviette: "#F472B6", congelateur: "#818CF8",
-  irve: "#22C55E", piscine: "#14B8A6", vmc: "#A78BFA", alarme: "#EF4444",
-};
-
-function creerGeometrieMarqueur(forme: FormeMarqueur): THREE.BufferGeometry {
-  switch (forme) {
-    case "plaque": return new THREE.BoxGeometry(0.09, 0.09, 0.018);
-    case "ampoule": return new THREE.SphereGeometry(0.055, 16, 16);
-    case "cylindre": return new THREE.CylinderGeometry(0.05, 0.05, 0.14, 14);
-    case "boite": default: return new THREE.BoxGeometry(0.13, 0.13, 0.13);
-  }
+// Hauteur d'installation (mètres) d'un appareillage : valeur saisie, sinon valeur par défaut
+// du type ; un point lumineux de plafond est, par défaut, AU plafond de sa pièce.
+function hauteurInstallation(type: AppareillageType, hauteurCm: number | undefined, plafond: number): number {
+  if (hauteurCm != null) return hauteurCm / 100;
+  if (type === "point_lumineux") return plafond;
+  return HAUTEUR_DEFAUT[type] ?? 1.0;
 }
 
 // Étiquette ronde (initiales) toujours orientée face caméra — c'est elle qui rend
@@ -198,24 +173,6 @@ function construireMurAvecOuvertures(
   if (curseur < longueur) ajouterPan((curseur + longueur) / 2, longueur - curseur, hauteurMur / 2, hauteurMur);
 }
 
-function creerMarqueurAppareillage(type: AppareillageType, couleur: string): THREE.Group {
-  const groupe = new THREE.Group();
-  const forme = FORME_PAR_TYPE[type];
-  const geo = creerGeometrieMarqueur(forme);
-  const estAmpoule = forme === "ampoule";
-  const mat = new THREE.MeshStandardMaterial({
-    color: couleur,
-    emissive: estAmpoule ? couleur : 0x000000,
-    emissiveIntensity: estAmpoule ? 0.7 : 0,
-  });
-  const mesh = new THREE.Mesh(geo, mat);
-  groupe.add(mesh);
-  const etiquette = creerEtiquetteSprite(initialesAppareillage(type), couleur);
-  etiquette.position.set(0, 0.13, 0);
-  groupe.add(etiquette);
-  return groupe;
-}
-
 export interface Vue3DHandle {
   capturerImage: () => string | null;
 }
@@ -234,6 +191,11 @@ const Vue3D = forwardRef<Vue3DHandle, {
 
   const [nightMode, setNightMode] = useState(false);
   const [interrupteursOn, setInterrupteursOn] = useState<Record<number, boolean>>({});
+  // Ouverture des volets roulants (0 fermé … 100 ouvert) forcée depuis le panneau 3D — simple
+  // état de VUE, jamais écrit dans le plan ; sans entrée, c'est la valeur enregistrée
+  // (AppareillagePlace.voletOuvertPct, réglée depuis le plan 2D) qui s'applique.
+  const [voletsOverride, setVoletsOverride] = useState<Record<number, number>>({});
+  const voletsRef = useRef<Map<number, { modele: ModeleVolet; defaut: number }>>(new Map());
 
   useImperativeHandle(ref, () => ({
     capturerImage: () => rendererRef.current?.domElement.toDataURL("image/png") ?? null,
@@ -268,7 +230,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
 
   // Changer de niveau réinitialise la simulation (les ids d'interrupteurs d'un autre
   // niveau n'ont aucun sens ici) — le mode nuit, lui, est une préférence de vue et reste.
-  useEffect(() => { setInterrupteursOn({}); }, [niveau.id]);
+  useEffect(() => { setInterrupteursOn({}); setVoletsOverride({}); }, [niveau.id]);
 
   // Ids des points lumineux actuellement allumés, dérivés des interrupteurs actifs.
   const lumieresAllumeesIds = useMemo(() => {
@@ -286,6 +248,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
     scene.background = new THREE.Color("#e7e5e4");
     sceneRef.current = scene;
     lumiereLightsRef.current.clear();
+    voletsRef.current.clear();
 
     const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.05, 200);
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -310,6 +273,16 @@ const Vue3D = forwardRef<Vue3DHandle, {
 
     const colorMap = resultat ? construireColorMap(resultat, [niveau]) : new Map<number, string>();
 
+    // Position 3D réelle (sur la face du mur / au plafond) de chaque appareillage, par id —
+    // utilisée pour que les câbles aboutissent AU appareillage et non à son point 2D brut.
+    const posApp = new Map<string, THREE.Vector3>();
+
+    // Les réglages d'un volet (caisson, ouverture) et la fenêtre qui lui donne ses dimensions
+    // sont lus sur l'état VIVANT du niveau (niveau), pas sur le résultat de génération figé :
+    // une modification se voit tout de suite, sans régénérer les circuits.
+    const liveParId = new Map<number, AppareillagePlace>();
+    niveau.pieces.forEach(p => p.appareillages.forEach(a => liveParId.set(a.id, a)));
+
     // Sol + murs par pièce
     niveauResultat.pieces.forEach(piece => {
       if (piece.contour.length < 3) return;
@@ -327,32 +300,71 @@ const Vue3D = forwardRef<Vue3DHandle, {
       // Murs (un ou plusieurs pans de boîte par arête du contour, troués aux ouvertures) —
       // hauteur propre à la pièce si définie
       const hauteurMurs = piece.hauteurPlafond ?? hauteurPlafond;
-      const murMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f4 });
+      // Murs en beige clair (et non blanc) pour que l'appareillage, blanc, ressorte dessus.
+      const murMat = new THREE.MeshStandardMaterial({ color: 0xe3dccf });
       piece.contour.forEach((a, i) => {
         const b = piece.contour[(i + 1) % piece.contour.length];
         const ouverturesSegment = ouverturesEffectivesMur(niveauResultat.pieces, piece, i);
         construireMurAvecOuvertures(a, b, hauteurMurs, ouverturesSegment, EPAISSEUR_MUR, murMat, scene);
       });
 
-      // Appareillages — forme + couleur propres au type + étiquette d'initiales face
-      // caméra, pour être identifiables d'un coup d'œil (jamais un simple point noir).
+      // Appareillages — modèles 3D ressemblants (voir Modeles3D.ts), posés sur la FACE
+      // INTÉRIEURE du mur le plus proche de leur pièce (orientés vers l'intérieur de la
+      // pièce), ou au plafond pour un point lumineux. Un électroménager est posé au sol,
+      // dos au mur.
       piece.appareillages.forEach(app => {
-        const h = app.hauteur != null ? app.hauteur / 100 : (HAUTEUR_DEFAUT[app.type] ?? 1.0);
+        const hCable = hauteurInstallation(app.type, app.hauteur, hauteurMurs);
         const couleurCircuitApp = showCircuits && app.circuitId != null ? colorMap.get(app.circuitId) : undefined;
-        const couleur = couleurCircuitApp ?? COULEUR_PAR_TYPE[app.type] ?? "#78716c";
-        const marker = creerMarqueurAppareillage(app.type, couleur);
-        marker.position.set(app.x, h, app.y);
-        scene.add(marker);
+        // Volet roulant : dimensions = celles de la fenêtre du mur (baieDuVolet), centré dessus,
+        // coffre à l'intérieur ou à l'extérieur, tablier ouvert/fermé (setOuverture).
+        if (app.type === "volet_roulant") {
+          const live = liveParId.get(app.id) ?? app;
+          const pieceLive = niveau.pieces.find(p => p.id === piece.id) ?? piece;
+          const baie = baieDuVolet({ x: live.x, y: live.y }, pieceLive, niveau.pieces);
+          const nxv = baie.ancrage?.normale.x ?? 0, nzv = baie.ancrage?.normale.y ?? 1;
+          const recul = EPAISSEUR_MUR / 2 + 0.002;
+          const vol = creerVoletRoulant({
+            largeur: baie.largeur, hauteur: baie.hauteur, allege: baie.allege,
+            caisson: live.caisson ?? "interieur", epaisseurMur: EPAISSEUR_MUR + 0.004, plafond: hauteurMurs,
+            ouvertPct: live.voletOuvertPct ?? 0, couleurCircuit: couleurCircuitApp,
+          });
+          const pxv = baie.centre.x + nxv * recul, pzv = baie.centre.y + nzv * recul;
+          vol.groupe.position.set(pxv, 0, pzv);
+          vol.groupe.rotation.y = Math.atan2(nxv, nzv);
+          scene.add(vol.groupe);
+          voletsRef.current.set(app.id, { modele: vol, defaut: live.voletOuvertPct ?? 0 });
+          posApp.set(String(app.id), new THREE.Vector3(pxv, vol.hautMoteur, pzv)); // câble → moteur
+          return;
+        }
+        const modele = creerModeleAppareillage(app.type, couleurCircuitApp);
+        let px = app.x, pz = app.y, py = hCable, rotY = 0;
+        let nx = 0, nz = 0; // direction "vers l'intérieur" (monde), pour décaler les lumières
+        if (modele.montage === "plafond") {
+          py = hCable;
+        } else {
+          const anc = ancrageMurLePlusProche({ x: app.x, y: app.y }, piece.contour);
+          if (anc) {
+            const recul = EPAISSEUR_MUR / 2 + 0.002; // face intérieure du mur (mur centré sur le contour)
+            px = anc.pied.x + anc.normale.x * recul;
+            pz = anc.pied.y + anc.normale.y * recul;
+            nx = anc.normale.x; nz = anc.normale.y;
+            rotY = Math.atan2(anc.normale.x, anc.normale.y); // +z local → normale intérieure
+          }
+          py = modele.montage === "sol_mur" ? 0 : Math.max(hCable, modele.demiHauteur);
+        }
+        modele.groupe.position.set(px, py, pz);
+        modele.groupe.rotation.y = rotY;
+        scene.add(modele.groupe);
+        // Extrémité des câbles : au point de raccordement (hauteur d'installation), sur le mur.
+        posApp.set(String(app.id), new THREE.Vector3(px, hCable, pz));
 
-        // Point lumineux/applique : lumière réelle en plus du marqueur, éteinte par défaut —
+        // Point lumineux/applique : lumière réelle en plus du modèle, éteinte par défaut —
         // allumée/éteinte via le panneau de simulation (voir lumiereLightsRef, syncEclairage).
-        // Orientation physique différente selon le type : un plafonnier (point_lumineux)
-        // éclaire vers le bas en cône (SpotLight, cible au sol) plutôt que dans toutes les
-        // directions ; une applique rayonne réellement autour d'elle (PointLight classique).
-        if (app.type === "point_lumineux") {
-          const bulbMat = (marker.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial;
+        // Un plafonnier éclaire vers le bas en cône (SpotLight, cible au sol) ; une applique
+        // rayonne autour d'elle (PointLight), décalée de 12 cm devant le mur.
+        if (app.type === "point_lumineux" && modele.ampoule) {
           const light = new THREE.SpotLight(0xffe0ab, 0, 6, Math.PI / 2.6, 0.5, 1.5);
-          light.position.set(app.x, h, app.y);
+          light.position.set(app.x, hCable - 0.12, app.y);
           light.target.position.set(app.x, 0, app.y);
           scene.add(light.target);
           light.castShadow = true;
@@ -360,17 +372,16 @@ const Vue3D = forwardRef<Vue3DHandle, {
           light.shadow.camera.near = 0.1;
           light.shadow.camera.far = light.distance;
           scene.add(light);
-          lumiereLightsRef.current.set(app.id, { light, mat: bulbMat });
-        } else if (app.type === "applique") {
-          const bulbMat = (marker.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial;
+          lumiereLightsRef.current.set(app.id, { light, mat: modele.ampoule });
+        } else if (app.type === "applique" && modele.ampoule) {
           const light = new THREE.PointLight(0xffe0ab, 0, 3, 2);
-          light.position.set(app.x, h, app.y);
+          light.position.set(px + nx * 0.12, py, pz + nz * 0.12);
           light.castShadow = true;
           light.shadow.mapSize.set(512, 512);
           light.shadow.camera.near = 0.1;
           light.shadow.camera.far = light.distance;
           scene.add(light);
-          lumiereLightsRef.current.set(app.id, { light, mat: bulbMat });
+          lumiereLightsRef.current.set(app.id, { light, mat: modele.ampoule });
         }
       });
 
@@ -429,9 +440,14 @@ const Vue3D = forwardRef<Vue3DHandle, {
       const hauteurAncre = (id: string): number => {
         if (id === "tableau") return hauteurTableau;
         if (id === "boite" || id.startsWith("boite-")) return hauteurCoudeParDefaut;
-        const app = tousAppareils.find(a => String(a.id) === id);
-        if (!app) return 1.0;
-        return app.hauteur != null ? app.hauteur / 100 : (HAUTEUR_DEFAUT[app.type] ?? 1.0);
+        const pa = posApp.get(id);
+        return pa ? pa.y : 1.0;
+      };
+      // Point 3D d'une ancre : l'appareillage lui-même (sur son mur) s'il existe, sinon le
+      // point plan brut (tableau, boîtes de dérivation).
+      const ancre3D = (id: string, pt: { x: number; y: number }): THREE.Vector3 => {
+        const pa = posApp.get(id);
+        return pa ? pa.clone() : new THREE.Vector3(pt.x, hauteurAncre(id), pt.y);
       };
       parCircuit.forEach((points, circuitId) => {
         const breaker = resultat.breakers.find(b => b.id === circuitId);
@@ -455,12 +471,12 @@ const Vue3D = forwardRef<Vue3DHandle, {
           }
           const cle = cleSegmentLiaison(seg.aId, seg.bId);
           const coudes = niveau.liaisonWaypoints?.[cle] ?? [];
-          const pts3D: THREE.Vector3[] = [new THREE.Vector3(seg.aPoint.x, hauteurAncre(seg.aId), seg.aPoint.y)];
+          const pts3D: THREE.Vector3[] = [ancre3D(seg.aId, seg.aPoint)];
           coudes.forEach(c => {
             const h = c.hauteur != null ? c.hauteur / 100 : hauteurCoudeParDefaut;
             pts3D.push(new THREE.Vector3(c.point.x, h, c.point.y));
           });
-          pts3D.push(new THREE.Vector3(seg.bPoint.x, hauteurAncre(seg.bId), seg.bPoint.y));
+          pts3D.push(ancre3D(seg.bId, seg.bPoint));
           const geo = new THREE.BufferGeometry().setFromPoints(pts3D);
           // Liaison (navette) entre deux va-et-vient : couleur du circuit assombrie, comme
           // en 2D — reste rattachée au circuit tout en se distinguant du reste du tracé.
@@ -606,6 +622,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
       ambientLightRef.current = null;
       dirLightRef.current = null;
       lumiereLightsRef.current.clear();
+      voletsRef.current.clear();
     };
   }, [niveau, resultat, showCircuits, niveauResultat]);
 
@@ -634,46 +651,89 @@ const Vue3D = forwardRef<Vue3DHandle, {
     });
   }, [nightMode, lumieresAllumeesIds, niveauResultat, showCircuits]);
 
+  // Volets roulants du niveau (état vivant) — alimente le panneau 3D.
+  const volets = useMemo(
+    () => niveau.pieces.flatMap(p => p.appareillages
+      .filter(a => a.type === "volet_roulant")
+      .map(a => ({ id: a.id, label: a.nom || "Volet", pieceNom: p.nom, defaut: a.voletOuvertPct ?? 0 }))),
+    [niveau],
+  );
+
+  // Applique l'ouverture courante à chaque volet déjà construit (sans reconstruire la scène) ;
+  // mêmes dépendances que l'effet de construction pour se réappliquer après chaque reconstruction.
+  useEffect(() => {
+    voletsRef.current.forEach((entry, id) => entry.modele.setOuverture(voletsOverride[id] ?? entry.defaut));
+  }, [voletsOverride, niveau, resultat, showCircuits, niveauResultat]);
+
   return (
     <div className="relative w-full h-full">
       <div ref={containerRef} className="w-full h-full" style={{ touchAction: "none", cursor: "grab" }} />
 
-      {interrupteurs.length > 0 && (
+      {(interrupteurs.length > 0 || volets.length > 0) && (
         <div className="absolute inset-x-0 bottom-0 p-3 flex flex-col gap-2 pointer-events-none">
-          <div className="flex items-center gap-2 pointer-events-auto">
-            <button
-              onClick={() => setInterrupteursOn(Object.fromEntries(interrupteurs.map(i => [i.id, true])))}
-              className="btn-ghost !text-xs !bg-white/90 backdrop-blur">
-              Tout allumer
-            </button>
-            <button
-              onClick={() => setInterrupteursOn({})}
-              className="btn-ghost !text-xs !bg-white/90 backdrop-blur">
-              Tout éteindre
-            </button>
-            <button
-              onClick={() => setNightMode(m => !m)}
-              className={`btn-ghost !text-xs !ml-auto backdrop-blur ${nightMode ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}>
-              {nightMode ? "☀️ Mode jour" : "🌙 Mode nuit"}
-            </button>
-          </div>
-          <div className="flex items-center gap-2 overflow-x-auto pointer-events-auto pb-1">
-            {interrupteurs.map(i => {
-              const actif = !!interrupteursOn[i.id];
-              return (
+          {interrupteurs.length > 0 && (
+            <>
+              <div className="flex items-center gap-2 pointer-events-auto">
                 <button
-                  key={i.id}
-                  onClick={() => setInterrupteursOn(s => ({ ...s, [i.id]: !s[i.id] }))}
-                  className={`shrink-0 card !py-1.5 !px-3 text-left transition-colors ${actif ? "!border-volt-500 !bg-volt-50" : "!bg-white/90"}`}>
-                  <div className="text-[10px] uppercase tracking-wide text-ink-400">{i.pieceNom}</div>
-                  <div className="text-xs font-semibold text-ink-900 flex items-center gap-1.5">
-                    <span className={`inline-block w-2 h-2 rounded-full ${actif ? "bg-volt-500" : "bg-ink-300"}`} />
-                    {i.label}
-                  </div>
+                  onClick={() => setInterrupteursOn(Object.fromEntries(interrupteurs.map(i => [i.id, true])))}
+                  className="btn-ghost !text-xs !bg-white/90 backdrop-blur">
+                  Tout allumer
                 </button>
-              );
-            })}
-          </div>
+                <button
+                  onClick={() => setInterrupteursOn({})}
+                  className="btn-ghost !text-xs !bg-white/90 backdrop-blur">
+                  Tout éteindre
+                </button>
+                <button
+                  onClick={() => setNightMode(m => !m)}
+                  className={`btn-ghost !text-xs !ml-auto backdrop-blur ${nightMode ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}>
+                  {nightMode ? "☀️ Mode jour" : "🌙 Mode nuit"}
+                </button>
+              </div>
+              <div className="flex items-center gap-2 overflow-x-auto pointer-events-auto pb-1">
+                {interrupteurs.map(i => {
+                  const actif = !!interrupteursOn[i.id];
+                  return (
+                    <button
+                      key={i.id}
+                      onClick={() => setInterrupteursOn(s => ({ ...s, [i.id]: !s[i.id] }))}
+                      className={`shrink-0 card !py-1.5 !px-3 text-left transition-colors ${actif ? "!border-volt-500 !bg-volt-50" : "!bg-white/90"}`}>
+                      <div className="text-[10px] uppercase tracking-wide text-ink-400">{i.pieceNom}</div>
+                      <div className="text-xs font-semibold text-ink-900 flex items-center gap-1.5">
+                        <span className={`inline-block w-2 h-2 rounded-full ${actif ? "bg-volt-500" : "bg-ink-300"}`} />
+                        {i.label}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+          {volets.length > 0 && (
+            <div className="flex items-center gap-2 overflow-x-auto pointer-events-auto pb-1">
+              <button
+                onClick={() => setVoletsOverride(Object.fromEntries(volets.map(v => [v.id, 100])))}
+                className="shrink-0 btn-ghost !text-xs !bg-white/90 backdrop-blur">
+                Ouvrir les volets
+              </button>
+              <button
+                onClick={() => setVoletsOverride(Object.fromEntries(volets.map(v => [v.id, 0])))}
+                className="shrink-0 btn-ghost !text-xs !bg-white/90 backdrop-blur">
+                Fermer les volets
+              </button>
+              {volets.map(v => {
+                const pct = voletsOverride[v.id] ?? v.defaut;
+                return (
+                  <div key={v.id} className="shrink-0 card !py-1.5 !px-3 !bg-white/90 backdrop-blur">
+                    <div className="text-[10px] uppercase tracking-wide text-ink-400">{v.pieceNom}</div>
+                    <div className="text-xs font-semibold text-ink-900">{v.label} — {pct >= 100 ? "ouvert" : pct <= 0 ? "fermé" : `ouvert à ${pct} %`}</div>
+                    <input type="range" min={0} max={100} step={5} value={pct} className="w-32"
+                      onChange={e => setVoletsOverride(s => ({ ...s, [v.id]: Number(e.target.value) }))} />
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -23,6 +23,7 @@ export const PALETTE: { type: AppareillageType; label: string; categorie: string
   { type: "piscine",         label: "Piscine / PAC",                  categorie: "Appareils dédiés" },
   { type: "vmc",             label: "VMC",                            categorie: "Appareils dédiés" },
   { type: "alarme",          label: "Alarme",                         categorie: "Appareils dédiés" },
+  { type: "volet_roulant",   label: "Volet roulant",                  categorie: "Appareils dédiés" },
 ];
 
 export function labelAppareillage(type: AppareillageType): string {
@@ -32,7 +33,7 @@ export function labelAppareillage(type: AppareillageType): string {
 const DEDIE_INITIALES: Record<string, string> = {
   four: "F", plaque: "PC", lave_linge: "LL", lave_vaisselle: "LV", seche_linge: "SL",
   chauffe_eau: "CE", chauffage: "CH", clim: "CL", seche_serviette: "SS",
-  congelateur: "CG", irve: "EV", piscine: "PI", vmc: "VMC", alarme: "AL",
+  congelateur: "CG", irve: "EV", piscine: "PI", vmc: "VMC", alarme: "AL", volet_roulant: "VR",
 };
 
 // Initiales courtes par type — utilisées comme étiquette d'identification (ex. vue 3D),
@@ -45,111 +46,143 @@ export function initialesAppareillage(type: AppareillageType): string {
   return INITIALES_BASE[type] ?? DEDIE_INITIALES[type] ?? "?";
 }
 
-// Symboles normalisés d'implantation (base CEI/NF EN 60617, convention UTE/Promotelec),
-// dessinés en SVG — même logique que le BreakerSVG existant du module Tableau.
+// ─── SYMBOLES D'IMPLANTATION NORMALISÉS (schéma architectural, NF C 15-100 / CEI 60617) ───
+// Source unique : chaque symbole est une liste de primitives dans un repère 24 × 24, avec
+// le MUR EN BAS (y = 24) et l'intérieur de la pièce en haut. Le même dessin sert au plan 2D
+// (React), à la palette et à l'impression (chaîne SVG) — on ne maintient qu'une définition.
+// Les symboles "orientés" (prises, commandes, applique) pivotent pour que leur base reste
+// plaquée contre le mur auquel ils sont aimantés ; les autres (lampe de plafond, appareils
+// dédiés avec abréviation) restent droits pour que le texte reste lisible.
+
+type Prim =
+  | { k: "c"; cx: number; cy: number; r: number; f?: boolean }
+  | { k: "l"; x1: number; y1: number; x2: number; y2: number; w?: number }
+  | { k: "p"; d: string; f?: boolean }
+  | { k: "r"; x: number; y: number; w: number; h: number; f?: boolean }
+  | { k: "t"; x: number; y: number; s: number; txt: string };
+
+interface DefSymbole { oriente: boolean; prims: Prim[]; }
+
+const L = (x1: number, y1: number, x2: number, y2: number, w?: number): Prim => ({ k: "l", x1, y1, x2, y2, w });
+
+// Interrupteur : petit cercle + "tige" oblique ; les barbes en bout de tige distinguent
+// simple allumage (1 barbe), va-et-vient (barbe de chaque côté) et bouton-poussoir (carré).
+const TIGE: Prim[] = [{ k: "c", cx: 10.5, cy: 15.5, r: 3.8 }, L(13.2, 12.8, 19, 7)];
+
+const SYMBOLES: Record<AppareillageType, DefSymbole> = {
+  // Prise de courant 2P+T : demi-cercle posé sur le mur, trait perpendiculaire (pôles)
+  // prolongé d'une barre (contact de terre).
+  prise: { oriente: true, prims: [
+    { k: "p", d: "M 5.5 19 A 6.5 6.5 0 0 1 18.5 19 Z" }, L(12, 19, 12, 7.5), L(8.5, 7.5, 15.5, 7.5),
+  ] },
+  // Prise commandée : prise 2P+T + tige de commande (comme un interrupteur).
+  prise_commandee: { oriente: true, prims: [
+    { k: "p", d: "M 4.5 19 A 6.5 6.5 0 0 1 17.5 19 Z" }, L(11, 19, 11, 8), L(7.5, 8, 14.5, 8),
+    L(17, 14, 21, 10), L(21, 10, 22.8, 11.8),
+  ] },
+  // Point d'éclairage en plafond : cercle barré d'une croix.
+  point_lumineux: { oriente: false, prims: [
+    { k: "c", cx: 12, cy: 12, r: 7 }, L(7.05, 7.05, 16.95, 16.95), L(16.95, 7.05, 7.05, 16.95),
+  ] },
+  // Applique : point d'éclairage (cercle croisé) tangent à un trait épais = le mur.
+  applique: { oriente: true, prims: [
+    { k: "c", cx: 12, cy: 13.5, r: 5.5 }, L(8.1, 9.6, 15.9, 17.4), L(15.9, 9.6, 8.1, 17.4), L(6, 20, 18, 20, 2.6),
+  ] },
+  interrupteur: { oriente: true, prims: [...TIGE, L(19, 7, 21.5, 9.5)] },
+  va_et_vient: { oriente: true, prims: [...TIGE, L(19, 7, 21.5, 9.5), L(19, 7, 16.5, 4.5)] },
+  telerupteur: { oriente: true, prims: [
+    { k: "c", cx: 10.5, cy: 15.5, r: 3.8 }, L(13.2, 12.8, 17.5, 8.5), { k: "r", x: 16.2, y: 3.2, w: 5, h: 5, f: true },
+  ] },
+  // Appareils dédiés : sortie de câble = cercle + abréviation (texte non pivoté).
+  four: { oriente: false, prims: [{ k: "c", cx: 12, cy: 12, r: 8.5 }, { k: "t", x: 12, y: 14.4, s: 7.5, txt: "F" }] },
+  plaque: { oriente: false, prims: [{ k: "c", cx: 12, cy: 12, r: 8.5 }, { k: "t", x: 12, y: 14.2, s: 6.6, txt: "PC" }] },
+  lave_linge: { oriente: false, prims: [{ k: "c", cx: 12, cy: 12, r: 8.5 }, { k: "t", x: 12, y: 14.2, s: 6.6, txt: "LL" }] },
+  lave_vaisselle: { oriente: false, prims: [{ k: "c", cx: 12, cy: 12, r: 8.5 }, { k: "t", x: 12, y: 14.2, s: 6.6, txt: "LV" }] },
+  seche_linge: { oriente: false, prims: [{ k: "c", cx: 12, cy: 12, r: 8.5 }, { k: "t", x: 12, y: 14.2, s: 6.6, txt: "SL" }] },
+  congelateur: { oriente: false, prims: [{ k: "c", cx: 12, cy: 12, r: 8.5 }, { k: "t", x: 12, y: 14.2, s: 6.6, txt: "CG" }] },
+  clim: { oriente: false, prims: [{ k: "c", cx: 12, cy: 12, r: 8.5 }, { k: "t", x: 12, y: 14.2, s: 6.6, txt: "CL" }] },
+  irve: { oriente: false, prims: [{ k: "c", cx: 12, cy: 12, r: 8.5 }, { k: "t", x: 12, y: 14.2, s: 6.6, txt: "EV" }] },
+  piscine: { oriente: false, prims: [{ k: "c", cx: 12, cy: 12, r: 8.5 }, { k: "t", x: 12, y: 14.2, s: 6.6, txt: "PI" }] },
+  vmc: { oriente: false, prims: [{ k: "c", cx: 12, cy: 12, r: 8.5 }, { k: "t", x: 12, y: 14, s: 5.6, txt: "VMC" }] },
+  alarme: { oriente: false, prims: [{ k: "c", cx: 12, cy: 12, r: 8.5 }, { k: "t", x: 12, y: 14.2, s: 6.6, txt: "AL" }] },
+  // Volet roulant : coffre (rectangle) + lames du tablier, abréviation VR. Ne pivote pas (texte).
+  volet_roulant: { oriente: false, prims: [
+    { k: "r", x: 2.5, y: 6, w: 19, h: 12 }, L(2.5, 10, 21.5, 10), { k: "t", x: 12, y: 16.4, s: 6.4, txt: "VR" },
+  ] },
+  // Chauffe-eau : réservoir (cercle) à hachures verticales.
+  chauffe_eau: { oriente: false, prims: [
+    { k: "c", cx: 12, cy: 12, r: 8.5 }, L(8.5, 7.2, 8.5, 16.8), L(12, 5.6, 12, 18.4), L(15.5, 7.2, 15.5, 16.8),
+  ] },
+  // Radiateur / convecteur électrique : rectangle à ailettes.
+  chauffage: { oriente: false, prims: [
+    { k: "r", x: 3, y: 7.5, w: 18, h: 9 }, L(7.5, 7.5, 7.5, 16.5), L(10.5, 7.5, 10.5, 16.5), L(13.5, 7.5, 13.5, 16.5), L(16.5, 7.5, 16.5, 16.5),
+  ] },
+  seche_serviette: { oriente: false, prims: [
+    { k: "r", x: 7, y: 3, w: 10, h: 18 }, L(7, 8, 17, 8), L(7, 12, 17, 12), L(7, 16, 17, 16),
+  ] },
+};
+
+export function symboleEstOriente(type: AppareillageType): boolean {
+  return SYMBOLES[type]?.oriente ?? false;
+}
+
+// Pictogramme centré sur (0,0), à insérer dans un <svg> existant (plan 2D) : size = côté
+// visuel en px, rotation = degrés (sens horaire écran) appliqués aux symboles orientés.
+// rotation = 0 → mur en bas de l'écran, intérieur de la pièce vers le haut.
+export function AppareillageGlyphe({ type, size = 20, color = "#1c1917", rotation = 0, fond = "#ffffff" }: {
+  type: AppareillageType; size?: number; color?: string; rotation?: number; fond?: string;
+}) {
+  const def = SYMBOLES[type] ?? SYMBOLES.prise;
+  const rot = def.oriente ? rotation : 0;
+  const trait = { stroke: color, strokeWidth: 1.5, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  return (
+    <g transform={`rotate(${rot}) scale(${size / 24}) translate(-12 -12)`}>
+      {def.prims.map((p, i) => {
+        switch (p.k) {
+          case "c": return <circle key={i} cx={p.cx} cy={p.cy} r={p.r} fill={p.f ? color : fond} {...trait} />;
+          case "l": return <line key={i} x1={p.x1} y1={p.y1} x2={p.x2} y2={p.y2} {...trait} strokeWidth={p.w ?? 1.5} />;
+          case "p": return <path key={i} d={p.d} fill={p.f ? color : fond} {...trait} />;
+          case "r": return <rect key={i} x={p.x} y={p.y} width={p.w} height={p.h} fill={p.f ? color : fond} {...trait} />;
+          case "t": return <text key={i} x={p.x} y={p.y} fontSize={p.s} textAnchor="middle" fill={color} fontFamily="monospace" fontWeight="bold">{p.txt}</text>;
+        }
+      })}
+    </g>
+  );
+}
+
+// Version autonome (palette, listes) : même dessin, dans son propre <svg>.
 export function AppareillageSymbol({ type, size = 20, color = "#1c1917" }: {
   type: AppareillageType; size?: number; color?: string;
 }) {
-  const stroke = { stroke: color, strokeWidth: 1.4, fill: "none" as const };
-
-  switch (type) {
-    case "prise":
-      return (
-        <svg width={size} height={size} viewBox="0 0 20 20">
-          <circle cx="10" cy="10" r="7" {...stroke} />
-          <circle cx="7.5" cy="10" r="1" fill={color} />
-          <circle cx="12.5" cy="10" r="1" fill={color} />
-        </svg>
-      );
-    case "prise_commandee":
-      return (
-        <svg width={size} height={size} viewBox="0 0 20 20">
-          <circle cx="10" cy="10" r="7" {...stroke} />
-          <circle cx="7.5" cy="10" r="1" fill={color} />
-          <circle cx="12.5" cy="10" r="1" fill={color} />
-          <line x1="4.5" y1="15.5" x2="15.5" y2="4.5" stroke={color} strokeWidth={1.4} />
-        </svg>
-      );
-    case "point_lumineux":
-      return (
-        <svg width={size} height={size} viewBox="0 0 20 20">
-          <circle cx="10" cy="10" r="7" {...stroke} />
-        </svg>
-      );
-    case "applique":
-      return (
-        <svg width={size} height={size} viewBox="0 0 20 20">
-          <path d="M 3 3 A 7 7 0 0 1 3 17" {...stroke} />
-          <line x1="3" y1="3" x2="3" y2="17" stroke={color} strokeWidth={1.4} />
-        </svg>
-      );
-    case "interrupteur":
-      return (
-        <svg width={size} height={size} viewBox="0 0 20 20">
-          <circle cx="10" cy="10" r="6" {...stroke} />
-          <line x1="6" y1="13" x2="13" y2="7" stroke={color} strokeWidth={1.4} />
-        </svg>
-      );
-    case "va_et_vient":
-      return (
-        <svg width={size} height={size} viewBox="0 0 20 20">
-          <circle cx="10" cy="9" r="6" {...stroke} />
-          <line x1="6" y1="12" x2="13" y2="6" stroke={color} strokeWidth={1.4} />
-          <text x="10" y="19" fontSize="6" textAnchor="middle" fill={color} fontFamily="monospace">VV</text>
-        </svg>
-      );
-    case "telerupteur":
-      return (
-        <svg width={size} height={size} viewBox="0 0 20 20">
-          <circle cx="10" cy="10" r="6" {...stroke} />
-          <text x="10" y="12.5" fontSize="6" textAnchor="middle" fill={color} fontFamily="monospace">BP</text>
-        </svg>
-      );
-    default: {
-      const txt = DEDIE_INITIALES[type] ?? "?";
-      return (
-        <svg width={size} height={size} viewBox="0 0 20 20">
-          <rect x="3" y="3" width="14" height="14" rx="2" {...stroke} />
-          <text x="10" y="13" fontSize="6" textAnchor="middle" fill={color} fontFamily="monospace" fontWeight="bold">{txt}</text>
-        </svg>
-      );
-    }
-  }
+  return (
+    <svg width={size} height={size} viewBox={`${-size / 2} ${-size / 2} ${size} ${size}`}>
+      <AppareillageGlyphe type={type} size={size} color={color} fond="none" />
+    </svg>
+  );
 }
 
-// Version chaîne SVG (pour la fenêtre d'impression, hors React — même approche que
-// printLabels()/rendreSVGImprimable() déjà utilisés ailleurs dans VoltApp).
-export function appareillageSymbolSvgString(type: AppareillageType, x: number, y: number, size = 14, color = "#1c1917"): string {
-  const r = size / 2;
-  switch (type) {
-    case "prise":
-      return `<circle cx="${x}" cy="${y}" r="${r}" fill="none" stroke="${color}" stroke-width="1.2"/>
-        <circle cx="${x - r * 0.35}" cy="${y}" r="1" fill="${color}"/>
-        <circle cx="${x + r * 0.35}" cy="${y}" r="1" fill="${color}"/>`;
-    case "prise_commandee":
-      return `<circle cx="${x}" cy="${y}" r="${r}" fill="none" stroke="${color}" stroke-width="1.2"/>
-        <circle cx="${x - r * 0.35}" cy="${y}" r="1" fill="${color}"/>
-        <circle cx="${x + r * 0.35}" cy="${y}" r="1" fill="${color}"/>
-        <line x1="${x - r * 0.7}" y1="${y + r * 0.7}" x2="${x + r * 0.7}" y2="${y - r * 0.7}" stroke="${color}" stroke-width="1.2"/>`;
-    case "point_lumineux":
-      return `<circle cx="${x}" cy="${y}" r="${r}" fill="none" stroke="${color}" stroke-width="1.2"/>`;
-    case "applique":
-      return `<path d="M ${x - r} ${y - r} A ${r} ${r} 0 0 0 ${x - r} ${y + r}" fill="none" stroke="${color}" stroke-width="1.2"/>
-        <line x1="${x - r}" y1="${y - r}" x2="${x - r}" y2="${y + r}" stroke="${color}" stroke-width="1.2"/>`;
-    case "interrupteur":
-      return `<circle cx="${x}" cy="${y}" r="${r * 0.85}" fill="none" stroke="${color}" stroke-width="1.2"/>
-        <line x1="${x - r * 0.5}" y1="${y + r * 0.5}" x2="${x + r * 0.5}" y2="${y - r * 0.5}" stroke="${color}" stroke-width="1.2"/>`;
-    case "va_et_vient":
-      return `<circle cx="${x}" cy="${y}" r="${r * 0.85}" fill="none" stroke="${color}" stroke-width="1.2"/>
-        <line x1="${x - r * 0.5}" y1="${y + r * 0.5}" x2="${x + r * 0.5}" y2="${y - r * 0.5}" stroke="${color}" stroke-width="1.2"/>
-        <text x="${x}" y="${y + r + 6}" font-size="5" text-anchor="middle" fill="${color}" font-family="monospace">VV</text>`;
-    case "telerupteur":
-      return `<circle cx="${x}" cy="${y}" r="${r * 0.85}" fill="none" stroke="${color}" stroke-width="1.2"/>
-        <text x="${x}" y="${y + 2}" font-size="5" text-anchor="middle" fill="${color}" font-family="monospace">BP</text>`;
-    default: {
-      const txt = DEDIE_INITIALES[type] ?? "?";
-      return `<rect x="${x - r}" y="${y - r}" width="${size}" height="${size}" rx="2" fill="none" stroke="${color}" stroke-width="1.2"/>
-        <text x="${x}" y="${y + 2}" font-size="5" text-anchor="middle" fill="${color}" font-family="monospace" font-weight="bold">${txt}</text>`;
+// Version chaîne SVG (fenêtre d'impression, hors React). x,y = centre ; size = côté du
+// pictogramme ; rotationDeg = orientation écran (symboles orientés) ; avecBoite entoure le
+// symbole d'un carré blanc, comme sur le plan.
+export function appareillageSymbolSvgString(
+  type: AppareillageType, x: number, y: number, size = 14, color = "#1c1917",
+  rotationDeg = 0, avecBoite = false,
+): string {
+  const def = SYMBOLES[type] ?? SYMBOLES.prise;
+  const rot = def.oriente ? rotationDeg : 0;
+  const sw = 1.5;
+  const attrs = `stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"`;
+  const corps = def.prims.map(p => {
+    switch (p.k) {
+      case "c": return `<circle cx="${p.cx}" cy="${p.cy}" r="${p.r}" fill="${p.f ? color : "#fff"}" ${attrs}/>`;
+      case "l": return `<line x1="${p.x1}" y1="${p.y1}" x2="${p.x2}" y2="${p.y2}" ${attrs} stroke-width="${p.w ?? sw}"/>`;
+      case "p": return `<path d="${p.d}" fill="${p.f ? color : "#fff"}" ${attrs}/>`;
+      case "r": return `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" fill="${p.f ? color : "#fff"}" ${attrs}/>`;
+      case "t": return `<text x="${p.x}" y="${p.y}" font-size="${p.s}" text-anchor="middle" fill="${color}" font-family="monospace" font-weight="bold">${p.txt}</text>`;
     }
-  }
+  }).join("");
+  const boite = avecBoite
+    ? `<rect x="${(x - size * 0.75).toFixed(2)}" y="${(y - size * 0.75).toFixed(2)}" width="${(size * 1.5).toFixed(2)}" height="${(size * 1.5).toFixed(2)}" rx="2" fill="#fff" stroke="${color}" stroke-width="0.9"/>`
+    : "";
+  return `${boite}<g transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) rotate(${rot}) scale(${(size / 24).toFixed(4)}) translate(-12 -12)">${corps}</g>`;
 }
