@@ -32,6 +32,11 @@ export interface AppareillagePlace {
   // entièrement fermé (défaut) … 100 = entièrement ouvert (tablier enroulé dans le coffre).
   caisson?: "interieur" | "exterieur";
   voletOuvertPct?: number;
+  // Couleur du volet en vue 3D (coffre, coulisses, tablier) — hex, blanc par défaut. Voir COULEURS_VOLET.
+  voletCouleur?: string;
+  // Couleur de la plaque/du mécanisme en vue 3D — uniquement prises et commandes (voir
+  // TYPES_APPAREILLAGE_COLORABLES). Hex ; blanc par défaut. Sans effet sur le symbole 2D (normalisé).
+  couleur?: string;
   // Puissance en watts — uniquement pour type "chauffage". Sert au regroupement des
   // circuits de chauffage par puissance cumulée (NF C 15-100, amendement A5) : voir
   // genererBreakersChauffage (maison-engine.ts). Valeur par défaut à la création :
@@ -984,3 +989,32 @@ export function assombrirCouleur(couleur: string, facteur = 0.55): string {
   }
   return couleur;
 }
+
+// Teintes proposées pour un volet roulant (vue 3D uniquement) — couleurs courantes du
+// marché (PVC / alu laqué). Le blanc est la valeur par défaut.
+export const COULEURS_VOLET: { nom: string; hex: string }[] = [
+  { nom: "Blanc", hex: "#ffffff" },
+  { nom: "Ivoire", hex: "#efe6cf" },
+  { nom: "Beige", hex: "#d8c7a3" },
+  { nom: "Gris clair", hex: "#c4c8cd" },
+  { nom: "Gris anthracite", hex: "#3d434a" },
+  { nom: "Brun", hex: "#5b4033" },
+  { nom: "Vert", hex: "#3f5a45" },
+];
+
+// Prises et commandes dont la couleur de plaque se choisit (vue 3D).
+export const TYPES_APPAREILLAGE_COLORABLES: AppareillageType[] = [
+  "prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur",
+];
+// Teintes courantes de plaques/mécanismes (gammes blanc, gris, anthracite, laiton…) — un
+// sélecteur de couleur libre complète cette liste côté interface.
+export const COULEURS_APPAREILLAGE: { nom: string; hex: string }[] = [
+  { nom: "Blanc", hex: "#ffffff" },
+  { nom: "Ivoire", hex: "#efe6cf" },
+  { nom: "Sable", hex: "#d8c7a3" },
+  { nom: "Gris clair", hex: "#c4c8cd" },
+  { nom: "Alu", hex: "#a9adb3" },
+  { nom: "Anthracite", hex: "#3d434a" },
+  { nom: "Noir", hex: "#1f2023" },
+  { nom: "Laiton", hex: "#b79a5b" },
+];

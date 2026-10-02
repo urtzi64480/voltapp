@@ -109,3 +109,88 @@ export function recentrerVolet(pt: Point, piece: Piece, pieces: Piece[]): Point 
   const baie = baieDuVolet(pt, piece, pieces);
   return baie.detectee ? baie.centre : pt;
 }
+
+// ─── COTES D'IMPLANTATION ──────────────────────────────────────────────────────
+// Une cote = une distance entre deux points du plan, en cm, affichée sur le plan 2D et à
+// l'impression. Deux familles :
+//  - "mur"  : appareillage posé contre un mur → distance LE LONG du mur, du coin au pied de
+//             l'appareillage (cote d'implantation classique) ;
+//  - "perp" : appareillage libre (ex. plafonnier) → distance perpendiculaire aux deux murs
+//             (non parallèles) les plus proches.
+export interface Cote {
+  kind: "mur" | "perp";
+  a: Point; b: Point;      // mur : coin → pied sur le mur · perp : appareillage → pied sur le mur
+  valeurCm: number;
+  normale?: Point;         // kind "mur" : normale intérieure (sert à décaler la cote hors de la pièce)
+}
+
+// detail = true : les deux cotes le long du mur (coin gauche et coin droit) — utile pour
+// caler un appareillage sélectionné ; false : une seule cote, vers le coin le plus proche.
+export function cotesAppareillage(pt: Point, contour: Point[], type: AppareillageType, detail: boolean): Cote[] {
+  const out: Cote[] = [];
+  const n = contour.length;
+  if (n < 3) return out;
+  const anc = estMural(type) ? ancrageMurLePlusProche(pt, contour) : null;
+  if (anc && anc.distance <= TOLERANCE_MUR_M) {
+    const A = contour[anc.segIndex], B = contour[(anc.segIndex + 1) % n];
+    const dA = Math.hypot(anc.pied.x - A.x, anc.pied.y - A.y), dB = Math.hypot(anc.pied.x - B.x, anc.pied.y - B.y);
+    const mk = (coin: Point, d: number): Cote => ({ kind: "mur", a: coin, b: anc.pied, valeurCm: Math.round(d * 100), normale: anc.normale });
+    if (detail) { out.push(mk(A, dA), mk(B, dB)); } else { out.push(dA <= dB ? mk(A, dA) : mk(B, dB)); }
+    return out;
+  }
+  const murs = contour.map((a, i) => {
+    const b = contour[(i + 1) % n];
+    const pied = projeterSurSegment(pt, a, b);
+    const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    return { pied, d: Math.hypot(pt.x - pied.x, pt.y - pied.y), ux: (b.x - a.x) / l, uy: (b.y - a.y) / l };
+  }).sort((p, q) => p.d - q.d);
+  const premier = murs[0];
+  const second = murs.find(m => m !== premier && Math.abs(m.ux * premier.ux + m.uy * premier.uy) < 0.7);
+  [premier, second].forEach(m => {
+    if (m && m.d > 0.02) out.push({ kind: "perp", a: pt, b: m.pied, valeurCm: Math.round(m.d * 100) });
+  });
+  return out;
+}
+
+// Garde les cotes lisibles : écarte celles trop courtes à l'écran et celles dont le texte
+// chevaucherait une cote déjà retenue. Les `prioritaires` (cotes de l'appareillage
+// sélectionné) sont toujours gardées, en tête de liste.
+export function filtrerCotesLisibles(
+  cotes: Cote[], toS: (p: Point) => Point, prioritaires: Cote[] = [], longueurMinPx = 14, espacementPx = 26,
+): Cote[] {
+  const milieu = (c: Cote) => { const A = toS(c.a), B = toS(c.b); return { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 }; };
+  const centres = prioritaires.map(milieu);
+  const gardees: Cote[] = [];
+  for (const c of cotes) {
+    const A = toS(c.a), B = toS(c.b);
+    if (Math.hypot(B.x - A.x, B.y - A.y) < longueurMinPx) continue;
+    const mid = milieu(c);
+    if (centres.some(p => Math.hypot(p.x - mid.x, p.y - mid.y) < espacementPx)) continue;
+    gardees.push(c); centres.push(mid);
+  }
+  return [...prioritaires, ...gardees];
+}
+
+// Géométrie d'affichage d'une cote (repère écran) — partagée par le rendu React du plan et
+// la chaîne SVG de l'impression. decalagePx : écart de la ligne de cote au mur, vers l'EXTÉRIEUR
+// de la pièce (kind "mur" uniquement).
+export interface GeoCote {
+  kind: "mur" | "perp";
+  A: Point; B: Point;     // extrémités réelles (écran)
+  a2: Point; b2: Point;   // extrémités de la ligne de cote (décalée pour "mur", = A/B pour "perp")
+  mid: Point; angle: number; txt: string;
+}
+export function geometrieCote(c: Cote, toS: (p: Point) => Point, decalagePx: number): GeoCote | null {
+  const A = toS(c.a), B = toS(c.b);
+  if (Math.hypot(B.x - A.x, B.y - A.y) < 3) return null;
+  let ox = 0, oy = 0;
+  if (c.kind === "mur" && c.normale) {
+    const pb = toS(c.b), pn = toS({ x: c.b.x + c.normale.x * 0.1, y: c.b.y + c.normale.y * 0.1 });
+    const l = Math.hypot(pn.x - pb.x, pn.y - pb.y) || 1;
+    ox = -(pn.x - pb.x) / l * decalagePx; oy = -(pn.y - pb.y) / l * decalagePx;
+  }
+  const a2 = { x: A.x + ox, y: A.y + oy }, b2 = { x: B.x + ox, y: B.y + oy };
+  let angle = Math.atan2(b2.y - a2.y, b2.x - a2.x) * 180 / Math.PI;
+  if (angle > 90 || angle < -90) angle += 180; // texte toujours lisible (jamais à l'envers)
+  return { kind: c.kind, A, B, a2, b2, mid: { x: (a2.x + b2.x) / 2, y: (a2.y + b2.y) / 2 }, angle, txt: String(c.valeurCm) };
+}
