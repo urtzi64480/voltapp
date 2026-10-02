@@ -16,8 +16,8 @@ import { Niveau, PIECE_TYPES, centroide, AppareillageType, OuvertureEffective, o
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
 import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
-import { parametresMur3D, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT, preparerMurs } from "@/lib/murs";
-import { appareillagesEnPoseApparente, posesTroncons } from "@/lib/pose-circuits";
+import { parametresMur3D, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT, preparerMurs, pointDansCouche2 } from "@/lib/murs";
+import { appareillagesEnPoseApparente, posesTroncons, hauteursTroncons } from "@/lib/pose-circuits";
 
 
 // Hauteur d'installation par défaut du tableau électrique (mètres) quand non précisée.
@@ -314,20 +314,22 @@ const Vue3D = forwardRef<Vue3DHandle, {
       // cloisons beige clair, murs extérieurs plus soutenus (enduit), doublage plus clair.
       const murMat = new THREE.MeshStandardMaterial({ color: 0xe3dccf });
       const murExtMat = new THREE.MeshStandardMaterial({ color: 0xcdc4b3 });
-      const doublageMat = new THREE.MeshStandardMaterial({ color: 0xece8de });
-      doublageMatsRef.current.push(doublageMat);
+      const doublageMat = new THREE.MeshStandardMaterial({ color: 0xe4e0d5 });
+      const finitionMat = new THREE.MeshStandardMaterial({ color: 0xf1eee6 });
+      // Doublage ET finition deviennent translucides en mode « Coupe » (pour voir les câbles de la couche 2).
+      doublageMatsRef.current.push(doublageMat, finitionMat);
       piece.contour.forEach((a, i) => {
         const b = piece.contour[(i + 1) % piece.contour.length];
         const ouverturesSegment = ouverturesEffectivesMur(niveauResultat.pieces, piece, i);
         const m = parametresMur3D(piece, i);
-        // Structure puis doublage, chacun à sa position réelle par rapport au contour (= face intérieure
-        // finie sur un mur extérieur, axe de la cloison sur un mur mitoyen) ; mêmes ouvertures pour les deux.
-        construireMurAvecOuvertures(a, b, hauteurMurs, ouverturesSegment, m.e, m.type === "exterieur" ? murExtMat : murMat, scene,
-          { decalage: m.decalageStructure, extDebut: m.extDebut, extFin: m.extFin });
-        if (m.d > 0) {
-          construireMurAvecOuvertures(a, b, hauteurMurs - 0.003, ouverturesSegment, m.d, doublageMat, scene,
-            { decalage: m.decalageDoublage, extDebut: m.extDoublageDebut, extFin: m.extDoublageFin, avecContenu: false });
-        }
+        // Les 3 couches (structure, doublage, finition), chacune à sa position réelle par rapport au contour
+        // (= face intérieure finie sur un mur extérieur, axe de la cloison sur un mur mitoyen) ; les MÊMES
+        // ouvertures traversent toutes les couches.
+        m.couches.forEach(c => {
+          const mat = c.nom === "structure" ? (m.type === "exterieur" ? murExtMat : murMat) : c.nom === "doublage" ? doublageMat : finitionMat;
+          construireMurAvecOuvertures(a, b, hauteurMurs - c.reduction, ouverturesSegment, c.epaisseur, mat, scene,
+            { decalage: c.decalage, extDebut: c.extDebut, extFin: c.extFin, avecContenu: c.nom === "structure" });
+        });
       });
 
       // Appareillages — modèles 3D ressemblants (voir Modeles3D.ts), posés sur la FACE
@@ -383,7 +385,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
         const apparent = appareilsApparents.has(app.id) && TYPES_POSE_APPARENTE.includes(app.type);
         const racine = apparent && murPose ? habillerEnSaillie(modele, py, hauteurMurs) : modele.groupe;
         if (murPose && !apparent && TYPES_POSE_APPARENTE.includes(app.type) && couleurCircuitApp) {
-          const profondeur = murPose.d > 0 ? murPose.d / 2 : 0.025;        // milieu du doublage, sinon saignée de 2,5 cm
+          const profondeur = murPose.profondeurCables;       // milieu de la couche 2 (doublage) — passage par défaut
           const longueurCable = Math.max(0, hauteurMurs - 0.05 - (py + 0.04));
           if (longueurCable > 0.02) {
             const cable = new THREE.Mesh(
@@ -518,25 +520,43 @@ const Vue3D = forwardRef<Vue3DHandle, {
             pts3D.push(new THREE.Vector3(c.point.x, h, c.point.y));
           });
           pts3D.push(ancre3D(seg.bId, seg.bPoint));
-          const geo = new THREE.BufferGeometry().setFromPoints(pts3D);
-          // Liaison (navette) entre deux va-et-vient : couleur du circuit assombrie, comme
-          // en 2D — reste rattachée au circuit tout en se distinguant du reste du tracé.
-          const mat = new THREE.LineBasicMaterial({ color: seg.type === "navette" ? assombrirCouleur(color) : color });
-          scene.add(new THREE.Line(geo, mat));
-          // Sections APPARENTES (le câble sort du mur) : moulure PVC 20 × 14 mm le long de la section,
-          // translucide pour laisser voir le câble coloré à l'intérieur. Encastré = rien de plus.
           const poses = posesTroncons(niveau, cle, coudes);
+          const hSections = hauteursTroncons(niveau, cle, coudes);
+          const teinte = seg.type === "navette" ? assombrirCouleur(color) : color;   // navette : couleur du circuit assombrie
+          const matCable = new THREE.MeshStandardMaterial({ color: teinte, emissive: teinte, emissiveIntensity: 0.45 });
+          // Chaque SECTION est tracée à part : tube coloré (visible, contrairement à un trait de 1 px), à plat à sa
+          // hauteur réglée (montées / descentes verticales aux extrémités) ou en pente directe si non réglée ;
+          // encastrée et longeant un mur → au milieu de la couche 2 de ce mur (visible en mode « Coupe »).
+          const tube = (p0: THREE.Vector3, p1: THREE.Vector3, rayon: number, mat: THREE.Material) => {
+            const l = p0.distanceTo(p1);
+            if (l < 0.005) return;
+            const m = new THREE.Mesh(new THREE.CylinderGeometry(rayon, rayon, l, 8), mat);
+            m.position.copy(p0).add(p1).multiplyScalar(0.5);
+            m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), p1.clone().sub(p0).normalize());
+            scene.add(m);
+          };
           for (let j = 0; j < pts3D.length - 1; j++) {
-            if (poses[j] !== "apparent") continue;
-            const p0 = pts3D[j], p1 = pts3D[j + 1];
-            const longueur = p0.distanceTo(p1);
-            if (longueur < 0.02) continue;
-            const moulure = new THREE.Mesh(
-              new THREE.BoxGeometry(0.02, 0.014, longueur),
-              new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 }));
-            moulure.position.copy(p0).add(p1).multiplyScalar(0.5);
-            moulure.lookAt(p1);   // l'axe long de la boîte (z) suit la section
-            scene.add(moulure);
+            let p0 = pts3D[j].clone(), p1 = pts3D[j + 1].clone();
+            if (poses[j] !== "apparent") {
+              const m0 = pointDansCouche2(niveau.pieces, { x: p0.x, y: p0.z }), m1 = pointDansCouche2(niveau.pieces, { x: p1.x, y: p1.z });
+              if (m0 && m1 && m0.pieceId === m1.pieceId && m0.i === m1.i) {
+                p0 = new THREE.Vector3(m0.point.x, p0.y, m0.point.y); p1 = new THREE.Vector3(m1.point.x, p1.y, m1.point.y);
+              }
+            }
+            const hs = hSections[j] != null ? hSections[j]! / 100 : null;
+            const chemin = hs == null ? [p0, p1] : [p0, new THREE.Vector3(p0.x, hs, p0.z), new THREE.Vector3(p1.x, hs, p1.z), p1];
+            for (let k = 0; k < chemin.length - 1; k++) {
+              tube(chemin[k], chemin[k + 1], 0.006, matCable);
+              // Section APPARENTE : moulure PVC 20 × 14 mm autour du tube, translucide pour laisser voir le câble.
+              if (poses[j] === "apparent") {
+                const longueur = chemin[k].distanceTo(chemin[k + 1]);
+                if (longueur < 0.02) continue;
+                const moulure = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.014, longueur), new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 }));
+                moulure.position.copy(chemin[k]).add(chemin[k + 1]).multiplyScalar(0.5);
+                moulure.lookAt(chemin[k + 1]);   // l'axe long de la boîte (z) suit la section
+                scene.add(moulure);
+              }
+            }
           }
         });
 
