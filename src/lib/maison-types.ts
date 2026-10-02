@@ -13,7 +13,8 @@ export type AppareillageType =
   | "interrupteur" | "va_et_vient" | "telerupteur"
   | "four" | "plaque" | "lave_linge" | "lave_vaisselle" | "seche_linge"
   | "chauffe_eau" | "chauffage" | "clim" | "seche_serviette" | "congelateur"
-  | "irve" | "piscine" | "vmc" | "alarme";
+  | "irve" | "piscine" | "vmc" | "alarme"
+  | "volet_roulant";
 
 export interface Point { x: number; y: number; }
 
@@ -24,6 +25,13 @@ export interface AppareillagePlace {
   y: number; // mètres
   nom?: string;      // libellé (ex: nom du point lumineux)
   hauteur?: number;  // hauteur d'installation en cm depuis le sol
+  // Volet roulant uniquement. Les dimensions (largeur, hauteur, allège) ne sont JAMAIS saisies :
+  // elles sont lues sur la fenêtre portée par le mur où le volet est posé (voir baieDuVolet,
+  // appareillage-mur.ts). caisson : emplacement du coffre — "interieur" (défaut, dans la pièce)
+  // ou "exterieur" (en applique sur la face extérieure du mur). voletOuvertPct : 0 = volet
+  // entièrement fermé (défaut) … 100 = entièrement ouvert (tablier enroulé dans le coffre).
+  caisson?: "interieur" | "exterieur";
+  voletOuvertPct?: number;
   // Puissance en watts — uniquement pour type "chauffage". Sert au regroupement des
   // circuits de chauffage par puissance cumulée (NF C 15-100, amendement A5) : voir
   // genererBreakersChauffage (maison-engine.ts). Valeur par défaut à la création :
@@ -271,6 +279,9 @@ export function familleCircuitManuelAppareillage(type: AppareillageType, pieceTy
     return "prise_16";
   }
   if (type === "point_lumineux" || type === "applique") return "lumiere";
+  // Volets roulants : un circuit dédié PARTAGÉ (NF C 15-100 : 16 A / 1,5 mm², tous les volets
+  // sur le même circuit — idéalement répartis sur 2) et non un circuit par moteur.
+  if (type === "volet_roulant") return "volets_roulants";
   return null;
 }
 

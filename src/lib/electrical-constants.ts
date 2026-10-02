@@ -90,6 +90,9 @@ export const CIRCUITS: Record<string, {
   piscine:         { label: "Piscine/PAC",      icon: "🏊", ampMax: 20, dedié: true,  diffType: "F",  section: "2.5", category: null },
   vmc:             { label: "VMC",              icon: "💨", ampMax: 10, dedié: true,  diffType: "AC", section: "1.5", category: null },
   alarme:          { label: "Alarme",           icon: "🔔", ampMax: 6,  dedié: true,  diffType: "AC", section: "1.5", category: null },
+  // NF C 15-100 : 1 circuit dédié 16 A / 1,5 mm² pour l'ensemble des volets roulants (partagé,
+  // d'où dedié:false — contrairement aux appareils à un circuit par instance), différentiel AC.
+  volets_roulants: { label: "Volets roulants",  icon: "🪟", ampMax: 16, dedié: false, diffType: "AC", section: "1.5", category: null },
   exterieur:       { label: "Extérieur",        icon: "🌿", ampMax: 16, dedié: false, diffType: "AC", section: "1.5", category: "prises" },
   garage:          { label: "Garage",           icon: "🏠", ampMax: 16, dedié: false, diffType: "AC", section: "1.5", category: "prises" },
   general:         { label: "Général / Arrivée",icon: "⚡", ampMax: 63, dedié: true,  diffType: null, section: "10.0", category: null },
@@ -128,6 +131,7 @@ export const MAX_PAR_CIRCUIT: Record<string, number> = {
   exterieur: 8,
   garage: 8,
   cuisine_prises: 6,   // socles cuisine — Art. 771.314.2
+  volets_roulants: 8,  // moteurs par circuit — pas de maximum normatif ; 8 pour répartir sur plusieurs circuits (conseil NF C 15-100)
   prise_20: 6,
 };
 

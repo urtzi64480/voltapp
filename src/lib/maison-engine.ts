@@ -40,7 +40,7 @@ export const CIRCUIT_DEDIE: Record<string, string> = {
 // type brut au besoin.
 const LABEL_NON_RACCORDE: Record<string, string> = {
   interrupteur: "Interrupteur", va_et_vient: "Va-et-vient", telerupteur: "Télérupteur",
-  prise: "Prise", prise_commandee: "Prise commandée",
+  prise: "Prise", prise_commandee: "Prise commandée", volet_roulant: "Volet roulant",
 };
 
 export interface ResultatGeneration {
@@ -389,12 +389,14 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     const prisesExtGarage = resteApresExclusion.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "exterieur");
     const pointsLumineux = resteApresExclusion.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "lumiere");
     const chauffages = resteApresExclusion.filter(a => a.base.type === "chauffage");
+    const volets = resteApresExclusion.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "volets_roulants");
     const dedies = resteApresExclusion.filter(a => !!CIRCUIT_DEDIE[a.base.type]);
 
     genererBreakersPrises(prisesStandard, "prise_16", niveau.nom, breakers);
     genererBreakersPrises(prisesCuisine, "cuisine_prises", niveau.nom, breakers);
     genererBreakersPrises(prisesExtGarage, "exterieur", niveau.nom, breakers);
     genererBreakersChauffage(chauffages, niveau.nom, breakers);
+    genererBreakersPrises(volets, "volets_roulants", niveau.nom, breakers);
 
     // Éclairage : déduction de la commande depuis les interrupteurs/va-et-vient/télérupteurs liés
     const lumItems = pointsLumineux.map(pl => ({ ...pl, ...deduireCommandeLumiere(tousItems, pl.base.id) }));

@@ -220,7 +220,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           ajouter(`${sousCat}@${piece.id}`, sousCat, LABEL_APPAREILLAGE_DOMOTIQUE[a.type], piece.nom || "Pièce", 1, "u");
         } else if (LABEL_APPAREILLAGE[a.type]) {
           ajouter(`${a.type}@${piece.id}`, a.type, LABEL_APPAREILLAGE[a.type], piece.nom || "Pièce", 1, "u");
-        } else if (CIRCUIT_DEDIE[a.type] || a.type === "chauffage") {
+        } else if (CIRCUIT_DEDIE[a.type] || a.type === "chauffage" || a.type === "volet_roulant") {
           ajouter(`prise_specialisee@${piece.id}`, "prise_specialisee", "Prise / sortie de câble spécialisée",
             piece.nom || "Pièce", 1, "u");
         }
