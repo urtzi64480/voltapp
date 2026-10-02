@@ -25,10 +25,10 @@ import {
   LiaisonWaypoint, cleSegmentLiaison,
   cheminSegment, longueurBranchesEclairage, centroidePoints, assombrirCouleur, pointsOndulesEntre,
   BoiteDerivation, migrerBoitesDerivation,
-  MeubleSimple, nouveauMeuble,
+  MeubleSimple, nouveauMeuble, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
 } from "@/lib/maison-types";
 import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
-import { ancrageMurLePlusProche, aimanterSurMur, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet } from "@/lib/appareillage-mur";
+import { ancrageMurLePlusProche, aimanterSurMur, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote } from "@/lib/appareillage-mur";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker } from "@/lib/electrical-constants";
@@ -119,13 +119,71 @@ function snapAvecAlignement(m: Point, candidats: Point[], seuilM: number): Resul
   return { point: { x, y }, guideX, guideY };
 }
 
+// Rendu d'une cote sur le plan 2D : ligne de cote décalée hors de la pièce (appareillage au
+// mur) avec traits d'attache et repères en bout, ou simple trait appareillage → mur
+// (appareillage libre) ; valeur en cm au milieu, jamais à l'envers, sur halo blanc.
+const COULEUR_COTE = "#0369A1";
+function CoteSvg({ g }: { g: GeoCote }) {
+  const dx = g.b2.x - g.a2.x, dy = g.b2.y - g.a2.y;
+  const l = Math.hypot(dx, dy) || 1;
+  const tx = -dy / l * 3, ty = dx / l * 3; // demi-repère perpendiculaire à la ligne de cote
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      {g.kind === "mur" ? (
+        <>
+          <line x1={g.A.x} y1={g.A.y} x2={g.a2.x} y2={g.a2.y} stroke={COULEUR_COTE} strokeWidth={0.7} opacity={0.6} />
+          <line x1={g.B.x} y1={g.B.y} x2={g.b2.x} y2={g.b2.y} stroke={COULEUR_COTE} strokeWidth={0.7} opacity={0.6} />
+          <line x1={g.a2.x} y1={g.a2.y} x2={g.b2.x} y2={g.b2.y} stroke={COULEUR_COTE} strokeWidth={1} />
+          <line x1={g.a2.x - tx} y1={g.a2.y - ty} x2={g.a2.x + tx} y2={g.a2.y + ty} stroke={COULEUR_COTE} strokeWidth={1.2} />
+          <line x1={g.b2.x - tx} y1={g.b2.y - ty} x2={g.b2.x + tx} y2={g.b2.y + ty} stroke={COULEUR_COTE} strokeWidth={1.2} />
+        </>
+      ) : (
+        <>
+          <line x1={g.A.x} y1={g.A.y} x2={g.B.x} y2={g.B.y} stroke={COULEUR_COTE} strokeWidth={1} strokeDasharray="3,2" />
+          <circle cx={g.A.x} cy={g.A.y} r={1.8} fill={COULEUR_COTE} />
+          <circle cx={g.B.x} cy={g.B.y} r={1.8} fill={COULEUR_COTE} />
+        </>
+      )}
+      {/* halo blanc dessiné à part (puis le texte par-dessus) : lisible sur n'importe quel fond, sans dépendre de paint-order */}
+      <g transform={`translate(${g.mid.x} ${g.mid.y}) rotate(${g.angle})`} textAnchor="middle" fontSize={9.5} fontWeight={600} fontFamily="monospace">
+        <text dominantBaseline="central" fill="none" stroke="#fff" strokeWidth={3.2} strokeLinejoin="round">{g.txt}</text>
+        <text dominantBaseline="central" fill={COULEUR_COTE}>{g.txt}</text>
+      </g>
+    </g>
+  );
+}
+
+// Même cote pour la fenêtre d'impression (chaîne SVG, hors React).
+function coteSvgString(c: Cote, toS: (p: Point) => Point): string {
+  const g = geometrieCote(c, toS, 8);
+  if (!g) return "";
+  const col = COULEUR_COTE, f = (n: number) => n.toFixed(1);
+  let out = "";
+  if (g.kind === "mur") {
+    const dx = g.b2.x - g.a2.x, dy = g.b2.y - g.a2.y, l = Math.hypot(dx, dy) || 1;
+    const tx = -dy / l * 2.2, ty = dx / l * 2.2;
+    out += `<line x1="${f(g.A.x)}" y1="${f(g.A.y)}" x2="${f(g.a2.x)}" y2="${f(g.a2.y)}" stroke="${col}" stroke-width="0.4" opacity="0.6"/>`;
+    out += `<line x1="${f(g.B.x)}" y1="${f(g.B.y)}" x2="${f(g.b2.x)}" y2="${f(g.b2.y)}" stroke="${col}" stroke-width="0.4" opacity="0.6"/>`;
+    out += `<line x1="${f(g.a2.x)}" y1="${f(g.a2.y)}" x2="${f(g.b2.x)}" y2="${f(g.b2.y)}" stroke="${col}" stroke-width="0.6"/>`;
+    out += `<line x1="${f(g.a2.x - tx)}" y1="${f(g.a2.y - ty)}" x2="${f(g.a2.x + tx)}" y2="${f(g.a2.y + ty)}" stroke="${col}" stroke-width="0.8"/>`;
+    out += `<line x1="${f(g.b2.x - tx)}" y1="${f(g.b2.y - ty)}" x2="${f(g.b2.x + tx)}" y2="${f(g.b2.y + ty)}" stroke="${col}" stroke-width="0.8"/>`;
+  } else {
+    out += `<line x1="${f(g.A.x)}" y1="${f(g.A.y)}" x2="${f(g.B.x)}" y2="${f(g.B.y)}" stroke="${col}" stroke-width="0.6" stroke-dasharray="2,1.5"/>`;
+  }
+  const tf = `translate(${f(g.mid.x)} ${f(g.mid.y)}) rotate(${f(g.angle)})`;
+  out += `<g transform="${tf}" text-anchor="middle" font-size="5.5" font-weight="bold" font-family="monospace">`
+    + `<text dominant-baseline="central" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round">${g.txt}</text>`
+    + `<text dominant-baseline="central" fill="${col}">${g.txt}</text></g>`;
+  return out;
+}
+
 function escapeXml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 // ─── IMPRESSION ─────────────────────────────────────────────────────────────────
 
-function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, showCircuits: boolean, showHauteurs: boolean, showLongueurs: boolean, piecesSelectionnees: Set<number> | null): string {
+function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, showCircuits: boolean, showHauteurs: boolean, showLongueurs: boolean, piecesSelectionnees: Set<number> | null, showCotes: boolean): string {
   const pieces = piecesSelectionnees ? n.pieces.filter(p => piecesSelectionnees.has(p.id)) : n.pieces;
   const allPts = [
     ...pieces.flatMap(p => p.contour),
@@ -299,6 +357,15 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
     }
   }
 
+  // Cotes d'implantation (option d'impression) : une cote par appareillage mural — sa distance
+  // au coin le plus proche — en écartant celles qui se chevaucheraient, pour rester lisible.
+  if (showCotes) {
+    const cotes = niveauResultat.pieces.flatMap(pc => pc.appareillages
+      .filter(a => estMural(a.type))
+      .flatMap(a => cotesAppareillage({ x: a.x, y: a.y }, pc.contour, a.type, false)));
+    filtrerCotesLisibles(cotes, toPx, [], 12, 22).forEach(c => { s += coteSvgString(c, toPx); });
+    s += `<text x="4" y="10" font-size="6" font-family="monospace" fill="${COULEUR_COTE}">Cotes en cm — distance de l'appareillage au coin le plus proche</text>`;
+  }
   s += `</svg>`;
   return s;
 }
@@ -349,7 +416,7 @@ function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau
 
 function imprimerPlan(
   niveaux: Niveau[], clientName: string, resultat: ResultatGeneration | null,
-  showCircuits: boolean, showLongueurs: boolean, showHauteurs: boolean, piecesSelectionnees: Set<number> | null,
+  showCircuits: boolean, showLongueurs: boolean, showHauteurs: boolean, piecesSelectionnees: Set<number> | null, showCotes: boolean,
 ) {
   const w = window.open("", "_blank");
   if (!w) return;
@@ -367,7 +434,7 @@ function imprimerPlan(
     const niveauResultatComplet = resultat?.maison.niveaux.find(rn => rn.id === n.id) ?? n;
     const niveauResultat: Niveau = { ...niveauResultatComplet, pieces: niveauResultatComplet.pieces.filter(p => piecesFiltrees.some(pf => pf.id === p.id)) };
     html += `<h2>${escapeXml(n.nom || NIVEAU_TYPES[n.type])}</h2><div class="meta">${piecesFiltrees.length} pièce${piecesFiltrees.length > 1 ? "s" : ""}</div>`;
-    html += rendreSVGImprimable(n, resultat, showCircuits, showHauteurs, showLongueurs, piecesSelectionnees);
+    html += rendreSVGImprimable(n, resultat, showCircuits, showHauteurs, showLongueurs, piecesSelectionnees, showCotes);
     if (showCircuits) {
       html += legendeCircuitsHtml(resultat, niveauResultat, showLongueurs, n);
     }
@@ -797,7 +864,7 @@ function PaletteBoutons({ placementType, onSelect }: { placementType: Appareilla
 
 function PrintForm({ niveaux, resultatDisponible, onValider, onCancel }: {
   niveaux: Niveau[]; resultatDisponible: boolean;
-  onValider: (piecesSelectionnees: Set<number> | null, avecCircuits: boolean, avecLongueurs: boolean, avecHauteurs: boolean) => void;
+  onValider: (piecesSelectionnees: Set<number> | null, avecCircuits: boolean, avecLongueurs: boolean, avecHauteurs: boolean, avecCotes: boolean) => void;
   onCancel: () => void;
 }) {
   const toutesPieces = niveaux.flatMap(n => n.pieces.map(p => p.id));
@@ -805,6 +872,7 @@ function PrintForm({ niveaux, resultatDisponible, onValider, onCancel }: {
   const [avecCircuits, setAvecCircuits] = useState(resultatDisponible);
   const [avecLongueurs, setAvecLongueurs] = useState(false);
   const [avecHauteurs, setAvecHauteurs] = useState(false);
+  const [avecCotes, setAvecCotes] = useState(false);
   const toutSelectionne = selection.size === toutesPieces.length;
 
   const toggle = (id: number) => setSelection(s => {
@@ -848,6 +916,10 @@ function PrintForm({ niveaux, resultatDisponible, onValider, onCancel }: {
               <input type="checkbox" checked={avecHauteurs} onChange={e => setAvecHauteurs(e.target.checked)} />
               <span className="text-sm text-ink-700">Afficher les hauteurs d'implantation (appareillages + gaines)</span>
             </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={avecCotes} onChange={e => setAvecCotes(e.target.checked)} />
+              <span className="text-sm text-ink-700">Afficher les cotes des appareillages (cm, depuis le coin le plus proche)</span>
+            </label>
             {resultatDisponible && (
               <>
                 <label className="flex items-center gap-2 cursor-pointer">
@@ -865,7 +937,7 @@ function PrintForm({ niveaux, resultatDisponible, onValider, onCancel }: {
         </div>
         <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
           <button disabled={selection.size === 0}
-            onClick={() => onValider(toutSelectionne ? null : selection, avecCircuits, avecLongueurs, avecHauteurs)}
+            onClick={() => onValider(toutSelectionne ? null : selection, avecCircuits, avecLongueurs, avecHauteurs, avecCotes)}
             className="btn-volt flex-1 disabled:opacity-40">
             <Printer size={14} /> Imprimer ({selection.size} pièce{selection.size > 1 ? "s" : ""})
           </button>
@@ -990,6 +1062,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const [resultat, setResultat] = useState<ResultatGeneration | null>(null);
   const [showCircuits, setShowCircuits] = useState(false);
+  // Cotes d'implantation : par défaut aucune (plan propre) ; l'appareillage sélectionné affiche
+  // toujours les siennes ; ce bouton affiche une cote par appareillage mural (lisibilité filtrée).
+  const [showCotes, setShowCotes] = useState(false);
   const [showLongueurs, setShowLongueurs] = useState(false);
   // Ids de breakers actuellement affichés sur le plan (sous-ensemble de resultat.breakers) —
   // permet d'isoler un ou plusieurs circuits à l'écran pour vérifier leur tracé avant de les
@@ -1515,7 +1590,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // Réglages propres au volet roulant (caisson intérieur/extérieur, ouvert/fermé) — purement
   // visuels (plan + vue 3D) : aucun effet sur les circuits, donc pas d'invalidation du résultat.
-  const modifierVolet = (appareillageId: number, patch: Partial<Pick<AppareillagePlace, "caisson" | "voletOuvertPct">>) => {
+  const modifierVolet = (appareillageId: number, patch: Partial<Pick<AppareillagePlace, "caisson" | "voletOuvertPct" | "voletCouleur">>) => {
     updateNiveauActif(n => ({
       ...n,
       pieces: n.pieces.map(p => ({
@@ -1523,6 +1598,27 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, ...patch } : a),
       })),
     }));
+  };
+
+  // Couleur de plaque d'une prise / commande (vue 3D) — pour un seul appareillage, ou
+  // appliquée d'un coup à toutes les prises et commandes de tous les niveaux (une gamme).
+  const modifierCouleurAppareillage = (appareillageId: number, couleur: string) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({
+        ...p,
+        appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, couleur } : a),
+      })),
+    }));
+  };
+  const appliquerCouleurATousAppareillages = (couleur: string) => {
+    setNiveaux(nvs => nvs.map(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({
+        ...p,
+        appareillages: p.appareillages.map(a => TYPES_APPAREILLAGE_COLORABLES.includes(a.type) ? { ...a, couleur } : a),
+      })),
+    })));
   };
 
   const modifierHauteur = (appareillageId: number, hauteur: number | undefined) => {
@@ -2404,6 +2500,23 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const pieceDeSelectedAppareillage = selectedAppareillage
     ? niveauActif?.pieces.find(p => p.appareillages.some(a => a.id === selectedAppareillage.id)) ?? null
     : null;
+  // Cotes à dessiner : celles de l'appareillage sélectionné (toujours, mises à jour en direct
+  // pendant le déplacement) + optionnellement une par appareillage mural, filtrées pour ne
+  // jamais se chevaucher.
+  const cotesAffichees: GeoCote[] = (() => {
+    if (!niveauActif) return [];
+    const prioritaires = selectedAppareillage && pieceDeSelectedAppareillage && mode === "select"
+      ? cotesAppareillage({ x: selectedAppareillage.x, y: selectedAppareillage.y }, pieceDeSelectedAppareillage.contour, selectedAppareillage.type, true)
+      : [];
+    const autres = showCotes
+      ? niveauActif.pieces.flatMap(pc => pc.appareillages
+          .filter(a => a.id !== selectedAppareillageId && estMural(a.type))
+          .flatMap(a => cotesAppareillage({ x: a.x, y: a.y }, pc.contour, a.type, false)))
+      : [];
+    return filtrerCotesLisibles(autres, toScreen, prioritaires)
+      .map(c => geometrieCote(c, toScreen, 14))
+      .filter((g): g is GeoCote => g != null);
+  })();
   const selectedMeuble = niveauActif?.pieces.flatMap(p => p.meubles ?? []).find(m => m.id === selectedMeubleId) ?? null;
 
   const colorMap = resultat ? construireColorMap(resultat, niveaux) : new Map<number, string>();
@@ -2588,6 +2701,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           </button>
           <button onClick={() => setShowLongueurs(s => !s)} disabled={!resultat || !showCircuits} className="btn-ghost !text-xs disabled:opacity-40">
             📏 Longueurs des circuits
+          </button>
+          <button onClick={() => setShowCotes(s => !s)} className={`${showCotes ? "btn-volt" : "btn-ghost"} !text-xs`}
+            title="Afficher les cotes de tous les appareillages (cm, depuis le coin le plus proche). L'appareillage sélectionné affiche toujours les siennes.">
+            📐 Cotes
           </button>
           <button onClick={handlePousserVersTableau} disabled={!resultat || pushing} className="btn-ghost !text-xs disabled:opacity-40">
             <ArrowRightCircle size={13} /> {pushing ? "…" : "Pousser vers le tableau"}
@@ -3016,6 +3133,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 );
               })}
 
+              {cotesAffichees.map((g, i) => <CoteSvg key={`cote-${i}`} g={g} />)}
+
               {pieceDeSelectedAppareillage && mode === "select" && pieceDeSelectedAppareillage.contour.map((pt, i) => {
                 const next = pieceDeSelectedAppareillage.contour[(i + 1) % pieceDeSelectedAppareillage.contour.length];
                 const p = toScreen({ x: (pt.x + next.x) / 2, y: (pt.y + next.y) / 2 });
@@ -3239,6 +3358,26 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       </div>
                       <input type="range" min={0} max={100} step={5} value={pct}
                         onChange={e => modifierVolet(selectedAppareillage.id, { voletOuvertPct: Number(e.target.value) })} />
+                      <div className="flex items-center gap-1.5">
+                        <span className="shrink-0">Couleur</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {COULEURS_VOLET.map(c => {
+                            const actif = (selectedAppareillage.voletCouleur ?? "#ffffff").toLowerCase() === c.hex;
+                            return (
+                              <button key={c.hex} title={c.nom} aria-label={c.nom}
+                                onClick={() => modifierVolet(selectedAppareillage.id, { voletCouleur: c.hex })}
+                                className="w-6 h-6 rounded-full border-2 transition-transform hover:scale-110"
+                                style={{ background: c.hex, borderColor: actif ? "#F59E0B" : "#d6d3d1", boxShadow: actif ? "0 0 0 2px #FEF3C7" : undefined }} />
+                            );
+                          })}
+                          <label className="flex items-center gap-1 cursor-pointer" title="Choisir n'importe quelle couleur">
+                            <input type="color" value={selectedAppareillage.voletCouleur ?? "#ffffff"}
+                              onChange={e => modifierVolet(selectedAppareillage.id, { voletCouleur: e.target.value })}
+                              className="w-7 h-7 p-0 border-0 bg-transparent cursor-pointer" />
+                            <span>Autre…</span>
+                          </label>
+                        </div>
+                      </div>
                     </div>
                   );
                 })()}
@@ -3298,6 +3437,32 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       <option value="">Automatique</option>
                       {(niveauActif?.circuitsManuels ?? []).map(m => <option key={m.id} value={m.id}>{m.nom}</option>)}
                     </select>
+                  </div>
+                )}
+                {TYPES_APPAREILLAGE_COLORABLES.includes(selectedAppareillage.type) && (
+                  <div className="flex flex-col gap-1.5 text-xs text-ink-500 border-t border-ink-100 pt-2">
+                    <span>Couleur de la plaque (vue 3D)</span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {COULEURS_APPAREILLAGE.map(c => {
+                        const actif = (selectedAppareillage.couleur ?? "#ffffff").toLowerCase() === c.hex;
+                        return (
+                          <button key={c.hex} title={c.nom} aria-label={c.nom}
+                            onClick={() => modifierCouleurAppareillage(selectedAppareillage.id, c.hex)}
+                            className="w-6 h-6 rounded-full border-2 transition-transform hover:scale-110"
+                            style={{ background: c.hex, borderColor: actif ? "#F59E0B" : "#d6d3d1", boxShadow: actif ? "0 0 0 2px #FEF3C7" : undefined }} />
+                        );
+                      })}
+                      <label className="flex items-center gap-1 cursor-pointer" title="Choisir n'importe quelle couleur">
+                        <input type="color" value={selectedAppareillage.couleur ?? "#ffffff"}
+                          onChange={e => modifierCouleurAppareillage(selectedAppareillage.id, e.target.value)}
+                          className="w-7 h-7 p-0 border-0 bg-transparent cursor-pointer" />
+                        <span>Autre…</span>
+                      </label>
+                    </div>
+                    <button onClick={() => appliquerCouleurATousAppareillages(selectedAppareillage.couleur ?? "#ffffff")}
+                      className="btn-ghost !text-xs !py-1 justify-center">
+                      Appliquer cette couleur à toutes les prises et commandes
+                    </button>
                   </div>
                 )}
                 {(["interrupteur", "va_et_vient", "telerupteur"] as AppareillageType[]).includes(selectedAppareillage.type) && (
@@ -3904,9 +4069,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       {showPrintForm && (
         <PrintForm
           niveaux={niveaux} resultatDisponible={!!resultat}
-          onValider={(piecesSelectionnees, avecCircuits, avecLongueurs, avecHauteurs) => {
+          onValider={(piecesSelectionnees, avecCircuits, avecLongueurs, avecHauteurs, avecCotes) => {
             setShowPrintForm(false);
-            imprimerPlan(niveaux, client?.nom ?? "", resultat, avecCircuits, avecLongueurs, avecHauteurs, piecesSelectionnees);
+            imprimerPlan(niveaux, client?.nom ?? "", resultat, avecCircuits, avecLongueurs, avecHauteurs, piecesSelectionnees, avecCotes);
           }}
           onCancel={() => setShowPrintForm(false)}
         />
