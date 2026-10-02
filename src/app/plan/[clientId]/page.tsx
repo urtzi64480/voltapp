@@ -27,7 +27,8 @@ import {
   BoiteDerivation, migrerBoitesDerivation,
   MeubleSimple, nouveauMeuble,
 } from "@/lib/maison-types";
-import { AppareillageSymbol, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
+import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
+import { ancrageMurLePlusProche, aimanterSurMur, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet } from "@/lib/appareillage-mur";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker } from "@/lib/electrical-constants";
@@ -42,6 +43,9 @@ const MAX_ZOOM = 4;
 // sont en concurrence — l'alignement gagne toujours sur le simple arrondi de grille.
 const SNAP_GRID_M = 0.1;
 const ALIGN_THRESHOLD_PX = 8;
+// Aimantation d'un appareillage sur le mur le plus proche de sa pièce (px écran, indépendant du zoom).
+// Maintenir Alt pendant le geste la désactive pour poser un appareillage au milieu d'une pièce.
+const SNAP_MUR_PX = 22;
 // Distance de détection (px écran) pour "clique près d'un mur" lors du placement
 // d'une porte/fenêtre — plus généreux que l'accroche fine, un mur est fin à l'écran.
 const SEUIL_MUR_PX = 18;
@@ -244,9 +248,22 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
     p.appareillages.forEach(a => {
       const pos = toPx({ x: a.x, y: a.y });
       const color = showCircuits && a.circuitId != null ? (colorMap.get(a.circuitId) ?? "#1c1917") : "#1c1917";
-      s += appareillageSymbolSvgString(a.type, pos.x, pos.y, 10, color);
+      // Même logique qu'à l'écran : carré tangent au mur, symbole tourné vers l'intérieur.
+      const TAILLE_SYM = 10;
+      let cxP = pos.x, cyP = pos.y, rotP = 0;
+      const ancP = estMural(a.type) ? ancrageMurLePlusProche({ x: a.x, y: a.y }, p.contour) : null;
+      if (ancP && ancP.distance <= TOLERANCE_MUR_M) {
+        const pf = toPx(ancP.pied);
+        const pn = toPx({ x: ancP.pied.x + ancP.normale.x * 0.1, y: ancP.pied.y + ancP.normale.y * 0.1 });
+        const ln = Math.hypot(pn.x - pf.x, pn.y - pf.y) || 1;
+        const nxp = (pn.x - pf.x) / ln, nyp = (pn.y - pf.y) / ln;
+        const demiP = TAILLE_SYM * 0.75 + 0.8;
+        cxP = pf.x + nxp * demiP; cyP = pf.y + nyp * demiP;
+        rotP = Math.atan2(nxp, -nyp) * 180 / Math.PI;
+      }
+      s += appareillageSymbolSvgString(a.type, cxP, cyP, TAILLE_SYM, color, rotP, true);
       if (showHauteurs && a.hauteur != null) {
-        s += `<text x="${(pos.x + 7).toFixed(1)}" y="${(pos.y + 3).toFixed(1)}" font-size="6" font-family="monospace" fill="#555">${a.hauteur}cm</text>`;
+        s += `<text x="${(cxP + 9).toFixed(1)}" y="${(cyP + 3).toFixed(1)}" font-size="6" font-family="monospace" fill="#555">${a.hauteur}cm</text>`;
       }
     });
   });
@@ -1098,7 +1115,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const niveauCourant = niveaux.find(n => n.id === niveauActifId) ?? null;
         const candidats = pointsReferenceNiveau(niveauCourant);
         const seuilM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
-        const { point: m, guideX, guideY } = snapAvecAlignement(raw, candidats, seuilM);
+        const { point: mAligne, guideX, guideY } = snapAvecAlignement(raw, candidats, seuilM);
+        // Aimantation murale : l'appareillage "colle" au mur le plus proche de sa pièce (Alt = désactivée).
+        const pieceDrag = niveauCourant?.pieces.find(p => p.id === dragMode.pieceId);
+        const appDrag = pieceDrag?.appareillages.find(a => a.id === dragMode.appareillageId);
+        const mAimante = pieceDrag && appDrag && !e.altKey
+          ? aimanterSurMur(mAligne, pieceDrag.contour, appDrag.type, SNAP_MUR_PX / (PX_PER_M * zoom))
+          : mAligne;
+        // Volet roulant : une fois près d'une fenêtre, il se centre dessus (Alt = position libre).
+        const m = pieceDrag && appDrag?.type === "volet_roulant" && !e.altKey && niveauCourant
+          ? recentrerVolet(mAimante, pieceDrag, niveauCourant.pieces)
+          : mAimante;
         setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
         updateNiveauActif(n => ({
           ...n,
@@ -1484,6 +1511,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       };
     });
     invalidateResultat();
+  };
+
+  // Réglages propres au volet roulant (caisson intérieur/extérieur, ouvert/fermé) — purement
+  // visuels (plan + vue 3D) : aucun effet sur les circuits, donc pas d'invalidation du résultat.
+  const modifierVolet = (appareillageId: number, patch: Partial<Pick<AppareillagePlace, "caisson" | "voletOuvertPct">>) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({
+        ...p,
+        appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, ...patch } : a),
+      })),
+    }));
   };
 
   const modifierHauteur = (appareillageId: number, hauteur: number | undefined) => {
@@ -1928,7 +1967,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         setTimeout(() => setPlacementError(null), 2000);
         return;
       }
-      const nouveau = nouvelAppareillage(placementType, m.x, m.y);
+      const mAimantee = e.altKey ? m : aimanterSurMur(m, piece.contour, placementType, SNAP_MUR_PX / (PX_PER_M * zoom));
+      const mPose = placementType === "volet_roulant" && !e.altKey && niveauActif
+        ? recentrerVolet(mAimantee, piece, niveauActif.pieces)
+        : mAimantee;
+      const nouveau = nouvelAppareillage(placementType, mPose.x, mPose.y);
       updateNiveauActif(n => ({
         ...n,
         pieces: n.pieces.map(p => p.id === piece.id ? { ...p, appareillages: [...p.appareillages, nouveau] } : p),
@@ -2365,7 +2408,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const colorMap = resultat ? construireColorMap(resultat, niveaux) : new Map<number, string>();
 
-  const symSize = Math.min(28, Math.max(11, 16 * zoom));
+  // Symbole + carré d'appui : le carré (boxSize) est ce qui vient toucher le mur — le symbole,
+  // lui, reste lisible à tous les zooms (plus grand qu'avant : 16→30 px au lieu de 11→28).
+  const symSize = Math.min(30, Math.max(16, 20 * zoom));
+  const boxSize = symSize + 8;
 
   const circuitsNiveauActif = niveauActif
     ? resultat?.breakers.filter(b => b.pieces.some(pc => niveauActif.pieces.some(p => p.nom === pc.nom))) ?? []
@@ -2905,12 +2951,39 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               })}
 
               {niveauActif?.pieces.flatMap(piece => piece.appareillages.map(a => ({ piece, a }))).map(({ piece, a }) => {
+                // p = position stockée (sur la ligne du mur quand l'appareillage est aimanté) ;
+                // (cx, cy) = centre du carré dessiné : décalé vers l'intérieur de la pièce d'une
+                // demi-taille pour que le carré soit TANGENT au mur au lieu de le chevaucher.
                 const p = toScreen({ x: a.x, y: a.y });
                 const isSel = a.id === selectedAppareillageId;
                 const color = showCircuits && a.circuitId != null && circuitsVisibles.has(a.circuitId) ? (colorMap.get(a.circuitId) ?? "#1c1917") : (isSel ? "#F59E0B" : "#1c1917");
-                // Cible de clic généreuse et indépendante du zoom (invisible, sous l'icône) :
-                // l'icône réelle peut être fine, la zone cliquable reste toujours confortable.
-                const rZoneClic = Math.max(16, symSize / 2 + 7);
+                const anc = estMural(a.type) ? ancrageMurLePlusProche({ x: a.x, y: a.y }, piece.contour) : null;
+                let cx = p.x, cy = p.y, rot = 0, nxs = 0, nys = 0;
+                if (anc && anc.distance <= TOLERANCE_MUR_M) {
+                  const pPied = toScreen(anc.pied);
+                  const pN = toScreen({ x: anc.pied.x + anc.normale.x * 0.1, y: anc.pied.y + anc.normale.y * 0.1 });
+                  const lenN = Math.hypot(pN.x - pPied.x, pN.y - pPied.y) || 1;
+                  nxs = (pN.x - pPied.x) / lenN; nys = (pN.y - pPied.y) / lenN;
+                  const demi = boxSize / 2 + 2; // +2 px : demi-épaisseur du trait de mur
+                  cx = pPied.x + nxs * demi; cy = pPied.y + nys * demi;
+                  rot = Math.atan2(nxs, -nys) * 180 / Math.PI;
+                }
+                const demiBoite = boxSize / 2;
+                const fondBoite = isSel ? "#FEF3C7" : "#ffffff";
+                // Volet roulant : trait pointillé sur TOUTE la largeur de la fenêtre qu'il équipe
+                // (convention des plans : le volet se lit le long de la baie), à 4 px dans la pièce.
+                let traitVolet: { x1: number; y1: number; x2: number; y2: number } | null = null;
+                if (a.type === "volet_roulant" && anc && anc.distance <= TOLERANCE_MUR_M) {
+                  const baie = baieDuVolet({ x: a.x, y: a.y }, piece, niveauActif.pieces);
+                  if (baie.detectee) {
+                    const sg = piece.contour[(anc.segIndex + 1) % piece.contour.length], sa = piece.contour[anc.segIndex];
+                    const lg = Math.hypot(sg.x - sa.x, sg.y - sa.y) || 1;
+                    const ux = (sg.x - sa.x) / lg, uy = (sg.y - sa.y) / lg;
+                    const e1 = toScreen({ x: baie.centre.x - ux * baie.largeur / 2, y: baie.centre.y - uy * baie.largeur / 2 });
+                    const e2 = toScreen({ x: baie.centre.x + ux * baie.largeur / 2, y: baie.centre.y + uy * baie.largeur / 2 });
+                    traitVolet = { x1: e1.x + nxs * 4, y1: e1.y + nys * 4, x2: e2.x + nxs * 4, y2: e2.y + nys * 4 };
+                  }
+                }
                 // Pastille d'alerte directement sur le plan — un appareillage sans circuit
                 // après génération (exclu, commande orpheline…) se repère sans devoir ouvrir
                 // la liste des alertes. Uniquement pertinent une fois un résultat généré :
@@ -2920,16 +2993,21 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   <g key={a.id}
                     onPointerDown={e => onAppareillagePointerDown(piece, a, e)}
                     style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture ? (isSel ? "grab" : "pointer") : "default" }}>
-                    <circle cx={p.x} cy={p.y} r={rZoneClic} fill={isSel ? "#FEF3C7" : "transparent"} stroke="none" />
-                    {a.dejaExistant && (
-                      <circle cx={p.x} cy={p.y} r={symSize / 2 + 3} fill="none" stroke="#0EA5E9" strokeWidth={1.2} strokeDasharray="2,2" style={{ pointerEvents: "none" }} />
+                    {traitVolet && (
+                      <line {...traitVolet} stroke={color} strokeWidth={2.4} strokeDasharray="7,3" strokeLinecap="round" opacity={0.85} style={{ pointerEvents: "none" }} />
                     )}
-                    <g transform={`translate(${p.x - symSize / 2}, ${p.y - symSize / 2})`} style={{ pointerEvents: "none" }}>
-                      <AppareillageSymbol type={a.type} size={symSize} color={color} />
+                    {/* Cible de clic généreuse (invisible, 5 px autour du carré) */}
+                    <rect x={cx - demiBoite - 5} y={cy - demiBoite - 5} width={boxSize + 10} height={boxSize + 10} fill="transparent" stroke="none" />
+                    {a.dejaExistant && (
+                      <rect x={cx - demiBoite - 3} y={cy - demiBoite - 3} width={boxSize + 6} height={boxSize + 6} rx={4} fill="none" stroke="#0EA5E9" strokeWidth={1.2} strokeDasharray="2,2" style={{ pointerEvents: "none" }} />
+                    )}
+                    <rect x={cx - demiBoite} y={cy - demiBoite} width={boxSize} height={boxSize} rx={3}
+                      fill={fondBoite} fillOpacity={0.96} stroke={isSel ? "#F59E0B" : color} strokeWidth={isSel ? 2 : 1.2} style={{ pointerEvents: "none" }} />
+                    <g transform={`translate(${cx}, ${cy})`} style={{ pointerEvents: "none" }}>
+                      <AppareillageGlyphe type={a.type} size={symSize} color={color} rotation={rot} fond={fondBoite} />
                     </g>
-                    {isSel && <circle cx={p.x} cy={p.y} r={rZoneClic} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
                     {nonRaccorde && (
-                      <g transform={`translate(${p.x + symSize / 2 - 1}, ${p.y - symSize / 2 - 1})`} style={{ pointerEvents: "none" }}>
+                      <g transform={`translate(${cx + demiBoite - 1}, ${cy - demiBoite - 1})`} style={{ pointerEvents: "none" }}>
                         <circle cx={0} cy={0} r={6.5} fill="#EF4444" stroke="#fff" strokeWidth={1.5} />
                         <text x={0} y={2.8} textAnchor="middle" fontSize={9} fontWeight={800} fill="#fff">!</text>
                       </g>
@@ -3122,12 +3200,48 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     </select>
                   </div>
                 )}
+                {selectedAppareillage.type !== "volet_roulant" && (
                 <div className="flex items-center gap-2 text-xs text-ink-500">
                   <span className="shrink-0">Hauteur (cm)</span>
                   <input type="number" className="input !py-1 !text-xs !w-20" placeholder="—"
                     value={selectedAppareillage.hauteur ?? ""}
                     onChange={e => modifierHauteur(selectedAppareillage.id, e.target.value ? Number(e.target.value) : undefined)} />
                 </div>
+                )}
+                {selectedAppareillage.type === "volet_roulant" && pieceDeSelectedAppareillage && niveauActif && (() => {
+                  const baie = baieDuVolet({ x: selectedAppareillage.x, y: selectedAppareillage.y }, pieceDeSelectedAppareillage, niveauActif.pieces);
+                  const caisson = selectedAppareillage.caisson ?? "interieur";
+                  const pct = selectedAppareillage.voletOuvertPct ?? 0;
+                  return (
+                    <div className="flex flex-col gap-2 text-xs text-ink-500">
+                      <p className={baie.detectee ? "text-ink-700" : "text-amber-600"}>
+                        {baie.detectee
+                          ? `Fenêtre détectée : ${Math.round(baie.largeur * 100)} × ${Math.round(baie.hauteur * 100)} cm (allège ${Math.round(baie.allege * 100)} cm) — le volet en prend les dimensions.`
+                          : "Aucune fenêtre à proximité sur ce mur — dimensions par défaut (100 × 120 cm). Rapproche le volet d'une fenêtre."}
+                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <span className="shrink-0">Caisson</span>
+                        {(["interieur", "exterieur"] as const).map(c => (
+                          <button key={c} onClick={() => modifierVolet(selectedAppareillage.id, { caisson: c })}
+                            className={`${caisson === c ? "btn-volt" : "btn-ghost"} !text-xs !py-1 flex-1 justify-center`}>
+                            {c === "interieur" ? "Intérieur" : "Extérieur"}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="shrink-0">Volet</span>
+                        {([["Fermé", 0], ["Mi-ouvert", 50], ["Ouvert", 100]] as const).map(([lib, v]) => (
+                          <button key={lib} onClick={() => modifierVolet(selectedAppareillage.id, { voletOuvertPct: v })}
+                            className={`${pct === v ? "btn-volt" : "btn-ghost"} !text-xs !py-1 flex-1 justify-center`}>
+                            {lib}
+                          </button>
+                        ))}
+                      </div>
+                      <input type="range" min={0} max={100} step={5} value={pct}
+                        onChange={e => modifierVolet(selectedAppareillage.id, { voletOuvertPct: Number(e.target.value) })} />
+                    </div>
+                  );
+                })()}
                 {selectedAppareillage.type === "chauffage" && (
                   <div className="flex items-center gap-2 text-xs text-ink-500">
                     <span className="shrink-0">Puissance (W)</span>
