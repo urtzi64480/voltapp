@@ -16,7 +16,7 @@ import { Niveau, PIECE_TYPES, centroide, AppareillageType, OuvertureEffective, o
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
 import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
-import { parametresMur3D, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT } from "@/lib/murs";
+import { parametresMur3D, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT, preparerMurs } from "@/lib/murs";
 import { appareillagesEnPoseApparente, posesTroncons } from "@/lib/pose-circuits";
 
 
@@ -148,7 +148,7 @@ export function construireMurAvecOuvertures(
       const vitreGeo = new THREE.BoxGeometry(fin - debut, hOuverture, 0.01);
       const vitreMat = new THREE.MeshStandardMaterial({ color: 0xBAE6FD, transparent: true, opacity: 0.35 });
       const vitre = new THREE.Mesh(vitreGeo, vitreMat);
-      vitre.position.set(a.x + ux * ((debut + fin) / 2), hAllege + hOuverture / 2, a.y + uy * ((debut + fin) / 2));
+      vitre.position.set(a.x + ux * ((debut + fin) / 2) + nx * decalage, hAllege + hOuverture / 2, a.y + uy * ((debut + fin) / 2) + ny * decalage);
       vitre.rotation.y = -angle;
       scene.add(vitre);
     }
@@ -157,12 +157,12 @@ export function construireMurAvecOuvertures(
       // Panneau "garé" contre le mur adjacent, du côté choisi — pas de vantail qui bat.
       const cote = o.coulisseVers === "gauche" ? -1 : 1;
       const centrePanneau = cote > 0 ? fin + larg / 2 : debut - larg / 2;
-      const decalage = epaisseur * 0.3;
+      const decalagePanneau = epaisseur * 0.3;
       const panneauGeo = new THREE.BoxGeometry(larg, hOuverture, epaisseur * 0.4);
       const panneauMat = new THREE.MeshStandardMaterial({ color: 0xD6C7A1 });
       const panneau = new THREE.Mesh(panneauGeo, panneauMat);
       panneau.position.set(
-        a.x + ux * centrePanneau + nx * decalage, hOuverture / 2, a.y + uy * centrePanneau + ny * decalage,
+        a.x + ux * centrePanneau + nx * (decalage + decalagePanneau), hOuverture / 2, a.y + uy * centrePanneau + ny * (decalage + decalagePanneau),
       );
       panneau.rotation.y = -angle;
       scene.add(panneau);
@@ -289,6 +289,10 @@ const Vue3D = forwardRef<Vue3DHandle, {
     // avec goulotte — les mêmes dont les tronçons donnent de la moulure au pré-devis.
     const appareilsApparents = appareillagesEnPoseApparente(niveau, niveauResultat.pieces.flatMap(p => p.appareillages), resultat);
 
+    // Murs extérieurs / mitoyens : à déduire de TOUTES les pièces du niveau, avant de bâtir les murs.
+    preparerMurs(niveauResultat.pieces);
+    preparerMurs(niveau.pieces);
+
     // Sol + murs par pièce
     niveauResultat.pieces.forEach(piece => {
       if (piece.contour.length < 3) return;
@@ -316,12 +320,13 @@ const Vue3D = forwardRef<Vue3DHandle, {
         const b = piece.contour[(i + 1) % piece.contour.length];
         const ouverturesSegment = ouverturesEffectivesMur(niveauResultat.pieces, piece, i);
         const m = parametresMur3D(piece, i);
-        // Structure centrée sur l'axe, puis doublage côté intérieur : mêmes ouvertures sur les deux.
+        // Structure puis doublage, chacun à sa position réelle par rapport au contour (= face intérieure
+        // finie sur un mur extérieur, axe de la cloison sur un mur mitoyen) ; mêmes ouvertures pour les deux.
         construireMurAvecOuvertures(a, b, hauteurMurs, ouverturesSegment, m.e, m.type === "exterieur" ? murExtMat : murMat, scene,
-          { extDebut: m.extDebut, extFin: m.extFin });
+          { decalage: m.decalageStructure, extDebut: m.extDebut, extFin: m.extFin });
         if (m.d > 0) {
           construireMurAvecOuvertures(a, b, hauteurMurs - 0.003, ouverturesSegment, m.d, doublageMat, scene,
-            { decalage: m.signeInterieur * (m.e / 2 + m.d / 2), avecContenu: false });
+            { decalage: m.decalageDoublage, extDebut: m.extDoublageDebut, extFin: m.extDoublageFin, avecContenu: false });
         }
       });
 
