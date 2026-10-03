@@ -12,10 +12,11 @@
 
 import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { Niveau, PIECE_TYPES, centroide, AppareillageType, OuvertureEffective, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
 import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
+import { cloisonsDeZone, ouverturesEffectivesZone } from "@/lib/zones";
 import { parametresMur3D, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT, preparerMurs, pointDansCouche2 } from "@/lib/murs";
 import { appareillagesEnPoseApparente, posesTroncons, hauteursTroncons, hauteurDefautLiaison } from "@/lib/pose-circuits";
 import { construireChemin3D, hauteurGaineNiveau } from "@/lib/chemin-3d";
@@ -139,7 +140,7 @@ export function construireMurAvecOuvertures(
     }
 
     const hAllege = (o.allege ?? 0) / 100;
-    const hOuverture = (o.hauteur ?? (o.type === "porte" || o.type === "porte_coulissante" ? 204 : 120)) / 100;
+    const hOuverture = (o.hauteur ?? hauteurOuvertureDefautCm(o.type)) / 100;
     const hLinteauBas = Math.min(hauteurMur, hAllege + hOuverture);
     // Le trou lui-même (linteau + allège) est percé des DEUX côtés d'un mur mitoyen —
     // sinon on verrait un mur plein depuis l'autre pièce. Le contenu (vitrage, panneau
@@ -169,6 +170,29 @@ export function construireMurAvecOuvertures(
       );
       panneau.rotation.y = -angle;
       scene.add(panneau);
+    }
+    if (avecContenu && o.proprietaire && o.type === "porte_garage") {
+      // Porte de garage basculante fermée : tablier plein dans l'ouverture, 3 rainures horizontales,
+      // poignée centrale. Posée dans le plan de la face (comme la vitre d'une fenêtre).
+      const panGeo = new THREE.BoxGeometry(fin - debut, hOuverture, 0.04);
+      const panMat = new THREE.MeshStandardMaterial({ color: 0xE5E7EB, roughness: 0.6 });
+      const pan = new THREE.Mesh(panGeo, panMat);
+      const cx = a.x + ux * ((debut + fin) / 2) + nx * decalage, cz = a.y + uy * ((debut + fin) / 2) + ny * decalage;
+      pan.position.set(cx, hAllege + hOuverture / 2, cz);
+      pan.rotation.y = -angle;
+      pan.castShadow = true;
+      scene.add(pan);
+      const rainureMat = new THREE.MeshStandardMaterial({ color: 0x9CA3AF });
+      [0.25, 0.5, 0.75].forEach(f => {
+        const rainure = new THREE.Mesh(new THREE.BoxGeometry(fin - debut, 0.012, 0.046), rainureMat);
+        rainure.position.set(cx, hAllege + hOuverture * f, cz);
+        rainure.rotation.y = -angle;
+        scene.add(rainure);
+      });
+      const poignee = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.03, 0.06), new THREE.MeshStandardMaterial({ color: 0x374151 }));
+      poignee.position.set(cx, hAllege + hOuverture * 0.45, cz);
+      poignee.rotation.y = -angle;
+      scene.add(poignee);
     }
     curseur = fin;
   });
@@ -306,6 +330,16 @@ const Vue3D = forwardRef<Vue3DHandle, {
     // Murs extérieurs / mitoyens : à déduire de TOUTES les pièces du niveau, avant de bâtir les murs.
     preparerMurs(niveauResultat.pieces);
     preparerMurs(niveau.pieces);
+
+    // Zones (dressing, cloisons libres) : seules leurs cloisons sont bâties — une zone n'est pas une pièce
+    // (pas de sol propre, pas d'appareillage). Lues sur le plan VIVANT : elles ne font pas partie du résultat des circuits.
+    (niveau.zones ?? []).forEach(z => {
+      const zMat = new THREE.MeshStandardMaterial({ color: 0xe3dccf });
+      cloisonsDeZone(z).forEach(c => {
+        construireMurAvecOuvertures(c.a, c.b, hauteurPlafond, ouverturesEffectivesZone(z, c.i), c.epaisseurM, zMat, scene,
+          { decalage: 0, extDebut: c.extA, extFin: c.extB, avecContenu: true });
+      });
+    });
 
     // Sol + murs par pièce
     niveauResultat.pieces.forEach(piece => {
