@@ -1,14 +1,19 @@
 "use client";
-import { AppareillageType } from "@/lib/maison-types";
+import { AppareillageType, AppareillagePlace, LIBELLE_USAGE_DEDIE, USAGE_DEDIE_DEFAUT } from "@/lib/maison-types";
 
 export const PALETTE: { type: AppareillageType; label: string; categorie: string }[] = [
   { type: "prise",           label: "Prise de courant",              categorie: "Prises" },
   { type: "prise_commandee", label: "Prise commandée",               categorie: "Prises" },
+  { type: "prise_dediee",    label: "Prise dédiée (20 A / 32 A)",    categorie: "Prises" },
+  { type: "rj45",            label: "Prise RJ45 (communication)",    categorie: "Prises" },
   { type: "point_lumineux",  label: "Point lumineux (plafond)",      categorie: "Éclairage" },
   { type: "applique",        label: "Applique murale",                categorie: "Éclairage" },
   { type: "interrupteur",    label: "Interrupteur simple",           categorie: "Commandes" },
   { type: "va_et_vient",     label: "Va-et-vient",                    categorie: "Commandes" },
   { type: "telerupteur",     label: "Bouton poussoir (télérupteur)", categorie: "Commandes" },
+  { type: "interrupteur_double", label: "Double interrupteur",         categorie: "Commandes" },
+  { type: "va_et_vient_double",  label: "Double va-et-vient",          categorie: "Commandes" },
+  { type: "telerupteur_double",  label: "Double bouton poussoir",      categorie: "Commandes" },
   { type: "four",            label: "Four",                           categorie: "Appareils dédiés" },
   { type: "plaque",          label: "Plaque de cuisson",              categorie: "Appareils dédiés" },
   { type: "lave_linge",      label: "Lave-linge",                     categorie: "Appareils dédiés" },
@@ -30,6 +35,13 @@ export function labelAppareillage(type: AppareillageType): string {
   return PALETTE.find(p => p.type === type)?.label ?? type;
 }
 
+// Libellé d'un appareillage PLACÉ : pour une prise dédiée, précise l'appareil alimenté
+// (ex. « Prise dédiée — Four »).
+export function labelAppareillagePlace(a: Pick<AppareillagePlace, "type" | "usageDedie">): string {
+  if (a.type === "prise_dediee") return `Prise dédiée — ${LIBELLE_USAGE_DEDIE[a.usageDedie ?? USAGE_DEDIE_DEFAUT] ?? "?"}`;
+  return labelAppareillage(a.type);
+}
+
 const DEDIE_INITIALES: Record<string, string> = {
   four: "F", plaque: "PC", lave_linge: "LL", lave_vaisselle: "LV", seche_linge: "SL",
   chauffe_eau: "CE", chauffage: "CH", clim: "CL", seche_serviette: "SS",
@@ -40,9 +52,12 @@ const DEDIE_INITIALES: Record<string, string> = {
 // même logique que les symboles 2D mais réduite à 1-3 caractères.
 const INITIALES_BASE: Record<string, string> = {
   prise: "P", prise_commandee: "PC", point_lumineux: "PL", applique: "AP",
-  interrupteur: "I", va_et_vient: "VV", telerupteur: "BP",
+  interrupteur: "I", va_et_vient: "VV", telerupteur: "BP", rj45: "RJ", prise_dediee: "PD",
+  interrupteur_double: "I2", va_et_vient_double: "VV2", telerupteur_double: "BP2",
 };
-export function initialesAppareillage(type: AppareillageType): string {
+// usageDedie : pour une prise dédiée, l'étiquette est celle de l'appareil alimenté (F, LL, LV…).
+export function initialesAppareillage(type: AppareillageType, usageDedie?: AppareillageType): string {
+  if (type === "prise_dediee") return DEDIE_INITIALES[usageDedie ?? USAGE_DEDIE_DEFAUT] ?? "PD";
   return INITIALES_BASE[type] ?? DEDIE_INITIALES[type] ?? "?";
 }
 
@@ -69,6 +84,11 @@ const L = (x1: number, y1: number, x2: number, y2: number, w?: number): Prim => 
 // simple allumage (1 barbe), va-et-vient (barbe de chaque côté) et bouton-poussoir (carré).
 const TIGE: Prim[] = [{ k: "c", cx: 10.5, cy: 15.5, r: 3.8 }, L(13.2, 12.8, 19, 7)];
 
+// Doubles : le même cercle porte deux tiges parallèles (une par voie). Tige A (haut-gauche) et tige B
+// (bas-droite), décalées de ±1,7 perpendiculairement à la tige, chacune partant du bord du cercle.
+const CERCLE: Prim = { k: "c", cx: 10.5, cy: 15.5, r: 3.8 };
+const TIGES_DOUBLES: Prim[] = [CERCLE, L(11.7, 11.9, 16.4, 7.2), L(14.1, 14.3, 18.8, 9.6)];
+
 const SYMBOLES: Record<AppareillageType, DefSymbole> = {
   // Prise de courant 2P+T : demi-cercle posé sur le mur, trait perpendiculaire (pôles)
   // prolongé d'une barre (contact de terre).
@@ -88,7 +108,28 @@ const SYMBOLES: Record<AppareillageType, DefSymbole> = {
   applique: { oriente: true, prims: [
     { k: "c", cx: 12, cy: 13.5, r: 5.5 }, L(8.1, 9.6, 15.9, 17.4), L(15.9, 9.6, 8.1, 17.4), L(6, 20, 18, 20, 2.6),
   ] },
+  // Prise dédiée (circuit spécialisé : four, lave-linge…) : prise 2P+T à demi-disque PLEIN — se
+  // distingue d'une prise ordinaire ; l'appareil alimenté s'indique à côté (initiales, voir
+  // initialesAppareillage).
+  prise_dediee: { oriente: true, prims: [
+    { k: "p", d: "M 5.5 19 A 6.5 6.5 0 0 1 18.5 19 Z", f: true }, L(12, 19, 12, 7.5), L(8.5, 7.5, 15.5, 7.5),
+  ] },
+  // Prise de communication RJ45 : triangle posé sur le mur, pointe vers la pièce, repéré par un
+  // carré plein (prise de communication — voltage faible, jamais sur un circuit de puissance).
+  rj45: { oriente: true, prims: [
+    { k: "p", d: "M 4.5 19 L 19.5 19 L 12 6 Z" }, { k: "r", x: 10, y: 13, w: 4, h: 4, f: true },
+  ] },
   interrupteur: { oriente: true, prims: [...TIGE, L(19, 7, 21.5, 9.5)] },
+  // Double allumage : une barbe au bout de CHAQUE tige.
+  interrupteur_double: { oriente: true, prims: [...TIGES_DOUBLES, L(16.4, 7.2, 18.1, 8.9), L(18.8, 9.6, 20.5, 11.3)] },
+  // Double va-et-vient : barbes de part et d'autre de chaque tige.
+  va_et_vient_double: { oriente: true, prims: [
+    ...TIGES_DOUBLES, L(16.4, 7.2, 18.1, 8.9), L(16.4, 7.2, 14.7, 5.5), L(18.8, 9.6, 20.5, 11.3), L(18.8, 9.6, 17.1, 7.9),
+  ] },
+  // Double bouton poussoir : un carré plein au bout de chaque tige.
+  telerupteur_double: { oriente: true, prims: [
+    ...TIGES_DOUBLES, { k: "r", x: 14.6, y: 4.9, w: 3.6, h: 3.6, f: true }, { k: "r", x: 17, y: 7.3, w: 3.6, h: 3.6, f: true },
+  ] },
   va_et_vient: { oriente: true, prims: [...TIGE, L(19, 7, 21.5, 9.5), L(19, 7, 16.5, 4.5)] },
   telerupteur: { oriente: true, prims: [
     { k: "c", cx: 10.5, cy: 15.5, r: 3.8 }, L(13.2, 12.8, 17.5, 8.5), { k: "r", x: 16.2, y: 3.2, w: 5, h: 5, f: true },

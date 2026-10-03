@@ -7,7 +7,7 @@
 // Dimensions en mètres, proches des produits réels (entraxe 71 mm → plaque 80 × 80 mm).
 
 import * as THREE from "three";
-import { AppareillageType } from "@/lib/maison-types";
+import { AppareillageType, ENTRAXE_POSTE_M } from "@/lib/maison-types";
 
 export type Montage = "mur" | "plafond" | "sol_mur";
 
@@ -80,8 +80,12 @@ function teinte(hex?: string) {
   };
 }
 
+// Largeur de la plaque en cours de construction : 80 mm pour un appareillage simple ; pour un
+// POSTE d'une plaque multiple, un tronçon de plaque de 71 mm (= l'entraxe) — les tronçons des
+// postes voisins se touchent et forment une seule plaque continue (double, triple, quadruple).
+let LARGEUR_PLAQUE = 0.08;
 function plaque(g: THREE.Group, mat: THREE.Material): void {
-  g.add(boite(0.08, 0.08, T_PLAQUE, mat, 0, 0, T_PLAQUE / 2));
+  g.add(boite(LARGEUR_PLAQUE, 0.08, T_PLAQUE, mat, 0, 0, T_PLAQUE / 2));
 }
 
 function modelePrise(commandee: boolean, couleur?: string): THREE.Group {
@@ -96,6 +100,27 @@ function modelePrise(commandee: boolean, couleur?: string): THREE.Group {
   g.add(cylZ(0.0045, 0.003, alveole, 0.011, 0, z + 0.0075));           // alvéole neutre
   g.add(cylZ(0.0035, 0.012, m(INOX, { metalness: 0.7 }), 0, 0.019, z + 0.008)); // broche de terre
   if (commandee) g.add(cylZ(0.004, 0.004, m(0xf97316, { emissive: 0xf97316, emissiveIntensity: 0.5 }), 0.03, -0.03, z + 0.002));
+  return g;
+}
+
+// Prise dédiée : prise 2P+T avec collerette orange (repère « circuit spécialisé »).
+function modelePriseDediee(couleur?: string): THREE.Group {
+  const g = modelePrise(false, couleur);
+  g.add(tore(0.0335, 0.0022, m(0xf97316, { emissive: 0xf97316, emissiveIntensity: 0.35 }), 0, 0, T_PLAQUE + 0.003));
+  return g;
+}
+
+// Prise RJ45 (communication) : plaque + embase rectangulaire avec volet anti-poussière, voyant
+// de repère bleu (câblage VDI, cat. 6 STP).
+function modeleRj45(couleur?: string): THREE.Group {
+  const g = new THREE.Group();
+  const t = teinte(couleur);
+  plaque(g, t.plaque);
+  const z = T_PLAQUE;
+  g.add(boite(0.03, 0.034, 0.005, t.accent, 0, 0, z + 0.0025));                 // embase
+  g.add(boite(0.02, 0.014, 0.004, m(t.contraste), 0, 0.002, z + 0.0055));       // alvéole RJ45
+  g.add(boite(0.022, 0.006, 0.003, t.plaque, 0, -0.011, z + 0.0065));           // volet
+  g.add(cylZ(0.0035, 0.002, m(0x2563eb, { emissive: 0x2563eb, emissiveIntensity: 0.4 }), 0, 0.024, z + 0.001)); // repère communication
   return g;
 }
 
@@ -114,6 +139,31 @@ function modeleInterrupteur(type: "interrupteur" | "va_et_vient" | "telerupteur"
     g.add(bascule);
     g.add(boite(0.038, 0.002, 0.008, t.accent, 0, 0, z + 0.004));    // fente centrale
     if (type === "va_et_vient") g.add(cylZ(0.0035, 0.002, m(t.contraste), 0, 0.037, z + 0.001)); // repère va-et-vient
+  }
+  return g;
+}
+
+// Double commande (1 poste, 2 voies) : deux bascules côte à côte (interrupteur / va-et-vient) ou deux
+// boutons ronds l'un sous l'autre (poussoir). Un point repère par voie pour le va-et-vient.
+function modeleInterrupteurDouble(base: "interrupteur" | "va_et_vient" | "telerupteur", couleur?: string): THREE.Group {
+  const g = new THREE.Group();
+  const t = teinte(couleur);
+  plaque(g, t.plaque);
+  const z = T_PLAQUE;
+  if (base === "telerupteur") {
+    [0.018, -0.018].forEach(y => {
+      g.add(cylZ(0.0135, 0.004, t.accent, 0, y, z + 0.002));
+      g.add(cylZ(0.0105, 0.008, t.plaque, 0, y, z + 0.006));
+      g.add(cylZ(0.0028, 0.002, m(0xfbbf24, { emissive: 0xfbbf24, emissiveIntensity: 0.5 }), 0.017, y, z + 0.001));
+    });
+  } else {
+    [-0.0175, 0.0175].forEach(x => {
+      const bascule = boite(0.028, 0.054, 0.007, t.plaque, x, 0, z + 0.0035);
+      bascule.rotation.x = -0.12;
+      g.add(bascule);
+      g.add(boite(0.03, 0.002, 0.008, t.accent, x, 0, z + 0.004));
+      if (base === "va_et_vient") g.add(cylZ(0.003, 0.002, m(t.contraste), x, 0.037, z + 0.001));
+    });
   }
   return g;
 }
@@ -336,6 +386,8 @@ export function creerVoletRoulant(o: OptsVolet): ModeleVolet {
 
 const MONTAGE: Record<AppareillageType, Montage> = {
   prise: "mur", prise_commandee: "mur", interrupteur: "mur", va_et_vient: "mur", telerupteur: "mur",
+  interrupteur_double: "mur", va_et_vient_double: "mur", telerupteur_double: "mur",
+  rj45: "mur", prise_dediee: "mur",
   applique: "mur", point_lumineux: "plafond",
   four: "sol_mur", plaque: "sol_mur", lave_linge: "sol_mur", lave_vaisselle: "sol_mur", seche_linge: "sol_mur",
   congelateur: "sol_mur", piscine: "sol_mur",
@@ -343,23 +395,32 @@ const MONTAGE: Record<AppareillageType, Montage> = {
   volet_roulant: "mur",
 };
 const DEMI_HAUTEUR: Partial<Record<AppareillageType, number>> = {
-  prise: 0.04, prise_commandee: 0.04, interrupteur: 0.04, va_et_vient: 0.04, telerupteur: 0.04,
+  prise: 0.04, prise_commandee: 0.04, interrupteur: 0.04, va_et_vient: 0.04, telerupteur: 0.04, interrupteur_double: 0.04, va_et_vient_double: 0.04, telerupteur_double: 0.04, rj45: 0.04, prise_dediee: 0.04,
   applique: 0.075, chauffe_eau: 0.5, chauffage: 0.225, clim: 0.14, seche_serviette: 0.6, irve: 0.18, vmc: 0.08, alarme: 0.14, volet_roulant: 0.12,
 };
 const SOMMET: Partial<Record<AppareillageType, number>> = {
-  prise: 0.045, prise_commandee: 0.045, interrupteur: 0.045, va_et_vient: 0.045, telerupteur: 0.045,
+  prise: 0.045, prise_commandee: 0.045, interrupteur: 0.045, va_et_vient: 0.045, telerupteur: 0.045, interrupteur_double: 0.045, va_et_vient_double: 0.045, telerupteur_double: 0.045, rj45: 0.045, prise_dediee: 0.045,
   applique: 0.08, point_lumineux: 0, four: 1.2, plaque: 0.9, lave_linge: 0.85, lave_vaisselle: 0.82, seche_linge: 0.85,
   congelateur: 0.85, piscine: 0.7, chauffe_eau: 0.45, chauffage: 0.23, clim: 0.14, seche_serviette: 0.6,
   irve: 0.18, vmc: 0.08, alarme: 0.2, volet_roulant: 0.1,
 };
 
-export function creerModeleAppareillage(type: AppareillageType, couleurCircuit?: string, couleur?: string): ModeleAppareillage {
+// poste = true : le modèle est un POSTE d'une plaque multiple (tronçon de plaque de 71 mm, voir
+// LARGEUR_PLAQUE) ; les tronçons voisins forment une plaque continue.
+export function creerModeleAppareillage(type: AppareillageType, couleurCircuit?: string, couleur?: string, poste = false): ModeleAppareillage {
   let groupe: THREE.Group;
   let ampoule: THREE.MeshStandardMaterial | undefined;
+  LARGEUR_PLAQUE = poste ? ENTRAXE_POSTE_M : 0.08;
+  try {
   switch (type) {
     case "prise": groupe = modelePrise(false, couleur); break;
     case "prise_commandee": groupe = modelePrise(true, couleur); break;
+    case "prise_dediee": groupe = modelePriseDediee(couleur); break;
+    case "rj45": groupe = modeleRj45(couleur); break;
     case "interrupteur": case "va_et_vient": case "telerupteur": groupe = modeleInterrupteur(type, couleur); break;
+    case "interrupteur_double": groupe = modeleInterrupteurDouble("interrupteur", couleur); break;
+    case "va_et_vient_double": groupe = modeleInterrupteurDouble("va_et_vient", couleur); break;
+    case "telerupteur_double": groupe = modeleInterrupteurDouble("telerupteur", couleur); break;
     case "applique": { const r = modeleApplique(); groupe = r.g; ampoule = r.verre; break; }
     case "point_lumineux": { const r = modelePlafonnier(); groupe = r.g; ampoule = r.verre; break; }
     case "lave_linge": groupe = modeleLaveLinge(BLANC); break;
@@ -378,6 +439,7 @@ export function creerModeleAppareillage(type: AppareillageType, couleurCircuit?:
     case "volet_roulant": groupe = creerVoletRoulant({ largeur: 1, hauteur: 1.2, allege: 0.9, caisson: "interieur", epaisseurMur: 0.1, plafond: 2.5, ouvertPct: 50 }).groupe; break;
     case "alarme": default: groupe = modeleAlarme(); break;
   }
+  } finally { LARGEUR_PLAQUE = 0.08; }
   const montage = MONTAGE[type] ?? "mur";
   const hauteurSommet = SOMMET[type] ?? 0.1;
   // Électroménager : porte ombre (bloque réellement la lumière des points lumineux) ;
@@ -403,7 +465,7 @@ export function creerModeleAppareillage(type: AppareillageType, couleurCircuit?:
 // mur, et le câble descend du plafond sous une goulotte (PVC blanc 20 × 14 mm). Renvoie un groupe
 // racine dans le MÊME repère local (z = vers l'intérieur de la pièce, y = vers le haut) à la place
 // du groupe du modèle. hauteurAppareil : y monde du centre de l'appareil ; plafond : hauteur du mur.
-export const TYPES_POSE_APPARENTE: AppareillageType[] = ["prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur", "applique"];
+export const TYPES_POSE_APPARENTE: AppareillageType[] = ["prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur", "interrupteur_double", "va_et_vient_double", "telerupteur_double", "applique", "rj45", "prise_dediee"];
 // hauteurMontee = hauteur (m) jusqu'où monte la goulotte : celle à laquelle le câble court à plat.
 export function habillerEnSaillie(modele: ModeleAppareillage, hauteurAppareil: number, hauteurMontee: number): THREE.Group {
   const racine = new THREE.Group();

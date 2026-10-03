@@ -12,17 +12,16 @@
 
 import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { Niveau, PIECE_TYPES, centroide, AppareillageType, OuvertureEffective, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, centroide, AppareillageType, OuvertureEffective, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
 import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
 import { parametresMur3D, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT, preparerMurs, pointDansCouche2 } from "@/lib/murs";
-import { appareillagesEnPoseApparente, posesTroncons, hauteursTroncons } from "@/lib/pose-circuits";
+import { appareillagesEnPoseApparente, posesTroncons, hauteursTroncons, hauteurDefautLiaison } from "@/lib/pose-circuits";
 import { construireChemin3D, hauteurGaineNiveau } from "@/lib/chemin-3d";
+import { HAUTEUR_TABLEAU_DEFAUT, creerContexteLongueurs } from "@/lib/longueurs-circuits";
 
-
-// Hauteur d'installation par défaut du tableau électrique (mètres) quand non précisée.
-const HAUTEUR_TABLEAU_DEFAUT = 1.5;
+// Hauteur du tableau par défaut (HAUTEUR_TABLEAU_DEFAUT) : définie dans lib/longueurs-circuits.ts, partagée avec le calcul des longueurs.
 
 // ─── SIMULATION D'ÉCLAIRAGE (VUE 3D) ───────────────────────────────────────────
 // Chaque interrupteur/va-et-vient/télérupteur ayant des points lumineux commandés
@@ -36,6 +35,9 @@ const LABEL_TYPE_INTERRUPTEUR: Record<"interrupteur" | "va_et_vient" | "telerupt
   va_et_vient: "Va-et-vient",
   telerupteur: "Télérupteur",
 };
+// Un mécanisme DOUBLE (2 voies) donne deux lignes de simulation indépendantes. Les ids de simulation
+// sont des nombres : la voie 2 utilise l'opposé de l'id de l'appareillage (jamais en collision, les id sont > 0).
+const ID_VOIE_2 = (id: number): number => -id;
 
 interface InterrupteurUI {
   id: number;
@@ -217,14 +219,21 @@ const Vue3D = forwardRef<Vue3DHandle, {
     const liste: InterrupteurUI[] = [];
     niveauResultat.pieces.forEach(piece => {
       piece.appareillages.forEach(app => {
-        if (app.type !== "interrupteur" && app.type !== "va_et_vient" && app.type !== "telerupteur") return;
-        const lumiereIds = app.commandePourIds ?? [];
-        if (lumiereIds.length === 0) return;
-        liste.push({
-          id: app.id,
-          label: app.nom || `${LABEL_TYPE_INTERRUPTEUR[app.type]}${lumiereIds.length > 1 ? ` (${lumiereIds.length} pts)` : ""}`,
-          pieceNom: piece.nom,
-          lumiereIds,
+        if (!estCommande(app.type)) return;
+        const base = baseCommande(app.type)!;
+        const double = estCommandeDouble(app.type);
+        const voies: { id: number; ids: number[]; suffixe: string }[] = double
+          ? [{ id: app.id, ids: app.commandePourIds ?? [], suffixe: " — voie 1" }, { id: ID_VOIE_2(app.id), ids: app.commandePourIds2 ?? [], suffixe: " — voie 2" }]
+          : [{ id: app.id, ids: app.commandePourIds ?? [], suffixe: "" }];
+        voies.forEach(v => {
+          if (v.ids.length === 0) return;
+          const prefixe = double ? "Double " : "";
+          liste.push({
+            id: v.id,
+            label: (app.nom ? app.nom : `${prefixe}${double ? LABEL_TYPE_INTERRUPTEUR[base].toLowerCase() : LABEL_TYPE_INTERRUPTEUR[base]}${v.ids.length > 1 ? ` (${v.ids.length} pts)` : ""}`) + v.suffixe,
+            pieceNom: piece.nom,
+            lumiereIds: v.ids,
+          });
         });
       });
     });
@@ -366,7 +375,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
           posApp.set(String(app.id), new THREE.Vector3(pxv, vol.hautMoteur, pzv)); // câble → moteur
           return;
         }
-        const modele = creerModeleAppareillage(app.type, couleurCircuitApp, liveParId.get(app.id)?.couleur);
+        const modele = creerModeleAppareillage(app.type, couleurCircuitApp, liveParId.get(app.id)?.couleur, (liveParId.get(app.id) ?? app).groupeId != null); // poste d'une plaque multiple : tronçon de plaque de 71 mm
         let px = app.x, pz = app.y, py = hCable, rotY = 0;
         let nx = 0, nz = 0; // direction "vers l'intérieur" (monde), pour décaler les lumières
         let murPose: ReturnType<typeof parametresMur3D> | null = null; // mur d'accueil (pose des câbles, doublage)
@@ -466,7 +475,9 @@ const Vue3D = forwardRef<Vue3DHandle, {
       // niveau (cohérent avec le plan 2D et le calcul de facturation, predevis-engine.ts —
       // origineCalcul), sinon le tableau directement.
       const tableauPos = origineCircuits(niveau)!;
-      const hauteurTableau = niveau.tableauHauteur != null ? niveau.tableauHauteur / 100 : HAUTEUR_TABLEAU_DEFAUT;
+      // Hauteur de l'ancre « tableau » du tracé : celle du tableau, ou la hauteur de gaine quand le tracé visible part
+      // du point d'arrivée des gaines — la MÊME règle que le calcul des longueurs (longueurs-circuits.ts).
+      const hauteurTableau = creerContexteLongueurs(niveau).hauteurOrigine;
       const tousAppareils = niveauResultat.pieces.flatMap(p => p.appareillages);
       const parCircuit = new Map<number, typeof tousAppareils>();
       tousAppareils.forEach(a => {
@@ -500,6 +511,9 @@ const Vue3D = forwardRef<Vue3DHandle, {
         rang++;
         const color = colorMap.get(circuitId) ?? "#666666";
         const segments = segmentsPourCircuit(breaker, points, niveau, tableauPos);
+        // Circuit de prises (ou tout circuit non éclairage) : les appareillages se relient entre eux à la hauteur de la
+        // 1re prise du circuit, au lieu de remonter à la hauteur de gaine à chaque prise (voir hauteurDefautLiaison).
+        const hauteurDefaut = hauteurDefautLiaison(breaker, segments, hauteurAncre, hauteurGaine);
         segments.forEach(seg => {
           if (seg.type === "domotique") {
             // Liaison sans fil (domotique) — pas de coudes de gaine à représenter (aucun
@@ -527,7 +541,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
             coudes: coudes.map(c => ({ point: c.point, hauteurCm: c.hauteur })),
             poses: posesTroncons(niveau, cle, coudes),
             hauteursSection: hauteursTroncons(niveau, cle, coudes),
-            hauteurGaine,
+            hauteurGaine: hauteurDefaut(seg),
             couche2,
           });
           const teinte = seg.type === "navette" ? assombrirCouleur(color) : color;   // navette : couleur du circuit assombrie
