@@ -9,6 +9,7 @@ import {
 } from "@/lib/fournisseurs";
 import { fmt, UNITES, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
+import { NOMENCLATURE_APPAREILLAGE } from "@/lib/predevis-engine";
 import {
   Plus, Trash2, Save, Pencil, X, ChevronDown, ChevronUp,
   Link, Wrench, Package, Search, Download, Upload, AlertCircle,
@@ -367,6 +368,10 @@ const SOUS_CATEGORIES_CONNUES: { code: string; label: string }[] = [
   { code: "boite_encastrement_3postes", label: "Boîte d'encastrement triple" },
   { code: "boite_encastrement_4postes", label: "Boîte d'encastrement quadruple" },
   { code: "boite_encastrement_dcl", label: "Boîte d'encastrement DCL (point lumineux)" },
+  { code: "plaque_2postes", label: "Plaque de finition double (2 postes)" },
+  { code: "plaque_3postes", label: "Plaque de finition triple (3 postes)" },
+  { code: "plaque_4postes", label: "Plaque de finition quadruple (4 postes)" },
+  { code: "cable_rj45", label: "Câble RJ45 cat. 6 STP (au mètre / bobine)" },
   { code: "disjoncteur_2A", label: "Disjoncteur 2A" },
   { code: "disjoncteur_6A", label: "Disjoncteur 6A" },
   { code: "disjoncteur_10A", label: "Disjoncteur 10A" },
@@ -378,17 +383,9 @@ const SOUS_CATEGORIES_CONNUES: { code: string; label: string }[] = [
   { code: "disjoncteur_63A", label: "Disjoncteur 63A" },
   ...[25, 40, 63, 80, 100, 125].flatMap(cal =>
     (["AC", "A", "F"] as const).map(t => ({ code: `differentiel_${cal}A_${t}`, label: `Différentiel ${cal}A Type ${t}` }))),
-  { code: "prise", label: "Prise de courant" },
-  { code: "prise_commandee", label: "Prise commandée" },
-  { code: "interrupteur", label: "Interrupteur simple" },
-  { code: "va_et_vient", label: "Va-et-vient" },
-  { code: "telerupteur", label: "Bouton télérupteur" },
-  { code: "point_lumineux", label: "Point lumineux (DCL)" },
-  { code: "applique", label: "Sortie applique" },
-  { code: "interrupteur_domotique", label: "Interrupteur domotique" },
-  { code: "va_et_vient_domotique", label: "Va-et-vient domotique" },
-  { code: "telerupteur_domotique", label: "Bouton télérupteur domotique" },
-  { code: "prise_specialisee", label: "Prise / sortie de câble spécialisée" },
+  // Appareillages (prise, interrupteurs simples/doubles, RJ45, points lumineux, variantes domotiques, sortie
+  // spécialisée…) : dérivés du moteur pré-devis — voir NOMENCLATURE_APPAREILLAGE.
+  ...NOMENCLATURE_APPAREILLAGE,
   { code: "main_oeuvre", label: "Main d'œuvre" },
 ];
 
