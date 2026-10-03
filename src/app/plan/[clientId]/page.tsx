@@ -14,20 +14,20 @@ import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
   GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt, Box,
-  Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen,
+  Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, SplitSquareHorizontal, BoxSelect,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
   MurSpec, MUR_DEFAUT, PRESETS_MUR,
-  Ouverture, OuvertureType, nouvelleOuverture, positionSurSegment, OuvertureEffective, ouverturesEffectivesMur,
+  Ouverture, OuvertureType, nouvelleOuverture, hauteurOuvertureDefautCm, positionSurSegment, OuvertureEffective, ouverturesEffectivesMur,
   NIVEAU_TYPES, estAnnexe, origineCircuits, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance,
-  distanceAuSegment, positionnerADistanceDuSegment, pointDansPolygone,
+  distanceAuSegment, positionnerADistanceDuSegment, pointDansPolygone, distanceAuMurLePlusProche,
   CircuitManuel, FamilleCircuitManuel,
   nouveauNiveau, nouvellePiece, nouvelAppareillage, uidMaison, reamorcerCompteurId, dedupliquerIds,
   LiaisonWaypoint, cleSegmentLiaison,
   cheminSegment, longueurBranchesEclairage, centroidePoints, assombrirCouleur, pointsOndulesEntre,
   BoiteDerivation, migrerBoitesDerivation,
-  MeubleSimple, nouveauMeuble, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
+  Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
   estCommande, estCommandeDouble, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M,
 } from "@/lib/maison-types";
 import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillageSymbolSvgString, PALETTE, labelAppareillage, labelAppareillagePlace, initialesAppareillage } from "@/components/plan/AppareillageSymbols";
@@ -35,6 +35,9 @@ import { cotesOuvertures, cotesExterieures, coteHorsTout } from "@/lib/cotes-arc
 import { posesTroncons, hauteursTroncons } from "@/lib/pose-circuits";
 import { creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurCircuit } from "@/lib/longueurs-circuits";
 import { preparerMurs, definirMitoyens, mitoyensDe, longueursUtilesCm, geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
+import { accrocherSurContour, apercuCloison, appliquerCloison, OptionsCloison, PointAccroche } from "@/lib/cloisons";
+import type { CloisonZone } from "@/lib/zones";
+import { cotesParDefaut, nouvelleZone, validerTraceZone, surfaceZone, centreEtiquetteZone, cloisonsDeZone, quadCloison, decoupeOuvertureZone, longueurCote, nbCotes, segmentsZone, definirTypeCote, trouverCloisonZone, positionOuvertureValide } from "@/lib/zones";
 import { enCm, estRectangle, redimensionnerMur, redimensionnerMurUtile, reporterAppareillages, propagerSommetsPartages } from "@/lib/dimensions-piece";
 import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece";
 import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
@@ -58,6 +61,8 @@ const SNAP_MUR_PX = 22;
 // Distance de détection (px écran) pour "clique près d'un mur" lors du placement
 // d'une porte/fenêtre — plus généreux que l'accroche fine, un mur est fin à l'écran.
 const SEUIL_MUR_PX = 18;
+// Outil cloison : distance (px écran) à un mur en deçà de laquelle un clic est pris pour un départ / une fin sur ce mur.
+const CLOISON_SEUIL_PX = 12;
 
 // Types de circuit proposés pour un circuit manuel — tout CIRCUITS sauf les entrées qui ne
 // correspondent pas à un vrai circuit posé sur le plan (arrivée générale, parafoudre) et
@@ -201,6 +206,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
   const pieces = piecesSelectionnees ? n.pieces.filter(p => piecesSelectionnees.has(p.id)) : n.pieces;
   const allPts = [
     ...pieces.flatMap(p => p.contour),
+    ...(n.zones ?? []).flatMap(z => z.contour),
     ...(n.tableauPos ? [n.tableauPos] : []),
   ];
   if (allPts.length === 0) {
@@ -253,11 +259,36 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
           const u = { x: (b.x - a.x), y: (b.y - a.y) }, L = Math.hypot(u.x, u.y) || 1;
           const c0 = { x: a.x + u.x * e.position - u.x / L * e.largeur / 200, y: a.y + u.y * e.position - u.y / L * e.largeur / 200 };
           const c1 = { x: a.x + u.x * e.position + u.x / L * e.largeur / 200, y: a.y + u.y * e.position + u.y / L * e.largeur / 200 };
-          const col = e.type === "porte" || e.type === "porte_coulissante" ? "#92400E" : e.type === "fenetre" ? "#0369A1" : "#78716c";
+          const col = e.type === "porte" || e.type === "porte_coulissante" || e.type === "porte_garage" ? "#92400E" : e.type === "fenetre" ? "#0369A1" : "#78716c";
           s += `<line x1="${toPx(c0).x.toFixed(1)}" y1="${toPx(c0).y.toFixed(1)}" x2="${toPx(c1).x.toFixed(1)}" y2="${toPx(c1).y.toFixed(1)}" stroke="${col}" stroke-width="1.2"/>`;
         }
       });
     });
+  });
+  // Zones : fond léger + limites virtuelles en pointillés, cloisons en épaisseur (percées de leurs portes), nom + surface.
+  (n.zones ?? []).forEach(z => {
+    if (z.ferme && z.contour.length >= 3) s += `<polygon points="${ptsPx(z.contour)}" fill="#a78bfa" fill-opacity="0.13" stroke="none"/>`;
+    segmentsZone(z).forEach(sg => {
+      if (z.cotes[sg.i] === "ouvert") s += `<line x1="${toPx(sg.a).x.toFixed(1)}" y1="${toPx(sg.a).y.toFixed(1)}" x2="${toPx(sg.b).x.toFixed(1)}" y2="${toPx(sg.b).y.toFixed(1)}" stroke="#7c3aed" stroke-width="0.9" stroke-dasharray="4,3"/>`;
+    });
+    cloisonsDeZone(z).forEach(c => {
+      s += `<polygon points="${ptsPx(quadCloison(c))}" fill="#78716c" stroke="#78716c" stroke-width="0.4"/>`;
+      (z.ouvertures ?? []).filter(o => o.segIndex === c.i).forEach(o => {
+        s += `<polygon points="${ptsPx(decoupeOuvertureZone(c, o.position, o.largeur))}" fill="#fff" stroke="none"/>`;
+        const L = Math.hypot(c.b.x - c.a.x, c.b.y - c.a.y) || 1, ux = (c.b.x - c.a.x) / L, uy = (c.b.y - c.a.y) / L;
+        const p0 = toPx({ x: c.a.x + ux * (o.position * L - o.largeur / 200), y: c.a.y + uy * (o.position * L - o.largeur / 200) });
+        const p1 = toPx({ x: c.a.x + ux * (o.position * L + o.largeur / 200), y: c.a.y + uy * (o.position * L + o.largeur / 200) });
+        s += `<line x1="${p0.x.toFixed(1)}" y1="${p0.y.toFixed(1)}" x2="${p1.x.toFixed(1)}" y2="${p1.y.toFixed(1)}" stroke="#92400E" stroke-width="1.2"${o.type === "ouverture" ? ' stroke-dasharray="2,2"' : ""}/>`;
+      });
+    });
+    const surfZ = surfaceZone(z), cz = toPx(centreEtiquetteZone(z));
+    const nomZ = z.nom || (z.ferme ? "Zone" : "Cloison");
+    s += `<g text-anchor="middle" font-family="monospace">`
+      + `<text x="${cz.x.toFixed(1)}" y="${(cz.y - 2).toFixed(1)}" font-size="9" font-weight="bold" fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="round">${escapeXml(nomZ)}</text>`
+      + `<text x="${cz.x.toFixed(1)}" y="${(cz.y - 2).toFixed(1)}" font-size="9" font-weight="bold" fill="#5b21b6">${escapeXml(nomZ)}</text>`
+      + (surfZ ? `<text x="${cz.x.toFixed(1)}" y="${(cz.y + 8).toFixed(1)}" font-size="8" fill="none" stroke="#fff" stroke-width="2.6" stroke-linejoin="round">${surfZ.utile.toFixed(1)} m²</text>`
+        + `<text x="${cz.x.toFixed(1)}" y="${(cz.y + 8).toFixed(1)}" font-size="8" fill="#5b21b6">${surfZ.utile.toFixed(1)} m²</text>` : "")
+      + `</g>`;
   });
   niveauResultat.pieces.forEach(p => {
     const utileP = geometrieMurs(p).utile;
@@ -754,6 +785,230 @@ function PieceForm({ initialNom, initialType, initialHauteurPlafond, initialCont
   );
 }
 
+
+// ─── CLOISON : formulaire de validation ─────────────────────────────────────────────────────────
+// Après le tracé (mur → angles → mur) : noms et types des deux pièces obtenues, épaisseur de la cloison,
+// porte éventuelle. Le résultat est calculé en direct (surfaces utiles, erreurs) par appliquerCloison.
+const IDEES_SOUS_PIECE: { nom: string; type: PieceType }[] = [
+  { nom: "Dressing", type: "autre" }, { nom: "Placard", type: "autre" }, { nom: "Bureau", type: "autre" },
+  { nom: "Buanderie", type: "autre" }, { nom: "Salle d'eau", type: "sdb" }, { nom: "WC", type: "wc" },
+];
+function CloisonForm({ piece, pieces, chemin, onValidate, onCancel }: {
+  piece: Piece; pieces: Piece[]; chemin: Point[];
+  onValidate: (opts: OptionsCloison) => void; onCancel: () => void;
+}) {
+  const [nomOrigine, setNomOrigine] = useState(piece.nom);
+  const [typeOrigine, setTypeOrigine] = useState<PieceType>(piece.type);
+  const [nomNouvelle, setNomNouvelle] = useState("Dressing");
+  const [typeNouvelle, setTypeNouvelle] = useState<PieceType>("autre");
+  const [epaisseur, setEpaisseur] = useState("10");
+  const [porte, setPorte] = useState<OptionsCloison["porte"]>("porte");
+
+  const ep = parseFloat(epaisseur.replace(",", "."));
+  const epaisseurValide = ep >= 5 && ep <= 50;
+  const opts: OptionsCloison = { nomOrigine, typeOrigine, nomNouvelle, typeNouvelle, epaisseurCm: epaisseurValide ? ep : 10, porte };
+  const essai = appliquerCloison(pieces, piece.id, chemin, opts);
+  let aireOrigine: number | null = null, aireNouvelle: number | null = null;
+  if (!("erreur" in essai)) {
+    preparerMurs(essai.pieces);
+    const po = essai.pieces.find(x => x.id === essai.idOrigine), pn = essai.pieces.find(x => x.id === essai.idNouvelle);
+    aireOrigine = (po ? surfaceUtile(po) : null) ?? essai.aireOrigine;
+    aireNouvelle = (pn ? surfaceUtile(pn) : null) ?? essai.aireNouvelle;
+  }
+  const longueurTotale = chemin.slice(1).reduce((t, pt, i) => t + distance(chemin[i], pt), 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+      <div className="card w-full max-w-sm max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-ink-200 shrink-0">
+          <p className="font-semibold text-ink-900">Cloison — {chemin.length - 1} tronçon{chemin.length > 2 ? "s" : ""}, {longueurTotale.toFixed(2)} m</p>
+          <button onClick={onCancel} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={16} /></button>
+        </div>
+        <div className="p-4 flex flex-col gap-3 overflow-y-auto">
+          <div>
+            <label className="label">Nouvelle pièce (petite partie)</label>
+            <input autoFocus className="input" placeholder="Ex: Dressing" value={nomNouvelle} onChange={e => setNomNouvelle(e.target.value)} />
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {IDEES_SOUS_PIECE.map(i => (
+                <button key={i.nom} type="button" onClick={() => { setNomNouvelle(i.nom); setTypeNouvelle(i.type); }}
+                  className={`!text-[11px] px-2 py-0.5 rounded-md border transition-colors ${nomNouvelle === i.nom ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"}`}>
+                  {i.nom}
+                </button>
+              ))}
+            </div>
+            <select className="input mt-1.5" value={typeNouvelle} onChange={e => setTypeNouvelle(e.target.value as PieceType)}>
+              {Object.entries(PIECE_TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+            <p className="text-xs text-ink-500 mt-1">Surface utile : <span className="font-semibold text-ink-900">{aireNouvelle != null ? `${aireNouvelle.toFixed(2)} m²` : "—"}</span></p>
+          </div>
+          <div className="border-t border-ink-100 pt-3">
+            <label className="label">Pièce d&apos;origine (grande partie)</label>
+            <input className="input" value={nomOrigine} onChange={e => setNomOrigine(e.target.value)} />
+            <select className="input mt-1.5" value={typeOrigine} onChange={e => setTypeOrigine(e.target.value as PieceType)}>
+              {Object.entries(PIECE_TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+            <p className="text-xs text-ink-500 mt-1">Surface utile : <span className="font-semibold text-ink-900">{aireOrigine != null ? `${aireOrigine.toFixed(2)} m²` : "—"}</span></p>
+          </div>
+          <div className="border-t border-ink-100 pt-3 grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Épaisseur cloison (cm)</label>
+              <input className="input" inputMode="decimal" value={epaisseur} onChange={e => setEpaisseur(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">Porte dans la cloison</label>
+              <select className="input" value={porte ?? ""} onChange={e => setPorte((e.target.value || null) as OptionsCloison["porte"])}>
+                <option value="">Aucune</option>
+                <option value="porte">Porte battante</option>
+                <option value="porte_coulissante">Porte coulissante</option>
+                <option value="ouverture">Passage sans porte</option>
+              </select>
+            </div>
+          </div>
+          {!epaisseurValide && <p className="text-xs text-red-500">Épaisseur : entre 5 et 50 cm.</p>}
+          {"erreur" in essai && <p className="text-xs text-red-500">{essai.erreur}</p>}
+          {!("erreur" in essai) && essai.avertissement && <p className="text-xs text-amber-600">{essai.avertissement}</p>}
+          <p className="text-[11px] text-ink-400">
+            La cloison devient un mur mitoyen des deux pièces (même épaisseur des deux côtés). Les appareillages, meubles, portes et fenêtres passent dans la pièce qui les contient ;
+            les circuits sont à regénérer. Une porte se déplace ensuite en la glissant sur la cloison.
+          </p>
+        </div>
+        <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
+          <button disabled={"erreur" in essai || !epaisseurValide || nomNouvelle.trim() === ""} onClick={() => onValidate(opts)}
+            className="btn-volt flex-1 disabled:opacity-40"><Save size={14} /> Créer les deux pièces</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ZONE : symbole d'une porte posée dans une cloison de zone (plan 2D) ──────────────────────
+// Calculé en mètres puis projeté point par point (indépendant de l'orientation de la cloison).
+function OuvertureZoneSymbole({ c, o, toScreen, zoom, selectionnee, actif, onDown }: {
+  c: CloisonZone; o: Ouverture; toScreen: (p: Point) => Point; zoom: number; selectionnee: boolean; actif: boolean;
+  onDown: (e: React.PointerEvent) => void;
+}) {
+  const couleur = o.type === "fenetre" ? "#0369A1" : o.type === "ouverture" ? "#78716c" : "#92400E";
+  const L = distance(c.a, c.b) || 1, ux = (c.b.x - c.a.x) / L, uy = (c.b.y - c.a.y) / L, nx = -uy, ny = ux;
+  const w = o.largeur / 100, s = o.position * L;
+  const pt = (along: number, perp: number): Point => ({ x: c.a.x + ux * along + nx * perp, y: c.a.y + uy * along + ny * perp });
+  const J0 = pt(s - w / 2, 0), J1 = pt(s + w / 2, 0), centre = pt(s, 0);
+  const sg = o.ouvreVersInterieur === false ? -1 : 1;
+  const P = (q: Point) => { const e = toScreen(q); return `${e.x},${e.y}`; };
+  const e0 = toScreen(J0), e1 = toScreen(J1), ec = toScreen(centre);
+  let corps: ReactNode = null;
+  if (o.type === "porte") {
+    const hingeAlong = o.charniere === "droite" ? s + w / 2 : s - w / 2, autreAlong = o.charniere === "droite" ? s - w / 2 : s + w / 2;
+    const hinge = pt(hingeAlong, 0), bout = pt(hingeAlong, sg * w);
+    const a1 = Math.atan2(bout.y - hinge.y, bout.x - hinge.x), a2 = Math.atan2(pt(autreAlong, 0).y - hinge.y, pt(autreAlong, 0).x - hinge.x);
+    let d = a2 - a1; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+    const arc = Array.from({ length: 11 }, (_, k) => ({ x: hinge.x + w * Math.cos(a1 + d * (k / 10)), y: hinge.y + w * Math.sin(a1 + d * (k / 10)) }));
+    corps = (<>
+      <line x1={toScreen(hinge).x} y1={toScreen(hinge).y} x2={toScreen(bout).x} y2={toScreen(bout).y} stroke={couleur} strokeWidth={1.6} />
+      <polyline points={arc.map(P).join(" ")} fill="none" stroke={couleur} strokeWidth={1} strokeDasharray="3,2" />
+    </>);
+  } else if (o.type === "porte_coulissante") {
+    const cote = o.coulisseVers === "gauche" ? -1 : 1;
+    const q0 = pt(cote > 0 ? s + w / 2 : s - w / 2 - w, 0), q1 = pt(cote > 0 ? s + w / 2 + w : s - w / 2, 0);
+    corps = <polygon points={[q0, q1, { x: q1.x + nx * 0.03, y: q1.y + ny * 0.03 }, { x: q0.x + nx * 0.03, y: q0.y + ny * 0.03 }].map(P).join(" ")} fill={couleur} opacity={0.45} />;
+  } else if (o.type === "fenetre") {
+    corps = (<>
+      <line x1={toScreen(pt(s - w / 2, 0.03)).x} y1={toScreen(pt(s - w / 2, 0.03)).y} x2={toScreen(pt(s + w / 2, 0.03)).x} y2={toScreen(pt(s + w / 2, 0.03)).y} stroke={couleur} strokeWidth={1.5} />
+      <line x1={toScreen(pt(s - w / 2, -0.03)).x} y1={toScreen(pt(s - w / 2, -0.03)).y} x2={toScreen(pt(s + w / 2, -0.03)).x} y2={toScreen(pt(s + w / 2, -0.03)).y} stroke={couleur} strokeWidth={1.5} />
+    </>);
+  } else if (o.type === "porte_garage") {
+    corps = <line x1={e0.x} y1={e0.y} x2={e1.x} y2={e1.y} stroke={couleur} strokeWidth={2.5} />;
+  } else {
+    corps = <line x1={e0.x} y1={e0.y} x2={e1.x} y2={e1.y} stroke={couleur} strokeWidth={1} strokeDasharray="2,2" />;
+  }
+  const rayon = Math.max(10, (w * PX_PER_M * zoom) / 2 + 4);
+  return (
+    <g onPointerDown={onDown} style={{ cursor: actif ? "pointer" : "default" }}>
+      {corps}
+      <circle cx={ec.x} cy={ec.y} r={rayon} fill="transparent" style={{ pointerEvents: actif ? "all" : "none" }} />
+      {selectionnee && <circle cx={ec.x} cy={ec.y} r={rayon} fill="none" stroke="#F59E0B" strokeWidth={1.5} style={{ pointerEvents: "none" }} />}
+    </g>
+  );
+}
+
+// ─── ZONE : formulaire de création ────────────────────────────────────────────────────────────
+// Nom, épaisseur des cloisons et nature de chaque côté (cloison à monter / limite ouverte). Un côté posé sur un
+// mur existant est proposé « ouvert » : le mur est déjà là. La surface se recalcule en direct.
+function ZoneForm({ contour, ferme, pieces, onValidate, onCancel }: {
+  contour: Point[]; ferme: boolean; pieces: Piece[];
+  onValidate: (nom: string, cotes: TypeCoteZone[], epaisseurCm: number) => void; onCancel: () => void;
+}) {
+  const [nom, setNom] = useState(ferme ? "Dressing" : "Cloison");
+  const [epaisseur, setEpaisseur] = useState("10");
+  const [cotes, setCotes] = useState<TypeCoteZone[]>(() => cotesParDefaut(contour, ferme, pieces));
+  const ep = parseFloat(epaisseur.replace(",", "."));
+  const epaisseurValide = ep >= 5 && ep <= 50;
+  const apercu: Zone = { id: 0, nom, contour, ferme, cotes, epaisseurCm: epaisseurValide ? ep : 10 };
+  const surf = surfaceZone(apercu);
+  const longueurTotale = segmentsZone(apercu).reduce((t, sg) => t + distance(sg.a, sg.b), 0);
+  const nbCloisons = cotes.filter(c => c === "cloison").length;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+      <div className="card w-full max-w-sm max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-ink-200 shrink-0">
+          <p className="font-semibold text-ink-900">{ferme ? "Zone" : "Cloison libre"}</p>
+          <button onClick={onCancel} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={16} /></button>
+        </div>
+        <div className="p-4 flex flex-col gap-3 overflow-y-auto">
+          <div>
+            <label className="label">Nom</label>
+            <input autoFocus className="input" placeholder={ferme ? "Ex: Dressing, Coin bureau…" : "Ex: Cloison dressing"} value={nom} onChange={e => setNom(e.target.value)} />
+            {ferme && (
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {["Dressing", "Placard", "Bureau", "Buanderie", "Coin repas", "Entrée"].map(n => (
+                  <button key={n} type="button" onClick={() => setNom(n)}
+                    className={`!text-[11px] px-2 py-0.5 rounded-md border transition-colors ${nom === n ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"}`}>{n}</button>
+                ))}
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-ink-500">
+            {surf
+              ? <>Surface utile : <span className="font-semibold text-ink-900">{surf.utile.toFixed(2)} m²</span> <span className="text-ink-400">(tracé à l&apos;axe {surf.brute.toFixed(2)} m²)</span></>
+              : <>Longueur : <span className="font-semibold text-ink-900">{longueurTotale.toFixed(2)} m</span> · une cloison libre n&apos;a pas de surface</>}
+          </p>
+          <div className="border-t border-ink-100 pt-3">
+            <label className="label">Épaisseur des cloisons (cm)</label>
+            <input className="input !w-24" inputMode="decimal" value={epaisseur} onChange={e => setEpaisseur(e.target.value)} />
+            {!epaisseurValide && <p className="text-xs text-red-500 mt-1">Épaisseur : entre 5 et 50 cm.</p>}
+          </div>
+          {ferme && (
+            <div className="border-t border-ink-100 pt-3 flex flex-col gap-1.5">
+              <label className="label">Côtés</label>
+              {cotes.map((c, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs text-ink-500">
+                  <span className="shrink-0 w-28">Côté {i + 1} · {distance(contour[i], contour[(i + 1) % contour.length]).toFixed(2)} m</span>
+                  <div className="flex gap-1 flex-1">
+                    {(["cloison", "ouvert"] as const).map(t => (
+                      <button key={t} type="button" onClick={() => setCotes(arr => arr.map((x, k) => (k === i ? t : x)))}
+                        className={`flex-1 !text-xs px-2 py-1 rounded-md border transition-colors ${c === t ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"}`}>
+                        {t === "cloison" ? "Cloison" : "Ouvert"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              <p className="text-[11px] text-ink-400">
+                « Cloison » = mur à monter, dessiné en épaisseur au plan et en 3D. « Ouvert » = limite virtuelle ou mur déjà existant (proposé automatiquement quand le côté longe un mur).
+                {nbCloisons === 0 && " Sans aucune cloison, la zone ne sert qu'à nommer et mesurer un espace."}
+              </p>
+            </div>
+          )}
+          <p className="text-[11px] text-ink-400">Les portes se posent ensuite avec l&apos;outil « Porte / fenêtre », en cliquant sur une cloison. Une zone n&apos;est pas une pièce : pas d&apos;appareillage ni de circuit.</p>
+        </div>
+        <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
+          <button disabled={!epaisseurValide || nom.trim() === ""} onClick={() => onValidate(nom, cotes, apercu.epaisseurCm)}
+            className="btn-volt flex-1 disabled:opacity-40"><Save size={14} /> Créer</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Enveloppe déplaçable pour les panneaux flottants (info pièce/appareillage/tableau/
 // ouverture/coude, circuits manuels, légende des circuits, dessin de cheminement) — une
 // poignée fine en haut (grip) permet de les glisser n'importe où sur l'écran pour ne plus
@@ -1122,7 +1377,7 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
 // Icône simple porte/fenêtre — pas de symbole normalisé dédié, juste de quoi
 // distinguer les deux boutons et l'ouverture posée sur le plan.
 const LABEL_OUVERTURE: Record<OuvertureType, string> = {
-  porte: "Porte", porte_coulissante: "Porte coulissante", fenetre: "Fenêtre", ouverture: "Ouverture murale",
+  porte: "Porte", porte_coulissante: "Porte coulissante", porte_garage: "Porte de garage basculante", fenetre: "Fenêtre", ouverture: "Ouverture murale",
 };
 
 function OuvertureIcon({ type, size = 16, color = "currentColor" }: { type: OuvertureType; size?: number; color?: string }) {
@@ -1140,6 +1395,14 @@ function OuvertureIcon({ type, size = 16, color = "currentColor" }: { type: Ouve
           <rect x={1} y={3} width={6} height={10} stroke={color} strokeWidth={1.3} />
           <rect x={7} y={3} width={6} height={10} stroke={color} strokeWidth={1.3} strokeDasharray="1.4,1.2" />
           <path d="M9 1 h3 M12 1 l-1.6 -1.2 M12 1 l-1.6 1.2" stroke={color} strokeWidth={0.9} />
+        </svg>
+      );
+    case "porte_garage":
+      return (
+        <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+          <rect x={2} y={4} width={12} height={10} stroke={color} strokeWidth={1.4} />
+          <path d="M2 7h12M2 10h12" stroke={color} strokeWidth={1} />
+          <path d="M5 2.5 L8 1 L11 2.5" stroke={color} strokeWidth={0.9} />
         </svg>
       );
     case "fenetre":
@@ -1429,7 +1692,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [confirmSuppNiveau, setConfirmSuppNiveau] = useState(false);
   const [suppNiveauEnCours, setSuppNiveauEnCours] = useState(false);
 
-  const [mode, setMode] = useState<"select" | "dessiner">("select");
+  const [mode, setMode] = useState<"select" | "dessiner" | "cloison" | "zone">("select");
+  // Outil cloison : points déjà posés (le 1er est sur un mur) ; tracé validé en attente du formulaire.
+  const [cloisonPoints, setCloisonPoints] = useState<Point[]>([]);
+  const [cloisonEnAttente, setCloisonEnAttente] = useState<{ pieceId: number; chemin: Point[] } | null>(null);
+  // Outil zone : points déjà posés, tracé validé en attente du formulaire, zone / porte de zone sélectionnée.
+  const [zonePoints, setZonePoints] = useState<Point[]>([]);
+  const [zoneEnAttente, setZoneEnAttente] = useState<{ contour: Point[]; ferme: boolean } | null>(null);
+  const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null);
+  const [selectedZoneOuv, setSelectedZoneOuv] = useState<{ zoneId: number; ouvId: number } | null>(null);
   const [drawingPoints, setDrawingPoints] = useState<Point[]>([]);
   const [pendingContour, setPendingContour] = useState<Point[] | null>(null);
   const [cursorPx, setCursorPx] = useState<Point | null>(null);
@@ -1890,6 +2161,181 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const id = requestAnimationFrame(() => setLayoutTick(t => t + 1));
     return () => cancelAnimationFrame(id);
   }, [modeFocus, paletteReduite, menuHautReduit, toolbarOuvert, vue3D]);
+
+  // Le tracé de cloison ne survit ni à un changement d'outil, ni à un changement de niveau, ni à la vue 3D.
+  useEffect(() => {
+    if (mode !== "cloison" || vue3D) { setCloisonPoints([]); setCloisonEnAttente(null); }
+    if (vue3D && mode === "cloison") setMode("select");
+  }, [mode, vue3D]);
+  useEffect(() => { setCloisonPoints([]); setCloisonEnAttente(null); }, [niveauActifId]);
+  // Clavier de l'outil cloison : Retour arrière = retire le dernier point, Échap = quitte l'outil.
+  useEffect(() => {
+    if (mode !== "cloison" || cloisonEnAttente) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      if (e.key === "Escape") { e.preventDefault(); if (cloisonPoints.length > 0) setCloisonPoints([]); else setMode("select"); }
+      else if (e.key === "Backspace" || e.key === "Delete") { e.preventDefault(); setCloisonPoints(pts => pts.slice(0, -1)); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mode, cloisonEnAttente, cloisonPoints.length]);
+
+  const entrerModeCloison = () => {
+    if (mode === "cloison") { setMode("select"); return; }
+    setMode("cloison"); setCloisonPoints([]); setCloisonEnAttente(null);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
+    setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
+    setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null); setDrawingPoints([]);
+  };
+
+  // Accroche du curseur pour l'outil cloison. 1er point : le mur le plus proche (toutes pièces). Ensuite : le
+  // point est soit sur un mur de la pièce visée (= fin de cloison), soit un coude à l'intérieur, aligné sur les
+  // sommets et sur les points déjà posés. Le même calcul sert à l'aperçu et au clic (rien de décalé entre les deux).
+  const curseurCloison = (mCur: Point): { point: Point; surMur: boolean; piece: Piece | null; guideX?: number; guideY?: number } | null => {
+    if (!niveauActif) return null;
+    const seuilM = CLOISON_SEUIL_PX / (PX_PER_M * zoom);
+    const seuilAlign = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
+    if (cloisonPoints.length === 0) {
+      let meilleur: { acc: PointAccroche; d: number } | null = null;
+      for (const pc of niveauActif.pieces) {
+        const acc = accrocherSurContour(pc.contour, mCur, seuilM);
+        if (!acc) continue;
+        const d = distance(acc.point, mCur);
+        if (!meilleur || d < meilleur.d) meilleur = { acc, d };
+      }
+      return meilleur ? { point: meilleur.acc.point, surMur: true, piece: null } : null;
+    }
+    const depart = cloisonPoints[0], dernier = cloisonPoints[cloisonPoints.length - 1];
+    let candidates = niveauActif.pieces.filter(pc => distanceAuMurLePlusProche(depart, pc.contour) < 0.02);
+    if (cloisonPoints.length >= 2) {
+      const fixe = candidates.find(pc => pointDansPolygone(cloisonPoints[1], pc.contour));
+      if (fixe) candidates = [fixe];
+    }
+    for (const pc of candidates) {
+      const acc = accrocherSurContour(pc.contour, mCur, seuilM);
+      if (!acc) continue;
+      const milieu = { x: (dernier.x + acc.point.x) / 2, y: (dernier.y + acc.point.y) / 2 };
+      if (pointDansPolygone(milieu, pc.contour)) return { point: acc.point, surMur: true, piece: pc };
+    }
+    const piece = candidates.find(pc => pointDansPolygone(mCur, pc.contour)) ?? null;
+    const refs = [...(piece ? piece.contour : []), ...cloisonPoints];
+    const { point, guideX, guideY } = snapAvecAlignement(mCur, refs, seuilAlign);
+    return { point, surMur: false, piece, guideX, guideY };
+  };
+
+  // ─── ZONES (polygone nommé / cloison libre) ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (mode !== "zone" || vue3D) { setZonePoints([]); setZoneEnAttente(null); }
+    if (vue3D && mode === "zone") setMode("select");
+  }, [mode, vue3D]);
+  useEffect(() => { setZonePoints([]); setZoneEnAttente(null); setSelectedZoneId(null); setSelectedZoneOuv(null); }, [niveauActifId]);
+  // Sélectionner autre chose qu'une zone referme les panneaux de zone (jamais deux panneaux à la fois).
+  useEffect(() => {
+    if (selectedPieceId != null || selectedAppareillageId != null || selectedOuvertureId != null || selectedMeubleId != null || selectedTableau) {
+      setSelectedZoneId(null); setSelectedZoneOuv(null);
+    }
+  }, [selectedPieceId, selectedAppareillageId, selectedOuvertureId, selectedMeubleId, selectedTableau]);
+  // Clavier : Retour arrière = retire le dernier point, Échap = annule le tracé puis quitte l'outil.
+  useEffect(() => {
+    if (mode !== "zone" || zoneEnAttente) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      if (e.key === "Escape") { e.preventDefault(); if (zonePoints.length > 0) setZonePoints([]); else setMode("select"); }
+      else if (e.key === "Backspace" || e.key === "Delete") { e.preventDefault(); setZonePoints(pts => pts.slice(0, -1)); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mode, zoneEnAttente, zonePoints.length]);
+
+  const entrerModeZone = () => {
+    if (mode === "zone") { setMode("select"); return; }
+    setMode("zone"); setZonePoints([]); setZoneEnAttente(null);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
+    setSelectedZoneId(null); setSelectedZoneOuv(null);
+    setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
+    setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null); setDrawingPoints([]);
+  };
+
+  // Accroche du curseur : fermeture près du 1er point ; sur un mur existant (côté de zone qui longe un mur) ;
+  // sinon alignement sur les sommets des pièces, des zones et des points déjà posés (grille de 10 cm).
+  const curseurZone = (mCur: Point): { point: Point; surMur: boolean; ferme: boolean; guideX?: number; guideY?: number } | null => {
+    if (!niveauActif) return null;
+    const seuilM = CLOISON_SEUIL_PX / (PX_PER_M * zoom);
+    const seuilAlign = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
+    if (zonePoints.length >= 3 && distance(mCur, zonePoints[0]) < seuilM) return { point: zonePoints[0], surMur: false, ferme: true };
+    let meilleur: { acc: PointAccroche; d: number } | null = null;
+    for (const pc of niveauActif.pieces) {
+      const acc = accrocherSurContour(pc.contour, mCur, seuilM);
+      if (!acc) continue;
+      const d = distance(acc.point, mCur);
+      if (!meilleur || d < meilleur.d) meilleur = { acc, d };
+    }
+    if (meilleur) return { point: meilleur.acc.point, surMur: true, ferme: false };
+    const refs = [...pointsReferenceNiveau(niveauActif), ...(niveauActif.zones ?? []).flatMap(z => z.contour), ...zonePoints];
+    const { point, guideX, guideY } = snapAvecAlignement(mCur, refs, seuilAlign);
+    return { point, surMur: false, ferme: false, guideX, guideY };
+  };
+
+  const majZone = (zoneId: number, fn: (z: Zone) => Zone) => {
+    updateNiveauActif(n => ({ ...n, zones: (n.zones ?? []).map(z => (z.id === zoneId ? fn(z) : z)) }));
+  };
+  const messageZone = (msg: string, ms = 2800) => { setPlacementError(msg); setTimeout(() => setPlacementError(null), ms); };
+  // Termine le tracé : fermé (polygone) ou non (cloison libre). Le formulaire de nom / côtés prend ensuite la main.
+  const terminerTraceZone = (ferme: boolean) => {
+    const err = validerTraceZone(zonePoints, ferme);
+    if (err) { messageZone(err); return; }
+    setZoneEnAttente({ contour: zonePoints, ferme });
+  };
+  const validerNouvelleZone = (nom: string, cotes: TypeCoteZone[], epaisseurCm: number) => {
+    if (!zoneEnAttente) return;
+    const z = nouvelleZone(nom.trim(), zoneEnAttente.contour, zoneEnAttente.ferme, cotes, epaisseurCm);
+    updateNiveauActif(n => ({ ...n, zones: [...(n.zones ?? []), z] }));
+    setZoneEnAttente(null); setZonePoints([]);
+    setMode("select"); setSelectedZoneId(z.id); setSelectedZoneOuv(null); setPanelResetTick(t => t + 1);
+  };
+  const supprimerZone = (zoneId: number) => {
+    const z = niveauActif?.zones?.find(zz => zz.id === zoneId);
+    if (!z || !window.confirm(`Supprimer « ${z.nom || (z.ferme ? "cette zone" : "cette cloison")} » et ses cloisons ?`)) return;
+    updateNiveauActif(n => ({ ...n, zones: (n.zones ?? []).filter(zz => zz.id !== zoneId) }));
+    setSelectedZoneId(null); setSelectedZoneOuv(null);
+  };
+  const zoneCliquable = mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingPointArrivee && !placingMeuble && !cheminementDessin && !liaisonLumiereMode;
+  const selectionnerZone = (zoneId: number, ouvId: number | null, e: React.PointerEvent) => {
+    if (!zoneCliquable) return;
+    e.stopPropagation();
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null);
+    setSelectedBoite(null); setSelectedMeubleId(null); setSelectedPointArrivee(false); setSelectedWaypoint(null);
+    setSelectedZoneId(zoneId); setSelectedZoneOuv(ouvId != null ? { zoneId, ouvId } : null);
+    setPanelResetTick(t => t + 1);
+  };
+  const modifierOuvertureZone = (zoneId: number, ouvId: number, patch: Partial<Ouverture>) => {
+    majZone(zoneId, z => ({
+      ...z,
+      ouvertures: (z.ouvertures ?? []).map(o => {
+        if (o.id !== ouvId) return o;
+        const nouv = { ...o, ...patch };
+        const pos = positionOuvertureValide(nouv.position, nouv.largeur, longueurCote(z, o.segIndex));
+        return pos == null ? o : { ...nouv, position: pos };   // côté trop court pour cette largeur : on refuse
+      }),
+    }));
+  };
+  const supprimerOuvertureZone = (zoneId: number, ouvId: number) => {
+    majZone(zoneId, z => ({ ...z, ouvertures: (z.ouvertures ?? []).filter(o => o.id !== ouvId) }));
+    setSelectedZoneOuv(null);
+  };
+
+  const validerCloison = (opts: OptionsCloison) => {
+    if (!cloisonEnAttente || !niveauActif) return;
+    const r = appliquerCloison(niveauActif.pieces, cloisonEnAttente.pieceId, cloisonEnAttente.chemin, opts);
+    if ("erreur" in r) { setPlacementError(r.erreur); setTimeout(() => setPlacementError(null), 3000); return; }
+    updateNiveauActif(n => ({ ...n, pieces: r.pieces }));
+    invalidateResultat();
+    setCloisonEnAttente(null); setCloisonPoints([]);
+    setMode("select"); setSelectedPieceId(r.idNouvelle);
+    if (r.avertissement) { setPlacementError(r.avertissement); setTimeout(() => setPlacementError(null), 4000); }
+  };
 
   const entrerModeDessiner = () => {
     setMode("dessiner"); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
@@ -2704,6 +3150,39 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       return;
     }
 
+    if (mode === "cloison") {
+      if (cloisonEnAttente) return;
+      const erreurCloison = (msg: string) => { setPlacementError(msg); setTimeout(() => setPlacementError(null), 2600); };
+      const cur = curseurCloison(m);
+      if (!cur) {
+        erreurCloison(cloisonPoints.length === 0 ? "Clique sur un mur de la pièce pour démarrer la cloison." : "Clique à l'intérieur de la pièce (angle de la cloison) ou sur un mur (fin de la cloison).");
+        return;
+      }
+      if (cloisonPoints.length === 0) { setCloisonPoints([cur.point]); return; }
+      if (distance(cur.point, cloisonPoints[cloisonPoints.length - 1]) < 0.05) return;
+      if (cur.surMur) {
+        if (!cur.piece) { erreurCloison("Impossible de déterminer la pièce à cloisonner."); return; }
+        const chemin = [...cloisonPoints, cur.point];
+        const ap = apercuCloison(cur.piece, chemin);
+        if ("erreur" in ap) { erreurCloison(ap.erreur); return; }
+        setCloisonEnAttente({ pieceId: cur.piece.id, chemin });
+        return;
+      }
+      if (!cur.piece) { erreurCloison("Le point doit être à l'intérieur de la pièce à cloisonner."); return; }
+      setCloisonPoints(pts => [...pts, cur.point]);
+      return;
+    }
+
+    if (mode === "zone") {
+      if (zoneEnAttente) return;
+      const cur = curseurZone(m);
+      if (!cur) return;
+      if (cur.ferme) { terminerTraceZone(true); return; }
+      if (zonePoints.length > 0 && distance(cur.point, zonePoints[zonePoints.length - 1]) < 0.05) return;
+      setZonePoints(pts => [...pts, cur.point]);
+      return;
+    }
+
     if (placingTableau) {
       const actifEstMaison = !!niveauActif && !estAnnexe(niveauActif);
       setNiveaux(nvs => nvs.map(n => {
@@ -2779,6 +3258,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
     if (placingOuverture) {
       const seuilM = SEUIL_MUR_PX / (PX_PER_M * zoom);
+      // Une cloison de zone (dressing, cloison libre) prime sur un mur de pièce : c'est elle que l'on vise.
+      const cz = niveauActif ? trouverCloisonZone(niveauActif.zones ?? [], m, seuilM) : null;
+      if (cz) {
+        const nouvelleZ = nouvelleOuverture(placingOuverture, cz.segIndex, cz.t);
+        const posZ = positionOuvertureValide(cz.t, nouvelleZ.largeur, longueurCote(cz.zone, cz.segIndex));
+        if (posZ == null) { messageZone(`Cette cloison est trop courte pour une ${LABEL_OUVERTURE[placingOuverture].toLowerCase()} de ${nouvelleZ.largeur} cm.`, 3200); return; }
+        nouvelleZ.position = posZ;
+        majZone(cz.zone.id, z => ({ ...z, ouvertures: [...(z.ouvertures ?? []), nouvelleZ] }));
+        setSelectedZoneId(cz.zone.id); setSelectedZoneOuv({ zoneId: cz.zone.id, ouvId: nouvelleZ.id });
+        return;
+      }
       const mur = niveauActif ? trouverMurLePlusProche(niveauActif.pieces, m, seuilM) : null;
       if (!mur) {
         setPlacementError("Clique tout près d'un mur pour y placer une porte ou une fenêtre.");
@@ -2800,18 +3290,19 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setSelectedWaypoint(null);
     setSelectedPointArrivee(false);
     setSelectedMeubleId(null);
+    setSelectedZoneId(null); setSelectedZoneOuv(null);
     setDragMode({ kind: "pan", startX: e.clientX, startY: e.clientY, startPan: pan });
   };
 
   const onCanvasPointerMove = (e: React.PointerEvent) => {
-    if (mode !== "dessiner") return;
+    if (mode !== "dessiner" && mode !== "cloison" && mode !== "zone") return;
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
     setCursorPx({ x: e.clientX - rect.left, y: e.clientY - rect.top });
   };
 
   const onPieceDown = (piece: Piece, e: React.PointerEvent) => {
-    if (cheminementDessin || liaisonLumiereMode || mode === "dessiner" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) return;
+    if (cheminementDessin || liaisonLumiereMode || mode === "dessiner" || mode === "cloison" || mode === "zone" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) return;
     e.stopPropagation();
     if (selectedPieceId === piece.id) {
       if (piece.verrouillee) return; // pièce verrouillée : sélectionnée mais jamais déplacée
@@ -3200,8 +3691,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const candidatsCurseur = [...pointsReferenceNiveau(niveauActif), ...drawingPoints];
     curseurSnap = snapAvecAlignement(mCurseur, candidatsCurseur, seuilAlignementM);
   }
+  const curseurCl = mode === "cloison" && cursorPx && !cloisonEnAttente ? curseurCloison(toMeters(cursorPx.x, cursorPx.y)) : null;
+  const cloisonAffichee: Point[] = cloisonEnAttente ? cloisonEnAttente.chemin : cloisonPoints;
+  const curseurZ = mode === "zone" && cursorPx && !zoneEnAttente ? curseurZone(toMeters(cursorPx.x, cursorPx.y)) : null;
+  const zoneAffichee: Point[] = zoneEnAttente ? zoneEnAttente.contour : zonePoints;
+  const selectedZone = niveauActif?.zones?.find(z => z.id === selectedZoneId) ?? null;
   const guideActif: { x?: number; y?: number } | null =
-    dragMode.kind === "vertex" ? snapGuide
+    mode === "zone" ? (curseurZ && (curseurZ.guideX !== undefined || curseurZ.guideY !== undefined) ? { x: curseurZ.guideX, y: curseurZ.guideY } : null)
+    : mode === "cloison" ? (curseurCl && (curseurCl.guideX !== undefined || curseurCl.guideY !== undefined) ? { x: curseurCl.guideX, y: curseurCl.guideY } : null)
+    : dragMode.kind === "vertex" ? snapGuide
     : mode === "dessiner" && curseurSnap && (curseurSnap.guideX !== undefined || curseurSnap.guideY !== undefined)
       ? { x: curseurSnap.guideX, y: curseurSnap.guideY }
       : null;
@@ -3479,6 +3977,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           <button onClick={entrerModeDessiner} className={`btn-ghost !text-xs ${mode === "dessiner" ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <Pencil size={13} /> Dessiner une pièce
           </button>
+          <button onClick={entrerModeCloison} disabled={!niveauActif || niveauActif.pieces.length === 0}
+            title="Monter une cloison dans une pièce existante (dressing, placard…) : clic sur un mur, angles, puis clic sur un mur"
+            className={`btn-ghost !text-xs disabled:opacity-40 ${mode === "cloison" ? "!bg-ink-900 !text-volt-400" : ""}`}>
+            <SplitSquareHorizontal size={13} /> Cloison
+          </button>
+          <button onClick={entrerModeZone} disabled={!niveauActif}
+            title="Dessiner une zone nommée (dressing ouvert, coin bureau…) avec sa surface, ou une cloison libre qui s'arrête dans la pièce"
+            className={`btn-ghost !text-xs disabled:opacity-40 ${mode === "zone" ? "!bg-ink-900 !text-volt-400" : ""}`}>
+            <BoxSelect size={13} /> Zone
+          </button>
           <button onClick={armerPlacementTableau} className={`btn-ghost !text-xs ${placingTableau ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <Zap size={13} /> Position tableau
           </button>
@@ -3496,8 +4004,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               <OuvertureIcon type={placingOuverture ?? "porte"} size={13} /> {placingOuverture ? LABEL_OUVERTURE[placingOuverture] : "Porte / fenêtre"}
             </button>
             {ouvertureMenuOpen && (
-              <div className="absolute z-20 top-full left-0 mt-1 card card-inner !p-1 flex flex-col shadow-lg w-48">
-                {(["porte", "porte_coulissante", "fenetre", "ouverture"] as OuvertureType[]).map(t => (
+              <div className="absolute z-20 top-full left-0 mt-1 card card-inner !p-1 flex flex-col shadow-lg w-56">
+                {(["porte", "porte_coulissante", "porte_garage", "fenetre", "ouverture"] as OuvertureType[]).map(t => (
                   <button key={t}
                     onClick={() => { armerPlacementOuverture(placingOuverture === t ? null : t); setOuvertureMenuOpen(false); }}
                     className={`flex items-center gap-2 !text-xs px-2 py-1.5 rounded-md hover:bg-ink-50 ${placingOuverture === t ? "text-volt-600 font-semibold" : "text-ink-600"}`}>
@@ -3513,6 +4021,28 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           <button onClick={() => setPaletteOpen(o => !o)} className={`btn-ghost !text-xs lg:hidden ${paletteOpen ? "!bg-ink-900 !text-volt-400" : ""}`}>
             Appareillages
           </button>
+          {mode === "zone" && (
+            <>
+              <span className="text-[11px] text-ink-500 max-w-md">
+                {zonePoints.length === 0
+                  ? "Zone — clique les sommets (un côté posé sur un mur existant s'accroche) · Retour arrière = annuler le dernier point · Échap = quitter"
+                  : zonePoints.length < 3 ? "Zone — continue le tracé, ou termine comme cloison libre" : "Zone — clique le 1er point (ou « Fermer ») pour terminer le polygone"}
+              </span>
+              {zonePoints.length >= 3 && <button onClick={() => terminerTraceZone(true)} className="btn-volt !text-xs">Fermer le polygone</button>}
+              {zonePoints.length >= 2 && <button onClick={() => terminerTraceZone(false)} className="btn-ghost !text-xs" title="Une cloison qui s'arrête dans la pièce : pas de surface">Terminer en cloison libre</button>}
+              {zonePoints.length > 0 && <button onClick={() => setZonePoints([])} className="btn-ghost !text-xs text-red-500">Annuler</button>}
+            </>
+          )}
+          {mode === "cloison" && (
+            <>
+              <span className="text-[11px] text-ink-500 max-w-md">
+                {cloisonPoints.length === 0
+                  ? "Cloison — 1 · clique sur un mur (départ)"
+                  : "Cloison — 2 · clique les angles dans la pièce, puis termine sur un mur · Retour arrière = annuler le dernier point · Échap = quitter"}
+              </span>
+              {cloisonPoints.length > 0 && <button onClick={() => setCloisonPoints([])} className="btn-ghost !text-xs text-red-500">Annuler</button>}
+            </>
+          )}
           {mode === "dessiner" && drawingPoints.length > 0 && (
             <>
               <button onClick={() => setDrawingPoints([])} className="btn-ghost !text-xs text-red-500">Annuler</button>
@@ -3649,8 +4179,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <svg
               ref={svgRef}
               className="w-full h-full block"
-              style={{ touchAction: "none", cursor: mode === "dessiner" || placementType || placingTableau || placingPointArrivee || placingMeuble ? "crosshair" : "grab" }}
+              style={{ touchAction: "none", cursor: mode === "dessiner" || mode === "cloison" || mode === "zone" || placementType || placingTableau || placingPointArrivee || placingMeuble ? "crosshair" : "grab" }}
               onPointerDown={onBackgroundPointerDown}
+              // Outil cloison : le clic gauche est traité ICI, avant les pièces / appareillages / portes (un
+              // appareillage posé sur le mur ne doit pas avaler le départ de la cloison).
+              onPointerDownCapture={e => { if ((mode === "cloison" || mode === "zone") && e.button === 0) { e.stopPropagation(); onBackgroundPointerDown(e); } }}
               onPointerMove={onCanvasPointerMove}
               onWheel={handleWheel}
             >
@@ -3704,6 +4237,42 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 ))
               ))}
 
+              {/* Couche 3 bis — zones : fond léger, limites virtuelles (pointillés), cloisons en épaisseur, portes.
+                  Sous les appareillages ; seules les cloisons et les portes captent le clic (jamais le fond). */}
+              {(niveauActif?.zones ?? []).map(z => {
+                const toPts = (poly: Point[]) => poly.map(toScreen).map(q => `${q.x},${q.y}`).join(" ");
+                const sel = z.id === selectedZoneId;
+                const cloisons = cloisonsDeZone(z);
+                return (
+                  <g key={`zone-${z.id}`}>
+                    {z.ferme && <polygon points={toPts(z.contour)} fill="#a78bfa" fillOpacity={0.14} stroke="none" style={{ pointerEvents: "none" }} />}
+                    {segmentsZone(z).filter(sg => z.cotes[sg.i] === "ouvert").map(sg => {
+                      const a = toScreen(sg.a), b = toScreen(sg.b);
+                      return <line key={`zo-${sg.i}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#7c3aed" strokeWidth={1.6} strokeDasharray="7,5" style={{ pointerEvents: "none" }} />;
+                    })}
+                    {cloisons.map(c => (
+                      <polygon key={`zc-${c.i}`} points={toPts(quadCloison(c))} fill="#78716c" stroke="#78716c" strokeWidth={0.6} strokeLinejoin="round" style={{ pointerEvents: "none" }} />
+                    ))}
+                    {cloisons.flatMap(c => (z.ouvertures ?? []).filter(o => o.segIndex === c.i).map(o => (
+                      <polygon key={`zd-${o.id}`} points={toPts(decoupeOuvertureZone(c, o.position, o.largeur))} fill="#fff" stroke="none" style={{ pointerEvents: "none" }} />
+                    )))}
+                    {cloisons.flatMap(c => (z.ouvertures ?? []).filter(o => o.segIndex === c.i).map(o => (
+                      <OuvertureZoneSymbole key={`zs-${o.id}`} c={c} o={o} toScreen={toScreen} zoom={zoom}
+                        selectionnee={selectedZoneOuv?.ouvId === o.id} actif={zoneCliquable}
+                        onDown={e => selectionnerZone(z.id, o.id, e)} />
+                    )))}
+                    {sel && (z.ferme
+                      ? <polygon points={toPts(z.contour)} fill="none" stroke="#F59E0B" strokeWidth={2.2} strokeLinejoin="round" style={{ pointerEvents: "none" }} />
+                      : <polyline points={toPts(z.contour)} fill="none" stroke="#F59E0B" strokeWidth={2.2} strokeLinejoin="round" strokeLinecap="round" style={{ pointerEvents: "none" }} />)}
+                    {zoneCliquable && cloisons.map(c => {
+                      const a = toScreen(c.a), b = toScreen(c.b);
+                      return <line key={`zh-${c.i}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={14} strokeLinecap="round"
+                        style={{ cursor: "pointer", pointerEvents: "stroke" }} onPointerDown={e => selectionnerZone(z.id, null, e)} />;
+                    })}
+                  </g>
+                );
+              })}
+
               {niveauActif?.pieces.map(piece => {
                 const pts = piece.contour.map(toScreen).map(p => `${p.x},${p.y}`).join(" ");
                 const isSelected = piece.id === selectedPieceId;
@@ -3748,13 +4317,33 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       const angleDeg = Math.atan2(pB.y - pA.y, pB.x - pA.x) * 180 / Math.PI;
                       const largeurPx = Math.max(10, (o.largeur / 100) * PX_PER_M * zoom);
                       const isSel = o.id === selectedOuvertureId;
-                      const couleur = o.type === "porte" || o.type === "porte_coulissante" ? "#92400E" : o.type === "fenetre" ? "#0369A1" : "#78716c";
+                      const couleur = o.type === "porte" || o.type === "porte_coulissante" || o.type === "porte_garage" ? "#92400E" : o.type === "fenetre" ? "#0369A1" : "#78716c";
 
                       // Symbole d'ouverture de porte (vantail + arc de débattement) — calculé en
                       // mètres à partir de la charnière et du sens choisis, puis chaque point est
                       // projeté à l'écran individuellement pour rester correct quelle que soit
                       // l'orientation du mur (pas de rotation SVG locale à démêler).
                       let vantail: { hinge: Point; bout: Point; arc: Point[] } | null = null;
+                      // Porte de garage basculante : emprise balayée par le tablier quand il se relève
+                      // sous le plafond (pointillés vers l'intérieur de la pièce, profondeur = hauteur).
+                      let basculement: Point[] | null = null;
+                      if (o.type === "porte_garage") {
+                        const largeurM = o.largeur / 100;
+                        const profondeurM = (o.hauteur ?? hauteurOuvertureDefautCm("porte_garage")) / 100;
+                        const dxw = b.x - a.x, dyw = b.y - a.y;
+                        const longueurMur = Math.hypot(dxw, dyw) || 1;
+                        const dirX = dxw / longueurMur, dirY = dyw / longueurMur;
+                        const jambeA = { x: centreM.x - dirX * (largeurM / 2), y: centreM.y - dirY * (largeurM / 2) };
+                        const jambeB = { x: centreM.x + dirX * (largeurM / 2), y: centreM.y + dirY * (largeurM / 2) };
+                        let nx = -dirY, ny = dirX;
+                        const cPiece = centroide(piece.contour);
+                        if (nx * (cPiece.x - centreM.x) + ny * (cPiece.y - centreM.y) < 0) { nx = -nx; ny = -ny; }
+                        basculement = [
+                          jambeA, jambeB,
+                          { x: jambeB.x + nx * profondeurM, y: jambeB.y + ny * profondeurM },
+                          { x: jambeA.x + nx * profondeurM, y: jambeA.y + ny * profondeurM },
+                        ].map(toScreen);
+                      }
                       if (o.type === "porte") {
                         const largeurM = o.largeur / 100;
                         const dxw = b.x - a.x, dyw = b.y - a.y;
@@ -3800,12 +4389,23 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                             {o.type === "ouverture" && (
                               <rect x={-largeurPx / 2} y={-4} width={largeurPx} height={8} fill="none" stroke={couleur} strokeWidth={1} strokeDasharray="2,2" />
                             )}
+                            {o.type === "porte_garage" && (
+                              <>
+                                <line x1={-largeurPx / 2} y1={0} x2={largeurPx / 2} y2={0} stroke={couleur} strokeWidth={2.5} />
+                                <line x1={-largeurPx / 2} y1={-4} x2={-largeurPx / 2} y2={4} stroke={couleur} strokeWidth={1.2} />
+                                <line x1={largeurPx / 2} y1={-4} x2={largeurPx / 2} y2={4} stroke={couleur} strokeWidth={1.2} />
+                              </>
+                            )}
                             {o.type === "porte_coulissante" && (() => {
                               const cote = o.coulisseVers === "gauche" ? -1 : 1;
                               const xPanneau = cote > 0 ? largeurPx / 2 : -largeurPx / 2 - largeurPx;
                               return <rect x={xPanneau} y={-3} width={largeurPx} height={6} fill={couleur} opacity={0.45} />;
                             })()}
                           </g>
+                          {basculement && (
+                            <polygon points={basculement.map(p => `${p.x},${p.y}`).join(" ")} fill={couleur} fillOpacity={0.06}
+                              stroke={couleur} strokeWidth={1} strokeDasharray="5,3" pointerEvents="none" />
+                          )}
                           {vantail && (
                             <>
                               <line x1={vantail.hinge.x} y1={vantail.hinge.y} x2={vantail.bout.x} y2={vantail.bout.y} stroke={couleur} strokeWidth={1.5} />
@@ -4130,6 +4730,27 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 );
               })}
 
+              {(niveauActif?.zones ?? []).map(z => {
+                const surf = surfaceZone(z);
+                const nom = z.nom || (z.ferme ? "Zone" : "Cloison");
+                const q = toScreen(centreEtiquetteZone(z));
+                const txtSurf = surf ? `${surf.utile.toFixed(1)} m²` : "";
+                const w = Math.max(nom.length * 6.6, txtSurf.length * 5.6) + 12, h = surf ? 28 : 16;
+                return (
+                  <g key={`zetiq-${z.id}`} textAnchor="middle" fontFamily="monospace">
+                    <rect x={q.x - w / 2} y={q.y - h / 2 - 2} width={w} height={h} rx={4} fill="transparent"
+                      style={{ cursor: zoneCliquable ? "pointer" : "default", pointerEvents: zoneCliquable ? "all" : "none" }}
+                      onPointerDown={e => selectionnerZone(z.id, null, e)} />
+                    <g style={{ pointerEvents: "none" }}>
+                      <text x={q.x} y={q.y - (surf ? 3 : -1)} fontSize={11} fontWeight={700} fill="none" stroke="#fff" strokeWidth={4} strokeLinejoin="round">{nom}</text>
+                      <text x={q.x} y={q.y - (surf ? 3 : -1)} fontSize={11} fontWeight={700} fill="#5b21b6">{nom}</text>
+                      {surf && <text x={q.x} y={q.y + 10} fontSize={9.5} fill="none" stroke="#fff" strokeWidth={3.2} strokeLinejoin="round">{txtSurf}</text>}
+                      {surf && <text x={q.x} y={q.y + 10} fontSize={9.5} fill="#6d28d9">{txtSurf}</text>}
+                    </g>
+                  </g>
+                );
+              })}
+
               {cotesAffichees.map((g, i) => <CoteSvg key={`cote-${i}`} g={g} />)}
               {epaisseursMurs.map(t => (
                 <g key={t.key} transform={`translate(${t.x} ${t.y}) rotate(${t.ang})`} style={{ pointerEvents: "none" }} textAnchor="middle" fontFamily="monospace" fontSize={8} fontWeight={700}>
@@ -4272,6 +4893,65 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               {guideActif?.y !== undefined && (() => {
                 const p = toScreen({ x: 0, y: guideActif.y });
                 return <line x1={0} y1={p.y} x2={W} y2={p.y} stroke="#F59E0B" strokeWidth={1} strokeDasharray="4,3" opacity={0.7} />;
+              })()}
+
+              {mode === "zone" && (zoneAffichee.length > 0 || curseurZ) && (() => {
+                const COUL = "#7C3AED";
+                const live = curseurZ && zoneAffichee.length > 0 && !zoneEnAttente ? curseurZ.point : null;
+                const trace = [...zoneAffichee, ...(live ? [live] : [])].map(toScreen);
+                const ferme = !!zoneEnAttente?.ferme || (curseurZ?.ferme ?? false);
+                return (
+                  <g pointerEvents="none">
+                    {zoneAffichee.length >= 3 && ferme && <polygon points={zoneAffichee.map(toScreen).map(q => `${q.x},${q.y}`).join(" ")} fill={COUL} fillOpacity={0.12} stroke="none" />}
+                    {trace.length >= 2 && (
+                      <polyline points={trace.map(q => `${q.x},${q.y}`).join(" ")} fill="none" stroke={COUL} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={zoneEnAttente ? undefined : "8,5"} />
+                    )}
+                    {zoneAffichee.map((pt, i) => {
+                      const q = toScreen(pt);
+                      return <circle key={`zp${i}`} cx={q.x} cy={q.y} r={i === 0 ? (zonePoints.length >= 3 ? 9 : 7) : 5} fill={i === 0 ? COUL : "#fff"} stroke={COUL} strokeWidth={2} />;
+                    })}
+                    {zoneAffichee.slice(1).map((pt, i) => (
+                      <EtiquetteLongueur key={`zseg${i}`} aPx={toScreen(zoneAffichee[i])} bPx={toScreen(pt)} texte={`${distance(zoneAffichee[i], pt).toFixed(2)} m`} />
+                    ))}
+                    {live && zoneAffichee.length > 0 && (
+                      <EtiquetteLongueur key="zlive" aPx={toScreen(zoneAffichee[zoneAffichee.length - 1])} bPx={toScreen(live)}
+                        texte={`${distance(zoneAffichee[zoneAffichee.length - 1], live).toFixed(2)} m`} actif />
+                    )}
+                    {curseurZ && (() => {
+                      const q = toScreen(curseurZ.point);
+                      return <circle cx={q.x} cy={q.y} r={8} fill="none" stroke={curseurZ.ferme || curseurZ.surMur ? "#16A34A" : COUL} strokeWidth={2.5} />;
+                    })()}
+                  </g>
+                );
+              })()}
+
+              {mode === "cloison" && (cloisonAffichee.length > 0 || curseurCl) && (() => {
+                const COUL = "#B45309";
+                const live = curseurCl && cloisonAffichee.length > 0 ? curseurCl.point : null;
+                const trace = [...cloisonAffichee, ...(live ? [live] : [])].map(toScreen);
+                return (
+                  <g pointerEvents="none">
+                    {trace.length >= 2 && (
+                      <polyline points={trace.map(q => `${q.x},${q.y}`).join(" ")} fill="none" stroke={COUL} strokeWidth={5} strokeLinecap="round" strokeLinejoin="round"
+                        opacity={cloisonEnAttente ? 0.9 : 0.7} strokeDasharray={cloisonEnAttente ? undefined : "9,6"} />
+                    )}
+                    {cloisonAffichee.map((pt, i) => {
+                      const q = toScreen(pt);
+                      return <circle key={`cl${i}`} cx={q.x} cy={q.y} r={i === 0 ? 7 : 5} fill={i === 0 ? COUL : "#fff"} stroke={COUL} strokeWidth={2} />;
+                    })}
+                    {cloisonAffichee.slice(1).map((pt, i) => (
+                      <EtiquetteLongueur key={`clseg${i}`} aPx={toScreen(cloisonAffichee[i])} bPx={toScreen(pt)} texte={`${distance(cloisonAffichee[i], pt).toFixed(2)} m`} />
+                    ))}
+                    {live && cloisonAffichee.length > 0 && (
+                      <EtiquetteLongueur key="cllive" aPx={toScreen(cloisonAffichee[cloisonAffichee.length - 1])} bPx={toScreen(live)}
+                        texte={`${distance(cloisonAffichee[cloisonAffichee.length - 1], live).toFixed(2)} m`} actif />
+                    )}
+                    {curseurCl && (() => {
+                      const q = toScreen(curseurCl.point);
+                      return <circle cx={q.x} cy={q.y} r={8} fill="none" stroke={curseurCl.surMur ? "#16A34A" : COUL} strokeWidth={2.5} />;
+                    })()}
+                  </g>
+                );
               })()}
 
               {mode === "dessiner" && drawingPoints.length > 0 && (
@@ -4681,6 +5361,113 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               </DraggablePanel>
             )}
 
+            {selectedZone && !selectedZoneOuv && mode === "select" && (() => {
+              const z = selectedZone;
+              const surf = surfaceZone(z);
+              const longueurTotale = segmentsZone(z).reduce((t, sg) => t + distance(sg.a, sg.b), 0);
+              return (
+                <DraggablePanel key={`zone-${z.id}-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-72 max-h-[80vh] overflow-y-auto">
+                  <div className="flex items-center gap-2">
+                    <BoxSelect size={16} className="text-violet-600 shrink-0" />
+                    <input className="input !py-1 !text-sm flex-1 min-w-0" placeholder={z.ferme ? "Nom de la zone (Dressing…)" : "Nom de la cloison"}
+                      value={z.nom} onChange={e => majZone(z.id, zz => ({ ...zz, nom: e.target.value }))} />
+                    <button onClick={() => supprimerZone(z.id)} className="btn-danger !px-2 !py-1.5 shrink-0" title="Supprimer la zone"><Trash2 size={13} /></button>
+                  </div>
+                  <p className="text-xs text-ink-500">
+                    {surf
+                      ? <>Surface utile <span className="font-semibold text-ink-900">{surf.utile.toFixed(2)} m²</span> · tracé à l&apos;axe {surf.brute.toFixed(2)} m²</>
+                      : <>Cloison libre · {longueurTotale.toFixed(2)} m · pas de surface</>}
+                  </p>
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0 w-28">Épaisseur cloison (cm)</span>
+                    <input type="number" min={5} max={50} className="input !py-1 !text-xs !w-20" key={`zep-${z.id}`} defaultValue={z.epaisseurCm}
+                      onChange={e => { const v = parseFloat(e.target.value); if (v >= 5 && v <= 50) majZone(z.id, zz => ({ ...zz, epaisseurCm: v })); }} />
+                  </div>
+                  {z.ferme && (
+                    <div className="flex flex-col gap-1 border-t border-ink-100 pt-2">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">Côtés</span>
+                      {z.cotes.map((c, i) => (
+                        <div key={i} className="flex items-center gap-2 text-xs text-ink-500">
+                          <span className="shrink-0 w-24">Côté {i + 1} · {longueurCote(z, i).toFixed(2)} m</span>
+                          <div className="flex gap-1 flex-1">
+                            {(["cloison", "ouvert"] as const).map(t => (
+                              <button key={t} onClick={() => majZone(z.id, zz => definirTypeCote(zz, i, t))}
+                                className={`flex-1 !text-xs px-2 py-1 rounded-md border transition-colors ${c === t ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"}`}>
+                                {t === "cloison" ? "Cloison" : "Ouvert"}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-[11px] text-ink-400">
+                    Pour percer une porte : outil « Porte / fenêtre », puis clic sur une cloison de la zone. Une zone n&apos;est pas une pièce : elle ne porte ni appareillage ni circuit.
+                  </p>
+                </DraggablePanel>
+              );
+            })()}
+
+            {selectedZoneOuv && mode === "select" && (() => {
+              const z = niveauActif?.zones?.find(zz => zz.id === selectedZoneOuv.zoneId);
+              const o = z?.ouvertures?.find(oo => oo.id === selectedZoneOuv.ouvId);
+              if (!z || !o) return null;
+              const Lcm = longueurCote(z, o.segIndex) * 100;
+              const majO = (patch: Partial<Ouverture>) => modifierOuvertureZone(z.id, o.id, patch);
+              const segmente = (actuel: boolean, vrai: string, faux: string, onVrai: () => void, onFaux: () => void) => (
+                <div className="flex gap-1 flex-1">
+                  {[[true, vrai, onVrai], [false, faux, onFaux]].map(([v, lib, fn]) => (
+                    <button key={String(lib)} onClick={fn as () => void}
+                      className={`flex-1 !text-xs px-2 py-1 rounded-md border transition-colors ${actuel === v ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"}`}>{lib as string}</button>
+                  ))}
+                </div>
+              );
+              return (
+                <DraggablePanel key={`zo-${o.id}-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
+                  <div className="flex items-center gap-2">
+                    <OuvertureIcon type={o.type} size={18} color="#1c1917" />
+                    <p className="text-sm font-semibold text-ink-900 flex-1">{LABEL_OUVERTURE[o.type]} · {z.nom || "zone"}</p>
+                    <button onClick={() => supprimerOuvertureZone(z.id, o.id)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0 w-24">Largeur (cm)</span>
+                    <input type="number" min={20} className="input !py-1 !text-xs !w-20" key={`zo-${o.id}-l`} defaultValue={o.largeur}
+                      onChange={e => { const v = parseFloat(e.target.value); if (v >= 20) majO({ largeur: v }); }} />
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0 w-24">Depuis le début (cm)</span>
+                    <input type="number" min={0} className="input !py-1 !text-xs !w-20" key={`zo-${o.id}-d-${o.largeur}`} defaultValue={Math.round(o.position * Lcm - o.largeur / 2)}
+                      onChange={e => { const v = parseFloat(e.target.value); if (v >= 0) majO({ position: (v + o.largeur / 2) / Lcm }); }} />
+                  </div>
+                  <p className="text-[11px] text-ink-400 -mt-1">Cloison de {(Lcm / 100).toFixed(2)} m : la porte reste entièrement dans la cloison.</p>
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0 w-24">Hauteur (cm)</span>
+                    <input type="number" min={30} className="input !py-1 !text-xs !w-20" key={`zo-${o.id}-h`} defaultValue={o.hauteur ?? hauteurOuvertureDefautCm(o.type)}
+                      onChange={e => { const v = parseFloat(e.target.value); if (v >= 30) majO({ hauteur: v }); }} />
+                  </div>
+                  {o.type === "porte" && (
+                    <>
+                      <div className="flex items-center gap-2 text-xs text-ink-500">
+                        <span className="shrink-0 w-24">Charnière</span>
+                        {segmente((o.charniere ?? "gauche") === "gauche", "Gauche", "Droite", () => majO({ charniere: "gauche" }), () => majO({ charniere: "droite" }))}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-ink-500">
+                        <span className="shrink-0 w-24">Ouvre vers</span>
+                        {segmente(o.ouvreVersInterieur !== false, "Côté A", "Côté B", () => majO({ ouvreVersInterieur: true }), () => majO({ ouvreVersInterieur: false }))}
+                      </div>
+                    </>
+                  )}
+                  {o.type === "porte_coulissante" && (
+                    <div className="flex items-center gap-2 text-xs text-ink-500">
+                      <span className="shrink-0 w-24">Glisse vers</span>
+                      {segmente((o.coulisseVers ?? "droite") === "gauche", "Gauche", "Droite", () => majO({ coulisseVers: "gauche" }), () => majO({ coulisseVers: "droite" }))}
+                    </div>
+                  )}
+                  <button onClick={() => setSelectedZoneOuv(null)} className="text-[11px] text-volt-600 underline self-start">Retour à la zone</button>
+                </DraggablePanel>
+              );
+            })()}
+
             {selectedOuvertureId != null && mode === "select" && (() => {
               const piece = niveauActif?.pieces.find(p => p.ouvertures?.some(o => o.id === selectedOuvertureId));
               const o = piece?.ouvertures?.find(o => o.id === selectedOuvertureId);
@@ -4726,7 +5513,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   <div className="flex items-center gap-2 text-xs text-ink-500">
                     <span className="shrink-0 w-24">Hauteur (cm)</span>
                     <input type="number" min={30} className="input !py-1 !text-xs !w-20"
-                      key={`ouv-${o.id}-hauteur-${dragEndTick}`} defaultValue={o.hauteur ?? (o.type === "porte" || o.type === "porte_coulissante" ? 204 : 120)}
+                      key={`ouv-${o.id}-hauteur-${dragEndTick}`} defaultValue={o.hauteur ?? hauteurOuvertureDefautCm(o.type)}
                       onChange={e => { if (e.target.value !== "") modifierOuverture(o.id, { hauteur: Number(e.target.value) }); }} />
                   </div>
                   {(o.type === "fenetre" || o.type === "ouverture") && (
@@ -5096,9 +5883,23 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         <div className={`px-4 py-1.5 bg-ink-50 border-t border-ink-100 text-[11px] text-ink-400 ${modeFocus ? "hidden" : "hidden md:block"} shrink-0`}>
           {vue3D
             ? "Glisser = tourner la caméra · Clic droit (ou Maj + glisser) = déplacer la vue · Molette = zoom"
-            : "Molette = zoom · Glisser le fond = déplacer la vue · En dessin : clic = ajouter un point, clic près du 1er point = fermer la pièce · Pièce sélectionnée : double-clic sur un sommet (rond orange) pour le supprimer (min. 3 sommets) · Tracé de circuit : clic = ajouter un point, Maj + clic = choisir une section (encastré / apparent)"}
+            : "Molette = zoom · Glisser le fond = déplacer la vue · En dessin : clic = ajouter un point, clic près du 1er point = fermer la pièce · Cloison : clic sur un mur, angles, clic sur un mur · Zone : clic = sommets, clic sur le 1er point = fermer · Pièce sélectionnée : double-clic sur un sommet (rond orange) pour le supprimer (min. 3 sommets) · Tracé de circuit : clic = ajouter un point, Maj + clic = choisir une section (encastré / apparent)"}
         </div>
       </div>
+
+      {zoneEnAttente && niveauActif && (
+        <ZoneForm contour={zoneEnAttente.contour} ferme={zoneEnAttente.ferme} pieces={niveauActif.pieces}
+          onValidate={validerNouvelleZone} onCancel={() => setZoneEnAttente(null)} />
+      )}
+
+      {cloisonEnAttente && niveauActif && (() => {
+        const pieceCloison = niveauActif.pieces.find(pc => pc.id === cloisonEnAttente.pieceId);
+        if (!pieceCloison) return null;
+        return (
+          <CloisonForm piece={pieceCloison} pieces={niveauActif.pieces} chemin={cloisonEnAttente.chemin}
+            onValidate={validerCloison} onCancel={() => setCloisonEnAttente(null)} />
+        );
+      })()}
 
       {pendingContour && (
         <PieceForm
