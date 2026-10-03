@@ -119,6 +119,21 @@ export function commandeCetteLumiere(a: Pick<AppareillagePlace, "commandePourIds
 // pièce — pas un objet libre comme un appareillage : contrainte à glisser le long du mur qui la porte.
 export type OuvertureType = "porte" | "porte_coulissante" | "porte_garage" | "fenetre" | "ouverture";
 
+// Usage d'une porte battante : intérieure (entre deux pièces), d'entrée (porte principale) ou de service
+// (porte secondaire donnant sur l'extérieur : cellier, garage, jardin…). Sert au rendu 3D (vantail, couleur,
+// quincaillerie) et aux dimensions par défaut ; aucune incidence sur le calcul des circuits.
+export type UsagePorte = "interieure" | "entree" | "service";
+export const USAGES_PORTE: UsagePorte[] = ["interieure", "entree", "service"];
+export const LABEL_USAGE_PORTE: Record<UsagePorte, string> = {
+  interieure: "Porte intérieure", entree: "Porte d'entrée", service: "Porte de service",
+};
+// Dimensions par défaut (cm) d'une porte battante selon son usage — SOURCE UNIQUE (palette du plan).
+export const DIMENSIONS_PORTE_DEFAUT: Record<UsagePorte, { largeur: number; hauteur: number }> = {
+  interieure: { largeur: 90, hauteur: 204 },
+  entree: { largeur: 90, hauteur: 215 },
+  service: { largeur: 80, hauteur: 204 },
+};
+
 // Hauteur par défaut (cm) d'une ouverture dont la hauteur n'a pas été saisie — SOURCE UNIQUE,
 // partagée par le plan 2D, la vue 3D et l'ancrage des volets (jamais de défaut recopié ailleurs).
 export function hauteurOuvertureDefautCm(type: OuvertureType): number {
@@ -148,12 +163,16 @@ export interface Ouverture {
   ouvreVersInterieur?: boolean;
   // Porte coulissante uniquement — côté du mur vers lequel le panneau coulisse (et se "gare").
   coulisseVers?: "gauche" | "droite";
+  // Porte battante uniquement — intérieure (défaut si absent), d'entrée ou de service.
+  usage?: UsagePorte;
 }
 
-export function nouvelleOuverture(type: OuvertureType, segIndex: number, position: number): Ouverture {
+export function nouvelleOuverture(type: OuvertureType, segIndex: number, position: number, usage: UsagePorte = "interieure"): Ouverture {
   switch (type) {
-    case "porte":
-      return { id: uidMaison(), type, segIndex, position, largeur: 90, hauteur: 204, allege: 0, charniere: "gauche", ouvreVersInterieur: true };
+    case "porte": {
+      const dim = DIMENSIONS_PORTE_DEFAUT[usage] ?? DIMENSIONS_PORTE_DEFAUT.interieure;
+      return { id: uidMaison(), type, segIndex, position, largeur: dim.largeur, hauteur: dim.hauteur, allege: 0, charniere: "gauche", ouvreVersInterieur: true, usage };
+    }
     case "porte_coulissante":
       return { id: uidMaison(), type, segIndex, position, largeur: 90, hauteur: 204, allege: 0, coulisseVers: "droite" };
     case "porte_garage":
@@ -219,6 +238,11 @@ export interface OuvertureEffective {
   allege?: number;
   coulisseVers?: "gauche" | "droite";
   proprietaire: boolean;
+  // Porte battante : de quoi dessiner et animer le vantail en 3D (id = clé de l'état ouvert/fermé).
+  id?: number;
+  usage?: UsagePorte;
+  charniere?: "gauche" | "droite";
+  ouvreVersInterieur?: boolean;
 }
 
 export function ouverturesEffectivesMur(pieces: Piece[], piece: Piece, segIndex: number): OuvertureEffective[] {
@@ -226,7 +250,7 @@ export function ouverturesEffectivesMur(pieces: Piece[], piece: Piece, segIndex:
   const longueur = distance(a, b) || 1;
   const propres: OuvertureEffective[] = (piece.ouvertures ?? [])
     .filter(o => o.segIndex === segIndex)
-    .map(o => ({ type: o.type, position: o.position, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: true }));
+    .map(o => ({ type: o.type, position: o.position, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: true, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur }));
 
   const projetees: OuvertureEffective[] = [];
   trouverMursJumeaux(pieces, piece, segIndex).forEach(j => {
@@ -236,7 +260,7 @@ export function ouverturesEffectivesMur(pieces: Piece[], piece: Piece, segIndex:
       const t = positionSurSegment(centreM, a, b);
       const tM = t * longueur;
       if (tM < j.loM - 0.01 || tM > j.hiM + 0.01) return; // hors du recouvrement réel — pas vraiment mitoyen ici
-      projetees.push({ type: o.type, position: t, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: false });
+      projetees.push({ type: o.type, position: t, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: false, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur });
     });
   });
   return [...propres, ...projetees];
