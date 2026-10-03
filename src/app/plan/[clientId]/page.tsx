@@ -19,7 +19,7 @@ import {
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
   MurSpec, MUR_DEFAUT, PRESETS_MUR,
-  Ouverture, OuvertureType, nouvelleOuverture, hauteurOuvertureDefautCm, positionSurSegment, OuvertureEffective, ouverturesEffectivesMur,
+  Ouverture, OuvertureType, UsagePorte, USAGES_PORTE, LABEL_USAGE_PORTE, nouvelleOuverture, hauteurOuvertureDefautCm, positionSurSegment, OuvertureEffective, ouverturesEffectivesMur,
   NIVEAU_TYPES, estAnnexe, origineCircuits, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance,
   distanceAuSegment, positionnerADistanceDuSegment, pointDansPolygone, distanceAuMurLePlusProche,
   CircuitManuel, FamilleCircuitManuel,
@@ -1376,6 +1376,13 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
 
 // Icône simple porte/fenêtre — pas de symbole normalisé dédié, juste de quoi
 // distinguer les deux boutons et l'ouverture posée sur le plan.
+// Aide courte affichée sous le choix du type de porte.
+function u_aide(u: UsagePorte): string {
+  return u === "entree" ? "Porte principale (pleine, seuil, serrure) — s'ouvre en 3D en cliquant dessus."
+    : u === "service" ? "Porte secondaire sur l'extérieur (vitrée en partie haute, seuil) — s'ouvre en 3D."
+    : "Porte entre deux pièces — s'ouvre en 3D en cliquant dessus.";
+}
+
 const LABEL_OUVERTURE: Record<OuvertureType, string> = {
   porte: "Porte", porte_coulissante: "Porte coulissante", porte_garage: "Porte de garage basculante", fenetre: "Fenêtre", ouverture: "Ouverture murale",
 };
@@ -1736,6 +1743,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [selectedTableau, setSelectedTableau] = useState(false);
   const [selectedPointArrivee, setSelectedPointArrivee] = useState(false);
   const [placingOuverture, setPlacingOuverture] = useState<OuvertureType | null>(null);
+  // Usage de la porte battante en cours de pose : intérieure (défaut), d'entrée ou de service.
+  const [placingUsagePorte, setPlacingUsagePorte] = useState<UsagePorte>("interieure");
   const [ouvertureMenuOpen, setOuvertureMenuOpen] = useState(false);
   const [selectedOuvertureId, setSelectedOuvertureId] = useState<number | null>(null);
   const [selectedBoite, setSelectedBoite] = useState<{ label: string; boiteId: number } | null>(null);
@@ -2367,8 +2376,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setLiaisonLumiereMode(null);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedPointArrivee(false); setSelectedMeubleId(null);
   };
-  const armerPlacementOuverture = (t: OuvertureType | null) => {
-    setPlacingOuverture(t); setMode("select"); setPlacementType(null); setPlacingTableau(false); setPlacingMeuble(false); setDrawingPoints([]);
+  const armerPlacementOuverture = (t: OuvertureType | null, usage: UsagePorte = "interieure") => {
+    setPlacingOuverture(t); setPlacingUsagePorte(usage); setMode("select"); setPlacementType(null); setPlacingTableau(false); setPlacingMeuble(false); setDrawingPoints([]);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
   };
@@ -2554,7 +2563,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }));
     setSelectedOuvertureId(null); setSelectedBoite(null);
   };
-  const modifierOuverture = (ouvertureId: number, patch: Partial<Pick<Ouverture, "largeur" | "hauteur" | "allege" | "charniere" | "ouvreVersInterieur" | "coulisseVers">>) => {
+  const modifierOuverture = (ouvertureId: number, patch: Partial<Pick<Ouverture, "largeur" | "hauteur" | "allege" | "charniere" | "ouvreVersInterieur" | "coulisseVers" | "usage">>) => {
     updateNiveauActif(n => ({
       ...n,
       pieces: n.pieces.map(p => ({
@@ -3261,7 +3270,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       // Une cloison de zone (dressing, cloison libre) prime sur un mur de pièce : c'est elle que l'on vise.
       const cz = niveauActif ? trouverCloisonZone(niveauActif.zones ?? [], m, seuilM) : null;
       if (cz) {
-        const nouvelleZ = nouvelleOuverture(placingOuverture, cz.segIndex, cz.t);
+        const nouvelleZ = nouvelleOuverture(placingOuverture, cz.segIndex, cz.t, placingUsagePorte);
         const posZ = positionOuvertureValide(cz.t, nouvelleZ.largeur, longueurCote(cz.zone, cz.segIndex));
         if (posZ == null) { messageZone(`Cette cloison est trop courte pour une ${LABEL_OUVERTURE[placingOuverture].toLowerCase()} de ${nouvelleZ.largeur} cm.`, 3200); return; }
         nouvelleZ.position = posZ;
@@ -3275,7 +3284,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         setTimeout(() => setPlacementError(null), 2000);
         return;
       }
-      const nouvelle = nouvelleOuverture(placingOuverture, mur.segIndex, mur.t);
+      const nouvelle = nouvelleOuverture(placingOuverture, mur.segIndex, mur.t, placingUsagePorte);
       updateNiveauActif(n => ({
         ...n,
         pieces: n.pieces.map(p => p.id === mur.piece.id ? { ...p, ouvertures: [...(p.ouvertures ?? []), nouvelle] } : p),
@@ -4001,17 +4010,23 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           <div className="relative">
             <button onClick={() => setOuvertureMenuOpen(o => !o)}
               className={`btn-ghost !text-xs ${placingOuverture ? "!bg-ink-900 !text-volt-400" : ""}`}>
-              <OuvertureIcon type={placingOuverture ?? "porte"} size={13} /> {placingOuverture ? LABEL_OUVERTURE[placingOuverture] : "Porte / fenêtre"}
+              <OuvertureIcon type={placingOuverture ?? "porte"} size={13} /> {placingOuverture ? (placingOuverture === "porte" ? LABEL_USAGE_PORTE[placingUsagePorte] : LABEL_OUVERTURE[placingOuverture]) : "Porte / fenêtre"}
             </button>
             {ouvertureMenuOpen && (
               <div className="absolute z-20 top-full left-0 mt-1 card card-inner !p-1 flex flex-col shadow-lg w-56">
-                {(["porte", "porte_coulissante", "porte_garage", "fenetre", "ouverture"] as OuvertureType[]).map(t => (
-                  <button key={t}
-                    onClick={() => { armerPlacementOuverture(placingOuverture === t ? null : t); setOuvertureMenuOpen(false); }}
-                    className={`flex items-center gap-2 !text-xs px-2 py-1.5 rounded-md hover:bg-ink-50 ${placingOuverture === t ? "text-volt-600 font-semibold" : "text-ink-600"}`}>
-                    <OuvertureIcon type={t} size={14} /> {LABEL_OUVERTURE[t]}
-                  </button>
-                ))}
+                {([
+                  { t: "porte", usage: "interieure" }, { t: "porte", usage: "entree" }, { t: "porte", usage: "service" },
+                  { t: "porte_coulissante" }, { t: "porte_garage" }, { t: "fenetre" }, { t: "ouverture" },
+                ] as { t: OuvertureType; usage?: UsagePorte }[]).map(({ t, usage }) => {
+                  const actif = placingOuverture === t && (t !== "porte" || placingUsagePorte === usage);
+                  return (
+                    <button key={`${t}-${usage ?? ""}`}
+                      onClick={() => { armerPlacementOuverture(actif ? null : t, usage); setOuvertureMenuOpen(false); }}
+                      className={`flex items-center gap-2 !text-xs px-2 py-1.5 rounded-md hover:bg-ink-50 ${actif ? "text-volt-600 font-semibold" : "text-ink-600"}`}>
+                      <OuvertureIcon type={t} size={14} /> {usage ? LABEL_USAGE_PORTE[usage] : LABEL_OUVERTURE[t]}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -4317,7 +4332,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       const angleDeg = Math.atan2(pB.y - pA.y, pB.x - pA.x) * 180 / Math.PI;
                       const largeurPx = Math.max(10, (o.largeur / 100) * PX_PER_M * zoom);
                       const isSel = o.id === selectedOuvertureId;
-                      const couleur = o.type === "porte" || o.type === "porte_coulissante" || o.type === "porte_garage" ? "#92400E" : o.type === "fenetre" ? "#0369A1" : "#78716c";
+                      // Porte battante : couleur selon l'usage (intérieure brun, entrée brun foncé, service vert d'eau).
+                      const couleur = o.type === "porte"
+                        ? (o.usage === "entree" ? "#7C2D12" : o.usage === "service" ? "#0F766E" : "#92400E")
+                        : o.type === "porte_coulissante" || o.type === "porte_garage" ? "#92400E" : o.type === "fenetre" ? "#0369A1" : "#78716c";
 
                       // Symbole d'ouverture de porte (vantail + arc de débattement) — calculé en
                       // mètres à partir de la charnière et du sens choisis, puis chaque point est
@@ -4408,7 +4426,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                           )}
                           {vantail && (
                             <>
-                              <line x1={vantail.hinge.x} y1={vantail.hinge.y} x2={vantail.bout.x} y2={vantail.bout.y} stroke={couleur} strokeWidth={1.5} />
+                              <line x1={vantail.hinge.x} y1={vantail.hinge.y} x2={vantail.bout.x} y2={vantail.bout.y} stroke={couleur} strokeWidth={o.usage === "entree" ? 2.6 : 1.5} />
                               <polyline points={vantail.arc.map(p => `${p.x},${p.y}`).join(" ")} fill="none" stroke={couleur} strokeWidth={1} strokeDasharray="3,2" />
                             </>
                           )}
@@ -5476,9 +5494,25 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 <DraggablePanel key={`${o.id}-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-64">
                   <div className="flex items-center gap-2">
                     <OuvertureIcon type={o.type} size={18} color="#1c1917" />
-                    <p className="text-sm font-semibold text-ink-900 flex-1">{LABEL_OUVERTURE[o.type]}</p>
+                    <p className="text-sm font-semibold text-ink-900 flex-1">{o.type === "porte" ? LABEL_USAGE_PORTE[o.usage ?? "interieure"] : LABEL_OUVERTURE[o.type]}</p>
                     <button onClick={() => supprimerOuverture(o.id)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
                   </div>
+                  {o.type === "porte" && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">Type de porte</span>
+                      <div className="flex gap-1">
+                        {USAGES_PORTE.map(u => (
+                          <button key={u} onClick={() => modifierOuverture(o.id, { usage: u })}
+                            className={`flex-1 !text-xs px-1.5 py-1 rounded-md border transition-colors ${
+                              (o.usage ?? "interieure") === u ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"
+                            }`}>
+                            {u === "interieure" ? "Intérieure" : u === "entree" ? "Entrée" : "Service"}
+                          </button>
+                        ))}
+                      </div>
+                      <span className="text-[11px] text-ink-400">{u_aide(o.usage ?? "interieure")}</span>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2 text-xs text-ink-500">
                     <span className="shrink-0 w-24">Largeur (cm)</span>
                     <input type="number" min={20} className="input !py-1 !text-xs !w-20"
