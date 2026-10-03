@@ -8,6 +8,11 @@
 //   2. apparierCatalogue() — associe chaque besoin brut à 0-3 articles du catalogue.
 //
 // Hypothèses de modélisation posées explicitement (à ajuster si besoin) :
+//  - LONGUEURS RÉELLES : chaque liaison est mesurée sur le tracé 3D (lib/longueurs-circuits.ts) — course horizontale
+//    ET montées / descentes (tableau → gaine → 1re prise, appareillage posé haut ou bas, retour lampe vers un
+//    interrupteur à 1,10 m…), avec les mêmes hauteurs que la vue 3D. Une montée encastrée compte en câble ET en
+//    gaine, une montée apparente en câble ET en moulure. Le décrochement dans l'épaisseur du mur (quelques cm par
+//    extrémité) n'est pas compté.
 //  - Chaque tronçon géométrique (segment ou sous-segment entre deux coudes) est compté
 //    comme UN câble (pratique du câble multiconducteur en une passe), jamais comme
 //    plusieurs conducteurs séparés — cohérent avec un devis d'achat de câble en mètres.
@@ -35,6 +40,14 @@
 //    prise commandée, interrupteur, va-et-vient, télérupteur) — pas pour point lumineux/
 //    applique (rosette DCL, produit différent). Regroupées par pièce si à moins de 20cm
 //    les unes des autres, jusqu'à 4 postes par boîte.
+//  - Appareillages MULTIPLES (plaque double/triple/quadruple, AppareillagePlace.groupeId) : UNE
+//    boîte d'encastrement de la taille de la plaque (jusqu'à 4 postes) et UNE plaque de finition
+//    (sous_categorie plaque_Npostes), jamais regroupées par proximité avec d'autres postes ; chaque
+//    poste reste chiffré à part (mécanisme). Les postes isolés gardent le regroupement par proximité.
+//  - Prise RJ45 (sous_categorie "rj45") : courant faible, aucun circuit de puissance. Le câble de
+//    communication (sous_categorie "cable_rj45", cat. 6 STP) est compté EN ÉTOILE depuis le tableau/
+//    coffret de communication du niveau jusqu'à chaque prise : distance « Manhattan » sur le plan
+//    (le câble suit les murs et les gaines, pas la ligne droite) PLUS les montées / descentes (coffret → gaine → prise).
 //  - Les appareils "dédiés" (four, plaque, lave-linge…, y compris chauffage) ne sont
 //    jamais chiffrés en tant qu'appareil — uniquement leur prise/sortie de câble
 //    spécialisée (sous_categorie "prise_specialisee").
@@ -44,13 +57,16 @@ import {
   distance, trouverPiece, cleSegmentLiaison, cheminSegment, SegmentCircuit, origineCircuits,
 } from "./maison-types";
 import {
-  genererCircuits, segmentsPourCircuit, ResultatGeneration, CIRCUIT_DEDIE,
+  genererCircuits, segmentsPourCircuit, ResultatGeneration, cleCircuitDedie,
 } from "./maison-engine";
+import { MAX_POSTES_PLAQUE, estCommande } from "./maison-types";
 import {
   Breaker as TableauBreaker, BreakerRow, BREAKER_TYPES, CIRCUITS,
   effectiveSection, gaineRecommandee, uid,
 } from "./electrical-constants";
-import { posesTroncons } from "./pose-circuits";
+import {
+  creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurJambe, pieceDeJambe, indexPiecesAppareils,
+} from "./longueurs-circuits";
 import { Prestation, Gamme, DevisLigne, PrestationFournisseur } from "@/types";
 import { nomAvecConditionnement } from "@/lib/utils";
 import { libelleOffre, offrePrincipale, offrePourFournisseur, prixVenteOffre } from "@/lib/fournisseurs";
@@ -119,7 +135,9 @@ const LABEL_CABLAGE: Record<string, string> = {
 const LABEL_APPAREILLAGE: Record<string, string> = {
   prise: "Prise de courant", prise_commandee: "Prise commandée",
   interrupteur: "Interrupteur simple", va_et_vient: "Va-et-vient", telerupteur: "Bouton télérupteur",
+  interrupteur_double: "Double interrupteur", va_et_vient_double: "Double va-et-vient", telerupteur_double: "Double bouton télérupteur",
   point_lumineux: "Point lumineux (DCL)", applique: "Sortie applique",
+  rj45: "Prise RJ45 (communication)",
 };
 // Une commande (interrupteur/va-et-vient/télérupteur) posée en domotique (AppareillagePlace.
 // domotique) est un produit différent d'un mécanisme filaire classique — module radio/wifi
@@ -127,7 +145,18 @@ const LABEL_APPAREILLAGE: Record<string, string> = {
 // pouvoir lui associer un prix catalogue propre.
 const LABEL_APPAREILLAGE_DOMOTIQUE: Record<string, string> = {
   interrupteur: "Interrupteur domotique", va_et_vient: "Va-et-vient domotique", telerupteur: "Bouton télérupteur domotique",
+  interrupteur_double: "Double interrupteur domotique", va_et_vient_double: "Double va-et-vient domotique", telerupteur_double: "Double bouton télérupteur domotique",
 };
+
+// Nomenclature des appareillages telle que le pré-devis la RÉCLAME au catalogue : source unique, reprise par
+// la page Catalogue (SOUS_CATEGORIES_CONNUES) pour que la liste d'autocomplétion ne puisse plus dériver du
+// moteur. Tout nouveau type d'appareillage ajouté à LABEL_APPAREILLAGE (ou à sa variante domotique) y
+// apparaît automatiquement. "prise_specialisee" = sortie dédiée d'un appareil (four, lave-linge…).
+export const NOMENCLATURE_APPAREILLAGE: { code: string; label: string }[] = [
+  ...Object.entries(LABEL_APPAREILLAGE).map(([code, label]) => ({ code, label })),
+  ...Object.entries(LABEL_APPAREILLAGE_DOMOTIQUE).map(([type, label]) => ({ code: `${type}_domotique`, label })),
+  { code: "prise_specialisee", label: "Prise / sortie de câble spécialisée" },
+];
 
 const PSEUDO_TABLEAU = "Tableau électrique";
 const pseudoCommun = (niveauNom: string) => `Commun — ${niveauNom}`;
@@ -142,10 +171,12 @@ const pseudoLiaisonVerticale = (niveauNom: string) => `Liaison verticale (config
 // ─── OUTILS GÉOMÉTRIQUES ────────────────────────────────────────────────────
 
 function estCommandeType(t?: AppareillageType): boolean {
-  return t === "interrupteur" || t === "va_et_vient" || t === "telerupteur";
+  return estCommande(t); // simples ET doubles
 }
 
-const TYPES_ENCASTRABLES: AppareillageType[] = ["prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur"];
+const TYPES_ENCASTRABLES: AppareillageType[] = ["prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur", "interrupteur_double", "va_et_vient_double", "telerupteur_double", "rj45", "prise_dediee"];
+
+const LABEL_POSTES = (n: number) => n === 1 ? "simple" : n === 2 ? "double" : n === 3 ? "triple" : "quadruple";
 
 // Regroupe des points en clusters d'au plus `maxParGroupe`, glouton, à `seuilM` près.
 function grouperParProximite(points: { id: number; x: number; y: number }[], seuilM: number, maxParGroupe: number): number[][] {
@@ -213,16 +244,16 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
   resultat.maison.niveaux.forEach(niveau => {
     // ─── Appareillages (mécanismes) et sorties dédiées, par pièce ──────────
     niveau.pieces.forEach(piece => {
-      const clustersEncastrement: { id: number; x: number; y: number }[] = [];
+      const clustersEncastrement: { id: number; x: number; y: number; groupeId?: number }[] = [];
       piece.appareillages.forEach(a => {
         if (a.dejaExistant) return; // déjà installé chez le client — jamais facturé, ni lui ni sa boîte
-        const estCommande = a.type === "interrupteur" || a.type === "va_et_vient" || a.type === "telerupteur";
-        if (estCommande && a.domotique && LABEL_APPAREILLAGE_DOMOTIQUE[a.type]) {
+        const estCmd = estCommande(a.type);
+        if (estCmd && a.domotique && LABEL_APPAREILLAGE_DOMOTIQUE[a.type]) {
           const sousCat = `${a.type}_domotique`;
           ajouter(`${sousCat}@${piece.id}`, sousCat, LABEL_APPAREILLAGE_DOMOTIQUE[a.type], piece.nom || "Pièce", 1, "u");
         } else if (LABEL_APPAREILLAGE[a.type]) {
           ajouter(`${a.type}@${piece.id}`, a.type, LABEL_APPAREILLAGE[a.type], piece.nom || "Pièce", 1, "u");
-        } else if (CIRCUIT_DEDIE[a.type] || a.type === "chauffage" || a.type === "volet_roulant") {
+        } else if (cleCircuitDedie(a) || a.type === "chauffage" || a.type === "volet_roulant") {
           ajouter(`prise_specialisee@${piece.id}`, "prise_specialisee", "Prise / sortie de câble spécialisée",
             piece.nom || "Pièce", 1, "u");
         }
@@ -233,17 +264,33 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           ajouter(`boite_encastrement_dcl@${piece.id}`, "boite_encastrement_dcl", "Boîte d'encastrement DCL",
             piece.nom || "Pièce", 1, "u");
         }
-        if (TYPES_ENCASTRABLES.includes(a.type)) clustersEncastrement.push({ id: a.id, x: a.x, y: a.y });
+        if (TYPES_ENCASTRABLES.includes(a.type)) clustersEncastrement.push({ id: a.id, x: a.x, y: a.y, groupeId: a.groupeId });
       });
       if (clustersEncastrement.length > 0) {
-        const groupes = grouperParProximite(clustersEncastrement, 0.20, 4);
+        // Postes d'une même plaque multiple : une boîte + une plaque pour tout le groupe, sinon
+        // regroupement par proximité (≤ 20 cm, 4 postes max) comme avant.
+        const parPlaque = new Map<number, number>(); // groupeId -> nombre de postes à facturer
+        const libres: { id: number; x: number; y: number }[] = [];
+        clustersEncastrement.forEach(c => {
+          if (c.groupeId != null) parPlaque.set(c.groupeId, (parPlaque.get(c.groupeId) ?? 0) + 1);
+          else libres.push(c);
+        });
         const parTaille = new Map<number, number>();
-        groupes.forEach(g => parTaille.set(g.length, (parTaille.get(g.length) ?? 0) + 1));
+        const plaquesParTaille = new Map<number, number>();
+        parPlaque.forEach(nb => {
+          const t = Math.min(nb, MAX_POSTES_PLAQUE);
+          parTaille.set(t, (parTaille.get(t) ?? 0) + 1);
+          if (t >= 2) plaquesParTaille.set(t, (plaquesParTaille.get(t) ?? 0) + 1);
+        });
+        grouperParProximite(libres, 0.20, 4).forEach(g => parTaille.set(g.length, (parTaille.get(g.length) ?? 0) + 1));
         parTaille.forEach((nb, taille) => {
-          const suffixe = taille === 1 ? "1poste" : taille === 2 ? "2postes" : taille === 3 ? "3postes" : "4postes";
-          ajouter(`boite_encastrement_${suffixe}@${piece.id}`, `boite_encastrement_${suffixe}`,
-            `Boîte d'encastrement ${taille === 1 ? "simple" : taille === 2 ? "double" : taille === 3 ? "triple" : "quadruple"}`,
-            piece.nom || "Pièce", nb, "u");
+          ajouter(`boite_encastrement_${taille}${taille === 1 ? "poste" : "postes"}@${piece.id}`,
+            `boite_encastrement_${taille}${taille === 1 ? "poste" : "postes"}`,
+            `Boîte d'encastrement ${LABEL_POSTES(taille)}`, piece.nom || "Pièce", nb, "u");
+        });
+        plaquesParTaille.forEach((nb, taille) => {
+          ajouter(`plaque_${taille}postes@${piece.id}`, `plaque_${taille}postes`,
+            `Plaque de finition ${LABEL_POSTES(taille)}`, piece.nom || "Pièce", nb, "u");
         });
       }
     });
@@ -261,6 +308,23 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       }
       return;
     }
+    // ─── Câble de communication RJ45 : étoile depuis le tableau / coffret de communication ──────
+    // Un câble par prise RJ45 (non « déjà existante »). Longueur RÉELLE : course horizontale « Manhattan » (le câble
+    // suit les murs et les gaines, pas la ligne droite) + montée du coffret (à la hauteur du tableau) jusqu'à la
+    // hauteur de gaine + descente jusqu'à la prise — même convention de course que les circuits de puissance.
+    const origineVDI = niveau.tableauPos ?? origineTrace;
+    const ctxVDI = creerContexteLongueurs(niveau);
+    const hauteurPriseVDI = hauteurAncreFn(ctxVDI);
+    niveau.pieces.forEach(piece => {
+      piece.appareillages.forEach(a => {
+        if (a.type !== "rj45" || a.dejaExistant) return;
+        const horizontale = Math.abs(a.x - origineVDI.x) + Math.abs(a.y - origineVDI.y);
+        const verticale = Math.abs(ctxVDI.hauteurGaine - ctxVDI.hauteurTableau) + Math.abs(ctxVDI.hauteurGaine - hauteurPriseVDI(String(a.id)));
+        ajouter(`cable_rj45@${piece.id}`, "cable_rj45", "Câble RJ45 cat. 6 STP (étoile vers le coffret de communication)",
+          piece.nom || "Pièce", horizontale + verticale, "m");
+      });
+    });
+
     // Origine utilisée pour MESURER les câbles visibles sur ce niveau (jamais pour le
     // tracé sur le plan, qui reste inchangé et part toujours du tableau réel) : si un
     // point d'arrivée des gaines est configuré, la distance géométrique visible (ex. point
@@ -272,6 +336,10 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
     const origineCalcul = origineTrace;
     const idToAppareillage = new Map<string, AppareillagePlace>();
     niveau.pieces.forEach(p => p.appareillages.forEach(a => idToAppareillage.set(String(a.id), a)));
+    // Longueurs RÉELLES (horizontales + verticales) : mêmes hauteurs et même tracé que la vue 3D.
+    const ctxLongueurs = creerContexteLongueurs(niveau);
+    const hauteurAncre = hauteurAncreFn(ctxLongueurs);
+    const pieceDeAppareil = indexPiecesAppareils(niveau);
 
     // ─── Boîtes de dérivation (une par circuit lumière qui en utilise) ─────
     const nomsPiecesNiveau = new Set(niveau.pieces.map(p => p.nom));
@@ -311,19 +379,16 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           || estCommandeType(idToAppareillage.get(seg.aId)?.type)
           || estCommandeType(idToAppareillage.get(seg.bId)?.type);
         const section = estLiaisonCommande ? "1.5" : sectionCircuit;
-        const cle = cleSegmentLiaison(seg.aId, seg.bId);
-        const coudes = niveau.liaisonWaypoints?.[cle] ?? [];
-        const chemin = cheminSegment(seg, niveau.liaisonWaypoints);
-        const poses = posesTroncons(niveau, cle, coudes); // pose de CHAQUE section (dernière incluse)
-        for (let j = 0; j < chemin.length - 1; j++) {
-          const legLength = distance(chemin[j], chemin[j + 1]);
-          if (legLength <= 0) continue;
-          const pose = poses[j] ?? "encastre";
-          // Attribution à la pièce : point médian du tronçon testé contre les polygones
-          // des pièces du niveau — la longueur d'un même circuit se répartit ainsi
-          // naturellement entre les pièces qu'il traverse.
-          const milieu: Point = { x: (chemin[j].x + chemin[j + 1].x) / 2, y: (chemin[j].y + chemin[j + 1].y) / 2 };
-          const pieceTraversee = trouverPiece(milieu, niveau.pieces);
+        // LONGUEUR RÉELLE : chaque jambe du tracé 3D (course horizontale ET montées / descentes), avec sa pose —
+        // exactement ce que dessine la vue 3D (voir longueurs-circuits.ts).
+        const { jambes } = tracerLiaison(ctxLongueurs, b, segments, seg, hauteurAncre);
+        jambes.forEach(jambe => {
+          const legLength = longueurJambe(jambe);
+          if (legLength <= 0) return;
+          const pose = jambe.pose;
+          // Attribution à la pièce : point médian d'une course horizontale, pièce de l'appareillage pour une montée
+          // à son extrémité — la longueur d'un même circuit se répartit ainsi entre les pièces qu'il traverse.
+          const pieceTraversee = pieceDeJambe(jambe, seg, pieceDeAppareil, niveau.pieces);
           const nomPiece = pieceTraversee?.nom || pseudoCommun(niveau.nom || niveau.type);
 
           if (estLiaisonCommande) {
@@ -354,7 +419,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
             const sousCatGaine = `gaine_irl${chiffres}`;
             ajouter(`${sousCatGaine}@${nomPiece}`, sousCatGaine, `Gaine ${gaineInfo.gaine}`, nomPiece, legLength, "m");
           }
-        }
+        });
       });
 
       // Distance verticale "point d'arrivée des gaines → tableau" — ajoutée une fois PAR
@@ -562,7 +627,7 @@ function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArt
 
 export function estBobinable(sousCategorie: string): boolean {
   return sousCategorie.startsWith("cablage_") || sousCategorie.startsWith("fil_")
-    || sousCategorie.startsWith("gaine_irl") || sousCategorie === "moulure";
+    || sousCategorie.startsWith("gaine_irl") || sousCategorie === "moulure" || sousCategorie === "cable_rj45";
 }
 
 export function genererLignesDevis(choix: ChoixLigne[], prestations: Prestation[]): Omit<DevisLigne, "devis_id" | "ordre">[] {

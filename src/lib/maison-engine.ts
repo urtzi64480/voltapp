@@ -15,7 +15,8 @@ import {
 } from "./electrical-constants";
 import {
   Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone,
-  CircuitManuel, familleCircuitManuelAppareillage, couleurCircuit,
+  CircuitManuel, familleCircuitManuelAppareillage, couleurCircuit, USAGE_DEDIE_DEFAUT,
+  estCommande, baseCommande, commandeCetteLumiere,
   SegmentCircuit, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage,
 } from "./maison-types";
 
@@ -33,6 +34,18 @@ export const CIRCUIT_DEDIE: Record<string, string> = {
   piscine: "piscine", vmc: "vmc", alarme: "alarme",
 };
 
+// Clé CIRCUITS du circuit dédié d'un appareillage, ou undefined s'il n'en a pas. Une PRISE DÉDIÉE
+// (type "prise_dediee") suit l'appareil qu'elle alimente (AppareillagePlace.usageDedie : four,
+// lave-linge…) ; tout autre appareil dédié suit son propre type.
+export function cleCircuitDedie(a: Pick<AppareillagePlace, "type" | "usageDedie">): string | undefined {
+  if (a.type === "prise_dediee") return CIRCUIT_DEDIE[a.usageDedie ?? USAGE_DEDIE_DEFAUT];
+  return CIRCUIT_DEDIE[a.type];
+}
+
+// Types sans circuit de PUISSANCE : une prise RJ45 est un courant faible (câblage de communication
+// en étoile vers le coffret VDI) — jamais rattachée à un disjoncteur, donc jamais « non raccordée ».
+export const TYPES_SANS_CIRCUIT: string[] = ["rj45"];
+
 // Libellés pour le message d'alerte "non raccordé" — soit une commande (interrupteur/
 // va-et-vient/télérupteur) qui ne pointe vers aucun point lumineux raccordé, soit un
 // appareillage explicitement exclu de la génération automatique (voir
@@ -40,7 +53,9 @@ export const CIRCUIT_DEDIE: Record<string, string> = {
 // type brut au besoin.
 const LABEL_NON_RACCORDE: Record<string, string> = {
   interrupteur: "Interrupteur", va_et_vient: "Va-et-vient", telerupteur: "Télérupteur",
+  interrupteur_double: "Double interrupteur", va_et_vient_double: "Double va-et-vient", telerupteur_double: "Double bouton poussoir",
   prise: "Prise", prise_commandee: "Prise commandée", volet_roulant: "Volet roulant",
+  prise_dediee: "Prise dédiée",
 };
 
 export interface ResultatGeneration {
@@ -206,7 +221,7 @@ function genererBreakersPrises(items: Item[], circuitKey: string, niveauNom: str
 function rattacherRetoursLampe(tousItems: Item[], cluster: { base: AppareillagePlace }[], circuitId: number): void {
   cluster.forEach(item => {
     tousItems
-      .filter(cmd => cmd.base.commandePourIds?.includes(item.base.id) && cmd.base.circuitManuelId == null)
+      .filter(cmd => commandeCetteLumiere(cmd.base, item.base.id) && cmd.base.circuitManuelId == null) // voie 1 ou 2 d'un double
       .forEach(cmd => { cmd.base.circuitId = circuitId; });
   });
 }
@@ -216,16 +231,18 @@ function rattacherRetoursLampe(tousItems: Item[], cluster: { base: AppareillageP
 // commandePourIds — partagé par la génération automatique et par un circuit manuel de
 // type "lumiere" (voir genererCircuits et breakerFromClusterManuel).
 function deduireCommandeLumiere(tousItems: Item[], pointLumineuxId: number): { typeCommande: CommandeType; nbCommandes: number } {
-  const commandes = tousItems.filter(a => a.base.commandePourIds?.includes(pointLumineuxId));
-  if (commandes.some(c => c.base.type === "telerupteur")) {
-    return { typeCommande: "telerupteur", nbCommandes: commandes.filter(c => c.base.type === "telerupteur").length || 1 };
+  // Voie 1 OU voie 2 d'un double : un double va-et-vient compte comme un va-et-vient pour chaque lampe qu'il
+  // commande (câblage identique, voie par voie) ; baseCommande() ramène chaque type à son genre de câblage.
+  const commandes = tousItems.filter(a => commandeCetteLumiere(a.base, pointLumineuxId));
+  if (commandes.some(c => baseCommande(c.base.type) === "telerupteur")) {
+    return { typeCommande: "telerupteur", nbCommandes: commandes.filter(c => baseCommande(c.base.type) === "telerupteur").length || 1 };
   }
-  if (commandes.some(c => c.base.type === "va_et_vient")) {
+  if (commandes.some(c => baseCommande(c.base.type) === "va_et_vient")) {
     // Nombre réel de va-et-vient posés pour cette lampe plutôt qu'une valeur fixe à 2 — une
     // configuration à 3 commandes ou plus (permutateurs) reste rare mais n'est pas empêchée
     // par le plan, autant que ce chiffre (repris tel quel dans le module Tableau) reflète
     // ce qui est réellement dessiné.
-    return { typeCommande: "vav", nbCommandes: commandes.filter(c => c.base.type === "va_et_vient").length };
+    return { typeCommande: "vav", nbCommandes: commandes.filter(c => baseCommande(c.base.type) === "va_et_vient").length };
   }
   return { typeCommande: "simple", nbCommandes: 1 };
 }
@@ -390,7 +407,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     const pointsLumineux = resteApresExclusion.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "lumiere");
     const chauffages = resteApresExclusion.filter(a => a.base.type === "chauffage");
     const volets = resteApresExclusion.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "volets_roulants");
-    const dedies = resteApresExclusion.filter(a => !!CIRCUIT_DEDIE[a.base.type]);
+    const dedies = resteApresExclusion.filter(a => !!cleCircuitDedie(a.base));
 
     genererBreakersPrises(prisesStandard, "prise_16", niveau.nom, breakers);
     genererBreakersPrises(prisesCuisine, "cuisine_prises", niveau.nom, breakers);
@@ -404,7 +421,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
 
     // Appareils dédiés : un circuit par instance
     dedies.forEach(item => {
-      const circuitKey = CIRCUIT_DEDIE[item.base.type];
+      const circuitKey = cleCircuitDedie(item.base)!;
       const spec = CIRCUITS[circuitKey];
       const b: Breaker = {
         id: uid(), label: `${spec.label} — ${item.pieceNom || niveau.nom}`, circuit: circuitKey,
@@ -422,7 +439,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     // passe facilement inaperçue.
     niveau.pieces.forEach(piece => {
       piece.appareillages.forEach(a => {
-        if (a.circuitId == null) {
+        if (a.circuitId == null && !TYPES_SANS_CIRCUIT.includes(a.type)) {
           const label = LABEL_NON_RACCORDE[a.type] ?? a.type;
           alertes.push(`"${piece.nom || piece.type}" (${niveau.nom}) : ${label} sans circuit assigné.`);
         }
@@ -499,7 +516,7 @@ export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[
   const relieAuTableau = !manuel?.nonRelieTableau;
   if (breaker.circuit === "lumiere") {
     const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
-    const commandes = points.filter(a => a.type === "interrupteur" || a.type === "va_et_vient" || a.type === "telerupteur");
+    const commandes = points.filter(a => estCommande(a.type));
     const boites = niveau.boitesDerivation?.[breaker.label] ?? [];
     const liaisonsDirectes = niveau.liaisonsDirectesLumiere?.[breaker.label] ?? [];
     return construireBranchesCircuitEclairage(tableauPos, boites, lumieres, commandes, liaisonsDirectes, relieAuTableau);

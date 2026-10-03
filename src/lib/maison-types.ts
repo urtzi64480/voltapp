@@ -11,10 +11,12 @@ export type AppareillageType =
   | "prise" | "prise_commandee"
   | "point_lumineux" | "applique"
   | "interrupteur" | "va_et_vient" | "telerupteur"
+  | "interrupteur_double" | "va_et_vient_double" | "telerupteur_double"
   | "four" | "plaque" | "lave_linge" | "lave_vaisselle" | "seche_linge"
   | "chauffe_eau" | "chauffage" | "clim" | "seche_serviette" | "congelateur"
   | "irve" | "piscine" | "vmc" | "alarme"
-  | "volet_roulant";
+  | "volet_roulant"
+  | "rj45" | "prise_dediee";
 
 export interface Point { x: number; y: number; }
 
@@ -45,6 +47,11 @@ export interface AppareillagePlace {
   // Pour interrupteur / va_et_vient / telerupteur : ids des point_lumineux (ou applique)
   // commandés — un interrupteur peut commander plusieurs points lumineux.
   commandePourIds?: number[];
+  // Doubles (interrupteur_double / va_et_vient_double / telerupteur_double) : UN mécanisme à DEUX
+  // voies. commandePourIds = voie 1 ; commandePourIds2 = voie 2 (chacune commande ses propres
+  // points lumineux, éventuellement sur deux circuits différents). Pour lire « tout ce que
+  // commande ce mécanisme », toujours passer par lumieresCommandees() — jamais un seul des deux champs.
+  commandePourIds2?: number[];
   // Pour interrupteur / va_et_vient / telerupteur : commande domotique (module radio/wifi),
   // sans câblage physique retour/navette vers le(s) point(s) lumineux commandé(s). Affecte
   // uniquement la visualisation du cheminement (voir SegmentCircuit.type "domotique" et
@@ -63,6 +70,48 @@ export interface AppareillagePlace {
   // ni l'appareillage ni sa boîte d'encastrement ne sont chiffrés. Seul le câblage qui
   // part réellement de lui (vers de nouveaux appareillages) reste facturé normalement.
   dejaExistant?: boolean;
+  // Prise dédiée (type "prise_dediee") uniquement : usage = appareil alimenté (four, lave-linge…),
+  // l'un des TYPES_USAGE_DEDIE. Détermine le circuit dédié créé (CIRCUITS[...], voir
+  // cleCircuitDedie, maison-engine.ts) : calibre, section, différentiel. Défaut : "four".
+  usageDedie?: AppareillageType;
+  // Appareillage multiple (plaque double / triple / quadruple) : tous les postes d'une même
+  // plaque partagent le même groupeId (id stable, voir uidMaison) et se distinguent par
+  // rangPlaque (0 = poste le plus à gauche, vu de la pièce face au mur). Chaque poste reste un
+  // AppareillagePlace À PART ENTIÈRE (son propre circuit, sa propre commande, sa propre ligne de
+  // devis) — seuls la position (entraxe 71 mm le long du mur), la hauteur, la couleur de plaque,
+  // la boîte d'encastrement et la plaque de finition sont communs. Voir disposerPlaque,
+  // normaliserPlaques (appareillage-mur.ts).
+  groupeId?: number;
+  rangPlaque?: number;
+}
+
+// ─── COMMANDES (simples ET doubles) ─────────────────────────────────────────────────────────
+// Source unique : toute logique « est-ce une commande ? de quel genre ? » passe par ici.
+export type CommandeBase = "interrupteur" | "va_et_vient" | "telerupteur";
+export const TYPES_COMMANDE: AppareillageType[] = [
+  "interrupteur", "va_et_vient", "telerupteur", "interrupteur_double", "va_et_vient_double", "telerupteur_double",
+];
+export function estCommande(type?: AppareillageType): boolean {
+  return !!type && TYPES_COMMANDE.includes(type);
+}
+export function estCommandeDouble(type?: AppareillageType): boolean {
+  return type === "interrupteur_double" || type === "va_et_vient_double" || type === "telerupteur_double";
+}
+// Genre de câblage d'une commande : un double va-et-vient se câble comme deux va-et-vient, etc.
+export function baseCommande(type: AppareillageType): CommandeBase | null {
+  switch (type) {
+    case "interrupteur": case "interrupteur_double": return "interrupteur";
+    case "va_et_vient": case "va_et_vient_double": return "va_et_vient";
+    case "telerupteur": case "telerupteur_double": return "telerupteur";
+    default: return null;
+  }
+}
+// Tous les points lumineux commandés par un mécanisme (voie 1 + voie 2, sans doublon).
+export function lumieresCommandees(a: Pick<AppareillagePlace, "commandePourIds" | "commandePourIds2">): number[] {
+  return Array.from(new Set([...(a.commandePourIds ?? []), ...(a.commandePourIds2 ?? [])]));
+}
+export function commandeCetteLumiere(a: Pick<AppareillagePlace, "commandePourIds" | "commandePourIds2">, lumiereId: number): boolean {
+  return !!a.commandePourIds?.includes(lumiereId) || !!a.commandePourIds2?.includes(lumiereId);
 }
 
 // Porte, porte coulissante, fenêtre, ou simple ouverture murale (sans porte, entièrement
@@ -431,7 +480,7 @@ export function reamorcerCompteurId(niveaux: Niveau[]): void {
     max = Math.max(max, n.id);
     n.pieces.forEach(p => {
       max = Math.max(max, p.id);
-      p.appareillages.forEach(a => { max = Math.max(max, a.id); });
+      p.appareillages.forEach(a => { max = Math.max(max, a.id, a.groupeId ?? 0); }); // groupeId : même compteur (plaques multiples)
       (p.ouvertures ?? []).forEach(o => { max = Math.max(max, o.id); });
       (p.meubles ?? []).forEach(m => { max = Math.max(max, m.id); });
     });
@@ -493,6 +542,7 @@ export function dedupliquerIds(niveaux: Niveau[]): { niveaux: Niveau[]; correcti
       appareillages: p.appareillages.map(a => ({
         ...a,
         commandePourIds: a.commandePourIds?.map(id => remapApp.get(id) ?? id),
+        commandePourIds2: a.commandePourIds2?.map(id => remapApp.get(id) ?? id),
         circuitManuelId: a.circuitManuelId != null ? (remapManuel.get(a.circuitManuelId) ?? a.circuitManuelId) : a.circuitManuelId,
       })),
     })),
@@ -535,7 +585,50 @@ const PUISSANCE_CHAUFFAGE_DEFAUT_W = 1000;
 export const nouvelAppareillage = (type: AppareillageType, x: number, y: number): AppareillagePlace => ({
   id: uidMaison(), type, x, y,
   ...(type === "chauffage" ? { puissanceW: PUISSANCE_CHAUFFAGE_DEFAUT_W } : {}),
+  ...(type === "prise_dediee" ? { usageDedie: USAGE_DEDIE_DEFAUT } : {}),
 });
+
+// ─── APPAREILLAGES MULTIPLES (plaques double / triple / quadruple) ─────────────────────────
+// Entraxe normalisé d'un poste (71 mm) et nombre maximal de postes d'une plaque.
+export const ENTRAXE_POSTE_M = 0.071;
+export const MAX_POSTES_PLAQUE = 4;
+export const MIN_POSTES_PLAQUE = 2;
+
+// Types que l'on peut poser sur un poste de plaque : prises, commandes, RJ45, prise dédiée.
+export const TYPES_POSTE_PLAQUE: AppareillageType[] = [
+  "prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur",
+  "interrupteur_double", "va_et_vient_double", "telerupteur_double", "rj45", "prise_dediee",
+];
+
+// Appareils alimentables par une prise dédiée (un circuit dédié chacun, voir CIRCUIT_DEDIE).
+export const TYPES_USAGE_DEDIE: AppareillageType[] = [
+  "four", "plaque", "lave_linge", "lave_vaisselle", "seche_linge", "congelateur", "chauffe_eau", "clim",
+];
+export const USAGE_DEDIE_DEFAUT: AppareillageType = "four";
+export const LIBELLE_USAGE_DEDIE: Partial<Record<AppareillageType, string>> = {
+  four: "Four", plaque: "Plaque de cuisson (32 A)", lave_linge: "Lave-linge", lave_vaisselle: "Lave-vaisselle",
+  seche_linge: "Sèche-linge", congelateur: "Congélateur", chauffe_eau: "Chauffe-eau", clim: "Climatisation",
+};
+
+// Un poste de plaque à créer : son type (et, pour une prise dédiée, l'appareil alimenté).
+export interface PosteSpec { type: AppareillageType; usageDedie?: AppareillageType; }
+
+// Hauteur commune d'une plaque : 1,10 m dès qu'elle porte une commande (règle d'usage), sinon la
+// hauteur par défaut du premier poste (0,30 m pour des prises). Modifiable ensuite.
+export function hauteurCommunePlaqueCm(types: AppareillageType[]): number {
+  return types.some(t => estCommande(t)) ? 110 : 30;
+}
+
+// Crée les postes d'une plaque (positions à fixer ensuite par disposerPlaque).
+export function nouvellePlaque(postes: PosteSpec[], x: number, y: number): AppareillagePlace[] {
+  const groupeId = uidMaison();
+  const hauteur = hauteurCommunePlaqueCm(postes.map(p => p.type));
+  return postes.map((p, i) => ({
+    ...nouvelAppareillage(p.type, x, y),
+    ...(p.type === "prise_dediee" ? { usageDedie: p.usageDedie ?? USAGE_DEDIE_DEFAUT } : {}),
+    groupeId, rangPlaque: i, hauteur,
+  }));
+}
 // Dimensions de départ raisonnables (une petite table/desserte) — modifiables ensuite
 // depuis le panneau du meuble sélectionné.
 export const nouveauMeuble = (x: number, y: number): MeubleSimple => ({
@@ -943,11 +1036,11 @@ export function construireBranchesCircuitEclairage(
   });
 
   lumieres.forEach(l => {
-    const commandesDeCetteLampe = commandes.filter(c => c.commandePourIds?.includes(l.id));
+    const commandesDeCetteLampe = commandes.filter(c => commandeCetteLumiere(c, l.id)); // voie 1 OU voie 2
     const vaEtVient = commandesDeCetteLampe
-      .filter(c => c.type === "va_et_vient")
+      .filter(c => baseCommande(c.type) === "va_et_vient")
       .sort((c1, c2) => distance({ x: c1.x, y: c1.y }, l) - distance({ x: c2.x, y: c2.y }, l));
-    const autres = commandesDeCetteLampe.filter(c => c.type !== "va_et_vient");
+    const autres = commandesDeCetteLampe.filter(c => baseCommande(c.type) !== "va_et_vient");
 
     vaEtVient.forEach((c, i) => {
       if (i === 0) {
@@ -1030,6 +1123,7 @@ export const COULEURS_VOLET: { nom: string; hex: string }[] = [
 // Prises et commandes dont la couleur de plaque se choisit (vue 3D).
 export const TYPES_APPAREILLAGE_COLORABLES: AppareillageType[] = [
   "prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur",
+  "interrupteur_double", "va_et_vient_double", "telerupteur_double", "rj45", "prise_dediee",
 ];
 // Teintes courantes de plaques/mécanismes (gammes blanc, gris, anthracite, laiton…) — un
 // sélecteur de couleur libre complète cette liste côté interface.

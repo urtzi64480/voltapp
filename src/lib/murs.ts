@@ -258,8 +258,8 @@ export function murAfterSuppressionSommet(murs: MurSpec[] | undefined, index: nu
 
 // Hauteur d'installation par défaut (mètres) quand l'appareillage n'a pas de hauteur saisie.
 export const HAUTEUR_DEFAUT: Partial<Record<AppareillageType, number>> = {
-  prise: 0.3, prise_commandee: 0.3,
-  interrupteur: 1.1, va_et_vient: 1.1, telerupteur: 1.1,
+  prise: 0.3, prise_commandee: 0.3, rj45: 0.3, prise_dediee: 0.3,
+  interrupteur: 1.1, va_et_vient: 1.1, telerupteur: 1.1, interrupteur_double: 1.1, va_et_vient_double: 1.1, telerupteur_double: 1.1,
   applique: 1.8,
   four: 0.6, plaque: 0.9, lave_linge: 0.85, lave_vaisselle: 0.85, seche_linge: 0.85,
   chauffe_eau: 1.8, chauffage: 0.3, clim: 2.0, seche_serviette: 1.2, congelateur: 0.85,

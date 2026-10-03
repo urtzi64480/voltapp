@@ -4,7 +4,7 @@
 // contre le mur) et la vue 3D (projection sur la face intérieure du mur). Aucun état,
 // aucune dépendance React/three : uniquement des fonctions pures sur des Point en mètres.
 
-import { AppareillageType, Piece, Point, pointDansPolygone, ouverturesEffectivesMur } from "@/lib/maison-types";
+import { AppareillageType, AppareillagePlace, Piece, Point, pointDansPolygone, ouverturesEffectivesMur, ENTRAXE_POSTE_M } from "@/lib/maison-types";
 
 export interface AncrageMur {
   segIndex: number;   // index du mur dans piece.contour (segment i → i+1)
@@ -209,4 +209,78 @@ export function geometrieCote(c: Cote, toS: (p: Point) => Point, decalagePx: num
   let angle = Math.atan2(b2.y - a2.y, b2.x - a2.x) * 180 / Math.PI;
   if (angle > 90 || angle < -90) angle += 180; // texte toujours lisible (jamais à l'envers)
   return { kind: c.kind, A, B, a2, b2, mid: { x: (a2.x + b2.x) / 2, y: (a2.y + b2.y) / 2 }, angle, txt: String(c.valeurCm) };
+}
+
+// ─── APPAREILLAGES MULTIPLES (plaques double / triple / quadruple) ─────────────────────────
+// Un poste de plaque est un AppareillagePlace ordinaire portant groupeId + rangPlaque (voir
+// maison-types.ts). Ces fonctions pures posent / entretiennent la disposition des postes.
+
+// Vecteur unitaire « vers la DROITE » d'une personne qui regarde le mur (de la pièce) :
+// rotation de +90° de la direction du regard (-normale) dans un repère écran (y vers le bas).
+export function droiteFaceAuMur(normale: Point): Point {
+  return { x: normale.y, y: -normale.x };
+}
+
+// Positions (sur l'axe du mur) des n postes d'une plaque centrée sur `centre` : alignés le long
+// du mur le plus proche, entraxe ENTRAXE_POSTE_M, rang 0 à gauche (vu de la pièce).
+export function disposerPlaque(centre: Point, contour: Point[], n: number): Point[] {
+  const anc = ancrageMurLePlusProche(centre, contour);
+  // Posée contre le mur (à TOLERANCE_MUR_M près) → collée dessus ; au-delà (placement libre, Alt) → là où elle est,
+  // mais toujours alignée parallèlement au mur le plus proche.
+  const base = anc && anc.distance <= TOLERANCE_MUR_M ? anc.pied : centre;
+  const droite = anc ? droiteFaceAuMur(anc.normale) : { x: 1, y: 0 };
+  return Array.from({ length: n }, (_, k) => {
+    const d = (k - (n - 1) / 2) * ENTRAXE_POSTE_M;
+    return { x: base.x + droite.x * d, y: base.y + droite.y * d };
+  });
+}
+
+export interface InfoPlaque { n: number; gx: number; gy: number; }
+
+// Postes regroupés par groupeId, triés par rang : { n, centre } pour le dessin 2D / l'impression.
+export function infosPlaques(appareillages: AppareillagePlace[]): Map<number, InfoPlaque> {
+  const parGroupe = new Map<number, AppareillagePlace[]>();
+  appareillages.forEach(a => {
+    if (a.groupeId == null) return;
+    const l = parGroupe.get(a.groupeId) ?? [];
+    l.push(a); parGroupe.set(a.groupeId, l);
+  });
+  const out = new Map<number, InfoPlaque>();
+  parGroupe.forEach((l, id) => {
+    if (l.length < 2) return;
+    out.set(id, {
+      n: l.length,
+      gx: l.reduce((s, a) => s + a.x, 0) / l.length,
+      gy: l.reduce((s, a) => s + a.y, 0) / l.length,
+    });
+  });
+  return out;
+}
+
+// Remet d'aplomb les plaques d'une pièce après une suppression / un déplacement de poste :
+//  - un groupe réduit à un seul poste redevient un appareillage simple (groupeId retiré) ;
+//  - les rangs sont renumérotés 0..n-1 (ordre conservé) ;
+//  - les postes sont re-disposés autour du centre du groupe (le long du mur le plus proche).
+// Un seul groupe de la pièce peut être ciblé via `seulementGroupeId`.
+export function normaliserPlaques(piece: Piece, seulementGroupeId?: number): Piece {
+  const groupes = new Map<number, AppareillagePlace[]>();
+  piece.appareillages.forEach(a => {
+    if (a.groupeId == null) return;
+    if (seulementGroupeId != null && a.groupeId !== seulementGroupeId) return;
+    const l = groupes.get(a.groupeId) ?? [];
+    l.push(a); groupes.set(a.groupeId, l);
+  });
+  if (groupes.size === 0) return piece;
+  const maj = new Map<number, AppareillagePlace>();
+  groupes.forEach(membres => {
+    if (membres.length < 2) {
+      membres.forEach(a => { const { groupeId, rangPlaque, ...reste } = a; void groupeId; void rangPlaque; maj.set(a.id, reste); });
+      return;
+    }
+    const tries = [...membres].sort((a, b) => (a.rangPlaque ?? 0) - (b.rangPlaque ?? 0));
+    const centre = { x: tries.reduce((s, a) => s + a.x, 0) / tries.length, y: tries.reduce((s, a) => s + a.y, 0) / tries.length };
+    const pts = disposerPlaque(centre, piece.contour, tries.length);
+    tries.forEach((a, k) => maj.set(a.id, { ...a, x: pts[k].x, y: pts[k].y, rangPlaque: k }));
+  });
+  return { ...piece, appareillages: piece.appareillages.map(a => maj.get(a.id) ?? a) };
 }
