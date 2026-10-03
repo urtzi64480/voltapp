@@ -12,9 +12,10 @@
 
 import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
+import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante } from "@/components/plan/PortesOuvrables";
 import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
 import { cloisonsDeZone, ouverturesEffectivesZone } from "@/lib/zones";
 import { parametresMur3D, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT, preparerMurs, pointDansCouche2 } from "@/lib/murs";
@@ -99,9 +100,12 @@ export function construireMurAvecOuvertures(
   // le long de la normale gauche ; extDebut/extFin = prolongement aux extrémités (comble le coin
   // avec le mur voisin) ; avecContenu = dessiner aussi vitrage / panneau coulissant (une seule
   // couche par mur). Toutes les couches reçoivent les MÊMES trous : une ouverture perce tout.
-  opts: { decalage?: number; extDebut?: number; extFin?: number; avecContenu?: boolean } = {},
+  // sensInterieur : signe de la normale du mur (repère du plan) qui regarde l'INTÉRIEUR de la pièce porteuse
+  // (+1 par défaut) — sert au sens de battement des portes ; enregistrerPorte : reçoit chaque porte ouvrable
+  // construite (pour piloter son ouverture sans reconstruire la scène).
+  opts: { decalage?: number; extDebut?: number; extFin?: number; avecContenu?: boolean; sensInterieur?: 1 | -1; enregistrerPorte?: (p: PorteRegistre) => void } = {},
 ): void {
-  const { decalage = 0, extDebut = 0, extFin = 0, avecContenu = true } = opts;
+  const { decalage = 0, extDebut = 0, extFin = 0, avecContenu = true, sensInterieur = 1, enregistrerPorte } = opts;
   const dx = b.x - a.x, dy = b.y - a.y;
   const longueur = Math.hypot(dx, dy);
   if (longueur < 0.01) return;
@@ -157,19 +161,47 @@ export function construireMurAvecOuvertures(
       scene.add(vitre);
     }
 
+    // Porte battante : encadrement + vantail pivotant (intérieure, d'entrée ou de service). Fermée par défaut ;
+    // l'ouverture se pilote ensuite via le registre (voir PortesOuvrables.ts). Le sens de battement suit le plan 2D :
+    // « vers l'intérieur » = côté du centre de la pièce porteuse (sensInterieur).
+    if (avecContenu && o.proprietaire && o.type === "porte") {
+      const usage: UsagePorte = o.usage ?? "interieure";
+      const hP = Math.max(0.5, Math.min(hOuverture, hauteurMur - 0.01));
+      const hs = o.charniere === "droite" ? 1 : -1;
+      const sensBattement = (o.ouvreVersInterieur === false ? -1 : 1) * sensInterieur;
+      const centreOuv = (debut + fin) / 2;
+      const pivot = new THREE.Group();
+      pivot.position.set(a.x + ux * centreOuv + nx * decalage, hAllege, a.y + uy * centreOuv + ny * decalage);
+      pivot.rotation.y = -angle;
+      const { cadre, swing } = creerPorteBattante({ larg: fin - debut, haut: hP, epMur: epaisseur, usage, hs, faceInt: sensInterieur });
+      pivot.add(cadre, swing);
+      scene.add(pivot);
+      if (o.id != null) {
+        const reg: PorteRegistre = { id: o.id, genre: "battante", mobile: swing, signe: sensBattement * hs, course: 0, defaut: 0 };
+        swing.traverse(obj => { obj.userData.porteId = o.id; });
+        appliquerOuverturePorte(reg, reg.defaut);
+        enregistrerPorte?.(reg);
+      }
+    }
+
+    // Porte coulissante : panneau qui remplit l'ouverture fermé et se gare contre le mur voisin ouvert
+    // (ouverte par défaut, comme avant : le panneau était toujours dessiné « garé »).
     if (avecContenu && o.proprietaire && o.type === "porte_coulissante") {
-      // Panneau "garé" contre le mur adjacent, du côté choisi — pas de vantail qui bat.
       const cote = o.coulisseVers === "gauche" ? -1 : 1;
-      const centrePanneau = cote > 0 ? fin + larg / 2 : debut - larg / 2;
+      const centreOuv = (debut + fin) / 2;
       const decalagePanneau = epaisseur * 0.3;
-      const panneauGeo = new THREE.BoxGeometry(larg, hOuverture, epaisseur * 0.4);
-      const panneauMat = new THREE.MeshStandardMaterial({ color: 0xD6C7A1 });
-      const panneau = new THREE.Mesh(panneauGeo, panneauMat);
-      panneau.position.set(
-        a.x + ux * centrePanneau + nx * (decalage + decalagePanneau), hOuverture / 2, a.y + uy * centrePanneau + ny * (decalage + decalagePanneau),
-      );
-      panneau.rotation.y = -angle;
-      scene.add(panneau);
+      const pivot = new THREE.Group();
+      pivot.position.set(a.x + ux * centreOuv + nx * (decalage + decalagePanneau), hAllege, a.y + uy * centreOuv + ny * (decalage + decalagePanneau));
+      pivot.rotation.y = -angle;
+      const mobile = creerPorteCoulissante({ larg: fin - debut, haut: hOuverture, epMur: epaisseur });
+      pivot.add(mobile);
+      scene.add(pivot);
+      const reg: PorteRegistre = { id: o.id ?? -1, genre: "coulissante", mobile, signe: cote, course: fin - debut, defaut: 100 };
+      if (o.id != null) {
+        mobile.traverse(obj => { obj.userData.porteId = o.id; });
+        enregistrerPorte?.(reg);
+      }
+      appliquerOuverturePorte(reg, reg.defaut);
     }
     if (avecContenu && o.proprietaire && o.type === "porte_garage") {
       // Porte de garage basculante fermée : tablier plein dans l'ouverture, 3 rainures horizontales,
@@ -225,6 +257,13 @@ const Vue3D = forwardRef<Vue3DHandle, {
   // (AppareillagePlace.voletOuvertPct, réglée depuis le plan 2D) qui s'applique.
   const [voletsOverride, setVoletsOverride] = useState<Record<number, number>>({});
   const voletsRef = useRef<Map<number, { modele: ModeleVolet; defaut: number }>>(new Map());
+  // Portes ouvrables : ouverture 0 (fermée) … 100 (ouverte) forcée depuis le panneau 3D ou par un clic sur la
+  // porte — simple état de VUE (jamais écrit dans le plan). L'animation glisse « courant » vers « cible » à
+  // chaque image, sans reconstruire la scène.
+  const [portesOverride, setPortesOverride] = useState<Record<number, number>>({});
+  const portesOverrideRef = useRef<Record<number, number>>({});
+  portesOverrideRef.current = portesOverride;
+  const portesRef = useRef<Map<number, { reg: PorteRegistre; courant: number; cible: number }>>(new Map());
 
   useImperativeHandle(ref, () => ({
     capturerImage: () => rendererRef.current?.domElement.toDataURL("image/png") ?? null,
@@ -266,7 +305,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
 
   // Changer de niveau réinitialise la simulation (les ids d'interrupteurs d'un autre
   // niveau n'ont aucun sens ici) — le mode nuit, lui, est une préférence de vue et reste.
-  useEffect(() => { setInterrupteursOn({}); setVoletsOverride({}); }, [niveau.id]);
+  useEffect(() => { setInterrupteursOn({}); setVoletsOverride({}); setPortesOverride({}); }, [niveau.id]);
 
   // Ids des points lumineux actuellement allumés, dérivés des interrupteurs actifs.
   const lumieresAllumeesIds = useMemo(() => {
@@ -287,6 +326,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
     sceneRef.current = scene;
     lumiereLightsRef.current.clear();
     voletsRef.current.clear();
+    portesRef.current.clear();
     doublageMatsRef.current = [];
 
     const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.05, 200);
@@ -327,6 +367,22 @@ const Vue3D = forwardRef<Vue3DHandle, {
     // Appareillages effectivement habillés d'un boîtier en saillie + goulotte : leur montée est déjà dessinée par le modèle.
     const habilles = new Set<number>();
 
+    // Portes : l'usage (intérieure / entrée / service), la charnière et le sens de battement sont lus sur l'état
+    // VIVANT du niveau (comme les volets) — une modification se voit sans régénérer les circuits.
+    const liveOuvParId = new Map<number, Ouverture>();
+    niveau.pieces.forEach(p => (p.ouvertures ?? []).forEach(o => liveOuvParId.set(o.id, o)));
+    (niveau.zones ?? []).forEach(z => (z.ouvertures ?? []).forEach(o => liveOuvParId.set(o.id, o)));
+    const ouverturesVivantes = (ouvs: OuvertureEffective[]): OuvertureEffective[] => ouvs.map(o => {
+      const l = o.id != null ? liveOuvParId.get(o.id) : undefined;
+      return l ? { ...o, usage: l.usage, charniere: l.charniere, ouvreVersInterieur: l.ouvreVersInterieur } : o;
+    });
+    // Chaque porte construite s'inscrit ici : son ouverture initiale = celle déjà forcée par la vue, sinon sa valeur par défaut.
+    const enregistrerPorte = (reg: PorteRegistre) => {
+      const ouverture = portesOverrideRef.current[reg.id] ?? reg.defaut;
+      portesRef.current.set(reg.id, { reg, courant: ouverture, cible: ouverture });
+      appliquerOuverturePorte(reg, ouverture);
+    };
+
     // Murs extérieurs / mitoyens : à déduire de TOUTES les pièces du niveau, avant de bâtir les murs.
     preparerMurs(niveauResultat.pieces);
     preparerMurs(niveau.pieces);
@@ -336,8 +392,8 @@ const Vue3D = forwardRef<Vue3DHandle, {
     (niveau.zones ?? []).forEach(z => {
       const zMat = new THREE.MeshStandardMaterial({ color: 0xe3dccf });
       cloisonsDeZone(z).forEach(c => {
-        construireMurAvecOuvertures(c.a, c.b, hauteurPlafond, ouverturesEffectivesZone(z, c.i), c.epaisseurM, zMat, scene,
-          { decalage: 0, extDebut: c.extA, extFin: c.extB, avecContenu: true });
+        construireMurAvecOuvertures(c.a, c.b, hauteurPlafond, ouverturesVivantes(ouverturesEffectivesZone(z, c.i)), c.epaisseurM, zMat, scene,
+          { decalage: 0, extDebut: c.extA, extFin: c.extB, avecContenu: true, enregistrerPorte });
       });
     });
 
@@ -366,9 +422,13 @@ const Vue3D = forwardRef<Vue3DHandle, {
       const finitionMat = new THREE.MeshStandardMaterial({ color: 0xf1eee6 });
       // Doublage ET finition deviennent translucides en mode « Coupe » (pour voir les câbles de la couche 2).
       doublageMatsRef.current.push(doublageMat, finitionMat);
+      const centrePiece = centroide(piece.contour);
       piece.contour.forEach((a, i) => {
         const b = piece.contour[(i + 1) % piece.contour.length];
-        const ouverturesSegment = ouverturesEffectivesMur(niveauResultat.pieces, piece, i);
+        const ouverturesSegment = ouverturesVivantes(ouverturesEffectivesMur(niveauResultat.pieces, piece, i));
+        // Côté de la normale (-uy, ux) qui regarde le centre de la pièce : même convention que le symbole 2D des portes.
+        const lSeg = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        const sensInterieur: 1 | -1 = (-(b.y - a.y) / lSeg * (centrePiece.x - a.x) + (b.x - a.x) / lSeg * (centrePiece.y - a.y)) >= 0 ? 1 : -1;
         const m = parametresMur3D(piece, i);
         // Les 3 couches (structure, doublage, finition), chacune à sa position réelle par rapport au contour
         // (= face intérieure finie sur un mur extérieur, axe de la cloison sur un mur mitoyen) ; les MÊMES
@@ -376,7 +436,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
         m.couches.forEach(c => {
           const mat = c.nom === "structure" ? (m.type === "exterieur" ? murExtMat : murMat) : c.nom === "doublage" ? doublageMat : finitionMat;
           construireMurAvecOuvertures(a, b, hauteurMurs - c.reduction, ouverturesSegment, c.epaisseur, mat, scene,
-            { decalage: c.decalage, extDebut: c.extDebut, extFin: c.extFin, avecContenu: c.nom === "structure" });
+            { decalage: c.decalage, extDebut: c.extDebut, extFin: c.extFin, avecContenu: c.nom === "structure", sensInterieur, enregistrerPorte });
         });
       });
 
@@ -666,9 +726,28 @@ const Vue3D = forwardRef<Vue3DHandle, {
     const axeDroite = new THREE.Vector3();
     const axeHaut = new THREE.Vector3();
 
+    let departX = 0, departY = 0;   // position du bouton à l'appui : distingue un clic (ouvrir/fermer une porte) d'un glisser
     const onPointerDown = (e: PointerEvent) => {
       interaction = (e.button === 2 || e.shiftKey) ? "deplacement" : "rotation";
       dernierX = e.clientX; dernierY = e.clientY;
+      departX = e.clientX; departY = e.clientY;
+    };
+    // Clic sur une porte = l'ouvrir / la fermer. Seul l'objet le plus proche sous le curseur compte : un mur
+    // devant la porte la masque, donc ne la déclenche pas.
+    const raycaster = new THREE.Raycaster();
+    const pointeur = new THREE.Vector2();
+    const onClick = (e: MouseEvent) => {
+      if (e.button !== 0 || e.shiftKey || portesRef.current.size === 0) return;
+      if (Math.hypot(e.clientX - departX, e.clientY - departY) > 4) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointeur.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+      raycaster.setFromCamera(pointeur, camera);
+      const premiere = raycaster.intersectObjects(scene.children, true).find(h => h.object instanceof THREE.Mesh);
+      const id = premiere?.object.userData.porteId;
+      if (typeof id !== "number") return;
+      const entree = portesRef.current.get(id);
+      if (!entree) return;
+      setPortesOverride(s => ({ ...s, [id]: (s[id] ?? entree.reg.defaut) > 50 ? 0 : 100 }));
     };
     const onPointerMove = (e: PointerEvent) => {
       if (!interaction) return;
@@ -698,6 +777,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
       appliquerCamera();
     };
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    renderer.domElement.addEventListener("click", onClick);
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
     renderer.domElement.addEventListener("contextmenu", onContextMenu);
@@ -706,6 +786,13 @@ const Vue3D = forwardRef<Vue3DHandle, {
     let frameId: number;
     const animate = () => {
       frameId = requestAnimationFrame(animate);
+      // Portes : l'ouverture glisse vers sa cible (animation douce, sans reconstruire la scène).
+      portesRef.current.forEach(e => {
+        if (e.courant === e.cible) return;
+        const ecart = e.cible - e.courant;
+        e.courant = Math.abs(ecart) < 0.5 ? e.cible : e.courant + ecart * 0.16;
+        appliquerOuverturePorte(e.reg, e.courant);
+      });
       renderer.render(scene, camera);
     };
     animate();
@@ -722,6 +809,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
       cancelAnimationFrame(frameId);
       window.removeEventListener("resize", onResize);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      renderer.domElement.removeEventListener("click", onClick);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
       renderer.domElement.removeEventListener("contextmenu", onContextMenu);
@@ -744,6 +832,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
       dirLightRef.current = null;
       lumiereLightsRef.current.clear();
       voletsRef.current.clear();
+      portesRef.current.clear();
     };
   }, [niveau, resultat, showCircuits, niveauResultat]);
 
@@ -790,6 +879,23 @@ const Vue3D = forwardRef<Vue3DHandle, {
     [niveau],
   );
 
+  // Portes (battantes et coulissantes) du niveau, murs de pièces et cloisons de zone — alimente le panneau 3D.
+  const portes = useMemo(() => {
+    const liste: { id: number; label: string; lieu: string; defaut: number }[] = [];
+    const ajouter = (o: Ouverture, lieu: string) => {
+      if (o.type === "porte") liste.push({ id: o.id, label: LABEL_USAGE_PORTE[o.usage ?? "interieure"], lieu, defaut: 0 });
+      else if (o.type === "porte_coulissante") liste.push({ id: o.id, label: "Porte coulissante", lieu, defaut: 100 });
+    };
+    niveau.pieces.forEach(p => (p.ouvertures ?? []).forEach(o => ajouter(o, p.nom)));
+    (niveau.zones ?? []).forEach(z => (z.ouvertures ?? []).forEach(o => ajouter(o, z.nom || "Zone")));
+    return liste;
+  }, [niveau]);
+
+  // Fixe la cible d'ouverture de chaque porte déjà construite ; l'animation (boucle de rendu) fait le reste.
+  useEffect(() => {
+    portesRef.current.forEach((e, id) => { e.cible = portesOverride[id] ?? e.reg.defaut; });
+  }, [portesOverride, niveau, resultat, showCircuits, niveauResultat]);
+
   // Applique l'ouverture courante à chaque volet déjà construit (sans reconstruire la scène) ;
   // mêmes dépendances que l'effet de construction pour se réappliquer après chaque reconstruction.
   useEffect(() => {
@@ -807,7 +913,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
         {coupeDoublage ? "Doublage opaque" : "Coupe du doublage"}
       </button>
 
-      {(interrupteurs.length > 0 || volets.length > 0) && (
+      {(interrupteurs.length > 0 || volets.length > 0 || portes.length > 0) && (
         <div className="absolute inset-x-0 bottom-0 p-3 flex flex-col gap-2 pointer-events-none">
           {interrupteurs.length > 0 && (
             <>
@@ -846,6 +952,32 @@ const Vue3D = forwardRef<Vue3DHandle, {
                 })}
               </div>
             </>
+          )}
+          {portes.length > 0 && (
+            <div className="flex items-center gap-2 overflow-x-auto pointer-events-auto pb-1">
+              <button
+                onClick={() => setPortesOverride(Object.fromEntries(portes.map(d => [d.id, 100])))}
+                className="shrink-0 btn-ghost !text-xs !bg-white/90 backdrop-blur">
+                Ouvrir les portes
+              </button>
+              <button
+                onClick={() => setPortesOverride(Object.fromEntries(portes.map(d => [d.id, 0])))}
+                className="shrink-0 btn-ghost !text-xs !bg-white/90 backdrop-blur">
+                Fermer les portes
+              </button>
+              {portes.map(d => {
+                const pct = portesOverride[d.id] ?? d.defaut;
+                return (
+                  <div key={d.id} className="shrink-0 card !py-1.5 !px-3 !bg-white/90 backdrop-blur">
+                    <div className="text-[10px] uppercase tracking-wide text-ink-400">{d.lieu}</div>
+                    <div className="text-xs font-semibold text-ink-900">{d.label} — {pct >= 100 ? "ouverte" : pct <= 0 ? "fermée" : `ouverte à ${pct} %`}</div>
+                    <input type="range" min={0} max={100} step={5} value={pct} className="w-32"
+                      onChange={e => setPortesOverride(s => ({ ...s, [d.id]: Number(e.target.value) }))} />
+                  </div>
+                );
+              })}
+              <span className="shrink-0 text-[10px] text-ink-400 bg-white/80 rounded px-1.5 py-0.5">Astuce : clique sur une porte dans la vue pour l&apos;ouvrir / la fermer</span>
+            </div>
           )}
           {volets.length > 0 && (
             <div className="flex items-center gap-2 overflow-x-auto pointer-events-auto pb-1">
