@@ -28,14 +28,16 @@ import {
   cheminSegment, longueurBranchesEclairage, centroidePoints, assombrirCouleur, pointsOndulesEntre,
   BoiteDerivation, migrerBoitesDerivation,
   MeubleSimple, nouveauMeuble, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
+  estCommande, estCommandeDouble, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M,
 } from "@/lib/maison-types";
-import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillageSymbolSvgString, PALETTE, labelAppareillage } from "@/components/plan/AppareillageSymbols";
+import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillageSymbolSvgString, PALETTE, labelAppareillage, labelAppareillagePlace, initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 import { cotesOuvertures, cotesExterieures, coteHorsTout } from "@/lib/cotes-archi";
 import { posesTroncons, hauteursTroncons } from "@/lib/pose-circuits";
+import { creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurCircuit } from "@/lib/longueurs-circuits";
 import { preparerMurs, definirMitoyens, mitoyensDe, longueursUtilesCm, geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
 import { enCm, estRectangle, redimensionnerMur, redimensionnerMurUtile, reporterAppareillages, propagerSommetsPartages } from "@/lib/dimensions-piece";
 import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece";
-import { ancrageMurLePlusProche, aimanterSurMur, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
+import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker } from "@/lib/electrical-constants";
@@ -282,6 +284,9 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       if (!breaker) return;
       const color = colorMap.get(circuitId) ?? "#666";
       const segments = segmentsPourCircuit(breaker, points, n, origineCircuits(n)!);
+      // Longueurs RÉELLES (horizontales + montées / descentes) — même tracé et mêmes hauteurs que la vue 3D.
+      const ctxL = creerContexteLongueurs(n);
+      const hAncreL = hauteurAncreFn(ctxL);
       segments.forEach(seg => {
         const cheminM = cheminSegment(seg, n.liaisonWaypoints);
         const chemin = cheminM.map(toPx);
@@ -296,9 +301,10 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
           }
           const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
           s += `<path d="${d}" fill="none" stroke="${couleurSegment}" stroke-width="1.2" stroke-dasharray="3,2" opacity="0.85"/>`;
-          if (showLongueurs) {
+          if (showLongueurs && seg.type !== "domotique") {
+            const sectionsL = tracerLiaison(ctxL, breaker, segments, seg, hAncreL).sections;
             for (let j = 0; j < cheminM.length - 1; j++) {
-              const distM = distance(cheminM[j], cheminM[j + 1]);
+              const distM = sectionsL[j] ?? distance(cheminM[j], cheminM[j + 1]);
               const aPx = chemin[j], bPx = chemin[j + 1];
               const mx = (aPx.x + bPx.x) / 2, my = (aPx.y + bPx.y) / 2;
               // Longueur toujours en noir, quelle que soit la couleur du circuit — lisible sur
@@ -347,13 +353,16 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
   }
 
   niveauResultat.pieces.forEach(p => {
+    const plaquesP = infosPlaques(p.appareillages);
     p.appareillages.forEach(a => {
-      const pos = toPx({ x: a.x, y: a.y });
+      const infoPl = a.groupeId != null ? plaquesP.get(a.groupeId) : undefined;
+      const ptAncreP = infoPl ? { x: infoPl.gx, y: infoPl.gy } : { x: a.x, y: a.y };
+      const pos = toPx(ptAncreP);
       const color = showCircuits && a.circuitId != null ? (colorMap.get(a.circuitId) ?? "#1c1917") : "#1c1917";
       // Même logique qu'à l'écran : carré tangent au mur, symbole tourné vers l'intérieur.
       const TAILLE_SYM = 10;
       let cxP = pos.x, cyP = pos.y, rotP = 0;
-      const ancP = estMural(a.type) ? ancrageMurLePlusProche({ x: a.x, y: a.y }, p.contour) : null;
+      const ancP = estMural(a.type) ? ancrageMurLePlusProche(ptAncreP, p.contour) : null;
       if (ancP && ancP.distance <= TOLERANCE_MUR_M) {
         const pf = toPx(ancP.pied);
         const pn = toPx({ x: ancP.pied.x + ancP.normale.x * 0.1, y: ancP.pied.y + ancP.normale.y * 0.1 });
@@ -363,7 +372,22 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
         cxP = pf.x + nxp * demiP; cyP = pf.y + nyp * demiP;
         rotP = Math.atan2(nxp, -nyp) * 180 / Math.PI;
       }
+      if (infoPl) {
+        // Plaque multiple : un carré par poste, contigus le long du mur, + contour commun (dessiné avec le rang 0).
+        const pas = TAILLE_SYM * 1.5 + 0.6;
+        const dr = ancP ? droiteFaceAuMur(ancP.normale) : { x: 1, y: 0 };
+        const off = ((a.rangPlaque ?? 0) - (infoPl.n - 1) / 2) * pas;
+        if ((a.rangPlaque ?? 0) === 0) {
+          const larg = infoPl.n * pas - 0.6 + 3;
+          s += `<g transform="translate(${cxP.toFixed(2)} ${cyP.toFixed(2)}) rotate(${rotP.toFixed(2)})"><rect x="${(-larg / 2).toFixed(2)}" y="${(-TAILLE_SYM * 0.75 - 1.5).toFixed(2)}" width="${larg.toFixed(2)}" height="${(TAILLE_SYM * 1.5 + 3).toFixed(2)}" rx="3" fill="none" stroke="#78716c" stroke-width="0.8" stroke-dasharray="2,1.5"/></g>`;
+        }
+        cxP += dr.x * off; cyP += dr.y * off;
+      }
       s += appareillageSymbolSvgString(a.type, cxP, cyP, TAILLE_SYM, color, rotP, true);
+      if (a.type === "prise_dediee") {
+        const ini = escapeXml(initialesAppareillage(a.type, a.usageDedie));
+        s += `<text x="${cxP.toFixed(1)}" y="${(cyP + TAILLE_SYM * 1.5).toFixed(1)}" font-size="5.5" font-weight="bold" text-anchor="middle" font-family="monospace" fill="${color}">${ini}</text>`;
+      }
       if (showHauteurs && a.hauteur != null) {
         s += `<text x="${(cxP + 9).toFixed(1)}" y="${(cyP + 3).toFixed(1)}" font-size="6" font-family="monospace" fill="#555">${a.hauteur}cm</text>`;
       }
@@ -511,13 +535,40 @@ function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau
       if (showLongueurs && origineCircuits(niveauVivant)) {
         const pts = niveauVivant.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
         if (pts.length > 0) {
-          const segments = segmentsPourCircuit(b, pts, niveauVivant, origineCircuits(niveauVivant)!);
-          lgTxt = ` — ${longueurBranchesEclairage(segments, niveauVivant.liaisonWaypoints).toFixed(1)}m`;
+          const lg = longueurCircuit(creerContexteLongueurs(niveauVivant), b, pts, origineCircuits(niveauVivant)!);
+          lgTxt = ` — ${lg.totale.toFixed(1)}m${lg.verticale > 0.05 ? ` (dont ${lg.verticale.toFixed(1)}m vertical)` : ""}`;
         }
       }
       const nomCircuit = niveauVivant.nomsCircuits?.[b.label] ?? b.label;
       return `<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;"></span>${escapeXml(nomCircuit || CIRCUITS[b.circuit]?.label || b.circuit)}${lgTxt}</span>`;
     }).join("") + `</div>`;
+}
+
+// Nomenclature des symboles d'un niveau : pour chaque type d'appareillage réellement présent, son symbole
+// normalisé (le même que sur le plan), son libellé et sa quantité ; une prise dédiée est comptée par appareil
+// alimenté. Termine par le décompte des appareillages multiples (plaques double / triple / quadruple).
+function nomenclatureHtml(pieces: Piece[]): string {
+  const ordre = new Map(PALETTE.map((pa, i) => [pa.type, i] as const));
+  const lignes = new Map<string, { a: AppareillagePlace; nb: number }>();
+  const postesParPlaque = new Map<number, number>();
+  pieces.forEach(pc => pc.appareillages.forEach(a => {
+    const cle = a.type === "prise_dediee" ? `prise_dediee:${a.usageDedie ?? USAGE_DEDIE_DEFAUT}` : a.type;
+    const l = lignes.get(cle);
+    if (l) l.nb++; else lignes.set(cle, { a, nb: 1 });
+    if (a.groupeId != null) postesParPlaque.set(a.groupeId, (postesParPlaque.get(a.groupeId) ?? 0) + 1);
+  }));
+  if (lignes.size === 0) return "";
+  const tri = [...lignes.entries()].sort((x, y) => (ordre.get(x[1].a.type) ?? 99) - (ordre.get(y[1].a.type) ?? 99) || x[0].localeCompare(y[0]));
+  const lignesHtml = tri.map(([, { a, nb }]) =>
+    `<tr><td style="padding:2px 8px;"><svg width="22" height="22" viewBox="0 0 22 22">${appareillageSymbolSvgString(a.type, 11, 11, 18, "#1c1917", 0, false)}</svg></td>` +
+    `<td style="padding:2px 8px;">${escapeXml(labelAppareillagePlace(a))}</td><td style="padding:2px 8px;text-align:right;font-weight:bold;">${nb}</td></tr>`).join("");
+  const plaques = new Map<number, number>();
+  postesParPlaque.forEach(nb => { if (nb >= 2) plaques.set(nb, (plaques.get(nb) ?? 0) + 1); });
+  const nomP = (n: number) => n === 2 ? "double" : n === 3 ? "triple" : "quadruple";
+  const plaquesHtml = plaques.size === 0 ? "" :
+    `<tr><td colspan="3" style="padding:4px 8px 0;border-top:1px solid #ccc;">Appareillages multiples : ${[...plaques.entries()].sort((x, y) => x[0] - y[0]).map(([n, nb]) => `${nb} ${nomP(n)}${nb > 1 ? "s" : ""}`).join(", ")}</td></tr>`;
+  return `<div style="margin:0 6mm 6mm;font-size:8pt;font-family:monospace;break-inside:avoid;"><p style="margin:0 0 2mm;font-weight:bold;">Nomenclature des symboles</p>` +
+    `<table style="border-collapse:collapse;border:1px solid #999;">${lignesHtml}${plaquesHtml}</table></div>`;
 }
 
 function imprimerPlan(
@@ -544,6 +595,7 @@ function imprimerPlan(
     if (showCircuits) {
       html += legendeCircuitsHtml(resultat, niveauResultat, showLongueurs, n);
     }
+    html += nomenclatureHtml(piecesFiltrees);
     const troncon = gainesNiveaux.find(g => g.niveau === (n.nom || n.type));
     if (showCircuits || (n.pointArriveeGaines && n.distanceArriveeGainesTableau != null)) {
       html += gaineNiveauHtml(showCircuits ? troncon : undefined, n);
@@ -924,12 +976,21 @@ function NiveauForm({ onValidate, onCancel }: { onValidate: (nom: string, type: 
 
 function CommandeLinkForm({ niveau, item, onValidate, onCancel }: {
   niveau: Niveau; item: AppareillagePlace;
-  onValidate: (pointLumineuxIds: number[]) => void; onCancel: () => void;
+  onValidate: (pointLumineuxIds: number[], pointLumineuxIds2: number[]) => void; onCancel: () => void;
 }) {
   const points = niveau.pieces.flatMap(p =>
     p.appareillages.filter(a => a.type === "point_lumineux" || a.type === "applique").map(a => ({ a, pieceNom: p.nom })));
+  const double = estCommandeDouble(item.type);
+  // Double : chaque lampe va sur la voie 1, la voie 2 ou aucune (jamais les deux). Par défaut, voie 1 = 1re lampe, voie 2 = 2e.
   const [choix, setChoix] = useState<number[]>(item.commandePourIds ?? (points[0] ? [points[0].a.id] : []));
+  const [choix2, setChoix2] = useState<number[]>(item.commandePourIds2 ?? (double && !item.commandePourIds && points[1] ? [points[1].a.id] : []));
   const toggle = (id: number) => setChoix(c => c.includes(id) ? c.filter(x => x !== id) : [...c, id]);
+  const setVoie = (id: number, voie: 1 | 2) => {
+    const dansVoie = (voie === 1 ? choix : choix2).includes(id);
+    setChoix(c => c.filter(x => x !== id).concat(voie === 1 && !dansVoie ? [id] : []));
+    setChoix2(c => c.filter(x => x !== id).concat(voie === 2 && !dansVoie ? [id] : []));
+  };
+  const total = choix.length + (double ? choix2.length : 0);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
       <div className="card w-full max-w-sm" onClick={e => e.stopPropagation()}>
@@ -938,9 +999,18 @@ function CommandeLinkForm({ niveau, item, onValidate, onCancel }: {
           <button onClick={onCancel} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={16} /></button>
         </div>
         <div className="p-4 flex flex-col gap-1 max-h-64 overflow-y-auto">
+          {double && points.length > 0 && <p className="text-[11px] text-ink-400 mb-1">Un double a deux voies : chaque lampe se règle sur la voie 1 ou la voie 2.</p>}
           {points.length === 0 ? (
             <p className="text-sm text-ink-400">Aucun point lumineux placé sur ce niveau. Place d'abord un ou plusieurs points lumineux, puis leur commande.</p>
-          ) : points.map(({ a, pieceNom }) => (
+          ) : points.map(({ a, pieceNom }) => double ? (
+            <div key={a.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-ink-50">
+              <span className="text-sm text-ink-700 flex-1 min-w-0 truncate">{pieceNom || "Pièce"} — {a.nom || `point lumineux #${a.id}`}</span>
+              {([1, 2] as const).map(v => (
+                <button key={v} onClick={() => setVoie(a.id, v)}
+                  className={`${(v === 1 ? choix : choix2).includes(a.id) ? "btn-volt" : "btn-ghost"} !text-xs !px-2 !py-0.5 shrink-0`}>Voie {v}</button>
+              ))}
+            </div>
+          ) : (
             <label key={a.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-ink-50 cursor-pointer">
               <input type="checkbox" checked={choix.includes(a.id)} onChange={() => toggle(a.id)} />
               <span className="text-sm text-ink-700">{pieceNom || "Pièce"} — {a.nom || `point lumineux #${a.id}`}</span>
@@ -948,7 +1018,9 @@ function CommandeLinkForm({ niveau, item, onValidate, onCancel }: {
           ))}
         </div>
         <div className="flex gap-2 p-4 border-t border-ink-200">
-          <button disabled={choix.length === 0} onClick={() => onValidate(choix)} className="btn-volt flex-1 disabled:opacity-40">Lier ({choix.length})</button>
+          <button disabled={total === 0} onClick={() => onValidate(choix, double ? choix2 : [])} className="btn-volt flex-1 disabled:opacity-40">
+            {double ? `Lier (voie 1 : ${choix.length} · voie 2 : ${choix2.length})` : `Lier (${choix.length})`}
+          </button>
         </div>
       </div>
     </div>
@@ -967,7 +1039,7 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
   const [couleur, setCouleur] = useState(existing?.couleur ?? "");
   const [creerBoite, setCreerBoite] = useState(false);
   const [nonRelieTableau, setNonRelieTableau] = useState(existing?.nonRelieTableau ?? false);
-  const tousAppareils = niveau.pieces.flatMap(p => p.appareillages.map(a => ({ a, pieceNom: p.nom })));
+  const tousAppareils = niveau.pieces.flatMap(p => p.appareillages.filter(a => a.type !== "rj45").map(a => ({ a, pieceNom: p.nom }))); // RJ45 : courant faible, pas de circuit de puissance
   const [membres, setMembres] = useState<Set<number>>(
     () => new Set(existing ? tousAppareils.filter(({ a }) => a.circuitManuelId === existing.id).map(({ a }) => a.id) : []),
   );
@@ -1026,7 +1098,7 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
                 <label key={a.id} className="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-ink-50 cursor-pointer text-xs">
                   <input type="checkbox" checked={membres.has(a.id)} onChange={() => toggleMembre(a.id)} />
                   <AppareillageSymbol type={a.type} size={14} />
-                  <span className="text-ink-700 truncate flex-1">{pieceNom || "Pièce"} — {a.nom || labelAppareillage(a.type)}</span>
+                  <span className="text-ink-700 truncate flex-1">{pieceNom || "Pièce"} — {a.nom || labelAppareillagePlace(a)}</span>
                   {a.circuitManuelId != null && a.circuitManuelId !== existing?.id && (
                     <span className="text-[10px] text-amber-600 shrink-0 whitespace-nowrap">déjà sur un autre circuit</span>
                   )}
@@ -1087,10 +1159,97 @@ function OuvertureIcon({ type, size = 16, color = "currentColor" }: { type: Ouve
   }
 }
 
-function PaletteBoutons({ placementType, onSelect }: { placementType: AppareillageType | null; onSelect: (t: AppareillageType | null) => void }) {
+
+// Configurateur d'appareillage multiple : nombre de postes (2 à 4) puis, pour chaque poste, ce qu'il porte
+// (prise, prise commandée, interrupteur, va-et-vient, bouton poussoir, RJ45, prise dédiée + appareil alimenté).
+function PlaqueForm({ initial, onValider, onCancel }: {
+  initial: PosteSpec[]; onValider: (postes: PosteSpec[]) => void; onCancel: () => void;
+}) {
+  const [postes, setPostes] = useState<PosteSpec[]>(initial.length >= MIN_POSTES_PLAQUE ? initial : [{ type: "prise" }, { type: "prise" }]);
+  const nomPlaque = (n: number) => n === 2 ? "double" : n === 3 ? "triple" : "quadruple";
+  const changerNombre = (n: number) => setPostes(ps => n <= ps.length ? ps.slice(0, n) : [...ps, ...Array.from({ length: n - ps.length }, (): PosteSpec => ({ type: "prise" }))]);
+  const majPoste = (i: number, patch: Partial<PosteSpec>) => setPostes(ps => ps.map((po, k) => {
+    if (k !== i) return po;
+    const type = patch.type ?? po.type;
+    return { type, ...(type === "prise_dediee" ? { usageDedie: patch.usageDedie ?? po.usageDedie ?? USAGE_DEDIE_DEFAUT } : {}) };
+  }));
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+      <div className="card w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-ink-200">
+          <p className="font-semibold text-ink-900">Appareillage {nomPlaque(postes.length)} ({postes.length} postes)</p>
+          <button onClick={onCancel} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={16} /></button>
+        </div>
+        <div className="p-4 flex flex-col gap-3">
+          <div className="flex items-center gap-2 text-xs text-ink-500">
+            <span className="shrink-0">Nombre de postes</span>
+            {[2, 3, 4].map(n => (
+              <button key={n} onClick={() => changerNombre(n)}
+                className={`${postes.length === n ? "btn-volt" : "btn-ghost"} !text-xs !py-1 flex-1 justify-center`}>
+                {n === 2 ? "Double" : n === 3 ? "Triple" : "Quadruple"}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center justify-center gap-1 py-2 bg-ink-50 rounded-lg border border-ink-200">
+            {postes.map((po, i) => (
+              <div key={i} className="w-12 h-12 bg-white border border-ink-300 rounded flex items-center justify-center">
+                <AppareillageSymbol type={po.type} size={24} />
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-col gap-2 max-h-72 overflow-y-auto">
+            {postes.map((po, i) => (
+              <div key={i} className="flex flex-col gap-1 p-2 rounded-lg border border-ink-200">
+                <div className="flex items-center gap-2 text-xs text-ink-500">
+                  <span className="shrink-0 w-14">Poste {i + 1}</span>
+                  <select className="input !py-1 !text-xs flex-1" value={po.type}
+                    onChange={e => majPoste(i, { type: e.target.value as AppareillageType })}>
+                    {TYPES_POSTE_PLAQUE.map(t => <option key={t} value={t}>{labelAppareillage(t)}</option>)}
+                  </select>
+                </div>
+                {po.type === "prise_dediee" && (
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0 w-14">Appareil</span>
+                    <select className="input !py-1 !text-xs flex-1" value={po.usageDedie ?? USAGE_DEDIE_DEFAUT}
+                      onChange={e => majPoste(i, { usageDedie: e.target.value as AppareillageType })}>
+                      {TYPES_USAGE_DEDIE.map(t => <option key={t} value={t}>{LIBELLE_USAGE_DEDIE[t]}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-ink-400">Les postes sont placés côte à côte (entraxe 71 mm), même hauteur, une seule boîte d'encastrement et une seule plaque. Chaque poste garde son propre circuit.</p>
+        </div>
+        <div className="flex gap-2 p-4 border-t border-ink-200">
+          <button onClick={() => onValider(postes)} className="btn-volt flex-1">Placer sur un mur</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PaletteBoutons({ placementType, onSelect, plaquePostes, onPlaque }: {
+  placementType: AppareillageType | null; onSelect: (t: AppareillageType | null) => void;
+  plaquePostes: PosteSpec[] | null; onPlaque: () => void;
+}) {
   const categories = Array.from(new Set(PALETTE.map(p => p.categorie)));
+  const plaqueActive = !!placementType && !!plaquePostes;
   return (
     <>
+      <div className="mb-3">
+        <p className="text-[10px] font-semibold text-ink-400 uppercase tracking-wide mb-1.5">Appareillage multiple</p>
+        <button onClick={onPlaque}
+          className={`w-full flex items-center justify-center gap-2 px-2 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
+            plaqueActive ? "bg-ink-900 border-ink-700 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-700 hover:border-ink-400"}`}>
+          <span className="flex items-center gap-0.5">
+            {(plaqueActive ? plaquePostes! : [{ type: "prise" as AppareillageType }, { type: "interrupteur" as AppareillageType }]).map((po, i) => (
+              <AppareillageSymbol key={i} type={po.type} size={14} color={plaqueActive ? "#FBBF24" : "#44403c"} />
+            ))}
+          </span>
+          {plaqueActive ? `Plaque ${plaquePostes!.length} postes — modifier` : "Double · triple · quadruple…"}
+        </button>
+      </div>
       {categories.map(cat => (
         <div key={cat} className="mb-3">
           <p className="text-[10px] font-semibold text-ink-400 uppercase tracking-wide mb-1.5">{cat}</p>
@@ -1288,6 +1447,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [dragMode, setDragMode] = useState<DragMode>({ kind: "none" });
 
   const [placementType, setPlacementType] = useState<AppareillageType | null>(null);
+  // Appareillage multiple : composition de la plaque en cours de pose (null = pose d'un appareillage simple).
+  // Ignorée dès que placementType est null — armerPlacement() la remet à null pour une pose simple.
+  const [plaquePostes, setPlaquePostes] = useState<PosteSpec[] | null>(null);
+  const [plaqueFormOuvert, setPlaqueFormOuvert] = useState(false);
+  const [plaqueConfig, setPlaqueConfig] = useState<PosteSpec[]>([{ type: "prise" }, { type: "prise" }]);
   const [placingTableau, setPlacingTableau] = useState(false);
   const [placingPointArrivee, setPlacingPointArrivee] = useState(false);
   const [placingMeuble, setPlacingMeuble] = useState(false);
@@ -1490,8 +1654,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
         updateNiveauActif(n => ({
           ...n,
-          pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : {
-            ...p, appareillages: p.appareillages.map(a => a.id === dragMode.appareillageId ? { ...a, x: m.x, y: m.y } : a),
+          pieces: n.pieces.map(p => {
+            if (p.id !== dragMode.pieceId) return p;
+            const gid = appDrag?.groupeId;
+            if (gid != null) {
+              // Plaque multiple : tous les postes suivent, re-disposés autour de la nouvelle position.
+              const membres = p.appareillages.filter(a => a.groupeId === gid).sort((a, b) => (a.rangPlaque ?? 0) - (b.rangPlaque ?? 0));
+              const pts = disposerPlaque(m, p.contour, membres.length);
+              const nouvelle = new Map(membres.map((a, k) => [a.id, pts[k]] as const));
+              return { ...p, appareillages: p.appareillages.map(a => nouvelle.has(a.id) ? { ...a, x: nouvelle.get(a.id)!.x, y: nouvelle.get(a.id)!.y } : a) };
+            }
+            return { ...p, appareillages: p.appareillages.map(a => a.id === dragMode.appareillageId ? { ...a, x: m.x, y: m.y } : a) };
           }),
         }));
       } else if (dragMode.kind === "nomPiece") {
@@ -1723,7 +1896,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
   };
+  const armerPlaque = (postes: PosteSpec[]) => {
+    armerPlacement(postes[0].type);
+    setPlaquePostes(postes);
+  };
   const armerPlacement = (t: AppareillageType | null) => {
+    setPlaquePostes(null);
     setPlacementType(t); setMode("select"); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false); setDrawingPoints([]);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
@@ -1757,17 +1935,98 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
   };
 
-  const removerAppareillage = (appareillageId: number) => {
+  // ─── APPAREILLAGES MULTIPLES : ajout / changement / retrait de poste ──────────────────────
+  // Ajoute un poste (prise par défaut) à côté de l'appareillage : un appareillage simple devient
+  // une plaque double, une plaque double devient triple… (4 postes maximum).
+  const ajouterPoste = (appareillageId: number) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => {
+        const a = p.appareillages.find(x => x.id === appareillageId);
+        if (!a || !TYPES_POSTE_PLAQUE.includes(a.type)) return p;
+        const groupeId = a.groupeId ?? uidMaison();
+        const membres = p.appareillages.filter(x => x.groupeId === groupeId);
+        const nb = a.groupeId != null ? membres.length : 1;
+        if (nb >= MAX_POSTES_PLAQUE) return p;
+        const hauteur = a.hauteur ?? hauteurCommunePlaqueCm([a.type, "prise"]);
+        const nouveau: AppareillagePlace = { ...nouvelAppareillage("prise", a.x, a.y), groupeId, rangPlaque: nb, hauteur, couleur: a.couleur };
+        const maj = p.appareillages.map(x => x.id === a.id ? { ...x, groupeId, rangPlaque: x.rangPlaque ?? 0, hauteur } : x);
+        return normaliserPlaques({ ...p, appareillages: [...maj, nouveau] }, groupeId);
+      }),
+    }));
+    invalidateResultat();
+  };
+
+  // Change le type d'un poste (prise, interrupteur, RJ45, prise dédiée…). Les liens propres à
+  // l'ancien type (circuit manuel, commande, domotique) sont retirés ; le circuit est regénéré.
+  const changerTypePoste = (appareillageId: number, type: AppareillageType) => {
+    const ancien = niveauActif?.pieces.flatMap(p => p.appareillages).find(a => a.id === appareillageId);
+    if (!ancien || ancien.type === type) return;
+    // Calculé HORS de l'updater (setNiveaux est différé) : le même objet sert à la mise à jour et à la fenêtre de commande.
+    const { commandePourIds, commandePourIds2, domotique, usageDedie, circuitManuelId, circuitId, ...reste } = ancien;
+    void circuitId;
+    const maj: AppareillagePlace = { ...reste, type, ...(type === "prise_dediee" ? { usageDedie: usageDedie ?? USAGE_DEDIE_DEFAUT } : {}) };
+    const controleVersControle = estCommande(type) && estCommande(ancien.type);
+    if (controleVersControle) {
+      // Les lampes commandées et le circuit manuel sont conservés. Vers un double : voies 1 et 2 telles quelles (voie 2
+      // vide depuis un simple). Vers un simple : les deux voies fusionnent en une seule liste.
+      Object.assign(maj, { domotique, circuitManuelId });
+      if (estCommandeDouble(type)) Object.assign(maj, { commandePourIds, commandePourIds2 });
+      else Object.assign(maj, { commandePourIds: lumieresCommandees({ commandePourIds, commandePourIds2 }) });
+    } else void domotique, void circuitManuelId, void commandePourIds, void commandePourIds2;
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({ ...p, appareillages: p.appareillages.map(a => a.id === appareillageId ? maj : a) })),
+    }));
+    invalidateResultat();
+    // Fenêtre de liaison : nouvelle commande, ou simple → double (pour régler la voie 2).
+    if (estCommande(type) && (!estCommande(ancien.type) || (estCommandeDouble(type) && !estCommandeDouble(ancien.type)))) {
+      setPendingCommande({ item: maj, estNouveau: false });
+    }
+  };
+
+  const modifierUsageDedie = (appareillageId: number, usageDedie: AppareillageType) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({
+        ...p, appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, usageDedie } : a),
+      })),
+    }));
+    invalidateResultat();
+  };
+
+  // Supprime tous les postes d'une plaque.
+  const removerPlaque = (groupeId: number) => {
+    const ids = new Set(niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.groupeId === groupeId).map(a => a.id) ?? []);
     updateNiveauActif(n => ({
       ...n,
       pieces: n.pieces.map(p => ({
         ...p,
-        appareillages: p.appareillages
-          .filter(a => a.id !== appareillageId)
-          .map(a => a.commandePourIds?.includes(appareillageId)
-            ? { ...a, commandePourIds: a.commandePourIds.filter(id => id !== appareillageId) }
-            : a),
+        appareillages: p.appareillages.filter(a => !ids.has(a.id))
+          .map(a => (a.commandePourIds?.some(id => ids.has(id)) || a.commandePourIds2?.some(id => ids.has(id)))
+            ? { ...a, commandePourIds: a.commandePourIds?.filter(id => !ids.has(id)), commandePourIds2: a.commandePourIds2?.filter(id => !ids.has(id)) } : a),
       })),
+    }));
+    setSelectedAppareillageId(null);
+    invalidateResultat();
+  };
+
+  const removerAppareillage = (appareillageId: number) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => {
+        const gid = p.appareillages.find(a => a.id === appareillageId)?.groupeId;
+        const sans: Piece = {
+          ...p,
+          appareillages: p.appareillages
+            .filter(a => a.id !== appareillageId)
+            .map(a => (a.commandePourIds?.includes(appareillageId) || a.commandePourIds2?.includes(appareillageId))
+              ? { ...a, commandePourIds: a.commandePourIds?.filter(id => id !== appareillageId), commandePourIds2: a.commandePourIds2?.filter(id => id !== appareillageId) }
+              : a),
+        };
+        // Plaque multiple : les postes restants se re-serrent (et un poste seul redevient simple).
+        return gid != null ? normaliserPlaques(sans, gid) : sans;
+      }),
     }));
     setSelectedAppareillageId(null);
     invalidateResultat();
@@ -1957,10 +2216,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const modifierCouleurAppareillage = (appareillageId: number, couleur: string) => {
     updateNiveauActif(n => ({
       ...n,
-      pieces: n.pieces.map(p => ({
-        ...p,
-        appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, couleur } : a),
-      })),
+      pieces: n.pieces.map(p => {
+        const gid = p.appareillages.find(a => a.id === appareillageId)?.groupeId; // plaque : couleur commune
+        return { ...p, appareillages: p.appareillages.map(a => a.id === appareillageId || (gid != null && a.groupeId === gid) ? { ...a, couleur } : a) };
+      }),
     }));
   };
   const appliquerCouleurATousAppareillages = (couleur: string) => {
@@ -1976,10 +2235,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const modifierHauteur = (appareillageId: number, hauteur: number | undefined) => {
     updateNiveauActif(n => ({
       ...n,
-      pieces: n.pieces.map(p => ({
-        ...p,
-        appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, hauteur } : a),
-      })),
+      pieces: n.pieces.map(p => {
+        const gid = p.appareillages.find(a => a.id === appareillageId)?.groupeId; // plaque : hauteur commune
+        return { ...p, appareillages: p.appareillages.map(a => a.id === appareillageId || (gid != null && a.groupeId === gid) ? { ...a, hauteur } : a) };
+      }),
     }));
   };
 
@@ -2004,10 +2263,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const appareillage = piece.appareillages.find(a => a.id === appareillageId);
     if (!appareillage) return;
     const nouveauPoint = positionnerADistanceDuSegment({ x: appareillage.x, y: appareillage.y }, piece.contour, segIndex, Math.max(0, distanceCm) / 100);
+    const dx = nouveauPoint.x - appareillage.x, dy = nouveauPoint.y - appareillage.y;
     updateNiveauActif(n => ({
       ...n,
       pieces: n.pieces.map(p => p.id !== piece.id ? p : {
-        ...p, appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, x: nouveauPoint.x, y: nouveauPoint.y } : a),
+        ...p, appareillages: p.appareillages.map(a =>
+          a.id === appareillageId ? { ...a, x: nouveauPoint.x, y: nouveauPoint.y }
+            : (appareillage.groupeId != null && a.groupeId === appareillage.groupeId) ? { ...a, x: a.x + dx, y: a.y + dy } : a),
       }),
     }));
     invalidateResultat();
@@ -2018,9 +2280,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (Number.isNaN(x) || Number.isNaN(y)) return;
     updateNiveauActif(n => ({
       ...n,
-      pieces: n.pieces.map(p => ({
-        ...p, appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, x, y } : a),
-      })),
+      pieces: n.pieces.map(p => {
+        const cible = p.appareillages.find(a => a.id === appareillageId);
+        if (!cible) return p;
+        const dx = x - cible.x, dy = y - cible.y;
+        return { ...p, appareillages: p.appareillages.map(a =>
+          a.id === appareillageId ? { ...a, x, y }
+            : (cible.groupeId != null && a.groupeId === cible.groupeId) ? { ...a, x: a.x + dx, y: a.y + dy } : a) };
+      }),
     }));
     invalidateResultat();
   };
@@ -2379,12 +2646,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }));
   };
 
-  const lierCommande = (itemId: number, pointLumineuxIds: number[]) => {
+  const lierCommande = (itemId: number, pointLumineuxIds: number[], pointLumineuxIds2: number[] = []) => {
     updateNiveauActif(n => ({
       ...n,
       pieces: n.pieces.map(p => ({
         ...p,
-        appareillages: p.appareillages.map(a => a.id === itemId ? { ...a, commandePourIds: pointLumineuxIds } : a),
+        appareillages: p.appareillages.map(a => a.id === itemId
+          ? { ...a, commandePourIds: pointLumineuxIds, commandePourIds2: estCommandeDouble(a.type) ? pointLumineuxIds2 : undefined }
+          : a),
       })),
     }));
     setPendingCommande(null);
@@ -2465,13 +2734,28 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       const mPose = placementType === "volet_roulant" && !e.altKey && niveauActif
         ? recentrerVolet(mAimantee, piece, niveauActif.pieces)
         : mAimantee;
+      if (plaquePostes && plaquePostes.length >= MIN_POSTES_PLAQUE) {
+        // Appareillage multiple : tous les postes d'un coup, alignés le long du mur, centrés sur le clic.
+        const postes = nouvellePlaque(plaquePostes, mPose.x, mPose.y);
+        const pts = disposerPlaque(mPose, piece.contour, postes.length);
+        postes.forEach((a, i) => { a.x = pts[i].x; a.y = pts[i].y; });
+        updateNiveauActif(n => ({
+          ...n,
+          pieces: n.pieces.map(p => p.id === piece.id ? { ...p, appareillages: [...p.appareillages, ...postes] } : p),
+        }));
+        invalidateResultat();
+        // Un poste de commande se lie à ses points lumineux comme un interrupteur seul (le premier d'abord).
+        const premiereCommande = postes.find(a => estCommande(a.type));
+        if (premiereCommande) setPendingCommande({ item: premiereCommande, estNouveau: false });
+        return;
+      }
       const nouveau = nouvelAppareillage(placementType, mPose.x, mPose.y);
       updateNiveauActif(n => ({
         ...n,
         pieces: n.pieces.map(p => p.id === piece.id ? { ...p, appareillages: [...p.appareillages, nouveau] } : p),
       }));
       invalidateResultat();
-      if (["interrupteur", "va_et_vient", "telerupteur"].includes(placementType)) {
+      if (estCommande(placementType)) {
         setPendingCommande({ item: nouveau, estNouveau: true });
       }
       return;
@@ -2925,6 +3209,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const pieceDeSelectedAppareillage = selectedAppareillage
     ? niveauActif?.pieces.find(p => p.appareillages.some(a => a.id === selectedAppareillage.id)) ?? null
     : null;
+  // Postes de la plaque de l'appareillage sélectionné (vide = appareillage simple), triés de gauche à droite.
+  const postesPlaqueSel: AppareillagePlace[] = selectedAppareillage?.groupeId != null && pieceDeSelectedAppareillage
+    ? pieceDeSelectedAppareillage.appareillages.filter(a => a.groupeId === selectedAppareillage.groupeId).sort((a, b) => (a.rangPlaque ?? 0) - (b.rangPlaque ?? 0))
+    : [];
   // Cotes à dessiner : celles de l'appareillage sélectionné (toujours, mises à jour en direct
   // pendant le déplacement) + optionnellement une par appareillage mural, filtrées pour ne
   // jamais se chevaucher.
@@ -2963,6 +3251,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // lui, reste lisible à tous les zooms (plus grand qu'avant : 16→30 px au lieu de 11→28).
   const symSize = Math.min(30, Math.max(16, 20 * zoom));
   const boxSize = symSize + 8;
+  // Plaques multiples : centre + nombre de postes de chaque groupe, par pièce (voir infosPlaques).
+  const infosPlaquesParPiece = new Map<number, Map<number, InfoPlaque>>(
+    (niveauActif?.pieces ?? []).map(pc => [pc.id, infosPlaques(pc.appareillages)] as const));
   // Murs extérieurs / mitoyens du niveau affiché : à déduire de l'ensemble des pièces avant de dessiner les murs.
   if (niveauActif) preparerMurs(niveauActif.pieces);
 
@@ -3549,7 +3840,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   const color = colorMap.get(circuitId) ?? "#666";
                   const segments = segmentsPourCircuit(breaker, points, niveauActif, tableauPos);
                   const elements: ReactNode[] = [];
+                  // Longueur RÉELLE de chaque section (horizontale + montée de départ, + descente finale pour la dernière).
+                  const ctxLg = creerContexteLongueurs(niveauActif);
+                  const hAncreLg = hauteurAncreFn(ctxLg);
                   segments.forEach(seg => {
+                    const sectionsLg = showLongueurs && seg.type !== "domotique" ? tracerLiaison(ctxLg, breaker, segments, seg, hAncreLg).sections : null;
                     const cle = cleSegmentLiaison(seg.aId, seg.bId);
                     const coudes = waypointsNiveau?.[cle] ?? [];
                     // Liaison (navette) entre deux va-et-vient : couleur du circuit assombrie,
@@ -3590,8 +3885,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       } else {
                         elements.push(<line key={`${cle}-${j}`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={couleurSegment} strokeWidth={apparente ? 2.4 : 2} strokeDasharray={apparente ? undefined : "6,4"} opacity={apparente ? 1 : 0.8} />);
                       }
-                      if (showLongueurs) {
-                        elements.push(<EtiquetteLongueur key={`${cle}-${j}-lg`} aPx={aPx} bPx={bPx} texte={`${distance(ptA, ptB).toFixed(2)}m`} />);
+                      if (sectionsLg) {
+                        elements.push(<EtiquetteLongueur key={`${cle}-${j}-lg`} aPx={aPx} bPx={bPx} texte={`${(sectionsLg[j] ?? distance(ptA, ptB)).toFixed(2)}m`} />);
                       }
                       if (mode === "select" && !cheminementDessin) {
                         elements.push(
@@ -3721,8 +4016,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 const p = toScreen({ x: a.x, y: a.y });
                 const isSel = a.id === selectedAppareillageId;
                 const color = showCircuits && a.circuitId != null && circuitsVisibles.has(a.circuitId) ? (colorMap.get(a.circuitId) ?? "#1c1917") : (isSel ? "#F59E0B" : "#1c1917");
-                const anc = estMural(a.type) ? ancrageMurLePlusProche({ x: a.x, y: a.y }, piece.contour) : null;
+                // Poste d'une plaque multiple : ancrage au mur sur le CENTRE de la plaque, puis décalage le long du mur.
+                const infoPl = a.groupeId != null ? infosPlaquesParPiece.get(piece.id)?.get(a.groupeId) : undefined;
+                const ptAncre = infoPl ? { x: infoPl.gx, y: infoPl.gy } : { x: a.x, y: a.y };
+                const anc = estMural(a.type) ? ancrageMurLePlusProche(ptAncre, piece.contour) : null;
                 let cx = p.x, cy = p.y, rot = 0, nxs = 0, nys = 0, facePx = 2;
+                if (infoPl) { const pc0 = toScreen(ptAncre); cx = pc0.x; cy = pc0.y; }
                 if (anc && anc.distance <= TOLERANCE_MUR_M) {
                   // Le point stocké est sur l'AXE du mur ; l'appareillage se pose sur sa face intérieure finie.
                   facePx = Math.max(2, faceInterieureM(piece, anc.segIndex) * PX_PER_M * zoom);
@@ -3733,6 +4032,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   const demi = boxSize / 2 + facePx; // carré tangent à la face intérieure finie du mur
                   cx = pPied.x + nxs * demi; cy = pPied.y + nys * demi;
                   rot = Math.atan2(nxs, -nys) * 180 / Math.PI;
+                }
+                let cxPlaque = cx, cyPlaque = cy, largeurPlaque = 0;
+                if (infoPl) {
+                  // Un carré par poste, contigus (rang 0 = à gauche vu de la pièce) ; la plaque est le contour commun.
+                  const dr = anc ? droiteFaceAuMur(anc.normale) : { x: 1, y: 0 };
+                  const off = ((a.rangPlaque ?? 0) - (infoPl.n - 1) / 2) * (boxSize + 1);
+                  cx += dr.x * off; cy += dr.y * off;
+                  largeurPlaque = infoPl.n * boxSize + (infoPl.n - 1);
                 }
                 const demiBoite = boxSize / 2;
                 const fondBoite = isSel ? "#FEF3C7" : "#ffffff";
@@ -3754,7 +4061,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 // après génération (exclu, commande orpheline…) se repère sans devoir ouvrir
                 // la liste des alertes. Uniquement pertinent une fois un résultat généré :
                 // avant ça, l'absence de circuitId ne veut encore rien dire.
-                const nonRaccorde = resultat != null && a.circuitId == null;
+                const nonRaccorde = resultat != null && a.circuitId == null && a.type !== "rj45"; // RJ45 : courant faible, jamais de circuit de puissance
                 return (
                   <g key={a.id}
                     onPointerDown={e => onAppareillagePointerDown(piece, a, e)}
@@ -3772,6 +4079,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     <g transform={`translate(${cx}, ${cy})`} style={{ pointerEvents: "none" }}>
                       <AppareillageGlyphe type={a.type} size={symSize} color={color} rotation={rot} fond={fondBoite} />
                     </g>
+                    {infoPl && (a.rangPlaque ?? 0) === 0 && (
+                      <g transform={`translate(${cxPlaque}, ${cyPlaque}) rotate(${rot})`} style={{ pointerEvents: "none" }}>
+                        <rect x={-largeurPlaque / 2 - 3} y={-boxSize / 2 - 3} width={largeurPlaque + 6} height={boxSize + 6} rx={6}
+                          fill="none" stroke="#78716c" strokeWidth={1.2} strokeDasharray="3,2" />
+                      </g>
+                    )}
+                    {a.type === "prise_dediee" && (
+                      <g style={{ pointerEvents: "none" }} textAnchor="middle" fontFamily="monospace" fontWeight={800} fontSize={8}>
+                        <text x={cx + nxs * (demiBoite + 7)} y={cy + nys * (demiBoite + 7) + 3} fill="none" stroke="#fff" strokeWidth={3} strokeLinejoin="round">{initialesAppareillage(a.type, a.usageDedie)}</text>
+                        <text x={cx + nxs * (demiBoite + 7)} y={cy + nys * (demiBoite + 7) + 3} fill={color}>{initialesAppareillage(a.type, a.usageDedie)}</text>
+                      </g>
+                    )}
                     {nonRaccorde && (
                       <g transform={`translate(${cx + demiBoite - 1}, ${cy - demiBoite - 1})`} style={{ pointerEvents: "none" }}>
                         <circle cx={0} cy={0} r={6.5} fill="#EF4444" stroke="#fff" strokeWidth={1.5} />
@@ -3883,6 +4202,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       let dMin = Infinity;
                       candidats.forEach(a => { const d = distance(niveauActif.pointArriveeGaines!, { x: a.x, y: a.y }); if (d < dMin) { dMin = d; plusProche = a; } });
                       if (!plusProche) return null;
+                      // + la descente de la hauteur de gaine jusqu'à l'appareillage (longueur réelle, pas seulement le plan).
+                      const ctxArr = creerContexteLongueurs(niveauActif);
+                      dMin += Math.abs(ctxArr.hauteurGaine - hauteurAncreFn(ctxArr)(String((plusProche as AppareillagePlace).id)));
                       const bPx = toScreen({ x: (plusProche as AppareillagePlace).x, y: (plusProche as AppareillagePlace).y });
                       return (
                         <>
@@ -3996,7 +4318,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               <DraggablePanel key={`${selectedAppareillage.id}-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-72 max-h-[80vh] overflow-y-auto">
                 <div className="flex items-center gap-2">
                   <AppareillageSymbol type={selectedAppareillage.type} size={22} />
-                  <input className="input !py-1 !text-sm flex-1 min-w-0" placeholder={labelAppareillage(selectedAppareillage.type)}
+                  <input className="input !py-1 !text-sm flex-1 min-w-0" placeholder={labelAppareillagePlace(selectedAppareillage)}
                     value={selectedAppareillage.nom ?? ""}
                     onChange={e => renommerAppareillage(selectedAppareillage.id, e.target.value)} />
                   <button onClick={() => removerAppareillage(selectedAppareillage.id)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
@@ -4083,6 +4405,56 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     <span className="text-ink-400">— regroupé par puissance (NF C 15-100)</span>
                   </div>
                 )}
+                {selectedAppareillage.type === "prise_dediee" && postesPlaqueSel.length === 0 && (
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0">Appareil alimenté</span>
+                    <select className="input !py-1 !text-xs flex-1" value={selectedAppareillage.usageDedie ?? USAGE_DEDIE_DEFAUT}
+                      onChange={e => modifierUsageDedie(selectedAppareillage.id, e.target.value as AppareillageType)}>
+                      {TYPES_USAGE_DEDIE.map(t => <option key={t} value={t}>{LIBELLE_USAGE_DEDIE[t]}</option>)}
+                    </select>
+                  </div>
+                )}
+                {TYPES_POSTE_PLAQUE.includes(selectedAppareillage.type) && (
+                  <div className="flex flex-col gap-1.5 text-xs text-ink-500 border-t border-ink-100 pt-2">
+                    <span className="font-semibold text-ink-700">
+                      {postesPlaqueSel.length >= 2 ? `Plaque ${postesPlaqueSel.length === 2 ? "double" : postesPlaqueSel.length === 3 ? "triple" : "quadruple"} — ${postesPlaqueSel.length} postes` : "Appareillage simple"}
+                    </span>
+                    {postesPlaqueSel.map((po, i) => (
+                      <div key={po.id} className={`flex flex-col gap-1 p-1.5 rounded-lg border ${po.id === selectedAppareillage.id ? "border-volt-400 bg-volt-50" : "border-ink-200"}`}>
+                        <div className="flex items-center gap-1.5">
+                          <button onClick={() => setSelectedAppareillageId(po.id)} className="shrink-0 w-12 text-left font-semibold">Poste {i + 1}</button>
+                          <select className="input !py-1 !text-xs flex-1 min-w-0" value={po.type}
+                            onChange={e => changerTypePoste(po.id, e.target.value as AppareillageType)}>
+                            {TYPES_POSTE_PLAQUE.map(t => <option key={t} value={t}>{labelAppareillage(t)}</option>)}
+                          </select>
+                        </div>
+                        {po.type === "prise_dediee" && (
+                          <select className="input !py-1 !text-xs" value={po.usageDedie ?? USAGE_DEDIE_DEFAUT}
+                            onChange={e => modifierUsageDedie(po.id, e.target.value as AppareillageType)}>
+                            {TYPES_USAGE_DEDIE.map(t => <option key={t} value={t}>{LIBELLE_USAGE_DEDIE[t]}</option>)}
+                          </select>
+                        )}
+                      </div>
+                    ))}
+                    {postesPlaqueSel.length === 0 && (
+                      <select className="input !py-1 !text-xs" value={selectedAppareillage.type}
+                        onChange={e => changerTypePoste(selectedAppareillage.id, e.target.value as AppareillageType)}>
+                        {TYPES_POSTE_PLAQUE.map(t => <option key={t} value={t}>{labelAppareillage(t)}</option>)}
+                      </select>
+                    )}
+                    <div className="flex items-center gap-1.5">
+                      {Math.max(postesPlaqueSel.length, 1) < MAX_POSTES_PLAQUE && (
+                        <button onClick={() => ajouterPoste(selectedAppareillage.id)} disabled={!!pieceDeSelectedAppareillage?.verrouillee}
+                          className="btn-ghost !text-xs !py-1 flex-1 justify-center disabled:opacity-40">+ Ajouter un poste</button>
+                      )}
+                      {postesPlaqueSel.length >= 2 && (
+                        <button onClick={() => removerPlaque(selectedAppareillage.groupeId!)} disabled={!!pieceDeSelectedAppareillage?.verrouillee}
+                          className="btn-danger !text-xs !py-1 flex-1 justify-center disabled:opacity-40">Supprimer la plaque</button>
+                      )}
+                    </div>
+                    {postesPlaqueSel.length >= 2 && <p className="text-ink-400">Hauteur, couleur et position sont communes à la plaque ; le bouton corbeille en haut ne retire que ce poste.</p>}
+                  </div>
+                )}
                 <div className="flex items-center gap-2 text-xs text-ink-500">
                   <span className="shrink-0 w-16">Position X/Y</span>
                   <input type="number" step="0.01" className="input !py-1 !text-xs !w-20"
@@ -4124,7 +4496,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     </div>
                   </div>
                 )}
-                {(niveauActif?.circuitsManuels?.length ?? 0) > 0 && (
+                {(niveauActif?.circuitsManuels?.length ?? 0) > 0 && selectedAppareillage.type !== "rj45" && (
                   <div className="flex items-center gap-2 text-xs text-ink-500 border-t border-ink-100 pt-2">
                     <span className="shrink-0">Circuit</span>
                     <select className="input !py-1 !text-xs flex-1"
@@ -4161,11 +4533,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     </button>
                   </div>
                 )}
-                {(["interrupteur", "va_et_vient", "telerupteur"] as AppareillageType[]).includes(selectedAppareillage.type) && (
+                {estCommande(selectedAppareillage.type) && (
                   <>
                     <button onClick={() => setPendingCommande({ item: selectedAppareillage, estNouveau: false })}
                       className="btn-ghost !text-xs justify-center">
-                      Commande : {selectedAppareillage.commandePourIds?.length ?? 0} point(s) lumineux — modifier
+                      {estCommandeDouble(selectedAppareillage.type)
+                        ? `Commande : voie 1 → ${selectedAppareillage.commandePourIds?.length ?? 0} · voie 2 → ${selectedAppareillage.commandePourIds2?.length ?? 0} point(s) lumineux — modifier`
+                        : `Commande : ${selectedAppareillage.commandePourIds?.length ?? 0} point(s) lumineux — modifier`}
                     </button>
                     <label className="flex items-center gap-2 text-xs text-ink-500 cursor-pointer border-t border-ink-100 pt-2">
                       <input type="checkbox" checked={selectedAppareillage.domotique ?? false}
@@ -4186,6 +4560,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     <span className="text-amber-700">Exclu de la génération automatique</span>
                     <button onClick={() => reinclureAppareillage(selectedAppareillage.id)} className="btn-ghost !text-[11px] !px-1.5 !py-0.5 shrink-0">Réinclure</button>
                   </div>
+                ) : selectedAppareillage.type === "rj45" ? (
+                  <p className="text-xs text-ink-400">Courant faible : câblée en étoile vers le coffret de communication — aucun circuit de puissance.</p>
                 ) : resultat ? (
                   <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-2 py-1.5">Non raccordé à un circuit.</p>
                 ) : null}
@@ -4556,7 +4932,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
             {placementType && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-lg">
-                Clique dans une pièce pour placer : {labelAppareillage(placementType)}
+                Clique dans une pièce pour placer : {plaquePostes ? `plaque ${plaquePostes.length} postes (${plaquePostes.map(po => labelAppareillagePlace(po)).join(" + ")})` : labelAppareillage(placementType)}
               </div>
             )}
             {placingTableau && (
@@ -4626,9 +5002,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     const couleur = b ? (colorMap.get(b.id) ?? "#666666") : (manuel!.couleur ?? "#78716c");
                     const visible = b ? circuitsVisibles.has(b.id) : true;
                     const pointsCircuit = b ? (niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id) ?? []) : [];
-                    const lg = b && showLongueurs && niveauActif && origineCircuits(niveauActif) && pointsCircuit.length > 0
-                      ? longueurBranchesEclairage(segmentsPourCircuit(b, pointsCircuit, niveauActif, origineCircuits(niveauActif)!), niveauActif.liaisonWaypoints)
+                    // Longueur RÉELLE : horizontale + montées / descentes (même tracé que la vue 3D et le pré-devis).
+                    const lgDetail = b && showLongueurs && niveauActif && origineCircuits(niveauActif) && pointsCircuit.length > 0
+                      ? longueurCircuit(creerContexteLongueurs(niveauActif), b, pointsCircuit, origineCircuits(niveauActif)!)
                       : null;
+                    const lg = lgDetail ? lgDetail.totale : null;
                     return (
                       <label key={item.key} className={`flex items-center gap-1.5 text-[11px] cursor-pointer ${visible ? "text-ink-600" : "text-ink-300"}`}>
                         {b ? (
@@ -4645,7 +5023,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         <input className="input !text-[11px] !py-0.5 !px-1.5 flex-1 min-w-0" value={nomAffichage}
                           onClick={e => e.stopPropagation()}
                           onChange={e => b ? renommerCircuit(b, e.target.value) : renommerCircuitManuelDirect(manuel!.id, e.target.value)} />
-                        {lg !== null && <span className="font-mono text-ink-400 shrink-0">{lg.toFixed(1)}m</span>}
+                        {lg !== null && <span className="font-mono text-ink-400 shrink-0" title={lgDetail ? `${lgDetail.horizontale.toFixed(2)} m à l'horizontale + ${lgDetail.verticale.toFixed(2)} m de montées / descentes` : undefined}>{lg.toFixed(1)}m</span>}
                         {!b && <span className="text-[9px] text-ink-400 shrink-0 italic whitespace-nowrap">à générer</span>}
                         {manuel?.nonRelieTableau && <span className="text-[9px] text-sky-600 shrink-0" title="Circuit déjà existant, non relié au tableau">🔗✕</span>}
                         {b && CIRCUITS[b.circuit]?.category !== "lumiere" && (
@@ -4697,7 +5075,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide">Appareillages</p>
               <button onClick={() => setPaletteReduite(true)} className="btn-ghost !px-1.5 !py-1" title="Replier la palette (plus de place pour le plan)"><ChevronRight size={14} /></button>
             </div>
-            <PaletteBoutons placementType={placementType} onSelect={armerPlacement} />
+            <PaletteBoutons placementType={placementType} onSelect={armerPlacement} plaquePostes={plaquePostes} onPlaque={() => setPlaqueFormOuvert(true)} />
           </div>
           ))}
 
@@ -4709,7 +5087,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide">Appareillages</p>
                   <button onClick={() => setPaletteOpen(false)} className="btn-ghost !px-2 !py-1"><X size={16} /></button>
                 </div>
-                <PaletteBoutons placementType={placementType} onSelect={t => { armerPlacement(t); setPaletteOpen(false); }} />
+                <PaletteBoutons placementType={placementType} onSelect={t => { armerPlacement(t); setPaletteOpen(false); }} plaquePostes={plaquePostes} onPlaque={() => { setPlaqueFormOuvert(true); setPaletteOpen(false); }} />
               </div>
             </div>
           )}
@@ -4807,10 +5185,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         />
       )}
 
+      {plaqueFormOuvert && (
+        <PlaqueForm
+          initial={plaquePostes ?? plaqueConfig}
+          onValider={postes => { setPlaqueConfig(postes); setPlaqueFormOuvert(false); armerPlaque(postes); }}
+          onCancel={() => setPlaqueFormOuvert(false)}
+        />
+      )}
+
       {pendingCommande && niveauActif && (
         <CommandeLinkForm
           niveau={niveauActif} item={pendingCommande.item}
-          onValidate={pointLumineuxIds => lierCommande(pendingCommande.item.id, pointLumineuxIds)}
+          onValidate={(ids, ids2) => lierCommande(pendingCommande.item.id, ids, ids2)}
           onCancel={() => {
             if (pendingCommande.estNouveau) removerAppareillage(pendingCommande.item.id);
             setPendingCommande(null);
