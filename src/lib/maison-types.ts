@@ -114,10 +114,24 @@ export function commandeCetteLumiere(a: Pick<AppareillagePlace, "commandePourIds
   return !!a.commandePourIds?.includes(lumiereId) || !!a.commandePourIds2?.includes(lumiereId);
 }
 
-// Porte, porte coulissante, fenêtre, ou simple ouverture murale (sans porte, entièrement
-// dimensionnée à la main) placée sur un mur (segment du contour) d'une pièce — pas un
-// objet libre comme un appareillage : contrainte à glisser le long du mur qui la porte.
-export type OuvertureType = "porte" | "porte_coulissante" | "fenetre" | "ouverture";
+// Porte, porte coulissante, porte de garage basculante, fenêtre, ou simple ouverture murale
+// (sans porte, entièrement dimensionnée à la main) placée sur un mur (segment du contour) d'une
+// pièce — pas un objet libre comme un appareillage : contrainte à glisser le long du mur qui la porte.
+export type OuvertureType = "porte" | "porte_coulissante" | "porte_garage" | "fenetre" | "ouverture";
+
+// Hauteur par défaut (cm) d'une ouverture dont la hauteur n'a pas été saisie — SOURCE UNIQUE,
+// partagée par le plan 2D, la vue 3D et l'ancrage des volets (jamais de défaut recopié ailleurs).
+export function hauteurOuvertureDefautCm(type: OuvertureType): number {
+  switch (type) {
+    case "porte":
+    case "porte_coulissante":
+      return 204;
+    case "porte_garage":
+      return 200;
+    default:
+      return 120;
+  }
+}
 
 export interface Ouverture {
   id: number;
@@ -142,6 +156,9 @@ export function nouvelleOuverture(type: OuvertureType, segIndex: number, positio
       return { id: uidMaison(), type, segIndex, position, largeur: 90, hauteur: 204, allege: 0, charniere: "gauche", ouvreVersInterieur: true };
     case "porte_coulissante":
       return { id: uidMaison(), type, segIndex, position, largeur: 90, hauteur: 204, allege: 0, coulisseVers: "droite" };
+    case "porte_garage":
+      // Porte de garage basculante standard : 240 × 200 cm, jusqu'au sol.
+      return { id: uidMaison(), type, segIndex, position, largeur: 240, hauteur: 200, allege: 0 };
     case "fenetre":
       return { id: uidMaison(), type, segIndex, position, largeur: 100, hauteur: 120, allege: 90 };
     case "ouverture":
@@ -358,12 +375,33 @@ export function familleCircuitManuelAppareillage(type: AppareillageType, pieceTy
   return null;
 }
 
+// ─── ZONES ─────────────────────────────────────────────────────────────────────────────────────
+// Une zone est un polygone nommé posé SUR le plan (dressing ouvert, coin bureau, retour de mur…) :
+// elle a un nom et une surface, mais n'est PAS une pièce (pas d'appareillage, pas de circuit, pas de
+// pré-devis). Chaque côté est soit une cloison (dessinée en épaisseur au plan et en 3D, percée de
+// portes éventuelles), soit « ouvert » (limite virtuelle, ou mur déjà existant). Fermée = polygone avec
+// surface ; non fermée = cloison libre (polyligne qui s'arrête dans la pièce, sans surface).
+export type TypeCoteZone = "cloison" | "ouvert";
+export interface Zone {
+  id: number;
+  nom: string;
+  contour: Point[];            // sommets, mètres. Les cloisons sont centrées sur l'axe (comme les murs mitoyens)
+  ferme: boolean;              // true : polygone (n côtés) · false : polyligne (n-1 côtés), sans surface
+  cotes: TypeCoteZone[];       // un par côté : cotes[i] va du sommet i au sommet i+1
+  epaisseurCm: number;         // épaisseur des cloisons de la zone
+  // Portes / passages percés dans les cloisons de la zone. segIndex = index du côté (même convention que
+  // Piece.ouvertures) ; position 0..1 le long de ce côté.
+  ouvertures?: Ouverture[];
+}
+export const EPAISSEUR_CLOISON_ZONE_CM = 10;
+
 export interface Niveau {
   id: number;
   nom: string;
   type: NiveauType;
   ordre: number;
   pieces: Piece[];
+  zones?: Zone[];
   // Niveaux de type "annexe" uniquement : id du tableau annexe (Projet.tableaux_annexes) qui
   // alimente cette annexe, créé avec elle. Ignoré pour les niveaux de la maison, qui
   // dépendent tous du tableau principal.
@@ -484,6 +522,7 @@ export function reamorcerCompteurId(niveaux: Niveau[]): void {
       (p.ouvertures ?? []).forEach(o => { max = Math.max(max, o.id); });
       (p.meubles ?? []).forEach(m => { max = Math.max(max, m.id); });
     });
+    (n.zones ?? []).forEach(z => { max = Math.max(max, z.id); (z.ouvertures ?? []).forEach(o => { max = Math.max(max, o.id); }); });
     (n.circuitsManuels ?? []).forEach(m => { max = Math.max(max, m.id); });
     Object.values(n.liaisonWaypoints ?? {}).forEach(liste => liste.forEach(w => { max = Math.max(max, w.id); }));
     Object.values(n.boitesDerivation ?? {}).forEach(liste => liste.forEach(b => { max = Math.max(max, b.id); }));
@@ -529,7 +568,8 @@ export function dedupliquerIds(niveaux: Niveau[]): { niveaux: Niveau[]; correcti
       if (nouvMId !== m.id) remapManuel.set(m.id, nouvMId);
       return { ...m, id: nouvMId };
     });
-    return { ...n, id: nouvId, pieces, circuitsManuels: n.circuitsManuels ? circuitsManuels : n.circuitsManuels };
+    const zones = (n.zones ?? []).map(z => ({ ...z, id: prendre(z.id), ouvertures: z.ouvertures ? z.ouvertures.map(o => ({ ...o, id: prendre(o.id) })) : z.ouvertures }));
+    return { ...n, id: nouvId, pieces, ...(n.zones ? { zones } : {}), circuitsManuels: n.circuitsManuels ? circuitsManuels : n.circuitsManuels };
   });
 
   if (corrections === 0) return { niveaux, corrections: 0 };

@@ -4,7 +4,7 @@
 // contre le mur) et la vue 3D (projection sur la face intérieure du mur). Aucun état,
 // aucune dépendance React/three : uniquement des fonctions pures sur des Point en mètres.
 
-import { AppareillageType, AppareillagePlace, Piece, Point, pointDansPolygone, ouverturesEffectivesMur, ENTRAXE_POSTE_M } from "@/lib/maison-types";
+import { AppareillageType, AppareillagePlace, Piece, Point, pointDansPolygone, ouverturesEffectivesMur, ENTRAXE_POSTE_M, hauteurOuvertureDefautCm } from "@/lib/maison-types";
 
 export interface AncrageMur {
   segIndex: number;   // index du mur dans piece.contour (segment i → i+1)
@@ -94,10 +94,9 @@ export function baieDuVolet(pt: Point, piece: Piece, pieces: Piece[]): BaieVolet
     if (d < meilleureD) { meilleureD = d; meilleure = o; }
   }
   if (!meilleure || meilleureD > TOL_BAIE_M) return defaut;
-  const estPorte = meilleure.type === "porte" || meilleure.type === "porte_coulissante";
   return {
     largeur: meilleure.largeur / 100,
-    hauteur: (meilleure.hauteur ?? (estPorte ? 204 : 120)) / 100, // mêmes défauts que le mur 3D
+    hauteur: (meilleure.hauteur ?? hauteurOuvertureDefautCm(meilleure.type)) / 100, // mêmes défauts que le mur 3D
     allege: (meilleure.allege ?? 0) / 100,
     centre: { x: a.x + (b.x - a.x) * meilleure.position, y: a.y + (b.y - a.y) * meilleure.position },
     detectee: true, ancrage: anc, ouvertureType: meilleure.type,
