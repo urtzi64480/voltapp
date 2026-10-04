@@ -14,7 +14,7 @@ import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
   GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt, Box,
-  Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, SplitSquareHorizontal, BoxSelect,
+  Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, SplitSquareHorizontal, BoxSelect, Undo2, Redo2,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -34,7 +34,7 @@ import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillage
 import { cotesOuvertures, cotesExterieures, coteHorsTout } from "@/lib/cotes-archi";
 import { posesTroncons, hauteursTroncons } from "@/lib/pose-circuits";
 import { creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurCircuit } from "@/lib/longueurs-circuits";
-import { preparerMurs, definirMitoyens, mitoyensDe, longueursUtilesCm, geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
+import { migrerModeleMurs, aimanterSurFaceMur, preparerMurs, definirMitoyens, mitoyensDe, longueursUtilesCm, geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
 import { accrocherSurContour, apercuCloison, appliquerCloison, OptionsCloison, PointAccroche } from "@/lib/cloisons";
 import type { CloisonZone } from "@/lib/zones";
 import { cotesParDefaut, nouvelleZone, validerTraceZone, surfaceZone, centreEtiquetteZone, cloisonsDeZone, quadCloison, decoupeOuvertureZone, longueurCote, nbCotes, segmentsZone, definirTypeCote, trouverCloisonZone, positionOuvertureValide } from "@/lib/zones";
@@ -43,7 +43,7 @@ import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece
 import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
-import { CIRCUITS, BreakerRow, Breaker } from "@/lib/electrical-constants";
+import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
 
 const PX_PER_M = 60;
 const MIN_ZOOM = 0.25;
@@ -242,6 +242,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
   {
     const quads = niveauResultat.pieces.flatMap(p => geometrieMurs(p).quads);
     const struct = (q: (typeof quads)[number]) => {
+      if (q.structureNulle) return;   // mur à 0 cm : rien à dessiner
       const col = q.type === "exterieur" ? "#44403c" : "#78716c";
       s += `<polygon points="${ptsPx(q.structure)}" fill="${col}" stroke="${col}" stroke-width="0.4"/>`;
     };
@@ -649,6 +650,8 @@ type DragMode =
   | { kind: "appareillage"; pieceId: number; appareillageId: number }
   | { kind: "meuble"; pieceId: number; meubleId: number }
   | { kind: "ouverture"; pieceId: number; ouvertureId: number }
+  | { kind: "zone"; zoneId: number; startX: number; startY: number; startContour: Point[] }
+  | { kind: "zoneSommet"; zoneId: number; index: number }
   | { kind: "tableau" }
   | { kind: "pointArrivee" }
   | { kind: "boite"; label: string; boiteId: number }
@@ -742,7 +745,7 @@ function PieceForm({ initialNom, initialType, initialHauteurPlafond, initialCont
                   {modifie && <span className="text-volt-600"> (modifiée)</span>}
                 </p>
                 <p className="text-[11px] text-ink-400 mt-1">
-                  Dimensions prises aux extrémités de la pièce, de face finie à face finie (doublage compris), pas au milieu des murs.
+                  Dimensions intérieures, de face finie à face finie. Le tracé de la pièce est son contour hors-tout : les épaisseurs de murs s&apos;ajoutent à l&apos;intérieur et réduisent ces dimensions.
                 </p>
               </>
             )}
@@ -768,7 +771,7 @@ function PieceForm({ initialNom, initialType, initialHauteurPlafond, initialCont
                   </button>
                 )}
                 <p className="text-[11px] text-ink-400 mt-1.5">
-                  1 = finition (côté pièce), 2 = doublage (les circuits y passent par défaut), 3 = structure. Les couches s&apos;ajoutent vers l&apos;extérieur : les dimensions de la pièce ne changent pas. Les ouvertures percent les 3 couches.
+                  1 = finition (côté pièce), 2 = doublage (les circuits y passent par défaut), 3 = structure (0 = pas de mur de ce côté, utile pour une cloison commune à deux pièces). Les couches s&apos;ajoutent à l&apos;intérieur du tracé : les dimensions intérieures sont recalculées. Les ouvertures percent les 3 couches.
                 </p>
               </>
             )}
@@ -941,7 +944,7 @@ function ZoneForm({ contour, ferme, pieces, onValidate, onCancel }: {
   const [epaisseur, setEpaisseur] = useState("10");
   const [cotes, setCotes] = useState<TypeCoteZone[]>(() => cotesParDefaut(contour, ferme, pieces));
   const ep = parseFloat(epaisseur.replace(",", "."));
-  const epaisseurValide = ep >= 5 && ep <= 50;
+  const epaisseurValide = ep >= 1 && ep <= 50;
   const apercu: Zone = { id: 0, nom, contour, ferme, cotes, epaisseurCm: epaisseurValide ? ep : 10 };
   const surf = surfaceZone(apercu);
   const longueurTotale = segmentsZone(apercu).reduce((t, sg) => t + distance(sg.a, sg.b), 0);
@@ -1125,7 +1128,7 @@ const saisieDepuisMur = (m: MurSpec): SaisieMur => ({ finition: String(m.finitio
 function murDepuisSaisie(s: SaisieMur): MurSpec | null {
   const num = (t: string) => t.trim() === "" ? 0 : parseFloat(t.replace(",", "."));
   const f = num(s.finition), d = num(s.doublage), e = num(s.epaisseur);
-  if (!(e >= 1 && e <= 200) || !(d >= 0 && d <= 100) || !(f >= 0 && f <= 50)) return null;
+  if (!(e >= 0 && e <= 200) || !(d >= 0 && d <= 100) || !(f >= 0 && f <= 50)) return null;
   return { epaisseur: Math.round(e * 10) / 10, doublage: Math.round(d * 10) / 10, finition: Math.round(f * 10) / 10 };
 }
 function ChampsMur({ valeur, onChange, disabled }: {
@@ -1136,7 +1139,7 @@ function ChampsMur({ valeur, onChange, disabled }: {
   const champs: [keyof SaisieMur, string, string][] = [
     ["finition", "1 · Finition", "Couche 1, côté pièce : plaque de plâtre, enduit, parement…"],
     ["doublage", "2 · Doublage", "Couche 2 : isolant / vide technique — les circuits y passent par défaut"],
-    ["epaisseur", "3 · Structure", "Couche 3, côté extérieur : maçonnerie, ossature, cloison"],
+    ["epaisseur", "3 · Structure", "Couche 3, contre le tracé : maçonnerie, ossature, cloison (0 = aucun mur de ce côté)"],
   ];
   return (
     <div className="flex items-end gap-2 flex-wrap">
@@ -1178,7 +1181,7 @@ function SegmentLengthForm({ longueurActuelle, murActuel, onValidate, onCancel }
           <div>
             <label className="label">Les 3 couches du mur (cm), de l&apos;intérieur vers l&apos;extérieur</label>
             <ChampsMur valeur={saisieMur} onChange={setSaisieMur} />
-            <p className="text-[11px] text-ink-400 mt-1.5">Longueur mesurée de face finie à face finie. Les couches s&apos;ajoutent vers l&apos;extérieur ; les circuits passent par défaut dans la couche 2.</p>
+            <p className="text-[11px] text-ink-400 mt-1.5">Longueur mesurée de face finie à face finie. Les couches s&apos;ajoutent à l&apos;intérieur du tracé (0 = aucune) ; les circuits passent par défaut dans la couche 2.</p>
           </div>
         </div>
         <div className="flex gap-2 p-4 border-t border-ink-200">
@@ -1706,6 +1709,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Outil zone : points déjà posés, tracé validé en attente du formulaire, zone / porte de zone sélectionnée.
   const [zonePoints, setZonePoints] = useState<Point[]>([]);
   const [zoneEnAttente, setZoneEnAttente] = useState<{ contour: Point[]; ferme: boolean } | null>(null);
+  // Outil « Cloison » : même moteur que les zones, mais ne trace qu'un mur libre (polyligne) — il ne modifie jamais
+  // une pièce existante. true = outil Cloison actif ; false = outil Zone (polygone nommé).
+  const [zoneCloisonSeule, setZoneCloisonSeule] = useState(false);
   const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null);
   const [selectedZoneOuv, setSelectedZoneOuv] = useState<{ zoneId: number; ouvId: number } | null>(null);
   const [drawingPoints, setDrawingPoints] = useState<Point[]>([]);
@@ -1830,6 +1836,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         if (Array.isArray(parsed?.niveaux) && parsed.niveaux.length > 0) {
           // Doit tourner avant reamorcerCompteurId : assigne de nouveaux id (uidMaison())
           // aux boîtes migrées depuis l'ancien format, que le compteur doit ensuite couvrir.
+          // Plans enregistrés avant le modèle « tracé hors-tout » : convertis une fois, intérieurs inchangés.
+          const { niveaux: niveauxMurs, migrees: nbMurs } = migrerModeleMurs(parsed.niveaux);
+          parsed.niveaux = niveauxMurs;
           migrerBoitesDerivation(parsed.niveaux);
           reamorcerCompteurId(parsed.niveaux);
           // Nettoie une fois pour toutes d'éventuels id en double laissés par une
@@ -1853,7 +1862,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           setNiveaux(niveauxFinal);
           setNiveauActifId(premier.id);
           setLoading(false);
-          if (corrections > 0 || orphelines.length > 0) {
+          if (corrections > 0 || orphelines.length > 0 || nbMurs > 0) {
             modifierProjet(projet.id, { maison_config: JSON.stringify({ niveaux: niveauxFinal }) });
           }
           return;
@@ -1925,7 +1934,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const pieceDrag = niveauCourant?.pieces.find(p => p.id === dragMode.pieceId);
         const appDrag = pieceDrag?.appareillages.find(a => a.id === dragMode.appareillageId);
         const mAimante = pieceDrag && appDrag && !e.altKey
-          ? aimanterSurMur(mAligne, pieceDrag.contour, appDrag.type, SNAP_MUR_PX / (PX_PER_M * zoom))
+          ? aimanterSurFaceMur(mAligne, pieceDrag, appDrag.type, SNAP_MUR_PX / (PX_PER_M * zoom))
           : mAligne;
         // Volet roulant : une fois près d'une fenêtre, il se centre dessus (Alt = position libre).
         const m = pieceDrag && appDrag?.type === "volet_roulant" && !e.altKey && niveauCourant
@@ -1968,6 +1977,30 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : {
             ...p, meubles: (p.meubles ?? []).map(mb => mb.id === dragMode.meubleId ? { ...mb, x: snapped.x, y: snapped.y } : mb),
           }),
+        }));
+      } else if (dragMode.kind === "zone") {
+        // Cloison / zone entière : déplacée à la grille, portes comprises (leur position est relative au côté).
+        const dxM = arrondiGrille((e.clientX - dragMode.startX) / (PX_PER_M * zoom));
+        const dyM = arrondiGrille((e.clientY - dragMode.startY) / (PX_PER_M * zoom));
+        updateNiveauActif(n => ({
+          ...n,
+          zones: (n.zones ?? []).map(z => z.id !== dragMode.zoneId ? z : { ...z, contour: dragMode.startContour.map(pt => ({ x: pt.x + dxM, y: pt.y + dyM })) }),
+        }));
+      } else if (dragMode.kind === "zoneSommet") {
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const raw = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        const niveauCourant = niveaux.find(n => n.id === niveauActifId) ?? null;
+        const refs = [
+          ...pointsReferenceNiveau(niveauCourant),
+          ...(niveauCourant?.zones ?? []).flatMap(z => z.id === dragMode.zoneId ? z.contour.filter((_, k) => k !== dragMode.index) : z.contour),
+        ];
+        const seuilM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
+        const { point: m, guideX, guideY } = snapAvecAlignement(raw, refs, seuilM);
+        setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
+        updateNiveauActif(n => ({
+          ...n,
+          zones: (n.zones ?? []).map(z => z.id !== dragMode.zoneId ? z : { ...z, contour: z.contour.map((pt, k) => (k === dragMode.index ? m : pt)) }),
         }));
       } else if (dragMode.kind === "tableau") {
         const rect = svgRef.current?.getBoundingClientRect();
@@ -2046,7 +2079,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       // (porte/fenêtre), "boite" et "pointArrivee" (purement cosmétiques/informatifs) ne
       // changent jamais la composition électrique du plan — les exclure évite de
       // réinitialiser les circuits générés à chaque simple clic ou déplacement de ces éléments.
-      if (dragBougeRef.current && !["liaison", "pan", "ouverture", "boite", "pointArrivee", "meuble", "nomPiece"].includes(dragMode.kind)) invalidateResultat();
+      if (dragBougeRef.current && !["liaison", "pan", "ouverture", "boite", "pointArrivee", "meuble", "nomPiece", "zone", "zoneSommet"].includes(dragMode.kind)) invalidateResultat();
       setDragEndTick(t => t + 1);
       setDragMode({ kind: "none" });
       setSnapGuide(null);
@@ -2190,12 +2223,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     return () => window.removeEventListener("keydown", onKey);
   }, [mode, cloisonEnAttente, cloisonPoints.length]);
 
+  // Outil « Cloison » : trace un mur libre (jamais de découpe d'une pièce) — voir entrerModeZone (zones).
   const entrerModeCloison = () => {
-    if (mode === "cloison") { setMode("select"); return; }
-    setMode("cloison"); setCloisonPoints([]); setCloisonEnAttente(null);
-    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
-    setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
-    setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null); setDrawingPoints([]);
+    if (mode === "zone" && zoneCloisonSeule) { setMode("select"); return; }
+    demarrerModeZone(true);
   };
 
   // Accroche du curseur pour l'outil cloison. 1er point : le mur le plus proche (toutes pièces). Ensuite : le
@@ -2235,10 +2266,22 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // ─── ZONES (polygone nommé / cloison libre) ─────────────────────────────────────────────────
   useEffect(() => {
-    if (mode !== "zone" || vue3D) { setZonePoints([]); setZoneEnAttente(null); }
+    if (mode !== "zone" || vue3D) { setZonePoints([]); setZoneEnAttente(null); setZoneCloisonSeule(false); }
     if (vue3D && mode === "zone") setMode("select");
   }, [mode, vue3D]);
   useEffect(() => { setZonePoints([]); setZoneEnAttente(null); setSelectedZoneId(null); setSelectedZoneOuv(null); }, [niveauActifId]);
+  // Suppr : supprime la cloison / zone sélectionnée (hors saisie de texte).
+  useEffect(() => {
+    if (selectedZoneId == null || selectedZoneOuv || mode !== "select") return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      if (e.key === "Delete") { e.preventDefault(); supprimerZone(selectedZoneId); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedZoneId, selectedZoneOuv, mode, niveaux]);
   // Sélectionner autre chose qu'une zone referme les panneaux de zone (jamais deux panneaux à la fois).
   useEffect(() => {
     if (selectedPieceId != null || selectedAppareillageId != null || selectedOuvertureId != null || selectedMeubleId != null || selectedTableau) {
@@ -2253,14 +2296,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
       if (e.key === "Escape") { e.preventDefault(); if (zonePoints.length > 0) setZonePoints([]); else setMode("select"); }
       else if (e.key === "Backspace" || e.key === "Delete") { e.preventDefault(); setZonePoints(pts => pts.slice(0, -1)); }
+      else if (e.key === "Enter" && zoneCloisonSeule && zonePoints.length >= 2) { e.preventDefault(); terminerTraceZone(false); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [mode, zoneEnAttente, zonePoints.length]);
+  }, [mode, zoneEnAttente, zonePoints.length, zoneCloisonSeule]);
 
   const entrerModeZone = () => {
-    if (mode === "zone") { setMode("select"); return; }
-    setMode("zone"); setZonePoints([]); setZoneEnAttente(null);
+    if (mode === "zone" && !zoneCloisonSeule) { setMode("select"); return; }
+    demarrerModeZone(false);
+  };
+  const demarrerModeZone = (cloisonSeule: boolean) => {
+    setMode("zone"); setZonePoints([]); setZoneEnAttente(null); setZoneCloisonSeule(cloisonSeule);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
     setSelectedZoneId(null); setSelectedZoneOuv(null);
     setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
@@ -2273,7 +2320,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (!niveauActif) return null;
     const seuilM = CLOISON_SEUIL_PX / (PX_PER_M * zoom);
     const seuilAlign = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
-    if (zonePoints.length >= 3 && distance(mCur, zonePoints[0]) < seuilM) return { point: zonePoints[0], surMur: false, ferme: true };
+    if (!zoneCloisonSeule && zonePoints.length >= 3 && distance(mCur, zonePoints[0]) < seuilM) return { point: zonePoints[0], surMur: false, ferme: true };
     let meilleur: { acc: PointAccroche; d: number } | null = null;
     for (const pc of niveauActif.pieces) {
       const acc = accrocherSurContour(pc.contour, mCur, seuilM);
@@ -2318,6 +2365,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setSelectedBoite(null); setSelectedMeubleId(null); setSelectedPointArrivee(false); setSelectedWaypoint(null);
     setSelectedZoneId(zoneId); setSelectedZoneOuv(ouvId != null ? { zoneId, ouvId } : null);
     setPanelResetTick(t => t + 1);
+  };
+  // Clic sur une cloison de zone : la sélectionne ET démarre un glisser-déposer (le mur se déplace avec la souris).
+  const cloisonDown = (z: Zone, e: React.PointerEvent) => {
+    if (!zoneCliquable) return;
+    selectionnerZone(z.id, null, e);
+    setDragMode({ kind: "zone", zoneId: z.id, startX: e.clientX, startY: e.clientY, startContour: z.contour });
+  };
+  const sommetZoneDown = (z: Zone, index: number, e: React.PointerEvent) => {
+    if (!zoneCliquable) return;
+    e.stopPropagation();
+    setDragMode({ kind: "zoneSommet", zoneId: z.id, index });
   };
   const modifierOuvertureZone = (zoneId: number, ouvId: number, patch: Partial<Ouverture>) => {
     majZone(zoneId, z => ({
@@ -3218,7 +3276,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         setTimeout(() => setPlacementError(null), 2000);
         return;
       }
-      const mAimantee = e.altKey ? m : aimanterSurMur(m, piece.contour, placementType, SNAP_MUR_PX / (PX_PER_M * zoom));
+      const mAimantee = e.altKey ? m : aimanterSurFaceMur(m, piece, placementType, SNAP_MUR_PX / (PX_PER_M * zoom));
       const mPose = placementType === "volet_roulant" && !e.altKey && niveauActif
         ? recentrerVolet(mAimantee, piece, niveauActif.pieces)
         : mAimantee;
@@ -3561,6 +3619,95 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setTimeout(() => setSaved(false), 2000);
   }, [niveaux, projet.id]);
 
+
+  // ─── ANNULER / REFAIRE + SAUVEGARDE AUTOMATIQUE ─────────────────────────────────────────────────
+  // Une « action » = un changement du plan qui se stabilise (500 ms sans nouvelle modification, et aucun glisser en
+  // cours) : un déplacement à la souris, une saisie, une pose, une suppression… comptent chacun pour UNE action.
+  // Chaque action empile l'état précédent (annulable : bouton ou Ctrl+Z, refaire : Ctrl+Y / Ctrl+Maj+Z) ; toutes les
+  // 5 actions, le plan est enregistré tout seul. « Sauvegarder » reste disponible à tout moment.
+  const HISTORIQUE_MAX = 60;
+  const ACTIONS_PAR_SAUVEGARDE_AUTO = 5;
+  const niveauxRef = useRef<Niveau[]>(niveaux);
+  niveauxRef.current = niveaux;
+  const dernierEtatRef = useRef<Niveau[] | null>(null);
+  const pileAnnulerRef = useRef<Niveau[][]>([]);
+  const pileRefaireRef = useRef<Niveau[][]>([]);
+  const compteActionsRef = useRef(0);
+  const [, setHistoTick] = useState(0);
+  const [autoSaveMsg, setAutoSaveMsg] = useState<string | null>(null);
+
+  const sauvegardeAuto = useCallback(async (etat: Niveau[]) => {
+    const ok = await modifierProjet(projet.id, { maison_config: JSON.stringify({ niveaux: etat }) });
+    setAutoSaveMsg(ok ? "Sauvegarde auto ✓" : "Sauvegarde auto impossible");
+    setTimeout(() => setAutoSaveMsg(null), 2500);
+  }, [projet.id]);
+
+  const compterAction = useCallback((etat: Niveau[]) => {
+    compteActionsRef.current += 1;
+    if (compteActionsRef.current % ACTIONS_PAR_SAUVEGARDE_AUTO === 0) void sauvegardeAuto(etat);
+  }, [sauvegardeAuto]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (dernierEtatRef.current === null) { dernierEtatRef.current = niveaux; return; }   // état chargé : point de départ
+    if (dragMode.kind !== "none") return;                                                  // pas pendant un glisser
+    if (niveaux === dernierEtatRef.current) return;
+    const t = setTimeout(() => {
+      const avant = dernierEtatRef.current;
+      if (!avant || avant === niveauxRef.current) return;
+      pileAnnulerRef.current.push(avant);
+      if (pileAnnulerRef.current.length > HISTORIQUE_MAX) pileAnnulerRef.current.shift();
+      pileRefaireRef.current = [];
+      dernierEtatRef.current = niveauxRef.current;
+      setHistoTick(x => x + 1);
+      compterAction(niveauxRef.current);
+    }, 500);
+    return () => clearTimeout(t);
+  }, [niveaux, dragMode.kind, loading, compterAction]);
+
+  // Remplace tout le plan par un état de l'historique, et referme tout ce qui dépendait de l'ancien (sélections, circuits générés).
+  const restaurerEtat = (etat: Niveau[]) => {
+    dernierEtatRef.current = etat;
+    setNiveaux(etat);
+    setNiveauActifId(id => (etat.some(n => n.id === id) ? id : [...etat].sort((a, b) => a.ordre - b.ordre)[0]?.id ?? null));
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null);
+    setSelectedBoite(null); setSelectedMeubleId(null); setSelectedPointArrivee(false); setSelectedZoneId(null); setSelectedZoneOuv(null);
+    setEditingPiece(null); setEditingSegment(null);
+    setResultat(null); setShowCircuits(false);
+    setHistoTick(x => x + 1);
+    compterAction(etat);
+  };
+  const annuler = () => {
+    const courant = niveauxRef.current, base = dernierEtatRef.current;
+    let cible: Niveau[] | undefined;
+    if (base && courant !== base) cible = base;                       // modification pas encore enregistrée dans l'historique
+    else cible = pileAnnulerRef.current.pop();
+    if (!cible) return;
+    pileRefaireRef.current.push(courant);
+    restaurerEtat(cible);
+  };
+  const refaire = () => {
+    const cible = pileRefaireRef.current.pop();
+    if (!cible) return;
+    pileAnnulerRef.current.push(niveauxRef.current);
+    restaurerEtat(cible);
+  };
+  const peutAnnuler = pileAnnulerRef.current.length > 0 || (dernierEtatRef.current !== null && dernierEtatRef.current !== niveaux);
+  const peutRefaire = pileRefaireRef.current.length > 0;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === "z" && !e.shiftKey) { e.preventDefault(); annuler(); }
+      else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); refaire(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compterAction]);
+
   const handleGenerer = () => {
     const res = genererCircuits({ niveaux });
     setResultat(res);
@@ -3599,7 +3746,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
 
   const handlePousserVersTableau = async () => {
-    if (!resultat || resultat.breakers.length === 0) return;
+    if (!resultat || resultat.breakers.filter(b => !estCircuitSansDisjoncteur(b)).length === 0) return;
     setPushing(true);
     // Circuits manuels "déjà existants" (CircuitManuel.nonRelieTableau) : jamais poussés
     // au tableau — ils restent protégés par le disjoncteur déjà en place sur l'installation
@@ -3607,8 +3754,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const idsManuelsNonRelies = new Set(
       niveaux.flatMap(n => (n.circuitsManuels ?? []).filter(m => m.nonRelieTableau).map(m => m.id)),
     );
-    const breakersAPousser = resultat.breakers.filter(b => b.manuelId == null || !idsManuelsNonRelies.has(b.manuelId));
-    const nbExclus = resultat.breakers.length - breakersAPousser.length;
+    // Courant faible (RJ45) : jamais de disjoncteur au tableau.
+    const breakersAPousser = resultat.breakers.filter(b => !estCircuitSansDisjoncteur(b) && (b.manuelId == null || !idsManuelsNonRelies.has(b.manuelId)));
+    const nbExclus = resultat.breakers.filter(b => !estCircuitSansDisjoncteur(b)).length - breakersAPousser.length;
     // Renommer un circuit automatique (Niveau.nomsCircuits) ne modifie jamais resultat.breakers
     // (label "naturel", utilisé comme clé stable par couleursCircuits/ordresCircuits) — on
     // résout donc le nom affiché ici, juste avant de pousser vers le tableau, en fusionnant
@@ -3879,6 +4027,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               title={modeFocus ? "Quitter le plein écran (Échap)" : "Plein écran"}>
               {modeFocus ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
             </button>
+            <button onClick={annuler} disabled={!peutAnnuler} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Annuler la dernière action (Ctrl+Z)"><Undo2 size={14} /></button>
+            <button onClick={refaire} disabled={!peutRefaire} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Refaire (Ctrl+Y)"><Redo2 size={14} /></button>
+            {autoSaveMsg && <span className="text-[11px] text-emerald-600 whitespace-nowrap">{autoSaveMsg}</span>}
             <button onClick={handleSave} disabled={saving} className={`btn-volt !px-3 !py-1 !text-xs ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
               <Save size={13} />{saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
             </button>
@@ -3918,6 +4069,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               <button onClick={() => setShowPrintForm(true)} className="btn-ghost"><Printer size={15} /> Imprimer</button>
             )}
             <Link href={`/predevis/${clientId}${qsProjet(projet.id)}`} className="btn-ghost"><Receipt size={15} /> Pré-devis</Link>
+            <button onClick={annuler} disabled={!peutAnnuler} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Annuler la dernière action (Ctrl+Z)"><Undo2 size={14} /></button>
+            <button onClick={refaire} disabled={!peutRefaire} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Refaire (Ctrl+Y)"><Redo2 size={14} /></button>
+            {autoSaveMsg && <span className="text-[11px] text-emerald-600 whitespace-nowrap">{autoSaveMsg}</span>}
             <button onClick={handleSave} disabled={saving} className={`btn-volt ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
               <Save size={15} />{saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
             </button>
@@ -3986,14 +4140,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           <button onClick={entrerModeDessiner} className={`btn-ghost !text-xs ${mode === "dessiner" ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <Pencil size={13} /> Dessiner une pièce
           </button>
-          <button onClick={entrerModeCloison} disabled={!niveauActif || niveauActif.pieces.length === 0}
-            title="Monter une cloison dans une pièce existante (dressing, placard…) : clic sur un mur, angles, puis clic sur un mur"
-            className={`btn-ghost !text-xs disabled:opacity-40 ${mode === "cloison" ? "!bg-ink-900 !text-volt-400" : ""}`}>
+          <button onClick={entrerModeCloison} disabled={!niveauActif}
+            title="Monter une cloison (mur intérieur) : clic pour chaque point, Entrée pour terminer. Elle ne modifie aucune pièce : on peut ensuite la nommer, la déplacer à la souris, y percer une porte ou la supprimer"
+            className={`btn-ghost !text-xs disabled:opacity-40 ${mode === "zone" && zoneCloisonSeule ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <SplitSquareHorizontal size={13} /> Cloison
           </button>
           <button onClick={entrerModeZone} disabled={!niveauActif}
             title="Dessiner une zone nommée (dressing ouvert, coin bureau…) avec sa surface, ou une cloison libre qui s'arrête dans la pièce"
-            className={`btn-ghost !text-xs disabled:opacity-40 ${mode === "zone" ? "!bg-ink-900 !text-volt-400" : ""}`}>
+            className={`btn-ghost !text-xs disabled:opacity-40 ${mode === "zone" && !zoneCloisonSeule ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <BoxSelect size={13} /> Zone
           </button>
           <button onClick={armerPlacementTableau} className={`btn-ghost !text-xs ${placingTableau ? "!bg-ink-900 !text-volt-400" : ""}`}>
@@ -4036,26 +4190,26 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           <button onClick={() => setPaletteOpen(o => !o)} className={`btn-ghost !text-xs lg:hidden ${paletteOpen ? "!bg-ink-900 !text-volt-400" : ""}`}>
             Appareillages
           </button>
-          {mode === "zone" && (
+          {mode === "zone" && !zoneCloisonSeule && (
             <>
               <span className="text-[11px] text-ink-500 max-w-md">
                 {zonePoints.length === 0
                   ? "Zone — clique les sommets (un côté posé sur un mur existant s'accroche) · Retour arrière = annuler le dernier point · Échap = quitter"
-                  : zonePoints.length < 3 ? "Zone — continue le tracé, ou termine comme cloison libre" : "Zone — clique le 1er point (ou « Fermer ») pour terminer le polygone"}
+                  : zonePoints.length < 3 ? "Zone — continue le tracé" : "Zone — clique le 1er point (ou « Fermer ») pour terminer le polygone"}
               </span>
               {zonePoints.length >= 3 && <button onClick={() => terminerTraceZone(true)} className="btn-volt !text-xs">Fermer le polygone</button>}
-              {zonePoints.length >= 2 && <button onClick={() => terminerTraceZone(false)} className="btn-ghost !text-xs" title="Une cloison qui s'arrête dans la pièce : pas de surface">Terminer en cloison libre</button>}
               {zonePoints.length > 0 && <button onClick={() => setZonePoints([])} className="btn-ghost !text-xs text-red-500">Annuler</button>}
             </>
           )}
-          {mode === "cloison" && (
+          {mode === "zone" && zoneCloisonSeule && (
             <>
               <span className="text-[11px] text-ink-500 max-w-md">
-                {cloisonPoints.length === 0
-                  ? "Cloison — 1 · clique sur un mur (départ)"
-                  : "Cloison — 2 · clique les angles dans la pièce, puis termine sur un mur · Retour arrière = annuler le dernier point · Échap = quitter"}
+                {zonePoints.length === 0
+                  ? "Cloison — clique le point de départ (s'accroche sur un mur existant) · Échap = quitter"
+                  : "Cloison — clique chaque angle, puis « Terminer la cloison » (ou Entrée) · Retour arrière = annuler le dernier point"}
               </span>
-              {cloisonPoints.length > 0 && <button onClick={() => setCloisonPoints([])} className="btn-ghost !text-xs text-red-500">Annuler</button>}
+              {zonePoints.length >= 2 && <button onClick={() => terminerTraceZone(false)} className="btn-volt !text-xs">Terminer la cloison</button>}
+              {zonePoints.length > 0 && <button onClick={() => setZonePoints([])} className="btn-ghost !text-xs text-red-500">Annuler</button>}
             </>
           )}
           {mode === "dessiner" && drawingPoints.length > 0 && (
@@ -4226,6 +4380,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 const toPts = (poly: Point[]) => poly.map(toScreen).map(q => `${q.x},${q.y}`).join(" ");
                 const quads = niveauActif.pieces.flatMap(pc => geometrieMurs(pc).quads.map(q => ({ ...q, cle: `${pc.id}-${q.i}` })));
                 const struct = (q: typeof quads[number]) => {
+                  if (q.structureNulle) return null;   // mur à 0 cm : rien à dessiner
                   const col = q.type === "exterieur" ? "#44403c" : "#78716c";
                   return <polygon key={`s-${q.cle}`} points={toPts(q.structure)} fill={col} stroke={col} strokeWidth={0.6} strokeLinejoin="round" />;
                 };
@@ -4282,7 +4437,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     {zoneCliquable && cloisons.map(c => {
                       const a = toScreen(c.a), b = toScreen(c.b);
                       return <line key={`zh-${c.i}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={14} strokeLinecap="round"
-                        style={{ cursor: "pointer", pointerEvents: "stroke" }} onPointerDown={e => selectionnerZone(z.id, null, e)} />;
+                        style={{ cursor: "move", pointerEvents: "stroke" }} onPointerDown={e => cloisonDown(z, e)} />;
+                    })}
+                    {sel && !selectedZoneOuv && zoneCliquable && z.contour.map((pt, k) => {
+                      const q = toScreen(pt);
+                      return <circle key={`zv-${k}`} cx={q.x} cy={q.y} r={6} fill="#fff" stroke="#F59E0B" strokeWidth={2} style={{ cursor: "grab" }}
+                        onPointerDown={e => sommetZoneDown(z, k, e)}><title>Glisser pour déplacer ce point</title></circle>;
                     })}
                   </g>
                 );
@@ -4328,7 +4488,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       const a = piece.contour[o.segIndex], b = piece.contour[(o.segIndex + 1) % piece.contour.length];
                       if (!a || !b) return null;
                       const centreM = { x: a.x + (b.x - a.x) * o.position, y: a.y + (b.y - a.y) * o.position };
-                      const pC = toScreen(centreM), pA = toScreen(a), pB = toScreen(b);
+                      // Le contour est le tracé hors-tout : le symbole se pose au milieu du mur (fenêtre, ouverture, coulissante) ou sur
+                      // la face intérieure finie (vantail de porte, emprise de la porte de garage).
+                      const nInO = normaleInterieure(piece.contour, o.segIndex), faceO = faceInterieureM(piece, o.segIndex);
+                      const centreMur = { x: centreM.x + nInO.x * faceO / 2, y: centreM.y + nInO.y * faceO / 2 };
+                      const centreFace = { x: centreM.x + nInO.x * faceO, y: centreM.y + nInO.y * faceO };
+                      const pC = toScreen(centreMur), pA = toScreen(a), pB = toScreen(b);
                       const angleDeg = Math.atan2(pB.y - pA.y, pB.x - pA.x) * 180 / Math.PI;
                       const largeurPx = Math.max(10, (o.largeur / 100) * PX_PER_M * zoom);
                       const isSel = o.id === selectedOuvertureId;
@@ -4351,8 +4516,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         const dxw = b.x - a.x, dyw = b.y - a.y;
                         const longueurMur = Math.hypot(dxw, dyw) || 1;
                         const dirX = dxw / longueurMur, dirY = dyw / longueurMur;
-                        const jambeA = { x: centreM.x - dirX * (largeurM / 2), y: centreM.y - dirY * (largeurM / 2) };
-                        const jambeB = { x: centreM.x + dirX * (largeurM / 2), y: centreM.y + dirY * (largeurM / 2) };
+                        const jambeA = { x: centreFace.x - dirX * (largeurM / 2), y: centreFace.y - dirY * (largeurM / 2) };
+                        const jambeB = { x: centreFace.x + dirX * (largeurM / 2), y: centreFace.y + dirY * (largeurM / 2) };
                         let nx = -dirY, ny = dirX;
                         const cPiece = centroide(piece.contour);
                         if (nx * (cPiece.x - centreM.x) + ny * (cPiece.y - centreM.y) < 0) { nx = -nx; ny = -ny; }
@@ -4367,8 +4532,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         const dxw = b.x - a.x, dyw = b.y - a.y;
                         const longueurMur = Math.hypot(dxw, dyw) || 1;
                         const dirX = dxw / longueurMur, dirY = dyw / longueurMur;
-                        const jambeA = { x: centreM.x - dirX * (largeurM / 2), y: centreM.y - dirY * (largeurM / 2) };
-                        const jambeB = { x: centreM.x + dirX * (largeurM / 2), y: centreM.y + dirY * (largeurM / 2) };
+                        const jambeA = { x: centreFace.x - dirX * (largeurM / 2), y: centreFace.y - dirY * (largeurM / 2) };
+                        const jambeB = { x: centreFace.x + dirX * (largeurM / 2), y: centreFace.y + dirY * (largeurM / 2) };
                         let nx = -dirY, ny = dirX;
                         const cPiece = centroide(piece.contour);
                         const versCentre = { x: cPiece.x - centreM.x, y: cPiece.y - centreM.y };
@@ -5398,8 +5563,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   </p>
                   <div className="flex items-center gap-2 text-xs text-ink-500">
                     <span className="shrink-0 w-28">Épaisseur cloison (cm)</span>
-                    <input type="number" min={5} max={50} className="input !py-1 !text-xs !w-20" key={`zep-${z.id}`} defaultValue={z.epaisseurCm}
-                      onChange={e => { const v = parseFloat(e.target.value); if (v >= 5 && v <= 50) majZone(z.id, zz => ({ ...zz, epaisseurCm: v })); }} />
+                    <input type="number" min={1} max={50} className="input !py-1 !text-xs !w-20" key={`zep-${z.id}`} defaultValue={z.epaisseurCm}
+                      onChange={e => { const v = parseFloat(e.target.value); if (v >= 1 && v <= 50) majZone(z.id, zz => ({ ...zz, epaisseurCm: v })); }} />
                   </div>
                   {z.ferme && (
                     <div className="flex flex-col gap-1 border-t border-ink-100 pt-2">
@@ -5420,7 +5585,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     </div>
                   )}
                   <p className="text-[11px] text-ink-400">
-                    Pour percer une porte : outil « Porte / fenêtre », puis clic sur une cloison de la zone. Une zone n&apos;est pas une pièce : elle ne porte ni appareillage ni circuit.
+                    Glisse la cloison (ou ses points orange) pour la déplacer · Suppr = supprimer · Pour percer une porte : outil « Porte / fenêtre », puis clic sur une cloison. Une zone n&apos;est pas une pièce : elle ne porte ni appareillage ni circuit.
                   </p>
                 </DraggablePanel>
               );
