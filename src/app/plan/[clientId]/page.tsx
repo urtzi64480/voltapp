@@ -4142,6 +4142,30 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   if (loading) return <Shell><div className="flex items-center justify-center h-64 text-ink-400">Chargement…</div></Shell>;
 
+
+  // Actions « circuits » (générer / afficher / point de départ manquant) : mêmes éléments en 2D (bandeau en haut à gauche)
+  // et en 3D (onglet « Vue » du bandeau de commandes). null = rien à proposer.
+  const blocCircuits: ReactNode = (() => {
+    if (!niveauActif || !niveauActif.pieces.some(pc => pc.appareillages.length > 0)) return null;
+    const origine = origineCircuits(niveauActif);
+    if (resultat && showCircuits && origine) return null;
+    return (
+      <>
+        {!resultat && (
+          <button onClick={handleGenerer} className="btn-volt !text-xs shadow-lg"><Sparkles size={13} /> Circuits non affichés — Générer les circuits</button>
+        )}
+        {resultat && !showCircuits && (
+          <button onClick={() => setShowCircuits(true)} className="btn-volt !text-xs shadow-lg"><Eye size={13} /> Afficher les circuits</button>
+        )}
+        {resultat && showCircuits && !origine && (
+          <div className="bg-amber-50 border border-amber-300 text-amber-800 text-xs rounded-lg px-3 py-2 shadow">
+            Aucun point de départ sur ce niveau : pose le <strong>tableau</strong> (⚡ Position tableau) ou le point d&apos;arrivée des gaines pour tracer les circuits.
+          </div>
+        )}
+      </>
+    );
+  })();
+
   return (
     <Shell>
       <div className={modeFocus
@@ -4471,32 +4495,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         <div className="flex-1 flex overflow-hidden">
           <div className="flex-1 relative overflow-hidden bg-white">
             {/* Circuits : ils ne sont jamais enregistrés avec le plan, il faut les générer (ou les ré-afficher) à
-                chaque ouverture. Ce bandeau est visible en 2D comme en 3D, barre d'outils repliée ou non. */}
-            {niveauActif && niveauActif.pieces.some(pc => pc.appareillages.length > 0) && (() => {
-              const origine = origineCircuits(niveauActif);
-              if (resultat && showCircuits && origine) return null;
-              return (
-                <div className="absolute top-3 left-3 z-20 flex flex-col gap-1.5 max-w-xs">
-                  {!resultat && (
-                    <button onClick={handleGenerer} className="btn-volt !text-xs shadow-lg"><Sparkles size={13} /> Circuits non affichés — Générer les circuits</button>
-                  )}
-                  {resultat && !showCircuits && (
-                    <button onClick={() => setShowCircuits(true)} className="btn-volt !text-xs shadow-lg"><Eye size={13} /> Afficher les circuits</button>
-                  )}
-                  {resultat && showCircuits && !origine && (
-                    <div className="bg-amber-50 border border-amber-300 text-amber-800 text-xs rounded-lg px-3 py-2 shadow">
-                      Aucun point de départ sur ce niveau : pose le <strong>tableau</strong> (⚡ Position tableau) ou le point d&apos;arrivée des gaines pour tracer les circuits.
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+                chaque ouverture. En 2D : bandeau en haut à gauche ; en 3D : ces mêmes actions sont dans l'onglet « Vue »
+                du bandeau de commandes (voir Vue3D, circuitsAction). */}
+            {!vue3D && blocCircuits && (
+              <div className="absolute top-3 left-3 z-20 flex flex-col gap-1.5 max-w-xs">{blocCircuits}</div>
+            )}
             {!vue3D && niveauActif && (
               <BoussoleOrientation angle={orientationNord} onChange={definirOrientationNord} />
             )}
             {vue3D ? (
               niveauActif ? (
-                <Vue3D ref={vue3DRef} niveau={niveauActif} resultat={resultat} showCircuits={showCircuits} orientationNord={orientationNord} />
+                <Vue3D ref={vue3DRef} niveau={niveauActif} resultat={resultat} showCircuits={showCircuits} orientationNord={orientationNord} circuitsAction={blocCircuits} />
               ) : null
             ) : (
               <>
