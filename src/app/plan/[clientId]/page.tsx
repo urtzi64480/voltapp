@@ -27,11 +27,12 @@ import {
   LiaisonWaypoint, cleSegmentLiaison,
   cheminSegment, longueurBranchesEclairage, centroidePoints, assombrirCouleur, pointsOndulesEntre,
   BoiteDerivation, migrerBoitesDerivation,
-  Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
+  Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
   estCommande, estCommandeDouble, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M,
 } from "@/lib/maison-types";
 import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillageSymbolSvgString, PALETTE, labelAppareillage, labelAppareillagePlace, initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 import { cotesOuvertures, cotesExterieures, coteHorsTout } from "@/lib/cotes-archi";
+import { normaliserAngle } from "@/lib/soleil";
 import { posesTroncons, hauteursTroncons } from "@/lib/pose-circuits";
 import { creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurCircuit } from "@/lib/longueurs-circuits";
 import { migrerModeleMurs, aimanterSurFaceMur, preparerMurs, definirMitoyens, mitoyensDe, longueursUtilesCm, geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
@@ -641,6 +642,42 @@ function imprimerPlan(
 
 // ─── DRAG STATE ───────────────────────────────────────────────────────────────
 
+// Boussole du plan : l'aiguille rouge indique le NORD. Glisser pour la tourner (ou saisir l'angle dans la barre) —
+// 0° = Nord en haut du plan, 90° = Nord à droite. Réglage commun au bâtiment, repris par le soleil de midi en 3D.
+function BoussoleOrientation({ angle, onChange }: { angle: number; onChange: (deg: number) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [glisse, setGlisse] = useState(false);
+  const depuisPointeur = (e: { clientX: number; clientY: number }) => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const dx = e.clientX - (r.left + r.width / 2);
+    const dy = e.clientY - (r.top + r.height / 2);
+    if (Math.hypot(dx, dy) < 4) return;
+    // Angle horaire depuis le haut : atan2(dx, -dy).
+    onChange((Math.atan2(dx, -dy) * 180) / Math.PI);
+  };
+  return (
+    <div ref={ref}
+      className="absolute top-3 right-3 z-10 w-16 h-16 rounded-full bg-white/90 border border-ink-200 shadow select-none"
+      style={{ touchAction: "none", cursor: glisse ? "grabbing" : "grab" }}
+      title="Orientation du bâtiment : glisser pour placer le Nord"
+      onPointerDown={e => { e.stopPropagation(); (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId); setGlisse(true); depuisPointeur(e); }}
+      onPointerMove={e => { if (glisse) depuisPointeur(e); }}
+      onPointerUp={e => { setGlisse(false); (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId); }}>
+      <svg viewBox="-32 -32 64 64" className="w-full h-full pointer-events-none">
+        <circle r={29} fill="none" stroke="#d6d3d1" strokeWidth={1} />
+        <g transform={`rotate(${angle})`}>
+          <polygon points="0,-24 6,0 -6,0" fill="#dc2626" />
+          <polygon points="0,24 6,0 -6,0" fill="#a8a29e" />
+          <text y={-26} x={0} textAnchor="middle" fontSize="9" fontWeight="700" fill="#dc2626" transform="translate(0,-2)">N</text>
+        </g>
+        <circle r={2.5} fill="#1c1917" />
+      </svg>
+      <span className="absolute -bottom-4 inset-x-0 text-center text-[10px] font-mono text-ink-500">{Math.round(angle)}°</span>
+    </div>
+  );
+}
+
 type DragMode =
   | { kind: "none" }
   | { kind: "pan"; startX: number; startY: number; startPan: Point }
@@ -649,6 +686,7 @@ type DragMode =
   | { kind: "nomPiece"; pieceId: number; startX: number; startY: number; startOffset: Point }
   | { kind: "appareillage"; pieceId: number; appareillageId: number }
   | { kind: "meuble"; pieceId: number; meubleId: number }
+  | { kind: "personne"; pieceId: number }
   | { kind: "ouverture"; pieceId: number; ouvertureId: number }
   | { kind: "zone"; zoneId: number; startX: number; startY: number; startContour: Point[] }
   | { kind: "zoneSommet"; zoneId: number; index: number }
@@ -1879,6 +1917,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const niveauActif = niveaux.find(n => n.id === niveauActifId) ?? null;
 
+  // Orientation du bâtiment : angle entre le haut du plan et le Nord (voir Niveau.orientationNord). Commune à tous les
+  // niveaux — stockée sur chacun pour suivre l'annuler/refaire et la sauvegarde sans rien changer au format du plan.
+  const orientationNord = niveaux.find(n => n.orientationNord != null)?.orientationNord ?? 0;
+  const definirOrientationNord = (deg: number) => {
+    const v = normaliserAngle(deg);
+    setNiveaux(nvs => nvs.map(n => ({ ...n, orientationNord: v })));
+  };
+
   const toScreen = useCallback((pt: Point): Point =>
     ({ x: pt.x * PX_PER_M * zoom + pan.x, y: pt.y * PX_PER_M * zoom + pan.y }), [zoom, pan]);
   const toMeters = useCallback((px: number, py: number): Point =>
@@ -1977,6 +2023,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : {
             ...p, meubles: (p.meubles ?? []).map(mb => mb.id === dragMode.meubleId ? { ...mb, x: snapped.x, y: snapped.y } : mb),
           }),
+        }));
+      } else if (dragMode.kind === "personne") {
+        // Personne témoin 1,80 m : à la grille, comme un meuble.
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const raw = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        const snapped = { x: arrondiGrille(raw.x), y: arrondiGrille(raw.y) };
+        updateNiveauActif(n => ({
+          ...n,
+          pieces: n.pieces.map(p => p.id !== dragMode.pieceId || !p.personne ? p : { ...p, personne: { ...p.personne, x: snapped.x, y: snapped.y } }),
         }));
       } else if (dragMode.kind === "zone") {
         // Cloison / zone entière : déplacée à la grille, portes comprises (leur position est relative au côté).
@@ -2079,7 +2135,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       // (porte/fenêtre), "boite" et "pointArrivee" (purement cosmétiques/informatifs) ne
       // changent jamais la composition électrique du plan — les exclure évite de
       // réinitialiser les circuits générés à chaque simple clic ou déplacement de ces éléments.
-      if (dragBougeRef.current && !["liaison", "pan", "ouverture", "boite", "pointArrivee", "meuble", "nomPiece", "zone", "zoneSommet"].includes(dragMode.kind)) invalidateResultat();
+      if (dragBougeRef.current && !["liaison", "pan", "ouverture", "boite", "pointArrivee", "meuble", "personne", "nomPiece", "zone", "zoneSommet"].includes(dragMode.kind)) invalidateResultat();
       setDragEndTick(t => t + 1);
       setDragMode({ kind: "none" });
       setSnapGuide(null);
@@ -2563,6 +2619,40 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       pieces: n.pieces.map(p => ({ ...p, meubles: (p.meubles ?? []).filter(m => m.id !== meubleId) })),
     }));
     setSelectedMeubleId(null);
+  };
+
+  // ─── PERSONNE TÉMOIN 1,80 m (vue 3D) ────────────────────────────────────────────
+  // Une par pièce, purement visuelle (jamais d'invalidateResultat : aucun effet sur circuits ni devis).
+  const ajouterPersonne = (piece: Piece) => {
+    const c = piece.contour.length > 0 ? centroide(piece.contour) : { x: 0, y: 0 };
+    const centre = pointDansPolygone(c, piece.contour) ? c : piece.contour[0] ?? c;
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => p.id === piece.id ? { ...p, personne: nouvellePersonne(arrondiGrille(centre.x), arrondiGrille(centre.y)) } : p),
+    }));
+  };
+  const basculerPersonne = (pieceId: number) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => p.id === pieceId && p.personne ? { ...p, personne: { ...p.personne, masquee: !p.personne.masquee } } : p),
+    }));
+  };
+  const retirerPersonne = (pieceId: number) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => { if (p.id !== pieceId) return p; const { personne: _retiree, ...reste } = p; return reste; }),
+    }));
+  };
+  const onPersonnePointerDown = (piece: Piece, e: React.PointerEvent) => {
+    if (cheminementDessin || liaisonLumiereMode) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) { e.stopPropagation(); return; }
+    e.stopPropagation();
+    setSelectedPieceId(piece.id);
+    setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
+    setSelectedMeubleId(null); setSelectedWaypoint(null); setSelectedPointArrivee(false);
+    setPanelResetTick(t => t + 1);
+    if (piece.verrouillee) return;
+    setDragMode({ kind: "personne", pieceId: piece.id });
   };
 
   // ─── SOMMETS DU CONTOUR D'UNE PIÈCE ────────────────────────────────────────────
@@ -4122,6 +4212,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   <span>m</span>
                 </>
               )}
+              <span className="ml-2" title="Angle entre le haut du plan et le Nord, dans le sens horaire (0 = Nord en haut). Sert au soleil de midi en vue 3D.">Nord</span>
+              <input type="number" min={0} max={359} step={1} className="input !py-1 !text-xs !w-16"
+                value={orientationNord}
+                onChange={e => { if (e.target.value !== "") definirOrientationNord(Number(e.target.value)); }} />
+              <span>°</span>
               <span className="ml-2">Plafond</span>
               <input type="number" step="0.1" className="input !py-1 !text-xs !w-16"
                 value={niveauActif.hauteurPlafond ?? 2.5}
@@ -4339,9 +4434,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 </div>
               );
             })()}
+            {!vue3D && niveauActif && (
+              <BoussoleOrientation angle={orientationNord} onChange={definirOrientationNord} />
+            )}
             {vue3D ? (
               niveauActif ? (
-                <Vue3D ref={vue3DRef} niveau={niveauActif} resultat={resultat} showCircuits={showCircuits} />
+                <Vue3D ref={vue3DRef} niveau={niveauActif} resultat={resultat} showCircuits={showCircuits} orientationNord={orientationNord} />
               ) : null
             ) : (
               <>
@@ -4792,6 +4890,25 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 );
               })}
 
+              {niveauActif?.pieces.filter(piece => piece.personne).map(piece => {
+                const pe = piece.personne!;
+                const p = toScreen({ x: pe.x, y: pe.y });
+                const r = 0.25 * PX_PER_M * zoom; // épaules ≈ 50 cm vues de dessus
+                const actif = mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingMeuble;
+                return (
+                  <g key={`personne-${piece.id}`} onPointerDown={e => onPersonnePointerDown(piece, e)}
+                    opacity={pe.masquee ? 0.35 : 1}
+                    style={{ cursor: actif ? (piece.verrouillee ? "pointer" : "grab") : "default" }}>
+                    <ellipse cx={p.x} cy={p.y} rx={r} ry={r * 0.6} fill="#2563eb" fillOpacity={0.35} stroke="#2563eb" strokeWidth={1.5}
+                      strokeDasharray={pe.masquee ? "3,2" : undefined} />
+                    <circle cx={p.x} cy={p.y} r={r * 0.45} fill="#f1c9a5" stroke="#92400e" strokeWidth={1} />
+                    <text x={p.x} y={p.y + r * 0.6 + 11} textAnchor="middle" fontSize="9" fontWeight="600" fill="#1d4ed8" style={{ pointerEvents: "none" }}>
+                      {HAUTEUR_PERSONNE_M.toFixed(2).replace(".", ",")} m{pe.masquee ? " (masquée)" : ""}
+                    </text>
+                  </g>
+                );
+              })}
+
               {niveauActif?.pieces.flatMap(piece => piece.appareillages.map(a => ({ piece, a }))).map(({ piece, a }) => {
                 // p = position stockée (sur la ligne du mur quand l'appareillage est aimanté) ;
                 // (cx, cy) = centre du carré dessiné : décalé vers l'intérieur de la pièce d'une
@@ -5171,6 +5288,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 </button>
                 {selectedPiece.nomDecalage && !selectedPiece.verrouillee && (
                   <button onClick={() => reinitialiserNomPiece(selectedPiece.id)} className="btn-ghost !px-2 !py-1.5 !text-xs" title="Replacer le nom et la surface automatiquement">↺ Nom</button>
+                )}
+                {!selectedPiece.personne ? (
+                  <button onClick={() => ajouterPersonne(selectedPiece)} className="btn-ghost !px-2 !py-1.5 !text-xs"
+                    title="Pose une personne de 1,80 m dans la pièce (vue 3D) pour juger les échelles — déplaçable à la souris">+ Personne 1,80 m</button>
+                ) : (
+                  <>
+                    <button onClick={() => basculerPersonne(selectedPiece.id)} className={`${selectedPiece.personne.masquee ? "btn-ghost" : "btn-volt"} !px-2 !py-1.5 !text-xs`}
+                      title={selectedPiece.personne.masquee ? "Personne masquée en 3D — cliquer pour l'afficher" : "Masquer la personne en 3D (elle reste en place)"}>
+                      {selectedPiece.personne.masquee ? "Afficher la personne" : "Masquer la personne"}
+                    </button>
+                    <button onClick={() => retirerPersonne(selectedPiece.id)} className="btn-danger !px-2 !py-1.5" title="Supprimer la personne de cette pièce"><Trash2 size={13} /></button>
+                  </>
                 )}
                 <button onClick={() => zoomSurPiece(selectedPiece)} className="btn-ghost !px-2 !py-1.5" title="Zoomer sur la pièce"><Search size={13} /></button>
                 <button onClick={() => setEditingPiece(selectedPiece)} className="btn-ghost !px-2 !py-1.5"><Pencil size={13} /></button>
