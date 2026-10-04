@@ -18,7 +18,7 @@ import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSail
 import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante } from "@/components/plan/PortesOuvrables";
 import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
 import { cloisonsDeZone, ouverturesEffectivesZone } from "@/lib/zones";
-import { parametresMur3D, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT, preparerMurs, pointDansCouche2 } from "@/lib/murs";
+import { parametresMur3D, geometrieMurs, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT, preparerMurs, pointDansCouche2 } from "@/lib/murs";
 import { appareillagesEnPoseApparente, posesTroncons, hauteursTroncons, hauteurDefautLiaison } from "@/lib/pose-circuits";
 import { construireChemin3D, hauteurGaineNiveau } from "@/lib/chemin-3d";
 import { HAUTEUR_TABLEAU_DEFAUT, creerContexteLongueurs } from "@/lib/longueurs-circuits";
@@ -93,6 +93,65 @@ function creerEtiquetteSprite(texte: string, couleurFond: string): THREE.Sprite 
 // un linteau plein au-dessus de l'ouverture jusqu'au plafond, une allège pleine
 // en dessous pour une fenêtre (une porte va jusqu'au sol, pas d'allège), et les
 // pans de mur pleins entre deux ouvertures ou jusqu'aux extrémités du segment.
+// ─── PRISME D'UNE COUCHE DE MUR ────────────────────────────────────────────────────────────────────────────
+// Une couche de mur (structure, doublage, finition) est un quadrilatère du plan, dont les extrémités sont les ONGLETS
+// exacts des angles (voir geometrieMurs, murs.ts). On l'extrude tel quel, découpé en tranches le long du mur (autour des
+// ouvertures) : les couches de deux murs voisins se rejoignent exactement, sur un angle sortant comme sur un angle
+// rentrant — aucun débordement, donc aucun « retour » visible à l'intérieur de la pièce.
+// s0..s1 : tranche, en mètres le long du mur depuis a, dans le sens a → (ux, uy) ; y0..y1 : hauteurs.
+function ajouterPrismeCouche(
+  quad: { x: number; y: number }[], a: { x: number; y: number }, ux: number, uy: number,
+  s0: number, s1: number, y0: number, y1: number, mat: THREE.Material, scene: THREE.Scene,
+): void {
+  if (y1 - y0 < 0.002 || s1 - s0 < 0.002) return;
+  type Pt = { x: number; z: number; s: number };
+  let poly: Pt[] = quad.map(p => ({ x: p.x, z: p.y, s: (p.x - a.x) * ux + (p.y - a.y) * uy }));
+  // Découpe de Sutherland–Hodgman contre s >= s0 puis s <= s1 (polygone convexe : le résultat l'est aussi).
+  const couper = (pts: Pt[], garde: (p: Pt) => boolean, limite: number): Pt[] => {
+    const out: Pt[] = [];
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i], q = pts[(i + 1) % pts.length];
+      const gp = garde(p), gq = garde(q);
+      if (gp) out.push(p);
+      if (gp !== gq && Math.abs(q.s - p.s) > 1e-12) {
+        const t = (limite - p.s) / (q.s - p.s);
+        out.push({ x: p.x + (q.x - p.x) * t, z: p.z + (q.z - p.z) * t, s: limite });
+      }
+    }
+    return out;
+  };
+  poly = couper(poly, p => p.s >= s0, s0);
+  poly = couper(poly, p => p.s <= s1, s1);
+  if (poly.length < 3) return;
+  let aire2 = 0;
+  for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length]; aire2 += p.x * q.z - q.x * p.z; }
+  if (Math.abs(aire2) < 1e-6) return;
+  if (aire2 > 0) poly = poly.slice().reverse();          // sens tel que la face du dessus regarde vers +y
+  const cx = poly.reduce((t, p) => t + p.x, 0) / poly.length, cz = poly.reduce((t, p) => t + p.z, 0) / poly.length;
+  const pos: number[] = [];
+  const tri = (A: number[], B: number[], C: number[]) => { pos.push(...A, ...B, ...C); };
+  for (let k = 1; k < poly.length - 1; k++) {
+    tri([poly[0].x, y1, poly[0].z], [poly[k].x, y1, poly[k].z], [poly[k + 1].x, y1, poly[k + 1].z]);   // dessus
+    tri([poly[0].x, y0, poly[0].z], [poly[k + 1].x, y0, poly[k + 1].z], [poly[k].x, y0, poly[k].z]);   // dessous
+  }
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length];
+    const dx = q.x - p.x, dz = q.z - p.z;
+    if (Math.hypot(dx, dz) < 1e-6) continue;
+    // face latérale tournée vers l'extérieur de la tranche : on teste le sens avec le centre
+    const sortant = (dz * ((p.x + q.x) / 2 - cx) - dx * ((p.z + q.z) / 2 - cz)) > 0;
+    const b0 = [p.x, y0, p.z], b1 = [q.x, y0, q.z], t0 = [p.x, y1, p.z], t1 = [q.x, y1, q.z];
+    if (sortant) { tri(b0, t1, b1); tri(b0, t0, t1); } else { tri(b0, b1, t1); tri(b0, t1, t0); }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+}
+
 export function construireMurAvecOuvertures(
   a: { x: number; y: number }, b: { x: number; y: number }, hauteurMur: number,
   ouvertures: OuvertureEffective[], epaisseur: number, murMat: THREE.Material, scene: THREE.Scene,
@@ -103,9 +162,13 @@ export function construireMurAvecOuvertures(
   // sensInterieur : signe de la normale du mur (repère du plan) qui regarde l'INTÉRIEUR de la pièce porteuse
   // (+1 par défaut) — sert au sens de battement des portes ; enregistrerPorte : reçoit chaque porte ouvrable
   // construite (pour piloter son ouverture sans reconstruire la scène).
-  opts: { decalage?: number; extDebut?: number; extFin?: number; avecContenu?: boolean; sensInterieur?: 1 | -1; enregistrerPorte?: (p: PorteRegistre) => void } = {},
+  // quad : quadrilatère exact de la couche (angles en onglet, voir ajouterPrismeCouche) — quand il est fourni, c'est lui qui
+  // dessine la couche (decalage / epaisseur ne servent alors qu'au contenu : vitrage, vantail, encadrement).
+  opts: { decalage?: number; extDebut?: number; extFin?: number; avecContenu?: boolean; sensInterieur?: 1 | -1; enregistrerPorte?: (p: PorteRegistre) => void; quad?: { x: number; y: number }[] } = {},
 ): void {
-  const { decalage = 0, extDebut = 0, extFin = 0, avecContenu = true, sensInterieur = 1, enregistrerPorte } = opts;
+  const { decalage = 0, avecContenu = true, sensInterieur = 1, enregistrerPorte, quad } = opts;
+  // Avec un quadrilatère, les tranches de mur s'étendent « à l'infini » : c'est le quadrilatère qui les borne aux onglets.
+  const extDebut = quad ? 1000 : (opts.extDebut ?? 0), extFin = quad ? 1000 : (opts.extFin ?? 0);
   const dx = b.x - a.x, dy = b.y - a.y;
   const longueur = Math.hypot(dx, dy);
   if (longueur < 0.01) return;
@@ -115,6 +178,10 @@ export function construireMurAvecOuvertures(
 
   const ajouterPan = (centreLong: number, largeur: number, centreHauteur: number, hauteur: number) => {
     if (largeur < 0.005 || hauteur < 0.005) return;
+    if (quad) {
+      ajouterPrismeCouche(quad, a, ux, uy, centreLong - largeur / 2, centreLong + largeur / 2, centreHauteur - hauteur / 2, centreHauteur + hauteur / 2, murMat, scene);
+      return;
+    }
     const geo = new THREE.BoxGeometry(largeur, hauteur, epaisseur);
     const mesh = new THREE.Mesh(geo, murMat);
     mesh.position.set(a.x + ux * centreLong + nx * decalage, centreHauteur, a.y + uy * centreLong + ny * decalage);
@@ -430,13 +497,18 @@ const Vue3D = forwardRef<Vue3DHandle, {
         const lSeg = Math.hypot(b.x - a.x, b.y - a.y) || 1;
         const sensInterieur: 1 | -1 = (-(b.y - a.y) / lSeg * (centrePiece.x - a.x) + (b.x - a.x) / lSeg * (centrePiece.y - a.y)) >= 0 ? 1 : -1;
         const m = parametresMur3D(piece, i);
-        // Les 3 couches (structure, doublage, finition), chacune à sa position réelle par rapport au contour
-        // (= face intérieure finie sur un mur extérieur, axe de la cloison sur un mur mitoyen) ; les MÊMES
-        // ouvertures traversent toutes les couches.
+        // Les 3 couches (structure, doublage, finition) : chacune bâtie à partir de son quadrilatère exact (onglets
+        // d'angle, voir geometrieMurs) ; les MÊMES ouvertures traversent toutes les couches. Le contenu (encadrement,
+        // vantail, vitrage) est posé avec la structure, sur l'épaisseur TOTALE du mur.
+        const quadsMur = geometrieMurs(piece).quads[i];
+        const epTotale = m.e + m.d + m.f;
         m.couches.forEach(c => {
           const mat = c.nom === "structure" ? (m.type === "exterieur" ? murExtMat : murMat) : c.nom === "doublage" ? doublageMat : finitionMat;
-          construireMurAvecOuvertures(a, b, hauteurMurs - c.reduction, ouverturesSegment, c.epaisseur, mat, scene,
-            { decalage: c.decalage, extDebut: c.extDebut, extFin: c.extFin, avecContenu: c.nom === "structure", sensInterieur, enregistrerPorte });
+          const quad = c.nom === "structure" ? quadsMur.structure : c.nom === "doublage" ? quadsMur.doublage : quadsMur.finition;
+          if (!quad) return;
+          const contenu = c.nom === "structure";
+          construireMurAvecOuvertures(a, b, hauteurMurs - c.reduction, ouverturesSegment, contenu ? Math.max(epTotale, 0.02) : c.epaisseur, mat, scene,
+            { decalage: contenu ? m.signeInterieur * (epTotale / 2) : c.decalage, avecContenu: contenu, sensInterieur, enregistrerPorte, quad });
         });
       });
 
