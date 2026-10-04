@@ -185,17 +185,17 @@ export default function SignerPage({ params }: { params: { token: string } }) {
               </tr>
             </thead>
             <tbody>
-              {blocs.map(b => (
+              {blocs.map((b, bi) => (
                 <Fragment key={b.poste ?? "__hors_poste"}>
                   {aDesPostes && (
-                    <tr className="bg-gray-50 border-b border-gray-100">
+                    <tr className={`border-b border-gray-100 ${bi % 2 === 1 ? "bg-gray-100" : "bg-white"}`}>
                       <td className="py-2 px-2 text-xs font-semibold uppercase tracking-wide text-gray-700">{b.poste ?? "Autres prestations"}</td>
                       <td />
                       <td className="py-2 text-right text-xs font-semibold text-gray-900">{fmt(totalItems(b.items))}</td>
                     </tr>
                   )}
                   {b.items.map(({ l }, k) => (
-                    <tr key={k} className="border-b border-gray-50">
+                    <tr key={k} className={`border-b border-gray-50 ${aDesPostes && bi % 2 === 1 ? "bg-gray-100" : ""}`}>
                       <td className="py-2 text-gray-700"><LigneImage url={l.image_url} taille={32} className="inline-block align-middle mr-2" />{l.nom}</td>
                       <td className="py-2 text-right text-gray-500">{l.quantite}</td>
                       <td className="py-2 text-right font-medium">{fmt(l.prix_unitaire * l.quantite)}</td>
