@@ -151,7 +151,7 @@ function ApercuDocument({
               {grouperParPoste(lignes).map((b, bi, arr) => (
                 <Fragment key={b.poste ?? "__hors_poste"}>
                   {arr.some(x => x.poste !== null) && (
-                    <tr className="border-t border-ink-200 bg-ink-100">
+                    <tr className={cn("border-t border-ink-200", bi % 2 === 1 ? "bg-ink-100" : "bg-white")}>
                       <td colSpan={5} className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-ink-700">
                         <span className="flex justify-between gap-3">
                           <span>{b.poste ?? "Autres prestations"}</span>
@@ -161,7 +161,7 @@ function ApercuDocument({
                     </tr>
                   )}
                   {b.items.map(({ l, i }) => (
-                    <tr key={i} className={cn("border-t border-ink-100", i % 2 === 1 ? "bg-ink-50/50" : "bg-white")}>
+                    <tr key={i} className={cn("border-t border-ink-100", arr.some(x => x.poste !== null) ? (bi % 2 === 1 ? "bg-ink-100" : "bg-white") : (i % 2 === 1 ? "bg-ink-50/50" : "bg-white"))}>
                       <td className="px-4 py-2.5 text-ink-900">
                         <LigneImage url={(l as any).image_url} taille={32} className="inline-block align-middle mr-2" /><span className="font-medium">{l.nom}</span>
                         {(l as any).kit_description && (
@@ -732,7 +732,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                   {grouperParPoste(viewLignes).map((b, bi, arr) => (
                     <Fragment key={b.poste ?? "__hors_poste"}>
                       {arr.some(x => x.poste !== null) && (
-                        <tr className="bg-ink-50 border-b border-ink-100">
+                        <tr className={cn("border-b border-ink-100", bi % 2 === 1 ? "bg-ink-100" : "bg-white")}>
                           <td colSpan={5} className="py-2 px-2 text-xs font-semibold uppercase tracking-wide text-ink-700">
                             <span className="flex justify-between gap-3">
                               <span>{b.poste ?? "Autres prestations"}</span>
@@ -742,7 +742,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                         </tr>
                       )}
                       {b.items.map(({ l }, k) => (
-                        <tr key={k} className="border-b border-ink-50">
+                        <tr key={k} className={cn("border-b border-ink-50", arr.some(x => x.poste !== null) && bi % 2 === 1 && "bg-ink-100")}>
                           <td className="py-2.5 pr-2">
                             <span className={cn("badge text-xs mr-1.5", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
                               {l.type_branche === "service" ? "S" : "M"}
