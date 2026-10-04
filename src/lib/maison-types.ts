@@ -288,6 +288,9 @@ export interface Piece {
   // meubles, portes/fenêtres et son étiquette ne peuvent être déplacés ou redimensionnés au
   // glisser (protection contre les fausses manipulations). Les propriétés restent éditables.
   verrouillee?: boolean;
+  // Affichage de l'étiquette : nom et/ou dimensions (surface, cotes des murs, épaisseurs) masqués pour cette pièce.
+  masquerNom?: boolean;
+  masquerDimensions?: boolean;
   // Murs de la pièce : un par côté du contour (murs[i] = mur du sommet i au sommet i+1). Le contour
   // est le TRACÉ HORS-TOUT de la pièce (face extérieure des murs) : les 3 couches (structure, doublage,
   // finition) s'ajoutent À L'INTÉRIEUR du tracé, vers la pièce — les dimensions intérieures sont donc
