@@ -27,7 +27,7 @@ import {
   LiaisonWaypoint, cleSegmentLiaison,
   cheminSegment, longueurBranchesEclairage, centroidePoints, assombrirCouleur, pointsOndulesEntre,
   BoiteDerivation, migrerBoitesDerivation,
-  Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
+  Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, nouvelleVoiture, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
   estCommande, estCommandeDouble, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M,
 } from "@/lib/maison-types";
 import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillageSymbolSvgString, PALETTE, labelAppareillage, labelAppareillagePlace, initialesAppareillage } from "@/components/plan/AppareillageSymbols";
@@ -261,7 +261,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
           const u = { x: (b.x - a.x), y: (b.y - a.y) }, L = Math.hypot(u.x, u.y) || 1;
           const c0 = { x: a.x + u.x * e.position - u.x / L * e.largeur / 200, y: a.y + u.y * e.position - u.y / L * e.largeur / 200 };
           const c1 = { x: a.x + u.x * e.position + u.x / L * e.largeur / 200, y: a.y + u.y * e.position + u.y / L * e.largeur / 200 };
-          const col = e.type === "porte" || e.type === "porte_coulissante" || e.type === "porte_garage" ? "#92400E" : e.type === "fenetre" ? "#0369A1" : "#78716c";
+          const col = e.type === "porte" || e.type === "porte_coulissante" || e.type === "porte_garage" ? "#92400E" : e.type === "fenetre" || e.type === "baie_vitree" ? "#0369A1" : "#78716c";
           s += `<line x1="${toPx(c0).x.toFixed(1)}" y1="${toPx(c0).y.toFixed(1)}" x2="${toPx(c1).x.toFixed(1)}" y2="${toPx(c1).y.toFixed(1)}" stroke="${col}" stroke-width="1.2"/>`;
         }
       });
@@ -687,6 +687,7 @@ type DragMode =
   | { kind: "appareillage"; pieceId: number; appareillageId: number }
   | { kind: "meuble"; pieceId: number; meubleId: number }
   | { kind: "personne"; pieceId: number }
+  | { kind: "voiture"; pieceId: number }
   | { kind: "ouverture"; pieceId: number; ouvertureId: number }
   | { kind: "zone"; zoneId: number; startX: number; startY: number; startContour: Point[] }
   | { kind: "zoneSommet"; zoneId: number; index: number }
@@ -928,7 +929,7 @@ function OuvertureZoneSymbole({ c, o, toScreen, zoom, selectionnee, actif, onDow
   c: CloisonZone; o: Ouverture; toScreen: (p: Point) => Point; zoom: number; selectionnee: boolean; actif: boolean;
   onDown: (e: React.PointerEvent) => void;
 }) {
-  const couleur = o.type === "fenetre" ? "#0369A1" : o.type === "ouverture" ? "#78716c" : "#92400E";
+  const couleur = o.type === "fenetre" || o.type === "baie_vitree" ? "#0369A1" : o.type === "ouverture" ? "#78716c" : "#92400E";
   const L = distance(c.a, c.b) || 1, ux = (c.b.x - c.a.x) / L, uy = (c.b.y - c.a.y) / L, nx = -uy, ny = ux;
   const w = o.largeur / 100, s = o.position * L;
   const pt = (along: number, perp: number): Point => ({ x: c.a.x + ux * along + nx * perp, y: c.a.y + uy * along + ny * perp });
@@ -951,7 +952,7 @@ function OuvertureZoneSymbole({ c, o, toScreen, zoom, selectionnee, actif, onDow
     const cote = o.coulisseVers === "gauche" ? -1 : 1;
     const q0 = pt(cote > 0 ? s + w / 2 : s - w / 2 - w, 0), q1 = pt(cote > 0 ? s + w / 2 + w : s - w / 2, 0);
     corps = <polygon points={[q0, q1, { x: q1.x + nx * 0.03, y: q1.y + ny * 0.03 }, { x: q0.x + nx * 0.03, y: q0.y + ny * 0.03 }].map(P).join(" ")} fill={couleur} opacity={0.45} />;
-  } else if (o.type === "fenetre") {
+  } else if (o.type === "fenetre" || o.type === "baie_vitree") {
     corps = (<>
       <line x1={toScreen(pt(s - w / 2, 0.03)).x} y1={toScreen(pt(s - w / 2, 0.03)).y} x2={toScreen(pt(s + w / 2, 0.03)).x} y2={toScreen(pt(s + w / 2, 0.03)).y} stroke={couleur} strokeWidth={1.5} />
       <line x1={toScreen(pt(s - w / 2, -0.03)).x} y1={toScreen(pt(s - w / 2, -0.03)).y} x2={toScreen(pt(s + w / 2, -0.03)).x} y2={toScreen(pt(s + w / 2, -0.03)).y} stroke={couleur} strokeWidth={1.5} />
@@ -1425,7 +1426,7 @@ function u_aide(u: UsagePorte): string {
 }
 
 const LABEL_OUVERTURE: Record<OuvertureType, string> = {
-  porte: "Porte", porte_coulissante: "Porte coulissante", porte_garage: "Porte de garage basculante", fenetre: "Fenêtre", ouverture: "Ouverture murale",
+  porte: "Porte", porte_coulissante: "Porte coulissante", porte_garage: "Porte de garage basculante", baie_vitree: "Baie vitrée coulissante", fenetre: "Fenêtre", ouverture: "Ouverture murale",
 };
 
 function OuvertureIcon({ type, size = 16, color = "currentColor" }: { type: OuvertureType; size?: number; color?: string }) {
@@ -1451,6 +1452,14 @@ function OuvertureIcon({ type, size = 16, color = "currentColor" }: { type: Ouve
           <rect x={2} y={4} width={12} height={10} stroke={color} strokeWidth={1.4} />
           <path d="M2 7h12M2 10h12" stroke={color} strokeWidth={1} />
           <path d="M5 2.5 L8 1 L11 2.5" stroke={color} strokeWidth={0.9} />
+        </svg>
+      );
+    case "baie_vitree":
+      return (
+        <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+          <rect x={1.5} y={2.5} width={13} height={11} stroke={color} strokeWidth={1.4} />
+          <path d="M8 2.5v11" stroke={color} strokeWidth={1.2} />
+          <path d="M3.5 8h3M5.3 6.6L6.7 8l-1.4 1.4" stroke={color} strokeWidth={0.9} />
         </svg>
       );
     case "fenetre":
@@ -2034,6 +2043,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           ...n,
           pieces: n.pieces.map(p => p.id !== dragMode.pieceId || !p.personne ? p : { ...p, personne: { ...p.personne, x: snapped.x, y: snapped.y } }),
         }));
+      } else if (dragMode.kind === "voiture") {
+        // Voiture témoin : à la grille, comme un meuble.
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const raw = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        const snapped = { x: arrondiGrille(raw.x), y: arrondiGrille(raw.y) };
+        updateNiveauActif(n => ({
+          ...n,
+          pieces: n.pieces.map(p => p.id !== dragMode.pieceId || !p.voiture ? p : { ...p, voiture: { ...p.voiture, x: snapped.x, y: snapped.y } }),
+        }));
       } else if (dragMode.kind === "zone") {
         // Cloison / zone entière : déplacée à la grille, portes comprises (leur position est relative au côté).
         const dxM = arrondiGrille((e.clientX - dragMode.startX) / (PX_PER_M * zoom));
@@ -2135,7 +2154,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       // (porte/fenêtre), "boite" et "pointArrivee" (purement cosmétiques/informatifs) ne
       // changent jamais la composition électrique du plan — les exclure évite de
       // réinitialiser les circuits générés à chaque simple clic ou déplacement de ces éléments.
-      if (dragBougeRef.current && !["liaison", "pan", "ouverture", "boite", "pointArrivee", "meuble", "personne", "nomPiece", "zone", "zoneSommet"].includes(dragMode.kind)) invalidateResultat();
+      if (dragBougeRef.current && !["liaison", "pan", "ouverture", "boite", "pointArrivee", "meuble", "personne", "voiture", "nomPiece", "zone", "zoneSommet"].includes(dragMode.kind)) invalidateResultat();
       setDragEndTick(t => t + 1);
       setDragMode({ kind: "none" });
       setSnapGuide(null);
@@ -2653,6 +2672,44 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setPanelResetTick(t => t + 1);
     if (piece.verrouillee) return;
     setDragMode({ kind: "personne", pieceId: piece.id });
+  };
+
+  // ─── VOITURE TÉMOIN (vue 3D) ─────────────────────────────────────────────────────
+  // Même principe que la personne : une par pièce, purement visuelle (aucun effet sur circuits ni devis).
+  const ajouterVoiture = (piece: Piece) => {
+    const c = piece.contour.length > 0 ? centroide(piece.contour) : { x: 0, y: 0 };
+    const centre = pointDansPolygone(c, piece.contour) ? c : piece.contour[0] ?? c;
+    // Capot dans le sens de la plus grande dimension de la pièce.
+    const xs = piece.contour.map(p => p.x), ys = piece.contour.map(p => p.y);
+    const rotation = (Math.max(...ys) - Math.min(...ys)) > (Math.max(...xs) - Math.min(...xs)) ? 90 : 0;
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => p.id === piece.id ? { ...p, voiture: nouvelleVoiture(arrondiGrille(centre.x), arrondiGrille(centre.y), rotation) } : p),
+    }));
+  };
+  const modifierVoiture = (pieceId: number, patch: Partial<NonNullable<Piece["voiture"]>>) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => p.id === pieceId && p.voiture ? { ...p, voiture: { ...p.voiture, ...patch } } : p),
+    }));
+  };
+  const pivoterVoiture = (piece: Piece) => modifierVoiture(piece.id, { rotation: (((piece.voiture?.rotation ?? 0) + 90) % 360) });
+  const retirerVoiture = (pieceId: number) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => { if (p.id !== pieceId) return p; const { voiture: _retiree, ...reste } = p; return reste; }),
+    }));
+  };
+  const onVoiturePointerDown = (piece: Piece, e: React.PointerEvent) => {
+    if (cheminementDessin || liaisonLumiereMode) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) { e.stopPropagation(); return; }
+    e.stopPropagation();
+    setSelectedPieceId(piece.id);
+    setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
+    setSelectedMeubleId(null); setSelectedWaypoint(null); setSelectedPointArrivee(false);
+    setPanelResetTick(t => t + 1);
+    if (piece.verrouillee) return;
+    setDragMode({ kind: "voiture", pieceId: piece.id });
   };
 
   // ─── SOMMETS DU CONTOUR D'UNE PIÈCE ────────────────────────────────────────────
@@ -4265,7 +4322,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               <div className="absolute z-20 top-full left-0 mt-1 card card-inner !p-1 flex flex-col shadow-lg w-56">
                 {([
                   { t: "porte", usage: "interieure" }, { t: "porte", usage: "entree" }, { t: "porte", usage: "service" },
-                  { t: "porte_coulissante" }, { t: "porte_garage" }, { t: "fenetre" }, { t: "ouverture" },
+                  { t: "porte_coulissante" }, { t: "porte_garage" }, { t: "baie_vitree" }, { t: "fenetre" }, { t: "ouverture" },
                 ] as { t: OuvertureType; usage?: UsagePorte }[]).map(({ t, usage }) => {
                   const actif = placingOuverture === t && (t !== "porte" || placingUsagePorte === usage);
                   return (
@@ -4598,7 +4655,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       // Porte battante : couleur selon l'usage (intérieure brun, entrée brun foncé, service vert d'eau).
                       const couleur = o.type === "porte"
                         ? (o.usage === "entree" ? "#7C2D12" : o.usage === "service" ? "#0F766E" : "#92400E")
-                        : o.type === "porte_coulissante" || o.type === "porte_garage" ? "#92400E" : o.type === "fenetre" ? "#0369A1" : "#78716c";
+                        : o.type === "porte_coulissante" || o.type === "porte_garage" ? "#92400E" : o.type === "fenetre" || o.type === "baie_vitree" ? "#0369A1" : "#78716c";
 
                       // Symbole d'ouverture de porte (vantail + arc de débattement) — calculé en
                       // mètres à partir de la charnière et du sens choisis, puis chaque point est
@@ -4667,6 +4724,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                                 <line x1={-largeurPx / 2} y1={3} x2={largeurPx / 2} y2={3} stroke={couleur} strokeWidth={1.5} />
                               </>
                             )}
+                            {o.type === "baie_vitree" && (() => {
+                              // Deux rails : vantail fixe (moitié côté « glisse vers ») et vantail mobile (autre moitié), flèche = sens.
+                              const cote = o.coulisseVers === "gauche" ? -1 : 1;
+                              const x0 = cote > 0 ? -largeurPx / 2 : 0;
+                              return (
+                                <>
+                                  <line x1={-largeurPx / 2} y1={-3} x2={largeurPx / 2} y2={-3} stroke={couleur} strokeWidth={1.5} />
+                                  <line x1={-largeurPx / 2} y1={3} x2={largeurPx / 2} y2={3} stroke={couleur} strokeWidth={1.5} />
+                                  <rect x={x0} y={1} width={largeurPx / 2} height={4} fill={couleur} opacity={0.4} />
+                                  <polyline points={`${-cote * largeurPx / 6},0 ${cote * largeurPx / 6},0 ${cote * largeurPx / 6 - cote * 4},-3 ${cote * largeurPx / 6},0 ${cote * largeurPx / 6 - cote * 4},3`}
+                                    fill="none" stroke={couleur} strokeWidth={1} />
+                                </>
+                              );
+                            })()}
                             {o.type === "ouverture" && (
                               <rect x={-largeurPx / 2} y={-4} width={largeurPx} height={8} fill="none" stroke={couleur} strokeWidth={1} strokeDasharray="2,2" />
                             )}
@@ -4886,6 +4957,27 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     {m.nom && (
                       <text x={0} y={3} textAnchor="middle" fontSize="9" fontWeight="600" fill="#44403c" style={{ pointerEvents: "none" }}>{m.nom}</text>
                     )}
+                  </g>
+                );
+              })}
+
+              {niveauActif?.pieces.filter(piece => piece.voiture).map(piece => {
+                const v = piece.voiture!;
+                const p = toScreen({ x: v.x, y: v.y });
+                const wL = VOITURE_LONGUEUR_M * PX_PER_M * zoom, wW = VOITURE_LARGEUR_M * PX_PER_M * zoom;
+                const actif = mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingMeuble;
+                return (
+                  <g key={`voiture-${piece.id}`} onPointerDown={e => onVoiturePointerDown(piece, e)}
+                    transform={`translate(${p.x}, ${p.y}) rotate(${v.rotation ?? 0})`} opacity={v.masquee ? 0.35 : 1}
+                    style={{ cursor: actif ? (piece.verrouillee ? "pointer" : "grab") : "default" }}>
+                    <rect x={-wL / 2} y={-wW / 2} width={wL} height={wW} rx={wW * 0.18} fill="#64748b" fillOpacity={0.28} stroke="#475569" strokeWidth={1.5}
+                      strokeDasharray={v.masquee ? "4,3" : undefined} />
+                    <rect x={-wL * 0.2} y={-wW * 0.38} width={wL * 0.42} height={wW * 0.76} rx={wW * 0.1} fill="#0f172a" fillOpacity={0.35} />
+                    <polygon points={`${wL / 2},0 ${wL / 2 - wW * 0.22},${-wW * 0.18} ${wL / 2 - wW * 0.22},${wW * 0.18}`} fill="#475569" />
+                    <text x={0} y={wW / 2 + 11} textAnchor="middle" fontSize="9" fontWeight="600" fill="#334155"
+                      transform={`rotate(${-(v.rotation ?? 0)}, 0, ${wW / 2 + 8})`} style={{ pointerEvents: "none" }}>
+                      Voiture{v.masquee ? " (masquée)" : ""}
+                    </text>
                   </g>
                 );
               })}
@@ -5299,6 +5391,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       {selectedPiece.personne.masquee ? "Afficher la personne" : "Masquer la personne"}
                     </button>
                     <button onClick={() => retirerPersonne(selectedPiece.id)} className="btn-danger !px-2 !py-1.5" title="Supprimer la personne de cette pièce"><Trash2 size={13} /></button>
+                  </>
+                )}
+                {!selectedPiece.voiture ? (
+                  <button onClick={() => ajouterVoiture(selectedPiece)} className="btn-ghost !px-2 !py-1.5 !text-xs"
+                    title="Pose une voiture familiale standard (4,60 × 1,85 m) dans la pièce (vue 3D) pour juger les échelles — déplaçable à la souris">+ Voiture</button>
+                ) : (
+                  <>
+                    <button onClick={() => pivoterVoiture(selectedPiece)} className="btn-ghost !px-2 !py-1.5 !text-xs" title="Tourner la voiture de 90°">↻ 90°</button>
+                    <button onClick={() => modifierVoiture(selectedPiece.id, { masquee: !selectedPiece.voiture!.masquee })}
+                      className={`${selectedPiece.voiture.masquee ? "btn-ghost" : "btn-volt"} !px-2 !py-1.5 !text-xs`}
+                      title={selectedPiece.voiture.masquee ? "Voiture masquée en 3D — cliquer pour l'afficher" : "Masquer la voiture en 3D (elle reste en place)"}>
+                      {selectedPiece.voiture.masquee ? "Afficher la voiture" : "Masquer la voiture"}
+                    </button>
+                    <button onClick={() => retirerVoiture(selectedPiece.id)} className="btn-danger !px-2 !py-1.5" title="Supprimer la voiture de cette pièce"><Trash2 size={13} /></button>
                   </>
                 )}
                 <button onClick={() => zoomSurPiece(selectedPiece)} className="btn-ghost !px-2 !py-1.5" title="Zoomer sur la pièce"><Search size={13} /></button>
@@ -5769,7 +5875,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       </div>
                     </>
                   )}
-                  {o.type === "porte_coulissante" && (
+                  {(o.type === "porte_coulissante" || o.type === "baie_vitree") && (
                     <div className="flex items-center gap-2 text-xs text-ink-500">
                       <span className="shrink-0 w-24">Glisse vers</span>
                       {segmente((o.coulisseVers ?? "droite") === "gauche", "Gauche", "Droite", () => majO({ coulisseVers: "gauche" }), () => majO({ coulisseVers: "droite" }))}
@@ -5844,7 +5950,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       key={`ouv-${o.id}-hauteur-${dragEndTick}`} defaultValue={o.hauteur ?? hauteurOuvertureDefautCm(o.type)}
                       onChange={e => { if (e.target.value !== "") modifierOuverture(o.id, { hauteur: Number(e.target.value) }); }} />
                   </div>
-                  {(o.type === "fenetre" || o.type === "ouverture") && (
+                  {(o.type === "fenetre" || o.type === "baie_vitree" || o.type === "ouverture") && (
                     <div className="flex items-center gap-2 text-xs text-ink-500">
                       <span className="shrink-0 w-24">{o.type === "ouverture" ? "Départ / sol (cm)" : "Allège (cm)"}</span>
                       <input type="number" min={0} className="input !py-1 !text-xs !w-20"
@@ -5886,7 +5992,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       </div>
                     </>
                   )}
-                  {o.type === "porte_coulissante" && (
+                  {(o.type === "porte_coulissante" || o.type === "baie_vitree") && (
                     <div className="flex items-center gap-2 text-xs text-ink-500">
                       <span className="shrink-0 w-24">Glisse vers</span>
                       <div className="flex gap-1 flex-1">
