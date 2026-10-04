@@ -12,10 +12,10 @@
 
 import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, HAUTEUR_PERSONNE_M } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, HAUTEUR_PERSONNE_M, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
-import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante } from "@/components/plan/PortesOuvrables";
+import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante, creerBaieVitree, creerPorteGarage } from "@/components/plan/PortesOuvrables";
 import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
 import { cloisonsDeZone, ouverturesEffectivesZone } from "@/lib/zones";
 import { SaisonSoleil, LABEL_SAISON_SOLEIL, LATITUDE_DEFAUT, elevationMidi, directionSoleilMidi } from "@/lib/soleil";
@@ -271,28 +271,45 @@ export function construireMurAvecOuvertures(
       }
       appliquerOuverturePorte(reg, reg.defaut);
     }
+    // Baie vitrée coulissante (2 vantaux) : fermée par défaut ; le vantail mobile glisse devant le fixe.
+    if (avecContenu && o.proprietaire && o.type === "baie_vitree") {
+      const cote = o.coulisseVers === "gauche" ? -1 : 1;
+      const centreOuv = (debut + fin) / 2;
+      const hB = Math.max(0.5, Math.min(hOuverture, hauteurMur - 0.01));
+      const pivot = new THREE.Group();
+      pivot.position.set(a.x + ux * centreOuv + nx * decalage, hAllege, a.y + uy * centreOuv + ny * decalage);
+      pivot.rotation.y = -angle;
+      const { cadre, mobile } = creerBaieVitree({ larg: fin - debut, haut: hB, epMur: epaisseur, cote });
+      pivot.add(cadre, mobile);
+      scene.add(pivot);
+      const reg: PorteRegistre = { id: o.id ?? -1, genre: "coulissante", mobile, signe: cote, course: (fin - debut) / 2, defaut: 0 };
+      if (o.id != null) {
+        pivot.traverse(obj => { obj.userData.porteId = o.id; });
+        enregistrerPorte?.(reg);
+      }
+      appliquerOuverturePorte(reg, reg.defaut);
+    }
+
+    // Porte de garage basculante : tablier plein suspendu à son bord haut ; fermée par défaut, elle bascule vers
+    // l'intérieur (sous le plafond) en cliquant dessus ou depuis le panneau 3D.
     if (avecContenu && o.proprietaire && o.type === "porte_garage") {
-      // Porte de garage basculante fermée : tablier plein dans l'ouverture, 3 rainures horizontales,
-      // poignée centrale. Posée dans le plan de la face (comme la vitre d'une fenêtre).
-      const panGeo = new THREE.BoxGeometry(fin - debut, hOuverture, 0.04);
-      const panMat = new THREE.MeshStandardMaterial({ color: 0xE5E7EB, roughness: 0.6 });
-      const pan = new THREE.Mesh(panGeo, panMat);
-      const cx = a.x + ux * ((debut + fin) / 2) + nx * decalage, cz = a.y + uy * ((debut + fin) / 2) + ny * decalage;
-      pan.position.set(cx, hAllege + hOuverture / 2, cz);
-      pan.rotation.y = -angle;
-      pan.castShadow = true;
-      scene.add(pan);
-      const rainureMat = new THREE.MeshStandardMaterial({ color: 0x9CA3AF });
-      [0.25, 0.5, 0.75].forEach(f => {
-        const rainure = new THREE.Mesh(new THREE.BoxGeometry(fin - debut, 0.012, 0.046), rainureMat);
-        rainure.position.set(cx, hAllege + hOuverture * f, cz);
-        rainure.rotation.y = -angle;
-        scene.add(rainure);
-      });
-      const poignee = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.03, 0.06), new THREE.MeshStandardMaterial({ color: 0x374151 }));
-      poignee.position.set(cx, hAllege + hOuverture * 0.45, cz);
-      poignee.rotation.y = -angle;
-      scene.add(poignee);
+      const centreOuv = (debut + fin) / 2;
+      const hG = Math.max(0.5, Math.min(hOuverture, hauteurMur - 0.01));
+      const sens = (o.ouvreVersInterieur === false ? -1 : 1) * sensInterieur;
+      const pivot = new THREE.Group();
+      pivot.position.set(a.x + ux * centreOuv + nx * decalage, hAllege, a.y + uy * centreOuv + ny * decalage);
+      pivot.rotation.y = -angle;
+      const { cadre, mobile } = creerPorteGarage({ larg: fin - debut, haut: hG, epMur: epaisseur });
+      mobile.position.set(0, hG - 0.04, 0);   // axe de bascule = bas du profilé haut
+      pivot.add(cadre, mobile);
+      scene.add(pivot);
+      // rotation.x = −sens × angle : le bas du tablier part du côté « sens » de la normale du mur.
+      const reg: PorteRegistre = { id: o.id ?? -1, genre: "basculante", mobile, signe: -sens, course: 0, defaut: 0 };
+      if (o.id != null) {
+        pivot.traverse(obj => { obj.userData.porteId = o.id; });
+        enregistrerPorte?.(reg);
+      }
+      appliquerOuverturePorte(reg, reg.defaut);
     }
     curseur = fin;
   });
@@ -326,6 +343,81 @@ function creerPersonne(): THREE.Group {
   return groupe;
 }
 
+// Voiture familiale standard (break compact, 4,60 × 1,85 × 1,50 m) : caisse extrudée d'après un profil latéral, vitres,
+// 4 roues, feux. Repère local : x = longueur (capot vers +x), y = vertical (roues au sol), z = largeur, centrée sur l'origine.
+// Elle projette et reçoit les ombres comme le mobilier.
+function creerVoiture(): THREE.Group {
+  const groupe = new THREE.Group();
+  const L = VOITURE_LONGUEUR_M, l = VOITURE_LARGEUR_M, H = VOITURE_HAUTEUR_M;
+  const kx = L / 4.6, kz = l / 1.85, ky = H / 1.5; // l'échelle suit les constantes partagées
+  const carrosserie = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.35, metalness: 0.45 });
+  const vitrage = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.1, metalness: 0.2, transparent: true, opacity: 0.85 });
+  const caoutchouc = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.9 });
+  const jante = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.7, roughness: 0.3 });
+  const marquer = (m: THREE.Mesh) => { m.castShadow = true; m.receiveShadow = true; return m; };
+
+  // Profil latéral (x = longueur, y = hauteur) : capot court, pare-brise incliné, toit long, hayon quasi vertical.
+  const profil: [number, number][] = [
+    [-2.3, 0.22], [2.3, 0.22], [2.3, 0.60], [2.12, 0.78], [1.25, 0.88], [0.65, 1.38], [0.45, 1.48],
+    [-1.55, 1.48], [-2.2, 1.30], [-2.3, 0.95],
+  ];
+  const forme = new THREE.Shape(profil.map(([x, y]) => new THREE.Vector2(x * kx, y * ky)));
+  const profondeur = l * 0.96;
+  const caisseGeo = new THREE.ExtrudeGeometry(forme, { depth: profondeur, bevelEnabled: false });
+  const caisse = marquer(new THREE.Mesh(caisseGeo, carrosserie));
+  caisse.position.z = -profondeur / 2;
+  groupe.add(caisse);
+
+  // Vitres latérales (une par côté) + pare-brise + lunette arrière, posés juste à l'extérieur de la caisse.
+  const vitreLat: [number, number][] = [[1.15, 0.93], [0.68, 1.39], [0.5, 1.43], [-1.45, 1.43], [-2.0, 1.29], [-1.9, 0.93]];
+  const formeVitre = new THREE.Shape(vitreLat.map(([x, y]) => new THREE.Vector2(x * kx, y * ky)));
+  [1, -1].forEach(cote => {
+    const v = new THREE.Mesh(new THREE.ShapeGeometry(formeVitre), vitrage);
+    v.position.z = cote * (profondeur / 2 + 0.004);
+    if (cote < 0) v.rotation.y = Math.PI;
+    groupe.add(v);
+  });
+  const plaque = (x0: number, y0: number, x1: number, y1: number, ecart: number) => {
+    const dx = (x1 - x0) * kx, dy = (y1 - y0) * ky;
+    const longueur = Math.hypot(dx, dy);
+    const g = new THREE.Mesh(new THREE.BoxGeometry(longueur, 0.008, profondeur * 0.9), vitrage);
+    const angle = Math.atan2(dy, dx);
+    // normale sortante (vers le haut / l'extérieur de la caisse) du segment (x0,y0)→(x1,y1)
+    const nxL = -Math.sin(angle), nyL = Math.cos(angle);
+    g.position.set(((x0 + x1) / 2) * kx + nxL * ecart, ((y0 + y1) / 2) * ky + nyL * ecart, 0);
+    g.rotation.z = angle;
+    groupe.add(g);
+  };
+  plaque(1.25, 0.88, 0.65, 1.38, 0.006);   // pare-brise (normale : vers l'avant et le haut)
+  plaque(-1.55, 1.48, -2.2, 1.30, -0.006); // lunette arrière
+
+  // Roues : empattement 2,80 m, voie ≈ 1,60 m.
+  const rayonRoue = 0.33 * ky;
+  [[1.4, 1], [1.4, -1], [-1.4, 1], [-1.4, -1]].forEach(([x, cote]) => {
+    const pneu = marquer(new THREE.Mesh(new THREE.CylinderGeometry(rayonRoue, rayonRoue, 0.22, 20), caoutchouc));
+    pneu.rotation.x = Math.PI / 2;
+    pneu.position.set(x * kx, rayonRoue, cote * (l / 2 - 0.15 * kz));
+    groupe.add(pneu);
+    const moyeu = new THREE.Mesh(new THREE.CylinderGeometry(rayonRoue * 0.62, rayonRoue * 0.62, 0.23, 14), jante);
+    moyeu.rotation.x = Math.PI / 2;
+    moyeu.position.copy(pneu.position);
+    groupe.add(moyeu);
+  });
+
+  // Feux : phares avant (blanc chaud), feux arrière (rouge).
+  const phare = new THREE.MeshStandardMaterial({ color: 0xfef3c7, emissive: 0xfef3c7, emissiveIntensity: 0.25 });
+  const feuAr = new THREE.MeshStandardMaterial({ color: 0xdc2626, emissive: 0xdc2626, emissiveIntensity: 0.25 });
+  [1, -1].forEach(cote => {
+    const ph = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.1, 0.3 * kz), phare);
+    ph.position.set(2.3 * kx, 0.5 * ky, cote * 0.62 * kz);
+    groupe.add(ph);
+    const fa = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.2, 0.22 * kz), feuAr);
+    fa.position.set(-2.3 * kx, 0.82 * ky, cote * 0.68 * kz);
+    groupe.add(fa);
+  });
+  return groupe;
+}
+
 export interface Vue3DHandle {
   capturerImage: () => string | null;
 }
@@ -350,6 +442,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
   const [saison, setSaison] = useState<SaisonSoleil>("aujourdhui");
   // Personnes témoins (1,80 m) : affichage global ; chaque personne se place / se masque depuis le plan 2D.
   const [personnesVisibles, setPersonnesVisibles] = useState(true);
+  const [voituresVisibles, setVoituresVisibles] = useState(true);
   // Emprise de la scène (centre + rayon, mètres) — sert à cadrer la caméra d'ombre du soleil.
   const empriseRef = useRef<{ cx: number; cz: number; rayon: number; hauteur: number }>({ cx: 0, cz: 0, rayon: 8, hauteur: 2.5 });
   // « Coupe » : rend le doublage translucide pour voir passer les câbles encastrés qu'il contient.
@@ -484,7 +577,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
     (niveau.zones ?? []).forEach(z => (z.ouvertures ?? []).forEach(o => liveOuvParId.set(o.id, o)));
     const ouverturesVivantes = (ouvs: OuvertureEffective[]): OuvertureEffective[] => ouvs.map(o => {
       const l = o.id != null ? liveOuvParId.get(o.id) : undefined;
-      return l ? { ...o, usage: l.usage, charniere: l.charniere, ouvreVersInterieur: l.ouvreVersInterieur } : o;
+      return l ? { ...o, usage: l.usage, charniere: l.charniere, ouvreVersInterieur: l.ouvreVersInterieur, coulisseVers: l.coulisseVers } : o;
     });
     // Chaque porte construite s'inscrit ici : son ouverture initiale = celle déjà forcée par la vue, sinon sa valeur par défaut.
     const enregistrerPorte = (reg: PorteRegistre) => {
@@ -1038,6 +1131,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
 
   // Personnes témoins (1,80 m) : lues sur le plan VIVANT, dans leur propre groupe — retiré/recréé ici sans toucher au reste.
   const nbPersonnes = useMemo(() => niveau.pieces.filter(p => p.personne).length, [niveau]);
+  const nbVoitures = useMemo(() => niveau.pieces.filter(p => p.voiture).length, [niveau]);
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
@@ -1051,6 +1145,16 @@ const Vue3D = forwardRef<Vue3DHandle, {
         groupe.add(modele);
       });
     }
+    if (voituresVisibles) {
+      niveau.pieces.forEach(p => {
+        const v = p.voiture;
+        if (!v || v.masquee) return;
+        const modele = creerVoiture();
+        modele.position.set(v.x, 0, v.y);
+        modele.rotation.y = -((v.rotation ?? 0) * Math.PI) / 180;   // même convention qu'un meuble
+        groupe.add(modele);
+      });
+    }
     scene.add(groupe);
     return () => {
       scene.remove(groupe);
@@ -1058,7 +1162,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
         if (obj instanceof THREE.Mesh) { obj.geometry.dispose(); (obj.material as THREE.Material).dispose(); }
       });
     };
-  }, [niveau, resultat, showCircuits, niveauResultat, personnesVisibles]);
+  }, [niveau, resultat, showCircuits, niveauResultat, personnesVisibles, voituresVisibles]);
 
   // Mode « Coupe » : doublage translucide, pour voir les câbles encastrés qu'il abrite.
   useEffect(() => {
@@ -1084,6 +1188,8 @@ const Vue3D = forwardRef<Vue3DHandle, {
     const ajouter = (o: Ouverture, lieu: string) => {
       if (o.type === "porte") liste.push({ id: o.id, label: LABEL_USAGE_PORTE[o.usage ?? "interieure"], lieu, defaut: 0 });
       else if (o.type === "porte_coulissante") liste.push({ id: o.id, label: "Porte coulissante", lieu, defaut: 100 });
+      else if (o.type === "porte_garage") liste.push({ id: o.id, label: "Porte de garage", lieu, defaut: 0 });
+      else if (o.type === "baie_vitree") liste.push({ id: o.id, label: "Baie vitrée", lieu, defaut: 0 });
     };
     niveau.pieces.forEach(p => (p.ouvertures ?? []).forEach(o => ajouter(o, p.nom)));
     (niveau.zones ?? []).forEach(z => (z.ouvertures ?? []).forEach(o => ajouter(o, z.nom || "Zone")));
@@ -1113,6 +1219,13 @@ const Vue3D = forwardRef<Vue3DHandle, {
           {coupeDoublage ? "Doublage opaque" : "Coupe du doublage"}
         </button>
 
+        {/* Mode nuit : toujours disponible (test des éclairages), même sans interrupteur sur le niveau */}
+        <button onClick={() => setNightMode(m => !m)}
+          className={`btn-ghost !text-xs backdrop-blur ${nightMode ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}
+          title="Bascule entre jour et nuit : la nuit, seules les lampes allumées éclairent">
+          {nightMode ? "☀️ Mode jour" : "🌙 Mode nuit"}
+        </button>
+
         {/* Soleil de midi : ombres réelles d'après l'orientation du bâtiment (réglée depuis le plan 2D) */}
         <button onClick={() => setSoleilActif(v => !v)}
           className={`btn-ghost !text-xs backdrop-blur ${soleilActif ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}
@@ -1139,6 +1252,17 @@ const Vue3D = forwardRef<Vue3DHandle, {
         ) : (
           <span className="rounded-lg bg-white/90 backdrop-blur px-2 py-1 text-[11px] text-ink-400 shadow">
             Personne 1,80 m : à placer depuis le plan 2D (clic sur une pièce → « Personne »)
+          </span>
+        )}
+        {nbVoitures > 0 ? (
+          <button onClick={() => setVoituresVisibles(v => !v)}
+            className={`btn-ghost !text-xs backdrop-blur ${voituresVisibles ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}
+            title="Affiche / masque les voitures témoins">
+            Voitures ({nbVoitures}) : {voituresVisibles ? "visibles" : "masquées"}
+          </button>
+        ) : (
+          <span className="rounded-lg bg-white/90 backdrop-blur px-2 py-1 text-[11px] text-ink-400 shadow">
+            Voiture : à placer depuis le plan 2D (clic sur une pièce → « Voiture »)
           </span>
         )}
       </div>

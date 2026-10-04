@@ -14,9 +14,9 @@ export const ANGLE_PORTE_MAX = (100 * Math.PI) / 180;
 
 export interface PorteRegistre {
   id: number;                          // id de l'ouverture (clé de l'état ouvert/fermé)
-  genre: "battante" | "coulissante";
-  mobile: THREE.Group;                 // battante : pivote (rotation.y) autour de la charnière ; coulissante : glisse (position.x)
-  signe: number;                       // battante : sens de rotation ; coulissante : côté vers lequel le panneau se gare (+1 / −1)
+  genre: "battante" | "coulissante" | "basculante";
+  mobile: THREE.Group;                 // battante : pivote (rotation.y) autour de la charnière ; coulissante : glisse (position.x) ; basculante : bascule (rotation.x) autour de son bord haut
+  signe: number;                       // battante / basculante : sens de rotation ; coulissante : côté vers lequel le panneau se gare (+1 / −1)
   course: number;                      // coulissante : course du panneau en mètres (= largeur de l'ouverture)
   defaut: number;                      // ouverture initiale : 0 fermée … 100 ouverte
 }
@@ -25,8 +25,12 @@ export interface PorteRegistre {
 export function appliquerOuverturePorte(p: PorteRegistre, pct: number): void {
   const f = Math.max(0, Math.min(100, pct)) / 100;
   if (p.genre === "battante") p.mobile.rotation.y = p.signe * ANGLE_PORTE_MAX * f;
+  else if (p.genre === "basculante") p.mobile.rotation.x = p.signe * ANGLE_GARAGE_MAX * f;
   else p.mobile.position.x = p.signe * p.course * f;
 }
+
+// Porte de garage basculante : le tablier pivote autour de son bord HAUT et finit presque à l'horizontale sous le plafond.
+export const ANGLE_GARAGE_MAX = (88 * Math.PI) / 180;
 
 const EPAISSEUR_VANTAIL: Record<UsagePorte, number> = { interieure: 0.04, entree: 0.058, service: 0.045 };
 const COULEUR_VANTAIL: Record<UsagePorte, number> = { interieure: 0xf3eee4, entree: 0x3f4a57, service: 0xa9b4bf };
@@ -158,4 +162,92 @@ export function creerPorteCoulissante(p: { larg: number; haut: number; epMur: nu
   panneau.castShadow = true; panneau.receiveShadow = true;
   mobile.add(panneau);
   return mobile;
+}
+
+// Baie vitrée coulissante à 2 vantaux : un vantail FIXE et un vantail MOBILE qui glisse, devant le fixe (rail avant),
+// de la moitié de la largeur. cote = +1 « droite » / −1 « gauche » : sens dans lequel le vantail mobile coulisse.
+// Fermée, le mobile occupe la moitié opposée ; ouverte, il recouvre le fixe et libère la moitié de la baie.
+// « cadre » : dormant fixe (+ vantail fixe) ; « mobile » : vantail à animer (position.x, voir appliquerOuverturePorte,
+// course = larg / 2). Le vitrage ne projette pas d'ombre : le soleil passe à travers.
+export function creerBaieVitree(p: { larg: number; haut: number; epMur: number; cote: number }): { cadre: THREE.Group; mobile: THREE.Group } {
+  const { larg, haut, epMur, cote } = p;
+  const cadre = new THREE.Group();
+  const mobile = new THREE.Group();
+  const matAlu = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.4, metalness: 0.5 });
+  const matVitre = new THREE.MeshStandardMaterial({ color: 0xbae6fd, transparent: true, opacity: 0.28, roughness: 0.05, depthWrite: false });
+  const prof = Math.min(0.12, epMur + 0.02);
+
+  // Dormant : 4 profilés sur le pourtour de l'ouverture + seuil.
+  const ep = 0.05;
+  const barre = (cible: THREE.Group, w: number, h: number, d: number, x: number, y: number, z: number) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), matAlu);
+    m.position.set(x, y, z);
+    m.castShadow = true; m.receiveShadow = true;
+    cible.add(m);
+  };
+  barre(cadre, ep, haut, prof, -(larg / 2 - ep / 2), haut / 2, 0);
+  barre(cadre, ep, haut, prof, larg / 2 - ep / 2, haut / 2, 0);
+  barre(cadre, larg, ep, prof, 0, haut - ep / 2, 0);
+  barre(cadre, larg, 0.03, prof, 0, 0.015, 0);
+
+  // Un vantail = cadre alu (4 profilés fins) + vitre. cx : centre du vantail ; z : rail (avant / arrière).
+  const vantail = (cible: THREE.Group, cx: number, z: number) => {
+    const w = larg / 2 + 0.03;           // léger recouvrement central
+    const h = haut - ep - 0.035;
+    const y0 = 0.03;
+    const e = 0.04, d = 0.035;
+    barre(cible, e, h, d, cx - w / 2 + e / 2, y0 + h / 2, z);
+    barre(cible, e, h, d, cx + w / 2 - e / 2, y0 + h / 2, z);
+    barre(cible, w, e, d, cx, y0 + h - e / 2, z);
+    barre(cible, w, e, d, cx, y0 + e / 2, z);
+    const vitre = new THREE.Mesh(new THREE.BoxGeometry(w - 2 * e, h - 2 * e, 0.008), matVitre);
+    vitre.position.set(cx, y0 + h / 2, z);
+    cible.add(vitre);
+  };
+  const xFixe = cote * (larg / 4);        // le fixe est du côté vers lequel le mobile glisse
+  vantail(cadre, xFixe, -0.022);
+  vantail(mobile, -xFixe, 0.022);          // le mobile démarre sur l'autre moitié
+  // Poignée du vantail mobile, côté bord de fermeture (milieu de la baie).
+  const poignee = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.18, 0.03), new THREE.MeshStandardMaterial({ color: 0xc7cdd3, metalness: 0.7, roughness: 0.3 }));
+  poignee.position.set(-xFixe + cote * (larg / 4 - 0.06), 1.05, 0.048);
+  mobile.add(poignee);
+  return { cadre, mobile };
+}
+
+// Porte de garage basculante : tablier plein à 3 rainures + poignée, suspendu à son bord haut. Le groupe « mobile » a son
+// ORIGINE au bas du profilé haut de l'ouverture, soit haut − 4 cm (le tablier pend vers le bas) : on le fait pivoter avec rotation.x
+// (voir appliquerOuverturePorte, genre « basculante »).
+export function creerPorteGarage(p: { larg: number; haut: number; epMur: number }): { cadre: THREE.Group; mobile: THREE.Group } {
+  const { larg, haut, epMur } = p;
+  const cadre = new THREE.Group();
+  const mobile = new THREE.Group();
+  const matCadre = new THREE.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.5 });
+  const prof = Math.min(0.14, epMur + 0.02);
+  const ep = 0.04;
+  const barre = (w: number, h: number, x: number, y: number) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, prof), matCadre);
+    m.position.set(x, y, 0);
+    m.castShadow = true; m.receiveShadow = true;
+    cadre.add(m);
+  };
+  barre(ep, haut, -(larg / 2 - ep / 2), haut / 2);
+  barre(ep, haut, larg / 2 - ep / 2, haut / 2);
+  barre(larg, ep, 0, haut - ep / 2);
+
+  const lw = larg - 2 * ep - 0.01;
+  const lh = haut - ep - 0.01;
+  const tablier = new THREE.Mesh(new THREE.BoxGeometry(lw, lh, 0.04), new THREE.MeshStandardMaterial({ color: 0xe5e7eb, roughness: 0.6 }));
+  tablier.position.set(0, -lh / 2, 0);   // pend sous le dormant haut (origine du groupe = bas du profilé haut)
+  tablier.castShadow = true; tablier.receiveShadow = true;
+  mobile.add(tablier);
+  const matRainure = new THREE.MeshStandardMaterial({ color: 0x9ca3af });
+  [0.25, 0.5, 0.75].forEach(f => {
+    const r = new THREE.Mesh(new THREE.BoxGeometry(lw, 0.012, 0.046), matRainure);
+    r.position.set(0, -lh * f, 0);
+    mobile.add(r);
+  });
+  const poignee = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.03, 0.06), new THREE.MeshStandardMaterial({ color: 0x374151 }));
+  poignee.position.set(0, -lh * 0.55, 0);
+  mobile.add(poignee);
+  return { cadre, mobile };
 }
