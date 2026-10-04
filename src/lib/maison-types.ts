@@ -289,6 +289,8 @@ export interface Piece {
   // glisser (protection contre les fausses manipulations). Les propriétés restent éditables.
   verrouillee?: boolean;
   // Affichage de l'étiquette : nom et/ou dimensions (surface, cotes des murs, épaisseurs) masqués pour cette pièce.
+  // Couleur de fond de la pièce sur le plan 2D (pastel au choix) ; absent = couleur du type de pièce.
+  couleurFond?: string;
   masquerNom?: boolean;
   masquerDimensions?: boolean;
   // Murs de la pièce : un par côté du contour (murs[i] = mur du sommet i au sommet i+1). Le contour
