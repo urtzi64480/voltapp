@@ -236,7 +236,7 @@ function insererSommet(piece: Piece, i: number, pt: Point): Piece | string {
   return res;
 }
 function libelleOuverture(o: Ouverture): string {
-  return o.type === "fenetre" ? "fenêtre" : o.type === "porte_garage" ? "porte de garage" : o.type === "ouverture" ? "ouverture" : "porte";
+  return o.type === "fenetre" ? "fenêtre" : o.type === "baie_vitree" ? "baie vitrée" : o.type === "porte_garage" ? "porte de garage" : o.type === "ouverture" ? "ouverture" : "porte";
 }
 
 export interface OptionsCloison {

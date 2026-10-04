@@ -117,7 +117,8 @@ export function commandeCetteLumiere(a: Pick<AppareillagePlace, "commandePourIds
 // Porte, porte coulissante, porte de garage basculante, fenêtre, ou simple ouverture murale
 // (sans porte, entièrement dimensionnée à la main) placée sur un mur (segment du contour) d'une
 // pièce — pas un objet libre comme un appareillage : contrainte à glisser le long du mur qui la porte.
-export type OuvertureType = "porte" | "porte_coulissante" | "porte_garage" | "fenetre" | "ouverture";
+// « baie_vitree » = baie vitrée coulissante à 2 vantaux (un fixe, un mobile qui glisse devant) — s'ouvre en 3D.
+export type OuvertureType = "porte" | "porte_coulissante" | "porte_garage" | "baie_vitree" | "fenetre" | "ouverture";
 
 // Usage d'une porte battante : intérieure (entre deux pièces), d'entrée (porte principale) ou de service
 // (porte secondaire donnant sur l'extérieur : cellier, garage, jardin…). Sert au rendu 3D (vantail, couleur,
@@ -143,6 +144,8 @@ export function hauteurOuvertureDefautCm(type: OuvertureType): number {
       return 204;
     case "porte_garage":
       return 200;
+    case "baie_vitree":
+      return 215;
     default:
       return 120;
   }
@@ -178,6 +181,9 @@ export function nouvelleOuverture(type: OuvertureType, segIndex: number, positio
     case "porte_garage":
       // Porte de garage basculante standard : 240 × 200 cm, jusqu'au sol.
       return { id: uidMaison(), type, segIndex, position, largeur: 240, hauteur: 200, allege: 0 };
+    case "baie_vitree":
+      // Baie vitrée coulissante standard : 240 × 215 cm, jusqu'au sol, le vantail mobile glisse vers la droite.
+      return { id: uidMaison(), type, segIndex, position, largeur: 240, hauteur: 215, allege: 0, coulisseVers: "droite" };
     case "fenetre":
       return { id: uidMaison(), type, segIndex, position, largeur: 100, hauteur: 120, allege: 90 };
     case "ouverture":
@@ -299,6 +305,9 @@ export interface Piece {
   // Personne témoin de 1,80 m (vue 3D uniquement) : sert à juger les échelles. Purement visuelle, jamais comptée
   // dans les circuits ni le devis. Une seule par pièce ; « masquee » la cache en 3D sans la supprimer.
   personne?: PersonnePlacee;
+  // Voiture familiale standard (vue 3D uniquement) : même principe que la personne — repère d'échelle, jamais comptée
+  // dans les circuits ni le devis. Une seule par pièce ; « masquee » la cache en 3D sans la supprimer.
+  voiture?: VoiturePlacee;
 }
 
 // Élément cubique simple (table, armoire, plan de travail…) placé dans une pièce, sans
@@ -720,6 +729,18 @@ export interface PersonnePlacee {
   masquee?: boolean;
 }
 export const HAUTEUR_PERSONNE_M = 1.8;
+
+// Voiture familiale standard (break compact) : 4,60 m × 1,85 m × 1,50 m. x, y = centre au sol (mètres) ;
+// rotation en degrés, sens horaire vu de dessus, comme un meuble — 0 = capot vers +x (la droite du plan).
+export interface VoiturePlacee {
+  x: number; y: number;
+  rotation?: number;
+  masquee?: boolean;
+}
+export const VOITURE_LONGUEUR_M = 4.6;
+export const VOITURE_LARGEUR_M = 1.85;
+export const VOITURE_HAUTEUR_M = 1.5;
+export const nouvelleVoiture = (x: number, y: number, rotation = 0): VoiturePlacee => ({ x, y, rotation });
 export const nouvellePersonne = (x: number, y: number): PersonnePlacee => ({ x, y });
 
 export function distance(a: Point, b: Point): number {
