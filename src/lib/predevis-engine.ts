@@ -637,9 +637,34 @@ export function estBobinable(sousCategorie: string): boolean {
     || sousCategorie.startsWith("gaine_irl") || sousCategorie === "moulure" || sousCategorie === "cable_rj45";
 }
 
+// Poste du devis (devis_lignes.poste) porté par un besoin du pré-devis : chaque PIÈCE du plan devient un poste du
+// devis (même nom), ainsi que les pseudo-pièces (« Tableau électrique », « Commun — RDC », liaison verticale).
+// Les câbles / gaines / moulures, chiffrés une seule fois sur le métrage de toutes les pièces, forment un poste à part
+// (le détail par pièce reste dans la description de la ligne).
+export const POSTE_CABLAGE = "Câbles, gaines et moulures (toutes pièces)";
+export const POSTE_MAIN_OEUVRE = "Main d'œuvre et frais";
+export function posteDuBesoin(besoin: Pick<BesoinApparie, "cle" | "piece">): string {
+  return besoin.cle.startsWith("AGREGE_") ? POSTE_CABLAGE : besoin.piece;
+}
+
 export function genererLignesDevis(choix: ChoixLigne[], prestations: Prestation[]): Omit<DevisLigne, "devis_id" | "ordre">[] {
   const lignes: Omit<DevisLigne, "devis_id" | "ordre">[] = [];
   choix.forEach(({ besoin, optionCatalogue, libre }) => {
+    const debut = lignes.length;
+    try {
+      ajouterLignesBesoin(lignes, { besoin, optionCatalogue, libre }, prestations);
+    } finally {
+      const poste = posteDuBesoin(besoin);
+      for (let k = debut; k < lignes.length; k++) lignes[k].poste = poste;
+    }
+  });
+  return lignes;
+}
+
+function ajouterLignesBesoin(
+  lignes: Omit<DevisLigne, "devis_id" | "ordre">[], { besoin, optionCatalogue, libre }: ChoixLigne, prestations: Prestation[],
+): void {
+  {
     if (libre) {
       lignes.push({
         nom: libre.nom, description: besoin.piece,
@@ -660,8 +685,7 @@ export function genererLignesDevis(choix: ChoixLigne[], prestations: Prestation[
         ...champsLigneDepuisOption(optionCatalogue),
       });
     }
-  });
-  return lignes;
+  }
 }
 
 // Multiplicateur à appliquer à besoin.quantite pour un article choisi "manuellement"
