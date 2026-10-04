@@ -11,7 +11,7 @@ import { BreakerRow } from "@/lib/electrical-constants";
 import {
   calculerBesoinsBruts, apparierCatalogue, optionsPourSousCategorie, genererLignesDevis, estBobinable,
   multiplicateurPourArticle, estPieceReelle, optionAvecOffre, prixCompagnonAuMetre,
-  ResultatPreDevis, BesoinApparie, OptionArticle, ChoixLigne,
+  ResultatPreDevis, BesoinApparie, OptionArticle, ChoixLigne, POSTE_MAIN_OEUVRE, POSTE_CABLAGE,
 } from "@/lib/predevis-engine";
 import { attacherFournisseurs, libelleOffre, offrePrincipale, offresTriees, prixVenteOffre } from "@/lib/fournisseurs";
 import { colonnesFournisseur, colonnesImage } from "@/lib/devis-lignes";
@@ -286,6 +286,8 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [prestations, setPrestations] = useState<Prestation[]>([]);
   const [profil, setProfil] = useState<any>(null);
   const [resultat, setResultat] = useState<ResultatPreDevis | null>(null);
+  // Toutes les pièces du plan (nom + niveau), même celles sans aucun besoin — sert au contrôle « rien oublié ».
+  const [piecesDuPlan, setPiecesDuPlan] = useState<{ nom: string; niveau: string }[]>([]);
   const [alertesGeometrie, setAlertesGeometrie] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [choix, setChoix] = useState<Record<string, EtatChoix>>({});
@@ -341,6 +343,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
         return;
       }
 
+      setPiecesDuPlan(niveaux.flatMap(n => n.pieces.map(pc => ({ nom: pc.nom, niveau: n.nom }))).filter(x => x.nom));
       const { besoins, alertes } = calculerBesoinsBruts(niveaux, rows);
       const res = apparierCatalogue(besoins, prestAvecFournisseurs);
       setResultat(res);
@@ -504,17 +507,17 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const optMO = optionsMainOeuvre[mainOeuvreIndex];
         lignesFinales.push({
           nom: optMO?.nom ?? "Main d'œuvre", quantite: heures, prix_unitaire: tauxHoraire, unite: "heure",
-          type_branche: "service", prestation_id: optMO?.prestation_id,
+          type_branche: "service", prestation_id: optMO?.prestation_id, poste: POSTE_MAIN_OEUVRE,
         });
       }
 
       const sousTotal = lignesFinales.reduce((s, l) => s + l.quantite * l.prix_unitaire, 0);
       const pctFrais = parseFloat(fraisGenerauxPct) || 0;
       if (pctFrais > 0) {
-        lignesFinales.push({ nom: "Frais généraux", quantite: 1, prix_unitaire: Math.round(sousTotal * pctFrais / 100 * 100) / 100, unite: "forfait", type_branche: "service" });
+        lignesFinales.push({ nom: "Frais généraux", quantite: 1, prix_unitaire: Math.round(sousTotal * pctFrais / 100 * 100) / 100, unite: "forfait", type_branche: "service", poste: POSTE_MAIN_OEUVRE });
       }
       if (deplacement > 0) {
-        lignesFinales.push({ nom: "Déplacement", quantite: 1, prix_unitaire: deplacement, unite: "forfait", type_branche: "service" });
+        lignesFinales.push({ nom: "Déplacement", quantite: 1, prix_unitaire: deplacement, unite: "forfait", type_branche: "service", poste: POSTE_MAIN_OEUVRE });
       }
 
       // Garde-fou : un devis sans aucune ligne (désignation) est un document invalide,
@@ -555,12 +558,16 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       // colonnesFournisseur) — sinon l'insertion est identique à l'ancienne.
       const colFournisseur = colonnesFournisseur(lignesFinales as DevisLigne[]);
       const colImage = colonnesImage(lignesFinales);
-      const { error: errLignes } = await supabase.from("devis_lignes").insert(
-        lignesFinales.map((l, i) => {
-          const { fournisseur_id, fournisseur_nom, prix_achat, image_url, ...reste } = l;
-          return { ...reste, devis_id: devis.id, ordre: i, ...colFournisseur(l as DevisLigne), ...colImage(l) };
-        })
-      );
+      // Chaque pièce du plan devient un POSTE du devis (devis_lignes.poste, voir posteDuBesoin). Si la colonne `poste`
+      // n'existe pas encore en base, on retente sans elle plutôt que de perdre le devis.
+      const construireLignes = (avecPoste: boolean) => lignesFinales.map((l, i) => {
+        const { fournisseur_id, fournisseur_nom, prix_achat, image_url, poste, ...reste } = l;
+        return { ...reste, devis_id: devis.id, ordre: i, ...(avecPoste ? { poste: poste ?? null } : {}), ...colFournisseur(l as DevisLigne), ...colImage(l) };
+      });
+      let { error: errLignes } = await supabase.from("devis_lignes").insert(construireLignes(true));
+      if (errLignes && /poste/i.test(errLignes.message)) {
+        ({ error: errLignes } = await supabase.from("devis_lignes").insert(construireLignes(false)));
+      }
       if (errLignes) {
         await supabase.from("devis").delete().eq("id", devis.id);
         alert("Erreur lors de l'enregistrement des lignes du devis (aucune ligne sauvegardée) : " + errLignes.message);
@@ -719,6 +726,47 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
             </div>
           </div>
         </div>
+
+        {resultat && piecesDuPlan.length > 0 && (() => {
+          // Contrôle « rien oublié » : chaque pièce du plan doit devenir un poste du devis. Une pièce sans aucune ligne
+          // (aucun appareillage, besoins tous exclus, ou décochée plus haut) n'aura PAS de poste — on la signale ici.
+          const lignesParPiece = new Map<string, number>();
+          Object.entries(parPieceFiltre).forEach(([piece, besoins]) => {
+            const n = besoins.filter(b => !estBobinable(b.sousCategorie) && (choix[b.cle] ?? etatParDefaut(b)).mode !== "exclu").length;
+            if (n > 0) lignesParPiece.set(piece, n);
+          });
+          const metrage = new Set<string>();
+          Object.entries(parPieceFiltre).forEach(([piece, besoins]) => { if (besoins.some(b => estBobinable(b.sousCategorie))) metrage.add(piece); });
+          const lignesPlan = piecesDuPlan.map(pc => {
+            const exclue = piecesSelectionnees !== null && !piecesSelectionnees.has(pc.nom) && estPieceReelle(pc.nom);
+            const n = lignesParPiece.get(pc.nom) ?? 0;
+            const cable = metrage.has(pc.nom);
+            return { ...pc, exclue, n, cable, ok: !exclue && (n > 0 || cable) };
+          });
+          const aVerifier = lignesPlan.filter(x => !x.ok);
+          return (
+            <div className={`card card-inner mb-4 ${aVerifier.length > 0 ? "bg-amber-50 border-amber-200" : "border-emerald-200"}`}>
+              <h2 className="font-semibold text-ink-800 text-sm mb-1">Contrôle des pièces → postes du devis</h2>
+              <p className="text-xs text-ink-500 mb-2">
+                Chaque pièce chiffrée devient un <strong>poste</strong> du devis (même nom). Le tableau et les liaisons communes ont leur propre poste, les câbles/gaines/moulures forment le poste « {POSTE_CABLAGE} », et la main d'œuvre le poste « {POSTE_MAIN_OEUVRE} ».
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {lignesPlan.map((x, i) => (
+                  <span key={`${x.niveau}-${x.nom}-${i}`}
+                    className={`text-xs px-2 py-1 rounded-lg border ${x.ok ? "border-emerald-300 bg-emerald-50 text-emerald-700" : x.exclue ? "border-ink-300 bg-ink-100 text-ink-500" : "border-amber-400 bg-amber-100 text-amber-800"}`}
+                    title={x.niveau}>
+                    {x.ok ? "✓" : x.exclue ? "⛔" : "⚠"} {x.nom} — {x.exclue ? "décochée" : x.ok ? `${x.n} ligne${x.n > 1 ? "s" : ""}${x.cable ? " + câblage" : ""}` : "aucune ligne"}
+                  </span>
+                ))}
+              </div>
+              {aVerifier.length > 0 && (
+                <p className="text-xs text-amber-700 mt-2">
+                  {aVerifier.length} pièce{aVerifier.length > 1 ? "s" : ""} sans poste dans le devis : {aVerifier.map(x => x.nom).join(", ")}. Vérifie qu'il n'y a vraiment rien à y chiffrer (appareillage non posé, besoins exclus, pièce décochée).
+                </p>
+              )}
+            </div>
+          );
+        })()}
 
         <div className="card card-inner mb-6">
           <div className="flex flex-col gap-1 text-sm">
