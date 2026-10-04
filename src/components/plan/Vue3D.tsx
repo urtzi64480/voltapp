@@ -343,78 +343,158 @@ function creerPersonne(): THREE.Group {
   return groupe;
 }
 
-// Voiture familiale standard (break compact, 4,60 × 1,85 × 1,50 m) : caisse extrudée d'après un profil latéral, vitres,
-// 4 roues, feux. Repère local : x = longueur (capot vers +x), y = vertical (roues au sol), z = largeur, centrée sur l'origine.
-// Elle projette et reçoit les ombres comme le mobilier.
+// Voiture familiale standard (break compact, 4,60 × 1,85 × 1,50 m). Repère local : x = longueur (capot vers +x),
+// y = vertical (roues au sol), z = largeur, centrée sur l'origine. Elle projette et reçoit les ombres comme le mobilier.
+//
+// Construction : une CAISSE basse (pleine largeur) + un HABITACLE plus étroit posé dessus. Les vitres sont calculées
+// à partir du profil de l'habitacle (réduit de quelques centimètres vers l'intérieur) : elles ne peuvent donc jamais
+// dépasser de la carrosserie. Un 2D convexe suffit ici (profil de l'habitacle = polygone convexe).
+const CAISSE: [number, number][] = [
+  [-2.30, 0.25], [2.30, 0.25], [2.30, 0.58], [2.18, 0.72], [1.45, 0.86], [-2.12, 0.92], [-2.30, 0.84],
+];
+const HABITACLE: [number, number][] = [
+  [1.20, 0.85], [0.58, 1.44], [-1.72, 1.50], [-2.14, 0.88],
+];
+const HABITACLE_DEMI_LARGEUR = 0.74;
+const LIGNE_CEINTURE = 0.99;   // les vitres latérales commencent au-dessus de cette hauteur
+
+// Polygone convexe : ne garde que la partie au-dessus de y = yMin.
+export function couperAuDessus(poly: [number, number][], yMin: number): [number, number][] {
+  const out: [number, number][] = [];
+  poly.forEach((a, i) => {
+    const b = poly[(i + 1) % poly.length];
+    const ina = a[1] >= yMin, inb = b[1] >= yMin;
+    if (ina) out.push(a);
+    if (ina !== inb) {
+      const t = (yMin - a[1]) / (b[1] - a[1]);
+      out.push([a[0] + (b[0] - a[0]) * t, yMin]);
+    }
+  });
+  return out;
+}
+
+// Polygone convexe (sens quelconque) rétréci de d vers l'intérieur : chaque arête recule de d (intersection des arêtes décalées).
+export function reduirePolygone(poly: [number, number][], d: number): [number, number][] {
+  const n = poly.length;
+  let aire = 0;
+  poly.forEach((p, i) => { const q = poly[(i + 1) % n]; aire += p[0] * q[1] - q[0] * p[1]; });
+  const sens = aire >= 0 ? 1 : -1;            // +1 = antihoraire
+  const droites = poly.map((p, i) => {
+    const q = poly[(i + 1) % n];
+    const dx = q[0] - p[0], dy = q[1] - p[1], L = Math.hypot(dx, dy) || 1;
+    const nx = -dy / L * sens, ny = dx / L * sens;   // normale intérieure
+    return { px: p[0] + nx * d, py: p[1] + ny * d, dx: dx / L, dy: dy / L };
+  });
+  return droites.map((D, i) => {
+    const P = droites[(i + n - 1) % n];             // arête précédente
+    const det = P.dx * D.dy - P.dy * D.dx;
+    if (Math.abs(det) < 1e-9) return [D.px, D.py] as [number, number];
+    const t = ((D.px - P.px) * D.dy - (D.py - P.py) * D.dx) / det;
+    return [P.px + P.dx * t, P.py + P.dy * t] as [number, number];
+  });
+}
+
 function creerVoiture(): THREE.Group {
   const groupe = new THREE.Group();
   const L = VOITURE_LONGUEUR_M, l = VOITURE_LARGEUR_M, H = VOITURE_HAUTEUR_M;
-  const kx = L / 4.6, kz = l / 1.85, ky = H / 1.5; // l'échelle suit les constantes partagées
   const carrosserie = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.35, metalness: 0.45 });
-  const vitrage = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.1, metalness: 0.2, transparent: true, opacity: 0.85 });
+  const plastique = new THREE.MeshStandardMaterial({ color: 0x1f2937, roughness: 0.8 });
+  const vitrage = new THREE.MeshStandardMaterial({ color: 0x0b1220, roughness: 0.08, metalness: 0.3, side: THREE.DoubleSide });
   const caoutchouc = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.9 });
   const jante = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.7, roughness: 0.3 });
-  const marquer = (m: THREE.Mesh) => { m.castShadow = true; m.receiveShadow = true; return m; };
+  const marquer = <T extends THREE.Object3D>(o: T): T => { o.traverse(x => { if (x instanceof THREE.Mesh) { x.castShadow = true; x.receiveShadow = true; } }); return o; };
+  const demiL = l / 2;
 
-  // Profil latéral (x = longueur, y = hauteur) : capot court, pare-brise incliné, toit long, hayon quasi vertical.
-  const profil: [number, number][] = [
-    [-2.3, 0.22], [2.3, 0.22], [2.3, 0.60], [2.12, 0.78], [1.25, 0.88], [0.65, 1.38], [0.45, 1.48],
-    [-1.55, 1.48], [-2.2, 1.30], [-2.3, 0.95],
-  ];
-  const forme = new THREE.Shape(profil.map(([x, y]) => new THREE.Vector2(x * kx, y * ky)));
-  const profondeur = l * 0.96;
-  const caisseGeo = new THREE.ExtrudeGeometry(forme, { depth: profondeur, bevelEnabled: false });
+  // Caisse : profil latéral extrudé sur toute la largeur.
+  const caisseGeo = new THREE.ExtrudeGeometry(new THREE.Shape(CAISSE.map(([x, y]) => new THREE.Vector2(x, y))), { depth: l, bevelEnabled: false });
   const caisse = marquer(new THREE.Mesh(caisseGeo, carrosserie));
-  caisse.position.z = -profondeur / 2;
+  caisse.position.z = -demiL;
   groupe.add(caisse);
 
-  // Vitres latérales (une par côté) + pare-brise + lunette arrière, posés juste à l'extérieur de la caisse.
-  const vitreLat: [number, number][] = [[1.15, 0.93], [0.68, 1.39], [0.5, 1.43], [-1.45, 1.43], [-2.0, 1.29], [-1.9, 0.93]];
-  const formeVitre = new THREE.Shape(vitreLat.map(([x, y]) => new THREE.Vector2(x * kx, y * ky)));
+  // Habitacle : profil extrudé, plus étroit que la caisse.
+  const dH = HABITACLE_DEMI_LARGEUR * 2;
+  const habGeo = new THREE.ExtrudeGeometry(new THREE.Shape(HABITACLE.map(([x, y]) => new THREE.Vector2(x, y))), { depth: dH, bevelEnabled: false });
+  const habitacle = marquer(new THREE.Mesh(habGeo, carrosserie));
+  habitacle.position.z = -HABITACLE_DEMI_LARGEUR;
+  groupe.add(habitacle);
+
+  // Vitres latérales : profil de l'habitacle coupé à la ligne de ceinture puis réduit de 6 cm — toujours à l'intérieur.
+  const vitreLat = reduirePolygone(couperAuDessus(HABITACLE, LIGNE_CEINTURE), 0.06);
+  const geoVitreLat = new THREE.ShapeGeometry(new THREE.Shape(vitreLat.map(([x, y]) => new THREE.Vector2(x, y))));
   [1, -1].forEach(cote => {
-    const v = new THREE.Mesh(new THREE.ShapeGeometry(formeVitre), vitrage);
-    v.position.z = cote * (profondeur / 2 + 0.004);
-    if (cote < 0) v.rotation.y = Math.PI;
+    const v = new THREE.Mesh(geoVitreLat, vitrage);
+    v.position.z = cote * (HABITACLE_DEMI_LARGEUR + 0.004);
     groupe.add(v);
   });
-  const plaque = (x0: number, y0: number, x1: number, y1: number, ecart: number) => {
-    const dx = (x1 - x0) * kx, dy = (y1 - y0) * ky;
-    const longueur = Math.hypot(dx, dy);
-    const g = new THREE.Mesh(new THREE.BoxGeometry(longueur, 0.008, profondeur * 0.9), vitrage);
-    const angle = Math.atan2(dy, dx);
-    // normale sortante (vers le haut / l'extérieur de la caisse) du segment (x0,y0)→(x1,y1)
-    const nxL = -Math.sin(angle), nyL = Math.cos(angle);
-    g.position.set(((x0 + x1) / 2) * kx + nxL * ecart, ((y0 + y1) / 2) * ky + nyL * ecart, 0);
-    g.rotation.z = angle;
+  // Montant central (B) pour casser la grande vitre.
+  [1, -1].forEach(cote => {
+    const montant = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.42, 0.012), carrosserie);
+    montant.position.set(-0.28, 1.2, cote * (HABITACLE_DEMI_LARGEUR + 0.006));
+    groupe.add(montant);
+  });
+
+  // Pare-brise et lunette arrière : posés SUR les faces inclinées de l'habitacle, en retrait de 6 cm aux extrémités et de 9 cm
+  // sur les côtés (donc inclus dans la face), à 3 mm au-dessus.
+  const vitreInclinee = (a: [number, number], b: [number, number], sortant: 1 | -1) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1], longueur = Math.hypot(dx, dy);
+    const ux = dx / longueur, uy = dy / longueur;
+    const nx = -uy * sortant, ny = ux * sortant;                  // normale : (−uy, ux) est tournée vers l'intérieur pour ce sens de parcours, d'où sortant = −1
+    const lu = longueur - 0.12;
+    const mx = (a[0] + b[0]) / 2 + nx * 0.003, my = (a[1] + b[1]) / 2 + ny * 0.003;
+    const g = new THREE.Mesh(new THREE.BoxGeometry(lu, 0.004, dH - 0.18), vitrage);
+    g.position.set(mx, my, 0);
+    g.rotation.z = Math.atan2(uy, ux);
     groupe.add(g);
   };
-  plaque(1.25, 0.88, 0.65, 1.38, 0.006);   // pare-brise (normale : vers l'avant et le haut)
-  plaque(-1.55, 1.48, -2.2, 1.30, -0.006); // lunette arrière
+  vitreInclinee(HABITACLE[0], HABITACLE[1], -1);   // pare-brise (normale sortante : vers l'avant et le haut)
+  vitreInclinee(HABITACLE[2], HABITACLE[3], -1);   // lunette arrière (normale sortante : vers l'arrière et le haut)
 
-  // Roues : empattement 2,80 m, voie ≈ 1,60 m.
-  const rayonRoue = 0.33 * ky;
+  // Pare-chocs, calandre, rétroviseurs.
+  [1, -1].forEach(bout => {
+    const pc = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.2, l * 0.94), plastique);
+    pc.position.set(bout * 2.25, 0.38, 0);
+    groupe.add(marquer(pc));
+  });
+  const calandre = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.1, 0.9), plastique);
+  calandre.position.set(2.31, 0.55, 0);
+  groupe.add(calandre);
+  [1, -1].forEach(cote => {
+    const r = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.09, 0.14), carrosserie);
+    r.position.set(0.72, 1.08, cote * (HABITACLE_DEMI_LARGEUR + 0.09));
+    groupe.add(marquer(r));
+  });
+
+  // Roues : empattement 2,80 m. Un cache d'aile sombre sur le flanc, puis le pneu qui dépasse de 4 cm.
+  const rayon = 0.33;
   [[1.4, 1], [1.4, -1], [-1.4, 1], [-1.4, -1]].forEach(([x, cote]) => {
-    const pneu = marquer(new THREE.Mesh(new THREE.CylinderGeometry(rayonRoue, rayonRoue, 0.22, 20), caoutchouc));
+    const aile = new THREE.Mesh(new THREE.CylinderGeometry(rayon + 0.04, rayon + 0.04, 0.02, 24), plastique);
+    aile.rotation.x = Math.PI / 2;
+    aile.position.set(x, rayon + 0.04, cote * (demiL + 0.002));   // bas de l'arche = sol, jamais en dessous
+    groupe.add(aile);
+    const pneu = marquer(new THREE.Mesh(new THREE.CylinderGeometry(rayon, rayon, 0.24, 24), caoutchouc));
     pneu.rotation.x = Math.PI / 2;
-    pneu.position.set(x * kx, rayonRoue, cote * (l / 2 - 0.15 * kz));
+    pneu.position.set(x, rayon, cote * (demiL - 0.105));          // le pneu dépasse du flanc d'1,5 cm seulement
     groupe.add(pneu);
-    const moyeu = new THREE.Mesh(new THREE.CylinderGeometry(rayonRoue * 0.62, rayonRoue * 0.62, 0.23, 14), jante);
+    const moyeu = new THREE.Mesh(new THREE.CylinderGeometry(rayon * 0.6, rayon * 0.6, 0.245, 18), jante);
     moyeu.rotation.x = Math.PI / 2;
     moyeu.position.copy(pneu.position);
     groupe.add(moyeu);
   });
 
-  // Feux : phares avant (blanc chaud), feux arrière (rouge).
+  // Feux : phares (blanc chaud) à l'avant, feux rouges à l'arrière — posés sur la face, jamais au-delà du pare-chocs.
   const phare = new THREE.MeshStandardMaterial({ color: 0xfef3c7, emissive: 0xfef3c7, emissiveIntensity: 0.25 });
   const feuAr = new THREE.MeshStandardMaterial({ color: 0xdc2626, emissive: 0xdc2626, emissiveIntensity: 0.25 });
   [1, -1].forEach(cote => {
-    const ph = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.1, 0.3 * kz), phare);
-    ph.position.set(2.3 * kx, 0.5 * ky, cote * 0.62 * kz);
+    const ph = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.1, 0.3), phare);
+    ph.position.set(2.29, 0.66, cote * 0.68);
     groupe.add(ph);
-    const fa = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.2, 0.22 * kz), feuAr);
-    fa.position.set(-2.3 * kx, 0.82 * ky, cote * 0.68 * kz);
+    const fa = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.2, 0.22), feuAr);
+    fa.position.set(-2.285, 0.78, cote * 0.74);
     groupe.add(fa);
   });
+
+  // Les constantes partagées (maison-types) pilotent l'échelle : 4,60 × 1,85 × 1,50 m par défaut → échelle 1.
+  groupe.scale.set(L / 4.6, H / 1.5, l / 1.85);
   return groupe;
 }
 
@@ -426,7 +506,9 @@ const Vue3D = forwardRef<Vue3DHandle, {
   niveau: Niveau; resultat: ResultatGeneration | null; showCircuits: boolean;
   // Angle (degrés, sens horaire) entre le haut du plan et le Nord — voir Niveau.orientationNord / lib/soleil.ts.
   orientationNord?: number;
-}>(function Vue3D({ niveau, resultat, showCircuits, orientationNord = 0 }, ref) {
+  // Actions « circuits » du plan (générer / afficher les circuits) : affichées dans l'onglet « Vue » du bandeau.
+  circuitsAction?: React.ReactNode;
+}>(function Vue3D({ niveau, resultat, showCircuits, orientationNord = 0, circuitsAction }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -443,6 +525,9 @@ const Vue3D = forwardRef<Vue3DHandle, {
   // Personnes témoins (1,80 m) : affichage global ; chaque personne se place / se masque depuis le plan 2D.
   const [personnesVisibles, setPersonnesVisibles] = useState(true);
   const [voituresVisibles, setVoituresVisibles] = useState(true);
+  // Bandeau de commandes escamotable : fermé par défaut (vue dégagée), un onglet par famille de réglages.
+  const [bandeauOuvert, setBandeauOuvert] = useState(false);
+  const [onglet, setOnglet] = useState<"eclairage" | "ouvrants" | "soleil" | "temoins" | "vue">("eclairage");
   // Emprise de la scène (centre + rayon, mètres) — sert à cadrer la caméra d'ombre du soleil.
   const empriseRef = useRef<{ cx: number; cz: number; rayon: number; hauteur: number }>({ cx: 0, cz: 0, rayon: 8, hauteur: 2.5 });
   // « Coupe » : rend le doublage translucide pour voir passer les câbles encastrés qu'il contient.
@@ -1211,155 +1296,187 @@ const Vue3D = forwardRef<Vue3DHandle, {
     <div className="relative w-full h-full">
       <div ref={containerRef} className="w-full h-full" style={{ touchAction: "none", cursor: "grab" }} />
 
-      <div className="absolute top-3 right-3 flex flex-col items-end gap-1.5">
-        {/* Coupe : doublage translucide → câbles encastrés visibles dans l'épaisseur du mur */}
-        <button onClick={() => setCoupeDoublage(c => !c)}
-          className={`btn-ghost !text-xs backdrop-blur ${coupeDoublage ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}
-          title="Rend le doublage translucide pour voir passer les câbles encastrés (circuits affichés)">
-          {coupeDoublage ? "Doublage opaque" : "Coupe du doublage"}
-        </button>
+      {/* ── Bandeau de commandes escamotable ──────────────────────────────────────────────────────────────
+          Une seule barre en haut à gauche : la poignée (toujours visible) + 2 raccourcis (nuit, soleil). Le détail
+          — éclairage, ouvrants, soleil, témoins, vue — se déplie dessous, un onglet par famille. */}
+      {(() => {
+        const puce = (actif: boolean) => `btn-ghost !text-xs backdrop-blur !py-1 ${actif ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`;
+        const nbOuvrants = portes.length + volets.length;
+        const onglets: { id: typeof onglet; label: string; badge?: string }[] = [
+          { id: "eclairage", label: "💡 Éclairage", badge: interrupteurs.length > 0 ? String(interrupteurs.length) : undefined },
+          { id: "ouvrants", label: "🚪 Ouvrants", badge: nbOuvrants > 0 ? String(nbOuvrants) : undefined },
+          { id: "soleil", label: "☀ Soleil" },
+          { id: "temoins", label: "🧍 Témoins", badge: nbPersonnes + nbVoitures > 0 ? String(nbPersonnes + nbVoitures) : undefined },
+          { id: "vue", label: "👁 Vue" },
+        ];
+        const ligneBtn = "btn-ghost !text-xs !bg-white/90 backdrop-blur shrink-0";
+        return (
+          <div className="absolute top-3 left-3 z-20 flex flex-col gap-1.5 w-[min(calc(100%-1.5rem),46rem)] pointer-events-none">
+            <div className="flex items-center gap-1.5 pointer-events-auto flex-wrap">
+              <button onClick={() => setBandeauOuvert(o => !o)} className={puce(bandeauOuvert)}
+                title={bandeauOuvert ? "Replier le bandeau de commandes" : "Déplier les commandes de la vue 3D"}>
+                {bandeauOuvert ? "▴" : "▾"} Commandes 3D
+              </button>
+              <button onClick={() => setNightMode(m => !m)} className={puce(nightMode)}
+                title="Bascule entre jour et nuit : la nuit, seules les lampes allumées éclairent">
+                {nightMode ? "☀️ Jour" : "🌙 Nuit"}
+              </button>
+              <button onClick={() => setSoleilActif(v => !v)} className={puce(soleilActif && !nightMode)}
+                title="Soleil de midi plein Sud : ombres portées d'après l'orientation du bâtiment">
+                ☀ Soleil {soleilActif ? "oui" : "non"}
+              </button>
+            </div>
 
-        {/* Mode nuit : toujours disponible (test des éclairages), même sans interrupteur sur le niveau */}
-        <button onClick={() => setNightMode(m => !m)}
-          className={`btn-ghost !text-xs backdrop-blur ${nightMode ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}
-          title="Bascule entre jour et nuit : la nuit, seules les lampes allumées éclairent">
-          {nightMode ? "☀️ Mode jour" : "🌙 Mode nuit"}
-        </button>
-
-        {/* Soleil de midi : ombres réelles d'après l'orientation du bâtiment (réglée depuis le plan 2D) */}
-        <button onClick={() => setSoleilActif(v => !v)}
-          className={`btn-ghost !text-xs backdrop-blur ${soleilActif ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}
-          title="Soleil de midi plein Sud : ombres portées d'après l'orientation du bâtiment">
-          ☀ Soleil de midi : {soleilActif ? "oui" : "non"}
-        </button>
-        {soleilActif && (
-          <div className="flex flex-col items-end gap-1 rounded-lg bg-white/90 backdrop-blur px-2 py-1.5 text-[11px] text-ink-500 shadow">
-            <select className="input !py-0.5 !text-xs" value={saison} onChange={e => setSaison(e.target.value as SaisonSoleil)}>
-              {(Object.keys(LABEL_SAISON_SOLEIL) as SaisonSoleil[]).map(k => <option key={k} value={k}>{LABEL_SAISON_SOLEIL[k]}</option>)}
-            </select>
-            <span>Soleil à {Math.round(elevationSoleil)}° · Nord à {Math.round(orientationNord)}° du haut du plan</span>
-            {nightMode && <span className="text-amber-600">Mode nuit : soleil éteint</span>}
-          </div>
-        )}
-
-        {/* Personne témoin 1,80 m : placée par pièce depuis le plan 2D */}
-        {nbPersonnes > 0 ? (
-          <button onClick={() => setPersonnesVisibles(v => !v)}
-            className={`btn-ghost !text-xs backdrop-blur ${personnesVisibles ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}
-            title="Affiche / masque les personnes témoins de 1,80 m">
-            Personnes 1,80 m ({nbPersonnes}) : {personnesVisibles ? "visibles" : "masquées"}
-          </button>
-        ) : (
-          <span className="rounded-lg bg-white/90 backdrop-blur px-2 py-1 text-[11px] text-ink-400 shadow">
-            Personne 1,80 m : à placer depuis le plan 2D (clic sur une pièce → « Personne »)
-          </span>
-        )}
-        {nbVoitures > 0 ? (
-          <button onClick={() => setVoituresVisibles(v => !v)}
-            className={`btn-ghost !text-xs backdrop-blur ${voituresVisibles ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}
-            title="Affiche / masque les voitures témoins">
-            Voitures ({nbVoitures}) : {voituresVisibles ? "visibles" : "masquées"}
-          </button>
-        ) : (
-          <span className="rounded-lg bg-white/90 backdrop-blur px-2 py-1 text-[11px] text-ink-400 shadow">
-            Voiture : à placer depuis le plan 2D (clic sur une pièce → « Voiture »)
-          </span>
-        )}
-      </div>
-
-      {(interrupteurs.length > 0 || volets.length > 0 || portes.length > 0) && (
-        <div className="absolute inset-x-0 bottom-0 p-3 flex flex-col gap-2 pointer-events-none">
-          {interrupteurs.length > 0 && (
-            <>
-              <div className="flex items-center gap-2 pointer-events-auto">
-                <button
-                  onClick={() => setInterrupteursOn(Object.fromEntries(interrupteurs.map(i => [i.id, true])))}
-                  className="btn-ghost !text-xs !bg-white/90 backdrop-blur">
-                  Tout allumer
-                </button>
-                <button
-                  onClick={() => setInterrupteursOn({})}
-                  className="btn-ghost !text-xs !bg-white/90 backdrop-blur">
-                  Tout éteindre
-                </button>
-                <button
-                  onClick={() => setNightMode(m => !m)}
-                  className={`btn-ghost !text-xs !ml-auto backdrop-blur ${nightMode ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}>
-                  {nightMode ? "☀️ Mode jour" : "🌙 Mode nuit"}
-                </button>
-              </div>
-              <div className="flex items-center gap-2 overflow-x-auto pointer-events-auto pb-1">
-                {interrupteurs.map(i => {
-                  const actif = !!interrupteursOn[i.id];
-                  return (
-                    <button
-                      key={i.id}
-                      onClick={() => setInterrupteursOn(s => ({ ...s, [i.id]: !s[i.id] }))}
-                      className={`shrink-0 card !py-1.5 !px-3 text-left transition-colors ${actif ? "!border-volt-500 !bg-volt-50" : "!bg-white/90"}`}>
-                      <div className="text-[10px] uppercase tracking-wide text-ink-400">{i.pieceNom}</div>
-                      <div className="text-xs font-semibold text-ink-900 flex items-center gap-1.5">
-                        <span className={`inline-block w-2 h-2 rounded-full ${actif ? "bg-volt-500" : "bg-ink-300"}`} />
-                        {i.label}
-                      </div>
+            {bandeauOuvert && (
+              <div className="pointer-events-auto rounded-xl bg-white/95 backdrop-blur border border-ink-200 shadow-lg overflow-hidden">
+                <div className="flex items-center gap-1 px-2 pt-2 overflow-x-auto border-b border-ink-100">
+                  {onglets.map(o => (
+                    <button key={o.id} onClick={() => setOnglet(o.id)}
+                      className={`shrink-0 text-xs px-2.5 py-1.5 rounded-t-lg border-b-2 transition-colors ${onglet === o.id ? "border-volt-500 text-ink-900 font-semibold" : "border-transparent text-ink-500 hover:text-ink-800"}`}>
+                      {o.label}{o.badge && <span className="ml-1 text-[10px] bg-ink-100 text-ink-600 rounded-full px-1.5 py-0.5">{o.badge}</span>}
                     </button>
-                  );
-                })}
+                  ))}
+                  <button onClick={() => setBandeauOuvert(false)} className="ml-auto shrink-0 text-xs text-ink-400 hover:text-ink-700 px-2 py-1" title="Replier">✕</button>
+                </div>
+
+                <div className="p-3 max-h-[38vh] overflow-y-auto flex flex-col gap-2">
+                  {onglet === "eclairage" && (
+                    <>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button onClick={() => setNightMode(m => !m)} className={puce(nightMode)}>{nightMode ? "☀️ Mode jour" : "🌙 Mode nuit"}</button>
+                        <button onClick={() => setInterrupteursOn(Object.fromEntries(interrupteurs.map(i => [i.id, true])))} disabled={interrupteurs.length === 0}
+                          className={`${ligneBtn} disabled:opacity-40`}>Tout allumer</button>
+                        <button onClick={() => setInterrupteursOn({})} disabled={interrupteurs.length === 0} className={`${ligneBtn} disabled:opacity-40`}>Tout éteindre</button>
+                      </div>
+                      {interrupteurs.length === 0 ? (
+                        <p className="text-xs text-ink-400">Aucun interrupteur ne commande de point lumineux sur ce niveau : rien à allumer. Relie un interrupteur à une lampe depuis le plan 2D.</p>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {interrupteurs.map(i => {
+                            const actif = !!interrupteursOn[i.id];
+                            return (
+                              <button key={i.id} onClick={() => setInterrupteursOn(s => ({ ...s, [i.id]: !s[i.id] }))}
+                                className={`card !py-1.5 !px-3 text-left transition-colors ${actif ? "!border-volt-500 !bg-volt-50" : "!bg-white"}`}>
+                                <div className="text-[10px] uppercase tracking-wide text-ink-400">{i.pieceNom}</div>
+                                <div className="text-xs font-semibold text-ink-900 flex items-center gap-1.5">
+                                  <span className={`inline-block w-2 h-2 rounded-full ${actif ? "bg-volt-500" : "bg-ink-300"}`} />
+                                  {i.label}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {onglet === "ouvrants" && (
+                    nbOuvrants === 0 ? (
+                      <p className="text-xs text-ink-400">Aucune porte ni aucun volet roulant sur ce niveau.</p>
+                    ) : (
+                      <>
+                        {portes.length > 0 && (
+                          <div className="flex flex-col gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-500">Portes, baies, garage</span>
+                              <button onClick={() => setPortesOverride(Object.fromEntries(portes.map(d => [d.id, 100])))} className={ligneBtn}>Tout ouvrir</button>
+                              <button onClick={() => setPortesOverride(Object.fromEntries(portes.map(d => [d.id, 0])))} className={ligneBtn}>Tout fermer</button>
+                              <span className="text-[10px] text-ink-400">Astuce : clique sur une porte dans la vue pour l&apos;ouvrir / la fermer</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {portes.map(d => {
+                                const pct = portesOverride[d.id] ?? d.defaut;
+                                return (
+                                  <div key={d.id} className="card !py-1.5 !px-3 !bg-white">
+                                    <div className="text-[10px] uppercase tracking-wide text-ink-400">{d.lieu}</div>
+                                    <div className="text-xs font-semibold text-ink-900">{d.label} — {pct >= 100 ? "ouverte" : pct <= 0 ? "fermée" : `ouverte à ${pct} %`}</div>
+                                    <input type="range" min={0} max={100} step={5} value={pct} className="w-32"
+                                      onChange={e => setPortesOverride(s => ({ ...s, [d.id]: Number(e.target.value) }))} />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                        {volets.length > 0 && (
+                          <div className="flex flex-col gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-500">Volets roulants</span>
+                              <button onClick={() => setVoletsOverride(Object.fromEntries(volets.map(v => [v.id, 100])))} className={ligneBtn}>Tout ouvrir</button>
+                              <button onClick={() => setVoletsOverride(Object.fromEntries(volets.map(v => [v.id, 0])))} className={ligneBtn}>Tout fermer</button>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {volets.map(v => {
+                                const pct = voletsOverride[v.id] ?? v.defaut;
+                                return (
+                                  <div key={v.id} className="card !py-1.5 !px-3 !bg-white">
+                                    <div className="text-[10px] uppercase tracking-wide text-ink-400">{v.pieceNom}</div>
+                                    <div className="text-xs font-semibold text-ink-900">{v.label} — {pct >= 100 ? "ouvert" : pct <= 0 ? "fermé" : `ouvert à ${pct} %`}</div>
+                                    <input type="range" min={0} max={100} step={5} value={pct} className="w-32"
+                                      onChange={e => setVoletsOverride(s => ({ ...s, [v.id]: Number(e.target.value) }))} />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )
+                  )}
+
+                  {onglet === "soleil" && (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button onClick={() => setSoleilActif(v => !v)} className={puce(soleilActif)}>☀ Soleil de midi : {soleilActif ? "oui" : "non"}</button>
+                        <select className="input !py-1 !text-xs !w-auto" value={saison} disabled={!soleilActif}
+                          onChange={e => setSaison(e.target.value as SaisonSoleil)}>
+                          {(Object.keys(LABEL_SAISON_SOLEIL) as SaisonSoleil[]).map(k => <option key={k} value={k}>{LABEL_SAISON_SOLEIL[k]}</option>)}
+                        </select>
+                      </div>
+                      <p className="text-xs text-ink-500">
+                        Plein Sud à midi, hauteur du soleil {Math.round(elevationSoleil)}° · Nord à {Math.round(orientationNord)}° du haut du plan (réglé depuis le plan 2D).
+                        {nightMode && <span className="text-amber-600"> Mode nuit : le soleil est éteint.</span>}
+                      </p>
+                    </div>
+                  )}
+
+                  {onglet === "temoins" && (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button onClick={() => setPersonnesVisibles(v => !v)} disabled={nbPersonnes === 0}
+                          className={`${puce(personnesVisibles && nbPersonnes > 0)} disabled:opacity-40`}>
+                          🧍 Personnes 1,80 m ({nbPersonnes}) : {personnesVisibles ? "visibles" : "masquées"}
+                        </button>
+                        <button onClick={() => setVoituresVisibles(v => !v)} disabled={nbVoitures === 0}
+                          className={`${puce(voituresVisibles && nbVoitures > 0)} disabled:opacity-40`}>
+                          🚗 Voitures ({nbVoitures}) : {voituresVisibles ? "visibles" : "masquées"}
+                        </button>
+                      </div>
+                      {(nbPersonnes === 0 || nbVoitures === 0) && (
+                        <p className="text-[11px] text-ink-400">
+                          À placer depuis le plan 2D : clic sur une pièce → « + Personne 1,80 m » / « + Voiture ».
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {onglet === "vue" && (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button onClick={() => setCoupeDoublage(c => !c)} className={puce(coupeDoublage)}
+                          title="Rend le doublage translucide pour voir passer les câbles encastrés (circuits affichés)">
+                          {coupeDoublage ? "Doublage opaque" : "Coupe du doublage"}
+                        </button>
+                      </div>
+                      {circuitsAction && <div className="flex flex-col gap-1.5 items-start">{circuitsAction}</div>}
+                    </div>
+                  )}
+                </div>
               </div>
-            </>
-          )}
-          {portes.length > 0 && (
-            <div className="flex items-center gap-2 overflow-x-auto pointer-events-auto pb-1">
-              <button
-                onClick={() => setPortesOverride(Object.fromEntries(portes.map(d => [d.id, 100])))}
-                className="shrink-0 btn-ghost !text-xs !bg-white/90 backdrop-blur">
-                Ouvrir les portes
-              </button>
-              <button
-                onClick={() => setPortesOverride(Object.fromEntries(portes.map(d => [d.id, 0])))}
-                className="shrink-0 btn-ghost !text-xs !bg-white/90 backdrop-blur">
-                Fermer les portes
-              </button>
-              {portes.map(d => {
-                const pct = portesOverride[d.id] ?? d.defaut;
-                return (
-                  <div key={d.id} className="shrink-0 card !py-1.5 !px-3 !bg-white/90 backdrop-blur">
-                    <div className="text-[10px] uppercase tracking-wide text-ink-400">{d.lieu}</div>
-                    <div className="text-xs font-semibold text-ink-900">{d.label} — {pct >= 100 ? "ouverte" : pct <= 0 ? "fermée" : `ouverte à ${pct} %`}</div>
-                    <input type="range" min={0} max={100} step={5} value={pct} className="w-32"
-                      onChange={e => setPortesOverride(s => ({ ...s, [d.id]: Number(e.target.value) }))} />
-                  </div>
-                );
-              })}
-              <span className="shrink-0 text-[10px] text-ink-400 bg-white/80 rounded px-1.5 py-0.5">Astuce : clique sur une porte dans la vue pour l&apos;ouvrir / la fermer</span>
-            </div>
-          )}
-          {volets.length > 0 && (
-            <div className="flex items-center gap-2 overflow-x-auto pointer-events-auto pb-1">
-              <button
-                onClick={() => setVoletsOverride(Object.fromEntries(volets.map(v => [v.id, 100])))}
-                className="shrink-0 btn-ghost !text-xs !bg-white/90 backdrop-blur">
-                Ouvrir les volets
-              </button>
-              <button
-                onClick={() => setVoletsOverride(Object.fromEntries(volets.map(v => [v.id, 0])))}
-                className="shrink-0 btn-ghost !text-xs !bg-white/90 backdrop-blur">
-                Fermer les volets
-              </button>
-              {volets.map(v => {
-                const pct = voletsOverride[v.id] ?? v.defaut;
-                return (
-                  <div key={v.id} className="shrink-0 card !py-1.5 !px-3 !bg-white/90 backdrop-blur">
-                    <div className="text-[10px] uppercase tracking-wide text-ink-400">{v.pieceNom}</div>
-                    <div className="text-xs font-semibold text-ink-900">{v.label} — {pct >= 100 ? "ouvert" : pct <= 0 ? "fermé" : `ouvert à ${pct} %`}</div>
-                    <input type="range" min={0} max={100} step={5} value={pct} className="w-32"
-                      onChange={e => setVoletsOverride(s => ({ ...s, [v.id]: Number(e.target.value) }))} />
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 });
