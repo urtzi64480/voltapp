@@ -12,12 +12,13 @@
 
 import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, HAUTEUR_PERSONNE_M } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
 import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante } from "@/components/plan/PortesOuvrables";
 import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
 import { cloisonsDeZone, ouverturesEffectivesZone } from "@/lib/zones";
+import { SaisonSoleil, LABEL_SAISON_SOLEIL, LATITUDE_DEFAUT, elevationMidi, directionSoleilMidi } from "@/lib/soleil";
 import { parametresMur3D, geometrieMurs, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT, preparerMurs, pointDansCouche2 } from "@/lib/murs";
 import { appareillagesEnPoseApparente, posesTroncons, hauteursTroncons, hauteurDefautLiaison } from "@/lib/pose-circuits";
 import { construireChemin3D, hauteurGaineNiveau } from "@/lib/chemin-3d";
@@ -298,13 +299,42 @@ export function construireMurAvecOuvertures(
   if (curseur < longueur) ajouterPan((curseur + longueur + extFin) / 2, longueur + extFin - curseur, hauteurMur / 2, hauteurMur);
 }
 
+// Personne témoin de 1,80 m (silhouette simple, pieds au sol à l'origine) — pour juger les échelles en 3D.
+// Elle projette et reçoit les ombres comme le mobilier.
+function creerPersonne(): THREE.Group {
+  const groupe = new THREE.Group();
+  const peau = new THREE.MeshStandardMaterial({ color: 0xf1c9a5, roughness: 0.8 });
+  const haut = new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.85 });
+  const bas = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.85 });
+  const ajouter = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, 0);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    groupe.add(m);
+  };
+  const H = HAUTEUR_PERSONNE_M;
+  const rTete = 0.11;
+  const hJambes = 0.85, hTorse = 0.6, hCou = 0.13;
+  ajouter(new THREE.CylinderGeometry(0.07, 0.065, hJambes, 12), bas, -0.1, hJambes / 2);
+  ajouter(new THREE.CylinderGeometry(0.07, 0.065, hJambes, 12), bas, 0.1, hJambes / 2);
+  ajouter(new THREE.BoxGeometry(0.42, hTorse, 0.22), haut, 0, hJambes + hTorse / 2);
+  ajouter(new THREE.CylinderGeometry(0.045, 0.04, 0.6, 10), haut, -0.265, hJambes + hTorse - 0.3);
+  ajouter(new THREE.CylinderGeometry(0.045, 0.04, 0.6, 10), haut, 0.265, hJambes + hTorse - 0.3);
+  ajouter(new THREE.CylinderGeometry(0.05, 0.05, hCou, 10), peau, 0, hJambes + hTorse + hCou / 2);
+  ajouter(new THREE.SphereGeometry(rTete, 16, 12), peau, 0, H - rTete); // sommet de la tête = 1,80 m
+  return groupe;
+}
+
 export interface Vue3DHandle {
   capturerImage: () => string | null;
 }
 
 const Vue3D = forwardRef<Vue3DHandle, {
   niveau: Niveau; resultat: ResultatGeneration | null; showCircuits: boolean;
-}>(function Vue3D({ niveau, resultat, showCircuits }, ref) {
+  // Angle (degrés, sens horaire) entre le haut du plan et le Nord — voir Niveau.orientationNord / lib/soleil.ts.
+  orientationNord?: number;
+}>(function Vue3D({ niveau, resultat, showCircuits, orientationNord = 0 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -315,6 +345,13 @@ const Vue3D = forwardRef<Vue3DHandle, {
   const lumiereLightsRef = useRef<Map<number, { light: THREE.PointLight | THREE.SpotLight; mat: THREE.MeshStandardMaterial }>>(new Map());
 
   const [nightMode, setNightMode] = useState(false);
+  // Soleil de midi (ombres portées réelles selon l'orientation du bâtiment) — simple état de VUE.
+  const [soleilActif, setSoleilActif] = useState(true);
+  const [saison, setSaison] = useState<SaisonSoleil>("aujourdhui");
+  // Personnes témoins (1,80 m) : affichage global ; chaque personne se place / se masque depuis le plan 2D.
+  const [personnesVisibles, setPersonnesVisibles] = useState(true);
+  // Emprise de la scène (centre + rayon, mètres) — sert à cadrer la caméra d'ombre du soleil.
+  const empriseRef = useRef<{ cx: number; cz: number; rayon: number; hauteur: number }>({ cx: 0, cz: 0, rayon: 8, hauteur: 2.5 });
   // « Coupe » : rend le doublage translucide pour voir passer les câbles encastrés qu'il contient.
   const [coupeDoublage, setCoupeDoublage] = useState(false);
   const doublageMatsRef = useRef<THREE.MeshStandardMaterial[]>([]);
@@ -414,7 +451,13 @@ const Vue3D = forwardRef<Vue3DHandle, {
     ambientLightRef.current = ambientLight;
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
     dirLight.position.set(5, 10, 5);
+    // Soleil : ombres portées (position / cadrage réglés par l'effet « soleil » plus bas, orientation incluse).
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.set(2048, 2048);
+    dirLight.shadow.bias = -0.0004;
+    dirLight.shadow.normalBias = 0.03;
     scene.add(dirLight);
+    scene.add(dirLight.target);
     dirLightRef.current = dirLight;
 
     const colorMap = resultat ? construireColorMap(resultat, [niveau]) : new Map<number, string>();
@@ -772,6 +815,11 @@ const Vue3D = forwardRef<Vue3DHandle, {
       ? Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 4)
       : 8;
 
+    empriseRef.current = tousPts.length > 0
+      ? { cx: (Math.min(...xs) + Math.max(...xs)) / 2, cz: (Math.min(...ys) + Math.max(...ys)) / 2,
+          rayon: Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2 + 3, hauteur: hauteurPlafond }
+      : { cx: 0, cz: 0, rayon: 8, hauteur: hauteurPlafond };
+
     // ── Caméra orbitale manuelle (coordonnées sphériques autour de la cible) ──
     // La cible ("cible") n'est plus figée sur le centre du niveau : le glisser-déplacer
     // (clic droit, ou Maj + clic gauche) la déplace dans le plan de l'écran, ce qui permet
@@ -919,11 +967,12 @@ const Vue3D = forwardRef<Vue3DHandle, {
     if (nightMode) {
       scene.background = new THREE.Color("#0b1220");
       if (ambientLightRef.current) ambientLightRef.current.intensity = 0.12;
-      if (dirLightRef.current) dirLightRef.current.intensity = 0.15;
+      if (dirLightRef.current) { dirLightRef.current.intensity = 0; dirLightRef.current.castShadow = false; }
     } else {
       scene.background = new THREE.Color("#e7e5e4");
-      if (ambientLightRef.current) ambientLightRef.current.intensity = 0.7;
-      if (dirLightRef.current) dirLightRef.current.intensity = 0.8;
+      // Soleil actif : moins d'ambiance, plus de lumière directe, pour que les ombres se voient franchement.
+      if (ambientLightRef.current) ambientLightRef.current.intensity = soleilActif ? 0.42 : 0.7;
+      if (dirLightRef.current) { dirLightRef.current.intensity = soleilActif ? 1.15 : 0.8; dirLightRef.current.castShadow = soleilActif; }
     }
 
     lumiereLightsRef.current.forEach((entry, id) => {
@@ -931,7 +980,53 @@ const Vue3D = forwardRef<Vue3DHandle, {
       entry.light.intensity = allumee ? (nightMode ? 2.4 : 1.4) : 0;
       entry.mat.emissiveIntensity = allumee ? (nightMode ? 1.4 : 0.9) : 0.15;
     });
-  }, [nightMode, lumieresAllumeesIds, niveauResultat, showCircuits]);
+  }, [nightMode, soleilActif, lumieresAllumeesIds, niveau, resultat, niveauResultat, showCircuits]);
+
+  // Hauteur du soleil à midi (degrés) pour la saison choisie — affichée dans le panneau.
+  const elevationSoleil = useMemo(() => elevationMidi(saison, LATITUDE_DEFAUT), [saison]);
+
+  // Soleil de midi : plein Sud (d'après l'orientation du bâtiment), à la hauteur propre à la date.
+  // Ne reconstruit rien : déplace la lumière directionnelle et recadre sa caméra d'ombre sur l'emprise du niveau.
+  useEffect(() => {
+    const lumiere = dirLightRef.current;
+    if (!lumiere) return;
+    const { cx, cz, rayon, hauteur } = empriseRef.current;
+    const dir = directionSoleilMidi(orientationNord, elevationSoleil);
+    const distance = rayon * 2 + 30;
+    lumiere.target.position.set(cx, hauteur / 2, cz);
+    lumiere.target.updateMatrixWorld();
+    lumiere.position.set(cx + dir.x * distance, hauteur / 2 + dir.y * distance, cz + dir.z * distance);
+    const cam = lumiere.shadow.camera;
+    const demi = rayon + hauteur;
+    cam.left = -demi; cam.right = demi; cam.top = demi; cam.bottom = -demi;
+    cam.near = 1; cam.far = distance + rayon * 2 + 10;
+    cam.updateProjectionMatrix();
+    lumiere.shadow.needsUpdate = true;
+  }, [orientationNord, elevationSoleil, niveau, resultat, niveauResultat, showCircuits]);
+
+  // Personnes témoins (1,80 m) : lues sur le plan VIVANT, dans leur propre groupe — retiré/recréé ici sans toucher au reste.
+  const nbPersonnes = useMemo(() => niveau.pieces.filter(p => p.personne).length, [niveau]);
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    const groupe = new THREE.Group();
+    if (personnesVisibles) {
+      niveau.pieces.forEach(p => {
+        const pe = p.personne;
+        if (!pe || pe.masquee) return;
+        const modele = creerPersonne();
+        modele.position.set(pe.x, 0, pe.y);
+        groupe.add(modele);
+      });
+    }
+    scene.add(groupe);
+    return () => {
+      scene.remove(groupe);
+      groupe.traverse(obj => {
+        if (obj instanceof THREE.Mesh) { obj.geometry.dispose(); (obj.material as THREE.Material).dispose(); }
+      });
+    };
+  }, [niveau, resultat, showCircuits, niveauResultat, personnesVisibles]);
 
   // Mode « Coupe » : doublage translucide, pour voir les câbles encastrés qu'il abrite.
   useEffect(() => {
@@ -978,12 +1073,43 @@ const Vue3D = forwardRef<Vue3DHandle, {
     <div className="relative w-full h-full">
       <div ref={containerRef} className="w-full h-full" style={{ touchAction: "none", cursor: "grab" }} />
 
-      {/* Coupe : doublage translucide → câbles encastrés visibles dans l'épaisseur du mur */}
-      <button onClick={() => setCoupeDoublage(c => !c)}
-        className={`absolute top-3 right-3 btn-ghost !text-xs backdrop-blur ${coupeDoublage ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}
-        title="Rend le doublage translucide pour voir passer les câbles encastrés (circuits affichés)">
-        {coupeDoublage ? "Doublage opaque" : "Coupe du doublage"}
-      </button>
+      <div className="absolute top-3 right-3 flex flex-col items-end gap-1.5">
+        {/* Coupe : doublage translucide → câbles encastrés visibles dans l'épaisseur du mur */}
+        <button onClick={() => setCoupeDoublage(c => !c)}
+          className={`btn-ghost !text-xs backdrop-blur ${coupeDoublage ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}
+          title="Rend le doublage translucide pour voir passer les câbles encastrés (circuits affichés)">
+          {coupeDoublage ? "Doublage opaque" : "Coupe du doublage"}
+        </button>
+
+        {/* Soleil de midi : ombres réelles d'après l'orientation du bâtiment (réglée depuis le plan 2D) */}
+        <button onClick={() => setSoleilActif(v => !v)}
+          className={`btn-ghost !text-xs backdrop-blur ${soleilActif ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}
+          title="Soleil de midi plein Sud : ombres portées d'après l'orientation du bâtiment">
+          ☀ Soleil de midi : {soleilActif ? "oui" : "non"}
+        </button>
+        {soleilActif && (
+          <div className="flex flex-col items-end gap-1 rounded-lg bg-white/90 backdrop-blur px-2 py-1.5 text-[11px] text-ink-500 shadow">
+            <select className="input !py-0.5 !text-xs" value={saison} onChange={e => setSaison(e.target.value as SaisonSoleil)}>
+              {(Object.keys(LABEL_SAISON_SOLEIL) as SaisonSoleil[]).map(k => <option key={k} value={k}>{LABEL_SAISON_SOLEIL[k]}</option>)}
+            </select>
+            <span>Soleil à {Math.round(elevationSoleil)}° · Nord à {Math.round(orientationNord)}° du haut du plan</span>
+            {nightMode && <span className="text-amber-600">Mode nuit : soleil éteint</span>}
+          </div>
+        )}
+
+        {/* Personne témoin 1,80 m : placée par pièce depuis le plan 2D */}
+        {nbPersonnes > 0 ? (
+          <button onClick={() => setPersonnesVisibles(v => !v)}
+            className={`btn-ghost !text-xs backdrop-blur ${personnesVisibles ? "!bg-ink-900 !text-volt-400" : "!bg-white/90"}`}
+            title="Affiche / masque les personnes témoins de 1,80 m">
+            Personnes 1,80 m ({nbPersonnes}) : {personnesVisibles ? "visibles" : "masquées"}
+          </button>
+        ) : (
+          <span className="rounded-lg bg-white/90 backdrop-blur px-2 py-1 text-[11px] text-ink-400 shadow">
+            Personne 1,80 m : à placer depuis le plan 2D (clic sur une pièce → « Personne »)
+          </span>
+        )}
+      </div>
 
       {(interrupteurs.length > 0 || volets.length > 0 || portes.length > 0) && (
         <div className="absolute inset-x-0 bottom-0 p-3 flex flex-col gap-2 pointer-events-none">
