@@ -74,6 +74,14 @@ const CIRCUIT_KEYS_MANUELS = Object.keys(CIRCUITS).filter(k => !["general", "par
 // Variable de module : lue au moment du geste par tous les outils (dessin, sommets, déplacements…).
 const reglageAimant = { pasM: 0.01, aimant: false, alt: false };
 
+// Couleurs de fond proposées pour une pièce sur le plan 2D (pastel).
+const COULEURS_FOND_PIECE: { nom: string; hex: string }[] = [
+  { nom: "Rose", hex: "#F9D5DC" },
+  { nom: "Bleu", hex: "#CFE5F7" },
+  { nom: "Vert", hex: "#D3EFD9" },
+  { nom: "Jaune", hex: "#FBF0C0" },
+];
+
 function arrondiGrille(v: number, pas: number = reglageAimant.pasM): number {
   return Number((Math.round(v / pas) * pas).toFixed(4));
 }
@@ -258,7 +266,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
   // 1) fonds de pièces, 2) murs en vraie épaisseur (structure + doublage), 3) ouvertures qui percent
   // toutes les épaisseurs — dans cet ordre pour que les murs ne soient jamais recouverts par le fond d'une voisine.
   niveauResultat.pieces.forEach(p => {
-    s += `<polygon points="${ptsPx(p.contour)}" fill="${PIECE_TYPES[p.type].color}" stroke="none"/>`;
+    s += `<polygon points="${ptsPx(p.contour)}" fill="${p.couleurFond ?? PIECE_TYPES[p.type].color}" stroke="none"/>`;
   });
   {
     const quads = niveauResultat.pieces.flatMap(p => geometrieMurs(p).quads);
@@ -4621,7 +4629,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               {/* Couche 1 — fonds de pièces (clic = sélection, glisser = déplacement) */}
               {niveauActif?.pieces.map(piece => (
                 <polygon key={`fond-${piece.id}`} points={piece.contour.map(toScreen).map(q => `${q.x},${q.y}`).join(" ")}
-                  fill={PIECE_TYPES[piece.type].color} fillOpacity={0.85} stroke="none"
+                  fill={piece.couleurFond ?? PIECE_TYPES[piece.type].color} fillOpacity={0.85} stroke="none"
                   style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture && !piece.verrouillee ? "move" : "default" }}
                   onPointerDown={e => onPieceDown(piece, e)} />
               ))}
@@ -5521,6 +5529,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 <button onClick={() => updateNiveauActif(n => ({ ...n, pieces: n.pieces.map(p => p.id === selectedPiece.id ? { ...p, masquerDimensions: p.masquerDimensions ? undefined : true } : p) }))}
                   className={`${selectedPiece.masquerDimensions ? "btn-ghost" : "btn-volt"} !px-2 !py-1.5 !text-xs`}
                   title={selectedPiece.masquerDimensions ? "Dimensions masquées — cliquer pour les afficher" : "Masquer toutes les dimensions de cette pièce (surface, longueur et largeur des murs, cotes, épaisseurs)"}>Dimensions</button>
+                <div className="flex items-center gap-1" title="Couleur de fond de la pièce (plan 2D) — recliquer sur la couleur choisie pour revenir à la couleur par défaut">
+                  {COULEURS_FOND_PIECE.map(c => (
+                    <button key={c.hex} aria-label={c.nom} title={c.nom}
+                      onClick={() => updateNiveauActif(n => ({ ...n, pieces: n.pieces.map(p => p.id === selectedPiece.id ? { ...p, couleurFond: p.couleurFond === c.hex ? undefined : c.hex } : p) }))}
+                      className="w-5 h-5 rounded-full border"
+                      style={{ background: c.hex, borderColor: selectedPiece.couleurFond === c.hex ? "#1c1917" : "#d6d3d1", borderWidth: selectedPiece.couleurFond === c.hex ? 2 : 1 }} />
+                  ))}
+                </div>
                 {selectedPiece.nomDecalage && !selectedPiece.verrouillee && (
                   <button onClick={() => reinitialiserNomPiece(selectedPiece.id)} className="btn-ghost !px-2 !py-1.5 !text-xs" title="Replacer le nom et la surface automatiquement">↺ Nom</button>
                 )}
