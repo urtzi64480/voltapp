@@ -296,6 +296,9 @@ export interface Piece {
   modeleMurs?: 2;
   // Mobilier simple (vue 3D uniquement) — voir MeubleSimple ci-dessous.
   meubles?: MeubleSimple[];
+  // Personne témoin de 1,80 m (vue 3D uniquement) : sert à juger les échelles. Purement visuelle, jamais comptée
+  // dans les circuits ni le devis. Une seule par pièce ; « masquee » la cache en 3D sans la supprimer.
+  personne?: PersonnePlacee;
 }
 
 // Élément cubique simple (table, armoire, plan de travail…) placé dans une pièce, sans
@@ -457,6 +460,10 @@ export interface Niveau {
   // paire sort de la topologie en étoile "boîte" habituelle : voir construireBranchesCircuitEclairage.
   liaisonsDirectesLumiere?: Record<string, [number, number][]>;
   hauteurPlafond?: number; // mètres — pour la vue 3D (2.5 par défaut)
+  // Orientation du bâtiment : angle (degrés, sens horaire) entre le HAUT du plan et le Nord géographique.
+  // 0 = le Nord est en haut du plan. Valeur commune à tous les niveaux (réglée depuis le plan, voir page du plan) ;
+  // la vue 3D en déduit la direction du soleil (midi solaire = plein Sud).
+  orientationNord?: number;
   liaisonWaypoints?: LiaisonWaypoints;
   // Pose de la DERNIÈRE section de chaque liaison (celle qui arrive à l'appareillage / à la boîte, après
   // le dernier coude). Les autres sections portent leur pose sur le coude où elles aboutissent
@@ -706,6 +713,14 @@ export function nouvellePlaque(postes: PosteSpec[], x: number, y: number): Appar
 export const nouveauMeuble = (x: number, y: number): MeubleSimple => ({
   id: uidMaison(), x, y, largeur: 0.6, profondeur: 0.4, hauteur: 0.75,
 });
+
+// Personne témoin (1,80 m) : position au sol dans le repère du niveau, comme un meuble.
+export interface PersonnePlacee {
+  x: number; y: number; // mètres
+  masquee?: boolean;
+}
+export const HAUTEUR_PERSONNE_M = 1.8;
+export const nouvellePersonne = (x: number, y: number): PersonnePlacee => ({ x, y });
 
 export function distance(a: Point, b: Point): number {
   return Math.hypot(b.x - a.x, b.y - a.y);
@@ -986,8 +1001,8 @@ export function centroidePoints(points: Point[]): Point {
 // entre elles forment leurs propres composantes connexes, chacune raccordée UNE SEULE FOIS
 // (à sa lampe d'entrée la plus proche) à la boîte la plus proche du groupe — ou au tableau
 // s'il n'y a aucune boîte — puis chaînées de lampe en lampe selon les liaisons posées.
-// point lumineux -> commande(s) : un interrupteur simple ou un télérupteur (par bouton
-// poussoir) se raccorde indépendamment à la lampe, comme avant. Un groupe de va-et-vient
+// ALIMENTATION -> COMMANDE -> LAMPE : le câble va d'abord à l'interrupteur (simple, va-et-vient, télérupteur),
+// dont le retour rejoint ensuite la lampe (voir raccorderLampe). Un groupe de va-et-vient
 // commandant la MÊME lampe, en revanche, ne se câble PAS chacun indépendamment vers la
 // lampe : électriquement, seul le premier (le plus proche) reçoit le retour lampe — les
 // suivants sont câblés EN CHAÎNE avec leur voisin précédent via les fils navette. Ces
@@ -1004,6 +1019,46 @@ export function construireBranchesCircuitEclairage(
   const idsLumieres = new Set(lumieres.map(l => l.id));
   const liaisonsValides = liaisonsDirectes.filter(([a, b]) => idsLumieres.has(a) && idsLumieres.has(b));
   const lumiereParId = new Map(lumieres.map(l => [l.id, l]));
+
+  // ── Sens du câblage ────────────────────────────────────────────────────────────────────────────
+  // L'alimentation (boîte de dérivation, sinon tableau) va D'ABORD à la commande (interrupteur, va-et-vient,
+  // télérupteur), PUIS le retour de la commande rejoint la lampe : alimentation → commande → lampe.
+  // Plusieurs commandes sur une même lampe (va-et-vient) : elles se chaînent dans l'ordre de proximité avec
+  // l'alimentation (navette entre elles), le retour partant de la DERNIÈRE vers la lampe. Une commande qui
+  // commande plusieurs lampes n'est alimentée qu'UNE fois, puis repart vers chacune.
+  // Commande domotique : aucun fil (onde pointillée), la lampe reste alimentée directement.
+  const dejaPose = new Set<string>();
+  const poser = (seg: SegmentCircuit) => {
+    const cle = `${seg.aId}->${seg.bId}`;
+    if (dejaPose.has(cle)) return;
+    dejaPose.add(cle);
+    segments.push(seg);
+  };
+  const lampesRaccordees = new Set<number>(); // lampes dont l'alimentation (via leur commande) est déjà tracée
+  const raccorderLampe = (l: AppareillagePlace, ancre: { id: string; point: Point }) => {
+    lampesRaccordees.add(l.id);
+    const pl = { x: l.x, y: l.y };
+    const filaires = commandes
+      .filter(c => commandeCetteLumiere(c, l.id) && !c.domotique)
+      .sort((c1, c2) => distance(ancre.point, { x: c1.x, y: c1.y }) - distance(ancre.point, { x: c2.x, y: c2.y }));
+    if (filaires.length === 0) {
+      poser({ aId: ancre.id, aPoint: ancre.point, bId: String(l.id), bPoint: pl });
+    } else {
+      let precedent: { id: string; point: Point } = ancre;
+      filaires.forEach(c => {
+        const pc = { x: c.x, y: c.y };
+        const vaEtVient = baseCommande(c.type) === "va_et_vient";
+        poser({ aId: precedent.id, aPoint: precedent.point, bId: String(c.id), bPoint: pc,
+          ...(vaEtVient && precedent.id !== ancre.id ? { type: "navette" as const } : {}) });
+        precedent = { id: String(c.id), point: pc };
+      });
+      poser({ aId: precedent.id, aPoint: precedent.point, bId: String(l.id), bPoint: pl });
+    }
+    // Commandes domotiques de cette lampe : liaison sans fil, tracée en onde depuis la lampe.
+    commandes.filter(c => commandeCetteLumiere(c, l.id) && c.domotique).forEach(c => {
+      poser({ aId: String(l.id), aPoint: pl, bId: String(c.id), bPoint: { x: c.x, y: c.y }, type: "domotique" });
+    });
+  };
 
   // Composantes connexes de lampes reliées directement entre elles (sans boîte).
   const adjacence = new Map<number, number[]>();
@@ -1046,18 +1101,18 @@ export function construireBranchesCircuitEclairage(
   if (boites.length === 0) {
     if (relieAuTableau) {
       if (lumieresLibres.length <= 1) {
-        lumieresLibres.forEach(l => segments.push({ aId: "tableau", aPoint: depart, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
+        lumieresLibres.forEach(l => raccorderLampe(l, { id: "tableau", point: depart }));
       } else {
         const centre = centroidePoints(lumieresLibres.map(l => ({ x: l.x, y: l.y })));
         segments.push({ aId: "tableau", aPoint: depart, bId: "boite", bPoint: centre });
-        lumieresLibres.forEach(l => segments.push({ aId: "boite", aPoint: centre, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
+        lumieresLibres.forEach(l => raccorderLampe(l, { id: "boite", point: centre }));
       }
     } else if (lumieresLibres.length > 1) {
       // Non relié au tableau : les lampes libres se maillent quand même entre elles via
       // une boîte implicite, mais aucun segment ne part vers l'extérieur (déjà alimenté
       // par l'installation existante). Avec 0 ou 1 lampe libre : rien à tracer.
       const centre = centroidePoints(lumieresLibres.map(l => ({ x: l.x, y: l.y })));
-      lumieresLibres.forEach(l => segments.push({ aId: "boite", aPoint: centre, bId: String(l.id), bPoint: { x: l.x, y: l.y } }));
+      lumieresLibres.forEach(l => raccorderLampe(l, { id: "boite", point: centre }));
     }
   } else {
     // Relié : chaîne complète tableau -> boîte 1 -> boîte 2 -> …
@@ -1079,7 +1134,7 @@ export function construireBranchesCircuitEclairage(
         const d = distance(boite.point, l);
         if (d < meilleureDistance) { meilleureDistance = d; plusProche = boite; }
       });
-      segments.push({ aId: `boite-${plusProche.id}`, aPoint: plusProche.point, bId: String(l.id), bPoint: { x: l.x, y: l.y } });
+      raccorderLampe(l, { id: `boite-${plusProche.id}`, point: plusProche.point });
     });
   }
 
@@ -1097,7 +1152,7 @@ export function construireBranchesCircuitEclairage(
       let entree = lampesGroupe[0];
       let meilleureDistance = distance(ancre.point, entree);
       lampesGroupe.forEach(l => { const d = distance(ancre.point, l); if (d < meilleureDistance) { meilleureDistance = d; entree = l; } });
-      segments.push({ aId: ancre.id, aPoint: ancre.point, bId: String(entree.id), bPoint: { x: entree.x, y: entree.y } });
+      raccorderLampe(entree, ancre);
     }
     liaisonsValides
       .filter(([a, b]) => idsGroupe.includes(a) && idsGroupe.includes(b))
@@ -1107,34 +1162,24 @@ export function construireBranchesCircuitEclairage(
       });
   });
 
-  lumieres.forEach(l => {
-    const commandesDeCetteLampe = commandes.filter(c => commandeCetteLumiere(c, l.id)); // voie 1 OU voie 2
-    const vaEtVient = commandesDeCetteLampe
-      .filter(c => baseCommande(c.type) === "va_et_vient")
+  // Lampes sans alimentation propre tracée ci-dessus (alimentées en bout de chaîne lampe à lampe, ou circuit
+  // « déjà existant » sans point de départ) : l'alimentation arrive par la lampe, le fil de commande en repart
+  // (lampe → commande, va-et-vient chaînés par navette), comme avant.
+  lumieres.filter(l => !lampesRaccordees.has(l.id)).forEach(l => {
+    const pl = { x: l.x, y: l.y };
+    const vaEtVient = commandes
+      .filter(c => commandeCetteLumiere(c, l.id) && baseCommande(c.type) === "va_et_vient")
       .sort((c1, c2) => distance({ x: c1.x, y: c1.y }, l) - distance({ x: c2.x, y: c2.y }, l));
-    const autres = commandesDeCetteLampe.filter(c => baseCommande(c.type) !== "va_et_vient");
-
+    const autres = commandes.filter(c => commandeCetteLumiere(c, l.id) && baseCommande(c.type) !== "va_et_vient");
     vaEtVient.forEach((c, i) => {
-      if (i === 0) {
-        segments.push({
-          aId: String(l.id), aPoint: { x: l.x, y: l.y }, bId: String(c.id), bPoint: { x: c.x, y: c.y },
-          type: c.domotique ? "domotique" : undefined,
-        });
-      } else {
+      const pc = { x: c.x, y: c.y };
+      if (i === 0) poser({ aId: String(l.id), aPoint: pl, bId: String(c.id), bPoint: pc, type: c.domotique ? "domotique" : undefined });
+      else {
         const precedent = vaEtVient[i - 1];
-        segments.push({
-          aId: String(precedent.id), aPoint: { x: precedent.x, y: precedent.y },
-          bId: String(c.id), bPoint: { x: c.x, y: c.y }, type: c.domotique ? "domotique" : "navette",
-        });
+        poser({ aId: String(precedent.id), aPoint: { x: precedent.x, y: precedent.y }, bId: String(c.id), bPoint: pc, type: c.domotique ? "domotique" : "navette" });
       }
     });
-
-    autres.forEach(c => {
-      segments.push({
-        aId: String(l.id), aPoint: { x: l.x, y: l.y }, bId: String(c.id), bPoint: { x: c.x, y: c.y },
-        type: c.domotique ? "domotique" : undefined,
-      });
-    });
+    autres.forEach(c => poser({ aId: String(l.id), aPoint: pl, bId: String(c.id), bPoint: { x: c.x, y: c.y }, type: c.domotique ? "domotique" : undefined }));
   });
   return segments;
 }

@@ -16,7 +16,7 @@
 //  - Chaque tronçon géométrique (segment ou sous-segment entre deux coudes) est compté
 //    comme UN câble (pratique du câble multiconducteur en une passe), jamais comme
 //    plusieurs conducteurs séparés — cohérent avec un devis d'achat de câble en mètres.
-//  - Un tronçon reliant une lampe à sa commande (interrupteur/va-et-vient/télérupteur),
+//  - Un tronçon reliant une commande (interrupteur/va-et-vient/télérupteur) à sa lampe (retour),
 //    ou une liaison "navette" entre deux va-et-vient, est toujours en 1.5mm² (retour/
 //    navette), quelle que soit la section du reste du circuit.
 //  - Un tronçon "domotique" (AppareillagePlace.domotique) ne consomme aucun câble.
@@ -378,9 +378,13 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       const segments: SegmentCircuit[] = segmentsPourCircuit(b, points, niveau, origineCalcul);
       segments.forEach(seg => {
         if (seg.type === "domotique") return; // sans fil — aucun câble
+        // Liaison de commande = navette, ou retour commande <-> lampe (1,5 mm²). L'alimentation boîte/tableau -> commande,
+        // elle, est du câblage normal du circuit (même section que le reste), pas un « retour lampe ».
+        const typeA = idToAppareillage.get(seg.aId)?.type, typeB = idToAppareillage.get(seg.bId)?.type;
+        const estLampeType = (t?: AppareillageType) => t === "point_lumineux" || t === "applique";
         const estLiaisonCommande = seg.type === "navette"
-          || estCommandeType(idToAppareillage.get(seg.aId)?.type)
-          || estCommandeType(idToAppareillage.get(seg.bId)?.type);
+          || (estCommandeType(typeA) && (estLampeType(typeB) || estCommandeType(typeB)))
+          || (estCommandeType(typeB) && estLampeType(typeA));
         const section = estLiaisonCommande ? "1.5" : sectionCircuit;
         // LONGUEUR RÉELLE : chaque jambe du tracé 3D (course horizontale ET montées / descentes), avec sa pose —
         // exactement ce que dessine la vue 3D (voir longueurs-circuits.ts).
@@ -395,7 +399,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           const nomPiece = pieceTraversee?.nom || pseudoCommun(niveau.nom || niveau.type);
 
           if (estLiaisonCommande) {
-            // Retour lampe (lampe -> 1er interrupteur/va-et-vient/télérupteur) et navette
+            // Retour lampe (dernier interrupteur/va-et-vient/télérupteur -> lampe) et navette
             // (entre deux va-et-vient) sont deux produits distincts au catalogue — même
             // section (1.5mm²) mais souvent des couleurs de fil différentes en pratique,
             // d'où deux sous-catégories séparées plutôt qu'une seule "fil_1.5" générique.
