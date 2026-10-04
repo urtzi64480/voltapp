@@ -39,7 +39,7 @@ import { migrerModeleMurs, aimanterSurFaceMur, preparerMurs, definirMitoyens, mi
 import { accrocherSurContour, apercuCloison, appliquerCloison, OptionsCloison, PointAccroche } from "@/lib/cloisons";
 import type { CloisonZone } from "@/lib/zones";
 import { cotesParDefaut, nouvelleZone, validerTraceZone, surfaceZone, centreEtiquetteZone, cloisonsDeZone, quadCloison, decoupeOuvertureZone, longueurCote, nbCotes, segmentsZone, definirTypeCote, trouverCloisonZone, positionOuvertureValide } from "@/lib/zones";
-import { enCm, estRectangle, redimensionnerMur, redimensionnerMurUtile, reporterAppareillages, propagerSommetsPartages } from "@/lib/dimensions-piece";
+import { enCm, estRectangle, redimensionnerMur, redimensionnerMurUtile, reporterAppareillages } from "@/lib/dimensions-piece";
 import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece";
 import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
@@ -3388,9 +3388,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const contour = redimensionnerMurUtile(p, editingSegment.segIndex, nouvelleLongueurCm);
         return { ...p, contour, appareillages: reporterAppareillages(p.contour, contour, p.appareillages) };
       });
-      // Les sommets partagés avec une pièce voisine (cloison mitoyenne) suivent.
-      const nouveauContour = pieces.find(p => p.id === editingSegment.pieceId)!.contour;
-      return { ...n, pieces: propagerSommetsPartages(pieces, editingSegment.pieceId, ancienContour, nouveauContour) };
+      // Les pièces voisines ne bougent JAMAIS : seule la pièce modifiée change de dimensions.
+      void ancienContour;
+      return { ...n, pieces };
     });
     // Seule une vraie modification de LONGUEUR déplace des appareillages : un simple changement d'épaisseur
     // de mur ne touche pas aux circuits, qui restent affichés.
@@ -6523,9 +6523,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 ...p, nom, type, hauteurPlafond,
                 ...(dimensionsModifiees ? { contour, appareillages: reporterAppareillages(p.contour, contour, p.appareillages) } : {}),
               });
-              // Épaisseur de structure reportée sur les côtés mitoyens voisins ; sommets partagés qui suivent.
+              // Épaisseur de structure reportée sur les côtés mitoyens voisins ; les pièces voisines ne se déforment jamais.
               const avecMurs = mursModifies ? appliquerMurs(pieces, editingPiece.id, murs) : pieces;
-              return { ...n, pieces: dimensionsModifiees ? propagerSommetsPartages(avecMurs, editingPiece.id, editingPiece.contour, contour) : avecMurs };
+              return { ...n, pieces: avecMurs };
             });
             // Les épaisseurs de murs seules ne changent rien aux circuits (positions inchangées) : on ne remet
             // à zéro le résultat que si les dimensions de la pièce ont bougé.
