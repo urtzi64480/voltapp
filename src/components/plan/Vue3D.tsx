@@ -19,7 +19,7 @@ import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteC
 import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
 import { cloisonsDeZone, ouverturesEffectivesZone } from "@/lib/zones";
 import { SaisonSoleil, LABEL_SAISON_SOLEIL, LATITUDE_DEFAUT, elevationMidi, directionSoleilMidi } from "@/lib/soleil";
-import { parametresMur3D, geometrieMurs, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT, preparerMurs, pointDansCouche2 } from "@/lib/murs";
+import { parametresMur3D, geometrieMurs, surfaceUtile, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT, preparerMurs, pointDansCouche2 } from "@/lib/murs";
 import { appareillagesEnPoseApparente, posesTroncons, hauteursTroncons, hauteurDefautLiaison } from "@/lib/pose-circuits";
 import { construireChemin3D, hauteurGaineNiveau } from "@/lib/chemin-3d";
 import { HAUTEUR_TABLEAU_DEFAUT, creerContexteLongueurs } from "@/lib/longueurs-circuits";
@@ -513,13 +513,33 @@ const Vue3D = forwardRef<Vue3DHandle, {
       const spec = PIECE_TYPES[piece.type];
 
       // Sol
-      const shape = new THREE.Shape(piece.contour.map(p => new THREE.Vector2(p.x, p.y)));
+      // Rotation -90° autour de x : (x, y) de la forme → (x, 0, -y). On passe donc -y pour retomber sur z = y du plan
+      // (comme les murs et les appareillages) — sans cela le sol était en MIROIR par rapport aux murs.
+      const shape = new THREE.Shape(piece.contour.map(p => new THREE.Vector2(p.x, -p.y)));
       const solGeo = new THREE.ShapeGeometry(shape);
       const solMat = new THREE.MeshStandardMaterial({ color: spec.color, side: THREE.DoubleSide });
       const sol = new THREE.Mesh(solGeo, solMat);
       sol.rotation.x = -Math.PI / 2;
       sol.receiveShadow = true;
       scene.add(sol);
+
+      // Plafond « fantôme » : invisible (aucune couleur, aucun masquage, jamais cliquable) mais il BLOQUE le soleil.
+      // Sans lui la 3D n'a pas de toit : le soleil tombait du ciel au milieu des pièces, et meubles / personnes y
+      // projetaient leur ombre alors que la pièce est couverte. Avec lui, le soleil n'entre que par les ouvertures
+      // (fenêtres, portes) — une pièce sans ouverture au soleil n'a aucune ombre portée. Pas de plafond sur une
+      // pièce « Extérieur » (terrasse). Découpé sur la surface utile : le dessus des murs reste éclairé.
+      if (piece.type !== "exterieur" && surfaceUtile(piece) != null) {
+        const { utile } = geometrieMurs(piece);
+        const hPlafond = piece.hauteurPlafond ?? hauteurPlafond;
+        const plafGeo = new THREE.ShapeGeometry(new THREE.Shape(utile.map(p => new THREE.Vector2(p.x, -p.y))));
+        const plafMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, colorWrite: false, depthWrite: false });
+        const plafond = new THREE.Mesh(plafGeo, plafMat);
+        plafond.rotation.x = -Math.PI / 2;
+        plafond.position.y = hPlafond - 0.003;
+        plafond.castShadow = true;
+        plafond.raycast = () => {};   // ne gêne ni le clic sur les portes ni aucun pointage
+        scene.add(plafond);
+      }
 
       // Murs (un ou plusieurs pans de boîte par arête du contour, troués aux ouvertures) —
       // hauteur propre à la pièce si définie
@@ -819,6 +839,18 @@ const Vue3D = forwardRef<Vue3DHandle, {
       ? { cx: (Math.min(...xs) + Math.max(...xs)) / 2, cz: (Math.min(...ys) + Math.max(...ys)) / 2,
           rayon: Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2 + 3, hauteur: hauteurPlafond }
       : { cx: 0, cz: 0, rayon: 8, hauteur: hauteurPlafond };
+
+    // Sol extérieur « receveur d'ombre » : transparent, il ne montre que les ombres — celle du bâtiment au sol,
+    // dehors (le plan n'a de sol que dans les pièces, l'ombre tombait donc dans le vide).
+    {
+      const cote = empriseRef.current.rayon * 2 + 30;
+      const terrain = new THREE.Mesh(new THREE.PlaneGeometry(cote, cote), new THREE.ShadowMaterial({ opacity: 0.3 }));
+      terrain.rotation.x = -Math.PI / 2;
+      terrain.position.set(empriseRef.current.cx, -0.01, empriseRef.current.cz);
+      terrain.receiveShadow = true;
+      terrain.raycast = () => {};
+      scene.add(terrain);
+    }
 
     // ── Caméra orbitale manuelle (coordonnées sphériques autour de la cible) ──
     // La cible ("cible") n'est plus figée sur le centre du niveau : le glisser-déplacer
