@@ -283,9 +283,17 @@ export interface Piece {
   // glisser (protection contre les fausses manipulations). Les propriétés restent éditables.
   verrouillee?: boolean;
   // Murs de la pièce : un par côté du contour (murs[i] = mur du sommet i au sommet i+1). Le contour
-  // est l'AXE de la structure ; le doublage s'ajoute côté intérieur de la pièce. Absent / incomplet
-  // = mur par défaut (cloison de 10 cm, sans doublage — l'ancien rendu). Voir lib/murs.ts.
+  // est le TRACÉ HORS-TOUT de la pièce (face extérieure des murs) : les 3 couches (structure, doublage,
+  // finition) s'ajoutent À L'INTÉRIEUR du tracé, vers la pièce — les dimensions intérieures sont donc
+  // le tracé moins les épaisseurs. Deux pièces dessinées côte à côte sur le même tracé gardent chacune
+  // leurs propres épaisseurs, sans aucun décalage. Absent / incomplet = mur par défaut (10 cm, sans
+  // doublage). Voir lib/murs.ts.
   murs?: MurSpec[];
+  // Version du modèle de murs : 2 = tracé hors-tout, couches à l'intérieur (voir ci-dessus). Absent = plan
+  // créé avant ce modèle (tracé = face intérieure finie d'un mur extérieur / axe d'un mur mitoyen) :
+  // converti une seule fois au chargement par migrerModeleMurs (lib/murs.ts), qui conserve les
+  // dimensions intérieures à l'identique.
+  modeleMurs?: 2;
   // Mobilier simple (vue 3D uniquement) — voir MeubleSimple ci-dessous.
   meubles?: MeubleSimple[];
 }
@@ -641,7 +649,7 @@ export const nouveauNiveau = (type: NiveauType = "rdc", ordre = 0): Niveau => ({
   id: uidMaison(), nom: "", type, ordre, pieces: [],
 });
 export const nouvellePiece = (contour: Point[], nom = "", type: PieceType = "autre"): Piece => ({
-  id: uidMaison(), nom, type, contour, appareillages: [],
+  id: uidMaison(), nom, type, contour, appareillages: [], modeleMurs: 2,
 });
 // Puissance par défaut appliquée à la création d'un chauffage — modifiable ensuite depuis
 // le panneau de l'appareillage sélectionné (voir PUISSANCE_CHAUFFAGE_DEFAUT_W, electrical-constants.ts).
@@ -1203,8 +1211,8 @@ export const COULEURS_APPAREILLAGE: { nom: string; hex: string }[] = [
 ];
 
 // ─── MURS ───────────────────────────────────────────────────────────────────────
-// Épaisseurs en cm. epaisseur = structure (parpaing, brique, pierre, cloison) centrée sur l'axe
-// du contour ; doublage = isolant + plaque côté intérieur de la pièce (0 = aucun).
+// Épaisseurs en cm. Le contour de la pièce est son tracé hors-tout : les 3 couches du mur s'y ajoutent
+// vers l'intérieur de la pièce (structure contre le tracé, puis doublage, puis finition côté pièce).
 export type MurType = "exterieur" | "interieur";
 // UN MUR = 3 COUCHES, de l'intérieur de la pièce vers l'extérieur (épaisseurs en cm, 0 = couche absente) :
 //   1 · finition   (plaque de plâtre, enduit, parement…)  → champ finition

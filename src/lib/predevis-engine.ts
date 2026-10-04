@@ -62,7 +62,7 @@ import {
 import { MAX_POSTES_PLAQUE, estCommande } from "./maison-types";
 import {
   Breaker as TableauBreaker, BreakerRow, BREAKER_TYPES, CIRCUITS,
-  effectiveSection, gaineRecommandee, uid,
+  effectiveSection, gaineRecommandee, uid, estCircuitSansDisjoncteur,
 } from "./electrical-constants";
 import {
   creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurJambe, pieceDeJambe, indexPiecesAppareils,
@@ -346,6 +346,9 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
     const breakersNiveau = resultat.breakers.filter(b => b.pieces.some(pc => nomsPiecesNiveau.has(pc.nom)));
 
     breakersNiveau.forEach(b => {
+      // Circuit de communication (RJ45) : son câble est déjà chiffré plus haut (étoile vers le coffret) — le
+      // recompter ici doublerait la ligne, et il n'a ni section de puissance ni disjoncteur au tableau.
+      if (estCircuitSansDisjoncteur(b)) return;
       const points = niveau.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
       if (b.circuit === "lumiere") {
         const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");

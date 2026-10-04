@@ -98,7 +98,13 @@ export const CIRCUITS: Record<string, {
   general:         { label: "Général / Arrivée",icon: "⚡", ampMax: 63, dedié: true,  diffType: null, section: "10.0", category: null },
   parafoudre:      { label: "Parafoudre",       icon: "⛈️", ampMax: 0,  dedié: true,  diffType: null, section: null,  category: null },
   autre:           { label: "Autre",            icon: "⚙️", ampMax: 32, dedié: false, diffType: "AC", section: "2.5", category: null },
+  // Courant faible : un câble RJ45 par prise, en étoile vers le coffret de communication. Circuit de PLAN uniquement
+  // (tracé, longueur, couleur) : jamais de disjoncteur, jamais poussé au tableau (voir CIRCUIT_COMMUNICATION).
+  communication:   { label: "RJ45 (communication)", icon: "🌐", ampMax: 0, dedié: true, diffType: null, section: null, category: null },
 };
+export const CIRCUIT_COMMUNICATION = "communication";
+// Vrai pour un circuit qui n'a pas de disjoncteur au tableau (courant faible).
+export const estCircuitSansDisjoncteur = (b: { circuit: string }): boolean => b.circuit === CIRCUIT_COMMUNICATION;
 
 export const SECTIONS_CABLE = ["1.5", "2.5", "4.0", "6.0", "10.0"];
 

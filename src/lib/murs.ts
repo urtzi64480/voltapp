@@ -1,17 +1,19 @@
 // src/lib/murs.ts
 //
-// Murs d'une pièce : épaisseurs des couches (structure + doublage) et géométrie (plan 2D, impression, 3D).
+// Murs d'une pièce : épaisseurs des couches (structure + doublage + finition) et géométrie (plan 2D, impression, 3D).
 //
-// RÉFÉRENCE DES DIMENSIONS = LES EXTRÉMITÉS DE LA PIÈCE (faces intérieures finies), jamais le milieu du mur :
-//  - mur EXTÉRIEUR (aucune pièce de l'autre côté) : le contour de la pièce EST la face intérieure finie ;
-//    les couches s'ajoutent vers l'extérieur : doublage (contre la pièce), puis structure.
-//  - mur MITOYEN (une autre pièce de l'autre côté, dessinée contre celle-ci) : le contour est l'axe de la
-//    cloison partagée, la structure est centrée dessus et chaque pièce a son doublage de son côté.
-// Toutes les dimensions affichées ou saisies (longueur d'un mur, largeur / longueur, surface) sont des
-// dimensions UTILES, face finie à face finie ; la conversion vers le contour est faite ici.
+// MODÈLE (version 2) : LE CONTOUR D'UNE PIÈCE EST SON TRACÉ HORS-TOUT, c'est-à-dire la face EXTÉRIEURE de ses murs.
+// Les 3 couches s'ajoutent À L'INTÉRIEUR du tracé, vers la pièce : structure (contre le tracé), puis doublage, puis
+// finition (côté pièce). Conséquences :
+//  - les dimensions intérieures (face finie à face finie) = tracé − épaisseurs ; elles sont calculées ici et affichées ;
+//  - deux pièces dessinées côte à côte sur la même ligne gardent chacune leurs propres épaisseurs : leurs tracés
+//    coïncident toujours, il n'y a jamais de décalage visuel, quelles que soient les épaisseurs choisies ;
+//  - les angles (sortants comme rentrants) sont tous des onglets exacts : les 4 faces d'un mur se raccordent à celles
+//    du mur voisin sans trou ni retour visible (voir geometrieMurs, utilisé par le plan 2D, l'impression et la 3D).
 // Tout est en mètres sur des Point du plan ; les épaisseurs des MurSpec sont en cm.
 
-import { AppareillagePlace, AppareillageType, MurSpec, MurType, MUR_DEFAUT, Piece, Point, aireDuPolygone } from "@/lib/maison-types";
+import { AppareillagePlace, AppareillageType, MurSpec, MurType, MUR_DEFAUT, Niveau, Piece, Point, aireDuPolygone, centroide } from "@/lib/maison-types";
+import { ancrageMurLePlusProche, estMural, TOLERANCE_MUR_M } from "@/lib/appareillage-mur";
 
 export function murDe(piece: Piece, i: number): MurSpec {
   const m = piece.murs?.[i];
@@ -22,9 +24,10 @@ export function mursDe(piece: Piece): MurSpec[] {
 }
 
 // ─── Mur extérieur ou mitoyen ? ───────────────────────────────────────────────────
-// Déduit de la géométrie : un côté dont l'autre face touche une AUTRE pièce est mitoyen. Calculé pour
-// l'ensemble des pièces d'un niveau (preparerMurs, à appeler une fois par rendu avant de dessiner) et
-// mémorisé par objet pièce ; une pièce non préparée est considérée comme entièrement extérieure.
+// Déduit de la géométrie : un côté dont le tracé coïncide avec celui d'une AUTRE pièce est mitoyen. N'influe plus
+// sur l'épaisseur (chaque pièce garde la sienne) : sert à la couleur du mur, aux cotes extérieures et à la projection
+// des ouvertures sur la pièce voisine. Calculé pour l'ensemble des pièces d'un niveau (preparerMurs, à appeler une
+// fois par rendu avant de dessiner) et mémorisé par objet pièce ; une pièce non préparée est entièrement extérieure.
 const MITOYENS = new WeakMap<object, boolean[]>();
 export function preparerMurs(pieces: Piece[]): void {
   pieces.forEach(p => MITOYENS.set(p, p.contour.map((_, i) => cotesMitoyens(pieces, p.id, i).length > 0)));
@@ -84,13 +87,11 @@ export function decalerContour(contour: Point[], offsets: number[]): Point[] {
 
 
 // Positions (m, vers l'INTÉRIEUR de la pièce, depuis la ligne du contour) des faces du mur i, de l'extérieur à
-// l'intérieur : exterieure (face externe de la structure) · structureInt · doublageInt (face interne du
-// doublage = face externe de la finition) · utile (face intérieure FINIE, après les 3 couches).
+// l'intérieur : exterieure (face externe de la structure = le tracé lui-même, donc 0) · structureInt · doublageInt
+// (face interne du doublage = face externe de la finition) · utile (face intérieure FINIE, après les 3 couches).
 function plansMur(piece: Piece, i: number): { exterieure: number; structureInt: number; doublageInt: number; utile: number } {
   const m = murDe(piece, i), e = m.epaisseur / 100, d = m.doublage / 100, f = (m.finition ?? 0) / 100;
-  return mitoyensDe(piece)[i]
-    ? { exterieure: -e / 2, structureInt: e / 2, doublageInt: e / 2 + d, utile: e / 2 + d + f }
-    : { exterieure: -(f + d + e), structureInt: -(f + d), doublageInt: -f, utile: 0 };
+  return { exterieure: 0, structureInt: e, doublageInt: e + d, utile: e + d + f };
 }
 
 export interface QuadMur {
@@ -98,6 +99,7 @@ export interface QuadMur {
   structure: Point[];            // couche 3 : 4 points, de la face extérieure à la face intérieure de la structure
   doublage: Point[] | null;      // couche 2 : 4 points, ou null si l'épaisseur est nulle
   finition: Point[] | null;      // couche 1 : 4 points, ou null si l'épaisseur est nulle
+  structureNulle: boolean;       // structure d'épaisseur 0 : pas de mur (cloison commune réglée à 0 d'un côté)
 }
 export interface GeometrieMurs {
   quads: QuadMur[];
@@ -118,6 +120,7 @@ export function geometrieMurs(piece: Piece): GeometrieMurs {
     return {
       i, type: typeMur(piece, i),
       structure: [ext[i], ext[k], int[k], int[i]],
+      structureNulle: !(m.epaisseur > 0),
       doublage: m.doublage > 0 ? [int[i], int[k], dbl[k], dbl[i]] : null,
       finition: (m.finition ?? 0) > 0 ? [dbl[i], dbl[k], utile[k], utile[i]] : null,
     };
@@ -131,7 +134,7 @@ export function surfaceUtile(piece: Piece): number | null {
   const { utile } = geometrieMurs(piece);
   const brute = aireDuPolygone(piece.contour);
   const u = aireDuPolygone(utile);
-  if (utile.length < 3 || u <= 0 || u > brute + 1e-9 + 4 * Math.max(...piece.contour.map((_, i) => Math.abs(plansMur(piece, i).exterieure)))) return null;
+  if (utile.length < 3 || u <= 0 || u > brute + 1e-9) return null;
   return orientation(utile) === orientation(piece.contour) ? u : null;
 }
 export function longueurUtileCm(piece: Piece, i: number): number {
@@ -143,8 +146,8 @@ export function longueursUtilesCm(piece: Piece): number[] {
   return piece.contour.map((_, i) => longueurUtileCm(piece, i));
 }
 
-// Distance (m) du contour à la face intérieure FINIE du mur i : là où se posent prises et interrupteurs
-// (0 sur un mur extérieur, puisque le contour est déjà la face finie).
+// Distance (m) du contour (tracé hors-tout) à la face intérieure FINIE du mur i : là où se posent prises et
+// interrupteurs. Égale à l'épaisseur totale du mur.
 export function faceInterieureM(piece: Piece, i: number): number {
   return plansMur(piece, i).utile;
 }
@@ -171,37 +174,20 @@ export function decoupeOuverture(piece: Piece, i: number, position: number, larg
 
 // Paramètres 3D du mur i : une entrée par COUCHE non nulle (structure, doublage, finition). decalage = position du
 // centre de la couche, le long de la normale GAUCHE du côté (-uy, ux), celle des boîtes de mur de la vue 3D.
-// extDebut / extFin = prolongement aux extrémités pour combler le coin avec un mur voisin extérieur (la couche
-// déborde jusqu'à la face de la MÊME couche du voisin). reduction = hauteur retranchée aux couches intérieures
-// pour éviter les scintillements là où elles se recouvrent. profondeurCables = distance de la face finie au
-// milieu de la couche 2 : c'est là que passent par défaut les circuits encastrés.
+// La géométrie exacte des couches (onglets d'angle, sans trou ni retour) est celle de geometrieMurs : la vue 3D bâtit
+// chaque couche à partir de son quadrilatère. extDebut / extFin sont donc toujours nuls (conservés pour compatibilité).
+// reduction = hauteur retranchée aux couches intérieures (0 : elles se juxtaposent sans se recouvrir).
+// profondeurCables = distance de la face finie au milieu de la couche 2 : c'est là que passent par défaut les
+// circuits encastrés.
 export type CoucheMur3D = { nom: "structure" | "doublage" | "finition"; epaisseur: number; decalage: number; extDebut: number; extFin: number; reduction: number };
 export function parametresMur3D(piece: Piece, i: number) {
-  const n = piece.contour.length;
   const m = murDe(piece, i), e = m.epaisseur / 100, d = m.doublage / 100, f = (m.finition ?? 0) / 100;
   const pl = plansMur(piece, i);
   const sg = orientation(piece.contour);
-  const prec = (i - 1 + n) % n, suiv = (i + 1) % n;
-  const mit = mitoyensDe(piece);
-  const coin = (j: number) => !mit[i] && !mit[j];
-  // distance (m, vers l'extérieur) de la face externe d'une couche, pour le mur j
-  const extStructure = (j: number) => -plansMur(piece, j).exterieure;
-  const extDoublage = (j: number) => -plansMur(piece, j).structureInt;    // face externe du doublage = f + d
-  const extFinition = (j: number) => -plansMur(piece, j).doublageInt;      // face externe de la finition = f
   const couches: CoucheMur3D[] = [];
-  couches.push({
-    nom: "structure", epaisseur: e, decalage: sg * (pl.exterieure + pl.structureInt) / 2, reduction: 0,
-    extDebut: coin(prec) ? extStructure(prec) : (mit[prec] && !mit[i] ? murDe(piece, prec).epaisseur / 200 : 0),
-    extFin: coin(suiv) ? extStructure(suiv) : (mit[suiv] && !mit[i] ? murDe(piece, suiv).epaisseur / 200 : 0),
-  });
-  if (d > 0) couches.push({
-    nom: "doublage", epaisseur: d, decalage: sg * (pl.structureInt + pl.doublageInt) / 2, reduction: 0.003,
-    extDebut: coin(prec) ? Math.max(0, extDoublage(prec)) : 0, extFin: coin(suiv) ? Math.max(0, extDoublage(suiv)) : 0,
-  });
-  if (f > 0) couches.push({
-    nom: "finition", epaisseur: f, decalage: sg * (pl.doublageInt + pl.utile) / 2, reduction: 0.006,
-    extDebut: coin(prec) ? Math.max(0, extFinition(prec)) : 0, extFin: coin(suiv) ? Math.max(0, extFinition(suiv)) : 0,
-  });
+  couches.push({ nom: "structure", epaisseur: e, decalage: sg * (pl.exterieure + pl.structureInt) / 2, reduction: 0, extDebut: 0, extFin: 0 });
+  if (d > 0) couches.push({ nom: "doublage", epaisseur: d, decalage: sg * (pl.structureInt + pl.doublageInt) / 2, reduction: 0, extDebut: 0, extFin: 0 });
+  if (f > 0) couches.push({ nom: "finition", epaisseur: f, decalage: sg * (pl.doublageInt + pl.utile) / 2, reduction: 0, extDebut: 0, extFin: 0 });
   return {
     type: typeMur(piece, i),
     signeInterieur: sg,
@@ -230,25 +216,11 @@ export function cotesMitoyens(pieces: Piece[], pieceId: number, i: number): { pi
   return res;
 }
 
-// Applique une nouvelle liste de murs à une pièce et reporte l'épaisseur de structure sur les côtés mitoyens.
+// Applique une nouvelle liste de murs à une pièce. Chaque pièce garde ses propres épaisseurs : rien n'est reporté
+// sur les pièces voisines (leurs murs sont dans leur propre tracé, voir l'en-tête du fichier).
 export function appliquerMurs(pieces: Piece[], pieceId: number, nouveaux: MurSpec[]): Piece[] {
-  const src = pieces.find(p => p.id === pieceId);
-  if (!src) return pieces;
-  const anciens = mursDe(src);
-  let res = pieces.map(p => p.id === pieceId ? { ...p, murs: nouveaux } : p);
-  nouveaux.forEach((m, i) => {
-    const a = anciens[i];
-    if (a && a.epaisseur === m.epaisseur) return;
-    cotesMitoyens(pieces, pieceId, i).forEach(v => {
-      res = res.map(p => {
-        if (p.id !== v.pieceId) return p;
-        const ms = mursDe(p);
-        ms[v.i] = { ...ms[v.i], epaisseur: m.epaisseur };
-        return { ...p, murs: ms };
-      });
-    });
-  });
-  return res;
+  if (!pieces.some(p => p.id === pieceId)) return pieces;
+  return pieces.map(p => p.id === pieceId ? { ...p, murs: nouveaux } : p);
 }
 
 // Suppression du sommet `index` : le côté `index` disparaît, celui d'avant s'étend jusqu'au sommet suivant.
@@ -299,4 +271,80 @@ export function pointDansCouche2(pieces: Piece[], pt: Point, tol = 0.35): { piec
     }
   }
   return meilleur ? { pieceId: meilleur.pieceId, i: meilleur.i, point: meilleur.point } : null;
+}
+
+
+// ─── Contour « utile » (faces intérieures finies) ────────────────────────────────────────────────────────────
+// Le contour utile si les épaisseurs tiennent dans la pièce, sinon le tracé lui-même (cas dégénéré : murs plus épais
+// que la pièce). Sert aux mesures prises « de face finie à face finie ».
+export function contourUtile(piece: Piece): Point[] {
+  return surfaceUtile(piece) != null ? geometrieMurs(piece).utile : piece.contour;
+}
+
+// Aimantation d'un appareillage sur la FACE FINIE du mur le plus proche (là où l'on le voit et où on le clique) ;
+// renvoie la position stockée, c'est-à-dire sur le tracé du mur (la vue 2D et la 3D décalent ensuite l'appareillage de
+// faceInterieureM vers la pièce). Les types non muraux, et les points hors de portée, ne bougent pas.
+export function aimanterSurFaceMur(pt: Point, piece: Piece, type: AppareillageType, seuilM: number): Point {
+  if (!estMural(type)) return pt;
+  const base = contourUtile(piece);
+  const surUtile = base !== piece.contour;
+  const anc = ancrageMurLePlusProche(pt, base);
+  if (!anc || anc.distance > seuilM) return pt;
+  const d = surUtile ? faceInterieureM(piece, anc.segIndex) : 0;
+  return { x: anc.pied.x - anc.normale.x * d, y: anc.pied.y - anc.normale.y * d };
+}
+
+// ─── MIGRATION des plans enregistrés avant le modèle « tracé hors-tout » ────────────────────────────────────────
+// Ancien modèle : contour = face intérieure FINIE d'un mur extérieur (les couches s'ajoutaient vers l'extérieur) ou AXE
+// d'un mur mitoyen (structure centrée sur l'axe). Conversion, une seule fois, sans changer d'un millimètre l'intérieur
+// des pièces ni la position des murs :
+//  - mur extérieur : le contour recule jusqu'à la face extérieure ; mêmes épaisseurs ;
+//  - mur mitoyen   : le contour reste sur l'axe, chaque pièce garde la moitié de la structure (e / 2) de son côté.
+// Les appareillages posés contre un mur extérieur reculent avec lui ; les ouvertures et les étiquettes gardent leur
+// position réelle sur le plan.
+function convertirPiece(p: Piece, mitoyens: boolean[]): Piece {
+  const c = p.contour;
+  const murs = c.map((_, i) => murDe(p, i));
+  const offsets = murs.map((m, i) => (mitoyens[i] ? 0 : -(((m.finition ?? 0) + m.doublage + m.epaisseur) / 100)));
+  const contour = decalerContour(c, offsets);
+  const mursNouveaux: MurSpec[] = murs.map((m, i) => (mitoyens[i] ? { ...m, epaisseur: Math.round((m.epaisseur / 2) * 10) / 10 } : { ...m }));
+
+  const ouvertures = p.ouvertures?.map(o => {
+    const a = c[o.segIndex], b = c[(o.segIndex + 1) % c.length];
+    const a2 = contour[o.segIndex], b2 = contour[(o.segIndex + 1) % contour.length];
+    if (!a || !b || !a2 || !b2) return o;
+    const centre = { x: a.x + (b.x - a.x) * o.position, y: a.y + (b.y - a.y) * o.position };
+    const L2 = Math.hypot(b2.x - a2.x, b2.y - a2.y);
+    if (L2 < 1e-6) return o;
+    const t = ((centre.x - a2.x) * (b2.x - a2.x) + (centre.y - a2.y) * (b2.y - a2.y)) / (L2 * L2);
+    return { ...o, position: Math.max(0, Math.min(1, t)) };
+  });
+
+  const appareillages = p.appareillages.map(a => {
+    if (!estMural(a.type)) return a;
+    const anc = ancrageMurLePlusProche({ x: a.x, y: a.y }, c);
+    if (!anc || anc.distance > TOLERANCE_MUR_M || mitoyens[anc.segIndex]) return a;   // mitoyen : la face finie ne bouge pas
+    const m = murs[anc.segIndex];
+    const recul = ((m.finition ?? 0) + m.doublage + m.epaisseur) / 100;               // l'ancienne face finie → le nouveau tracé
+    return { ...a, x: a.x - anc.normale.x * recul, y: a.y - anc.normale.y * recul };
+  });
+
+  let nomDecalage = p.nomDecalage;
+  if (nomDecalage) {
+    const c0 = centroide(c), c1 = centroide(contour);
+    nomDecalage = { x: c0.x + nomDecalage.x - c1.x, y: c0.y + nomDecalage.y - c1.y };
+  }
+  return { ...p, contour, murs: mursNouveaux, ouvertures, appareillages, ...(nomDecalage ? { nomDecalage } : {}), modeleMurs: 2 };
+}
+
+export function migrerModeleMurs(niveaux: Niveau[]): { niveaux: Niveau[]; migrees: number } {
+  let migrees = 0;
+  const res = niveaux.map(n => {
+    if (n.pieces.every(p => p.modeleMurs === 2)) return n;
+    // Mitoyens déterminés sur les contours d'origine, comme le faisait le rendu de l'ancien modèle.
+    const mit = new Map<number, boolean[]>();
+    n.pieces.forEach(p => mit.set(p.id, p.contour.map((_, i) => cotesMitoyens(n.pieces, p.id, i).length > 0)));
+    return { ...n, pieces: n.pieces.map(p => { if (p.modeleMurs === 2) return p; migrees++; return convertirPiece(p, mit.get(p.id) ?? []); }) };
+  });
+  return { niveaux: migrees > 0 ? res : niveaux, migrees };
 }

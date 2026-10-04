@@ -53,15 +53,20 @@ export function grouperParPoste<T extends { poste?: string | null }>(
   lignes: T[],
   opts: { postes?: string[]; inclureVides?: boolean } = {},
 ): BlocPoste<T>[] {
-  const noms: string[] = [...(opts.postes ?? [])];
+  // Regroupement insensible à la casse et aux espaces multiples : « Pose prise » et « pose  prise » = même poste
+  // (le nom affiché est celui de la première occurrence).
+  const cle = (n: string) => nettoyerNomPoste(n).toLowerCase();
+  const noms: string[] = [];
+  const ajouterNom = (n: string) => { if (!noms.some(x => cle(x) === cle(n))) noms.push(n); };
+  (opts.postes ?? []).forEach(ajouterNom);
   for (const l of lignes) {
     const p = posteDe(l);
-    if (p && !noms.includes(p)) noms.push(p);
+    if (p) ajouterNom(p);
   }
   const blocs: BlocPoste<T>[] = [];
   for (const nom of noms) {
     const items: { l: T; i: number }[] = [];
-    lignes.forEach((l, i) => { if (posteDe(l) === nom) items.push({ l, i }); });
+    lignes.forEach((l, i) => { const p = posteDe(l); if (p !== null && cle(p) === cle(nom)) items.push({ l, i }); });
     if (items.length > 0 || opts.inclureVides) blocs.push({ poste: nom, items });
   }
   const horsPoste: { l: T; i: number }[] = [];

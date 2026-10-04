@@ -12,6 +12,7 @@ import {
   PMAX_CHAUFFAGE_16A_W, PMAX_CHAUFFAGE_20A_W, PUISSANCE_CHAUFFAGE_DEFAUT_W,
   AMPERES_DIFFERENTIEL,
   gaineRecommandee, cablesGroupe, cablesPrises, effectiveSection, uid,
+  CIRCUIT_COMMUNICATION, estCircuitSansDisjoncteur,
 } from "./electrical-constants";
 import {
   Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone,
@@ -432,6 +433,22 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
       item.base.circuitId = b.id;
     });
 
+    // Prises RJ45 : UN circuit (de communication) par prise — une plaque « prise + RJ45 » donne donc deux circuits :
+    // le circuit de puissance de la prise et le câble RJ45. Sans disjoncteur (voir CIRCUIT_COMMUNICATION).
+    let nRj45 = 0;
+    const nbRj45Niveau = resteApresExclusion.filter(a => a.base.type === "rj45").length;
+    resteApresExclusion.filter(a => a.base.type === "rj45").forEach(item => {
+      nRj45++;
+      const spec = CIRCUITS[CIRCUIT_COMMUNICATION];
+      const b: Breaker = {
+        id: uid(), label: `${spec.label} ${nbRj45Niveau > 1 ? `n°${nRj45} ` : ""}— ${item.pieceNom || niveau.nom}`, circuit: CIRCUIT_COMMUNICATION,
+        amperes: 0, type: "1P",
+        pieces: [{ nom: item.pieceNom, nbPrises: 1, groupes: [] }],
+      };
+      breakers.push(b);
+      item.base.circuitId = b.id;
+    });
+
     // ─── Garde-fou : tout appareillage encore sans circuit après tout ce qui précède ──
     // (typiquement un interrupteur/va-et-vient/télérupteur dont la commande ne pointe vers
     // aucun point lumineux raccordé, ou un appareillage explicitement exclu — voir
@@ -674,6 +691,7 @@ export function genererGainesNiveaux(resultat: ResultatGeneration): TronconGaine
     // Un circuit manuel "déjà existant" (CircuitManuel.nonRelieTableau) ne remonte jamais
     // au tableau — il ne consomme donc aucune place dans la gaine principale tableau→niveau.
     const circuitsNiveau = resultat.breakers.filter(b => {
+      if (estCircuitSansDisjoncteur(b)) return false;   // courant faible : pas dans la gaine de puissance
       if (!b.pieces.some(p => nomsPieces.has(p.nom))) return false;
       const manuel = b.manuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === b.manuelId) : undefined;
       return !manuel?.nonRelieTableau;

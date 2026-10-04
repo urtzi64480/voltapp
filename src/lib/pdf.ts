@@ -68,9 +68,78 @@ function designationCell(nom: string, description?: string | null): string {
   return `${nom}\n${description.trim()}`;
 }
 
+
+// ─── Lignes groupées par postes (devis ET factures) ────────────────────────────────────────────────────────────
+// Chaque poste = un bloc (titre, lignes, sous-total). Règles :
+//  - un poste n'est jamais coupé entre deux pages : s'il ne tient pas dans la place restante mais tient sur une page
+//    entière, on passe à la page suivante (l'en-tête du tableau y est redessiné) ; seul un poste plus haut qu'une page
+//    est autorisé à se couper ;
+//  - fond blanc puis gris un poste sur deux (titre, lignes et sous-total d'un même poste ont le même fond).
+// La hauteur d'un poste est MESURÉE avant de le dessiner (__createTable), jamais estimée.
+const GRIS_POSTE: [number, number, number] = [238, 238, 235];
+const MARGE_HAUTE_SUITE = 18;   // mm — haut des pages suivantes
+
+function dessinerLignesParPostes(
+  doc: any, autoTableMod: any, blocs: ReturnType<typeof grouperParPoste<any>>, images: ImagesPdf,
+  o: { startY: number; M: number; font?: string; margeBasse: number },
+): void {
+  const autoTable = autoTableMod.default, creerTable = autoTableMod.__createTable;
+  const pH = doc.internal.pageSize.getHeight();
+  const bas = pH - o.margeBasse;
+  const enTete = [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]];
+  const base = (y: number) => ({
+    startY: y,
+    ...(o.font ? { styles: { font: o.font } } : {}),
+    theme: "plain",
+    headStyles: { fillColor: [28, 25, 23], textColor: [251, 191, 36], fontStyle: "bold", fontSize: 8 },
+    bodyStyles: { fontSize: 8.5, textColor: [44, 38, 34], valign: "middle" },
+    columnStyles: {
+      0: { cellWidth: images.size > 0 ? 72 : 65 }, 1: { cellWidth: 22 }, 2: { cellWidth: 18 },
+      3: { cellWidth: 12, halign: "center" }, 4: { cellWidth: 25, halign: "right" }, 5: { cellWidth: 25, halign: "right" },
+    },
+    margin: { left: o.M, right: o.M, top: MARGE_HAUTE_SUITE, bottom: o.margeBasse },
+  });
+  const dessinerEnTete = (y: number): number => {
+    autoTable(doc, { ...base(y), head: enTete, body: [] });
+    return (doc as any).lastAutoTable.finalY;
+  };
+
+  let y = dessinerEnTete(o.startY);
+  blocs.forEach((b, k) => {
+    const titre = b.poste ?? "Autres prestations";
+    const fond = k % 2 === 1 ? GRIS_POSTE : undefined;      // 1er poste blanc, 2e gris, 3e blanc…
+    const cellule = (c: any, styles: any = {}) => (typeof c === "object" && c !== null && !Array.isArray(c) && "content" in c
+      ? { ...c, styles: { ...(c.styles ?? {}), ...(fond ? { fillColor: fond } : {}), ...styles } }
+      : { content: c, styles: { ...(fond ? { fillColor: fond } : {}), ...styles } });
+    const body: any[] = [];
+    body.push([{ content: titre, colSpan: 6, styles: { fontStyle: "bold", textColor: [28, 25, 23], ...(fond ? { fillColor: fond } : {}) } }]);
+    b.items.forEach(({ l }: any) => body.push([
+      cellule(celluleDesignation(l, images)),
+      cellule(l.type_branche === "service" ? "Service" : "Matériau"),
+      cellule(l.unite), cellule(l.quantite), cellule(fmt(l.prix_unitaire)), cellule(fmt(l.prix_unitaire * l.quantite)),
+    ]));
+    body.push([
+      { content: `Sous-total — ${titre}`, colSpan: 5, styles: { halign: "right", fontStyle: "bold", ...(fond ? { fillColor: fond } : {}) } },
+      { content: fmt(totalItems(b.items)), styles: { halign: "right", fontStyle: "bold", ...(fond ? { fillColor: fond } : {}) } },
+    ]);
+
+    const opts = (yy: number) => ({ ...base(yy), body, showHead: "never", didDrawCell: (data: any) => dessinerImageCellule(doc, data, images) });
+    const mesure = creerTable(doc, opts(y));
+    const hauteur = mesure.body.reduce((t: number, r: any) => t + r.height, 0);
+    const pageUtile = bas - MARGE_HAUTE_SUITE;
+    if (y + hauteur > bas + 0.01 && hauteur <= pageUtile) {
+      doc.addPage();
+      y = dessinerEnTete(MARGE_HAUTE_SUITE);
+    }
+    autoTable(doc, opts(y));
+    y = (doc as any).lastAutoTable.finalY;
+  });
+}
+
 async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string, imagesInjectees?: ImagesPdf) {
   const { default: jsPDF } = await import("jspdf");
-  const { default: autoTable } = await import("jspdf-autotable");
+  const autoTableMod = await import("jspdf-autotable");
+  const autoTable = autoTableMod.default;
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
   const M = 18;
@@ -122,43 +191,30 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string, ima
   const images: ImagesPdf = imagesInjectees ?? await chargerImagesPdf(lignes.map((l: any) => l.image_url));
   const blocs = grouperParPoste(lignes);
   const aDesPostes = blocs.some(b => b.poste !== null);
-  const body: any[] = [];
-  blocs.forEach(b => {
-    const titre = b.poste ?? "Autres prestations";
-    if (aDesPostes) {
-      body.push([{
-        content: titre, colSpan: 6,
-        styles: { fontStyle: "bold", fillColor: [245, 245, 244], textColor: [28, 25, 23] },
-      }]);
-    }
-    b.items.forEach(({ l }) => body.push([
-      celluleDesignation(l as any, images),
-      l.type_branche === "service" ? "Service" : "Matériau",
-      l.unite, l.quantite, fmt(l.prix_unitaire), fmt(l.prix_unitaire * l.quantite),
-    ]));
-    if (aDesPostes) {
-      body.push([
-        { content: `Sous-total — ${titre}`, colSpan: 5, styles: { halign: "right", fontStyle: "bold", fillColor: [245, 245, 244] } },
-        { content: fmt(totalItems(b.items)), styles: { halign: "right", fontStyle: "bold", fillColor: [245, 245, 244] } },
-      ]);
-    }
-  });
-  autoTable(doc, {
-    startY: 80,
-    head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
-    body,
-    headStyles: { fillColor: [28, 25, 23], textColor: [251, 191, 36], fontStyle: "bold", fontSize: 8 },
-    bodyStyles: { fontSize: 8.5, textColor: [44, 38, 34], valign: "middle" },
-    alternateRowStyles: aDesPostes ? {} : { fillColor: [250, 250, 249] },
-    columnStyles: {
-      0: { cellWidth: images.size > 0 ? 72 : 65 }, 1: { cellWidth: 22 }, 2: { cellWidth: 18 },
-      3: { cellWidth: 12, halign: "center" }, 4: { cellWidth: 25, halign: "right" }, 5: { cellWidth: 25, halign: "right" },
-    },
-    didDrawCell: (data: any) => dessinerImageCellule(doc, data, images),
-    margin: { left: M, right: M },
-  });
+  if (aDesPostes) {
+    dessinerLignesParPostes(doc, autoTableMod, blocs, images, { startY: 80, M, margeBasse: 14 });
+  } else {
+    // Aucun poste : tableau à plat, lignes alternées (comme avant).
+    autoTable(doc, {
+      startY: 80,
+      head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
+      body: lignes.map((l: any) => [
+        celluleDesignation(l, images), l.type_branche === "service" ? "Service" : "Matériau",
+        l.unite, l.quantite, fmt(l.prix_unitaire), fmt(l.prix_unitaire * l.quantite),
+      ]),
+      headStyles: { fillColor: [28, 25, 23], textColor: [251, 191, 36], fontStyle: "bold", fontSize: 8 },
+      bodyStyles: { fontSize: 8.5, textColor: [44, 38, 34], valign: "middle" },
+      alternateRowStyles: { fillColor: [250, 250, 249] },
+      columnStyles: {
+        0: { cellWidth: images.size > 0 ? 72 : 65 }, 1: { cellWidth: 22 }, 2: { cellWidth: 18 },
+        3: { cellWidth: 12, halign: "center" }, 4: { cellWidth: 25, halign: "right" }, 5: { cellWidth: 25, halign: "right" },
+      },
+      didDrawCell: (data: any) => dessinerImageCellule(doc, data, images),
+      margin: { left: M, right: M, bottom: 14 },
+    });
+  }
 
-  const finalY = (doc as any).lastAutoTable.finalY + 6;
+  let finalY = (doc as any).lastAutoTable.finalY + 6;
 
   // Totaux depuis la base uniquement — les kits ont kit_ratio_service qui ventile
   // différemment de type_branche, donc on ne recalcule PAS depuis les lignes
@@ -190,6 +246,8 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string, ima
 
   const boxH = 8 + lignesTotal.length * 7;
   const bx = W - M - 72;
+  // Totaux + signature (≈ 52 mm de plus que la boîte) : jamais coupés ni écrasés par le pied de page.
+  if (finalY + boxH + 52 > doc.internal.pageSize.getHeight() - 14) { doc.addPage(); finalY = 20; }
   doc.setFillColor(245, 245, 244); doc.rect(bx, finalY, 72, boxH, "F");
   lignesTotal.forEach((row, i) => {
     const y = finalY + 9 + i * 7;
@@ -229,7 +287,8 @@ const FX_FONT = "LiberationSans";
 
 async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acompte[] = [], pdfa = false, images: ImagesPdf = new Map()) {
   const { default: jsPDF } = await import("jspdf");
-  const { default: autoTable } = await import("jspdf-autotable");
+  const autoTableMod = await import("jspdf-autotable");
+  const autoTable = autoTableMod.default;
   const doc = new jsPDF({ unit: "mm", format: "a4", putOnlyUsedFonts: true });
   const W = doc.internal.pageSize.getWidth();
   const M = 18;
@@ -315,44 +374,30 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   const lignes = trierParOrdre(facture.lignes ?? []);
   const blocs = grouperParPoste(lignes);
   const aDesPostes = blocs.some(b => b.poste !== null);
-  const body: any[] = [];
-  blocs.forEach(b => {
-    const titre = b.poste ?? "Autres prestations";
-    if (aDesPostes) {
-      body.push([{
-        content: titre, colSpan: 6,
-        styles: { fontStyle: "bold", fillColor: [245, 245, 244], textColor: [28, 25, 23] },
-      }]);
-    }
-    b.items.forEach(({ l }) => body.push([
-      celluleDesignation(l as any, images),
-      l.type_branche === "service" ? "Service" : "Matériau",
-      l.unite, l.quantite, fmt(l.prix_unitaire), fmt(l.prix_unitaire * l.quantite),
-    ]));
-    if (aDesPostes) {
-      body.push([
-        { content: `Sous-total — ${titre}`, colSpan: 5, styles: { halign: "right", fontStyle: "bold", fillColor: [245, 245, 244] } },
-        { content: fmt(totalItems(b.items)), styles: { halign: "right", fontStyle: "bold", fillColor: [245, 245, 244] } },
-      ]);
-    }
-  });
-  autoTable(doc, {
-    startY: 84,
-    styles: { font: FONT },
-    head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
-    body,
-    headStyles: { fillColor: [28, 25, 23], textColor: [251, 191, 36], fontStyle: "bold", fontSize: 8 },
-    bodyStyles: { fontSize: 8.5, textColor: [44, 38, 34], valign: "middle" },
-    alternateRowStyles: aDesPostes ? {} : { fillColor: [250, 250, 249] },
-    columnStyles: {
-      0: { cellWidth: images.size > 0 ? 72 : 65 }, 1: { cellWidth: 22 }, 2: { cellWidth: 18 },
-      3: { cellWidth: 12, halign: "center" }, 4: { cellWidth: 25, halign: "right" }, 5: { cellWidth: 25, halign: "right" },
-    },
-    didDrawCell: (data: any) => dessinerImageCellule(doc, data, images),
-    margin: { left: M, right: M },
-  });
+  if (aDesPostes) {
+    dessinerLignesParPostes(doc, autoTableMod, blocs, images, { startY: 84, M, font: FONT, margeBasse: 26 });
+  } else {
+    autoTable(doc, {
+      startY: 84,
+      styles: { font: FONT },
+      head: [["Désignation", "Type", "Unité", "Qté", "P.U.", "Total"]],
+      body: lignes.map((l: any) => [
+        celluleDesignation(l, images), l.type_branche === "service" ? "Service" : "Matériau",
+        l.unite, l.quantite, fmt(l.prix_unitaire), fmt(l.prix_unitaire * l.quantite),
+      ]),
+      headStyles: { fillColor: [28, 25, 23], textColor: [251, 191, 36], fontStyle: "bold", fontSize: 8 },
+      bodyStyles: { fontSize: 8.5, textColor: [44, 38, 34], valign: "middle" },
+      alternateRowStyles: { fillColor: [250, 250, 249] },
+      columnStyles: {
+        0: { cellWidth: images.size > 0 ? 72 : 65 }, 1: { cellWidth: 22 }, 2: { cellWidth: 18 },
+        3: { cellWidth: 12, halign: "center" }, 4: { cellWidth: 25, halign: "right" }, 5: { cellWidth: 25, halign: "right" },
+      },
+      didDrawCell: (data: any) => dessinerImageCellule(doc, data, images),
+      margin: { left: M, right: M, bottom: 26 },
+    });
+  }
 
-  const fy = (doc as any).lastAutoTable.finalY + 6;
+  let fy = (doc as any).lastAutoTable.finalY + 6;
 
   // Totaux depuis la base uniquement
   const remiseFideliteEur = facture.remise_fidelite_pct
@@ -387,6 +432,8 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
 
   const boxH = 8 + lignesTotal.length * 7;
   const bx = W - M - 80;
+  // Boîte de totaux + mentions de paiement : jamais coupées ni écrasées par le pied de page (bandeau de 22 mm).
+  if (fy + Math.max(boxH, 24) + 4 > doc.internal.pageSize.getHeight() - 26) { doc.addPage(); fy = 20; }
   doc.setFillColor(28, 25, 23); doc.rect(bx, fy, 80, boxH, "F");
   lignesTotal.forEach((row, i) => {
     const y = fy + 9 + i * 7;
