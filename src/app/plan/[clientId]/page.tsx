@@ -52,9 +52,8 @@ const MAX_ZOOM = 4;
 
 // Accroche grille + alignement (façon logiciel de dessin vectoriel) : un point saisi
 // s'arrondit à la grille fine (10cm) par défaut, et s'aligne exactement sur un sommet
-// existant proche (mur voisin, autre pièce) plutôt que sur la grille quand les deux
-// sont en concurrence — l'alignement gagne toujours sur le simple arrondi de grille.
-const SNAP_GRID_M = 0.1;
+// existant proche (mur voisin, autre pièce) quand l'aimant est activé (désactivé par défaut) ;
+// la grille est au centimètre par défaut (réglable 1 / 5 / 10 cm dans la barre d'outils).
 const ALIGN_THRESHOLD_PX = 8;
 // Aimantation d'un appareillage sur le mur le plus proche de sa pièce (px écran, indépendant du zoom).
 // Maintenir Alt pendant le geste la désactive pour poser un appareillage au milieu d'une pièce.
@@ -70,8 +69,13 @@ const CLOISON_SEUIL_PX = 12;
 // l'ancienne clé "chauffage" (un seul radiateur, historique) remplacée par chauffage_16/20.
 const CIRCUIT_KEYS_MANUELS = Object.keys(CIRCUITS).filter(k => !["general", "parafoudre", "chauffage"].includes(k));
 
-function arrondiGrille(v: number, pas: number = SNAP_GRID_M): number {
-  return Math.round(v / pas) * pas;
+// Réglage de précision du plan (modifiable dans la barre d'outils) : pas de la grille au centimètre par défaut,
+// aimantation aux sommets des autres pièces désactivée par défaut, Alt = désactivation momentanée.
+// Variable de module : lue au moment du geste par tous les outils (dessin, sommets, déplacements…).
+const reglageAimant = { pasM: 0.01, aimant: false, alt: false };
+
+function arrondiGrille(v: number, pas: number = reglageAimant.pasM): number {
+  return Number((Math.round(v / pas) * pas).toFixed(4));
 }
 
 function pointsReferenceNiveau(niveau: Niveau | null, excludePieceId?: number, excludeIndex?: number): Point[] {
@@ -124,6 +128,7 @@ function snapAvecAlignement(m: Point, candidats: Point[], seuilM: number): Resul
   let y = arrondiGrille(m.y);
   let guideX: number | undefined;
   let guideY: number | undefined;
+  if (!reglageAimant.aimant || reglageAimant.alt) return { point: { x, y } };
   let meilleurDX = seuilM, meilleurDY = seuilM;
   candidats.forEach(c => {
     const dx = Math.abs(c.x - m.x);
@@ -132,6 +137,21 @@ function snapAvecAlignement(m: Point, candidats: Point[], seuilM: number): Resul
     if (dy < meilleurDY) { meilleurDY = dy; y = c.y; guideY = c.y; }
   });
   return { point: { x, y }, guideX, guideY };
+}
+
+function ReglageAimant({ pasCm, setPasCm, aimant, setAimant }: { pasCm: number; setPasCm: (v: number) => void; aimant: boolean; setAimant: (v: boolean) => void }) {
+  return (
+    <div className="flex items-center gap-1">
+      <button onClick={() => setAimant(!aimant)} className={`btn-ghost !px-2 !py-1 !text-xs ${aimant ? "!bg-ink-900 !text-volt-400" : ""}`}
+        title="Aimanter aux sommets des autres pièces (maintenir Alt pour désactiver momentanément)">Aimant</button>
+      <select value={pasCm} onChange={e => setPasCm(Number(e.target.value))} title="Pas de placement"
+        className="rounded-lg border border-ink-200 bg-white px-1 py-1 text-xs text-ink-900">
+        <option value={1}>1 cm</option>
+        <option value={5}>5 cm</option>
+        <option value={10}>10 cm</option>
+      </select>
+    </div>
+  );
 }
 
 // Repère de lecture des cotes d'une pièce : face intérieure finie des murs (ce qu'on mesure sur place).
@@ -1862,6 +1882,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [annexes, setAnnexes] = useState<TableauAnnexe[]>(() => lireAnnexes(projet.tableaux_annexes));
 
   const [zoom, setZoom] = useState(1);
+  const [pasSnapCm, setPasSnapCm] = useState(1);
+  const [aimantActif, setAimantActif] = useState(false);
+  reglageAimant.pasM = pasSnapCm / 100;
+  reglageAimant.aimant = aimantActif;
+  useEffect(() => {
+    const maj = (e: KeyboardEvent) => { reglageAimant.alt = e.altKey; };
+    const raz = () => { reglageAimant.alt = false; };
+    window.addEventListener("keydown", maj); window.addEventListener("keyup", maj); window.addEventListener("blur", raz);
+    return () => { window.removeEventListener("keydown", maj); window.removeEventListener("keyup", maj); window.removeEventListener("blur", raz); };
+  }, []);
   const [pan, setPan] = useState<Point>({ x: 60, y: 60 });
   const [, forceRerender] = useState(0);
 
@@ -4198,6 +4228,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               title={modeFocus ? "Quitter le plein écran (Échap)" : "Plein écran"}>
               {modeFocus ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
             </button>
+            <ReglageAimant pasCm={pasSnapCm} setPasCm={setPasSnapCm} aimant={aimantActif} setAimant={setAimantActif} />
             <button onClick={annuler} disabled={!peutAnnuler} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Annuler la dernière action (Ctrl+Z)"><Undo2 size={14} /></button>
             <button onClick={refaire} disabled={!peutRefaire} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Refaire (Ctrl+Y)"><Redo2 size={14} /></button>
             {autoSaveMsg && <span className="text-[11px] text-emerald-600 whitespace-nowrap">{autoSaveMsg}</span>}
@@ -4240,6 +4271,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               <button onClick={() => setShowPrintForm(true)} className="btn-ghost"><Printer size={15} /> Imprimer</button>
             )}
             <Link href={`/predevis/${clientId}${qsProjet(projet.id)}`} className="btn-ghost"><Receipt size={15} /> Pré-devis</Link>
+            <ReglageAimant pasCm={pasSnapCm} setPasCm={setPasSnapCm} aimant={aimantActif} setAimant={setAimantActif} />
             <button onClick={annuler} disabled={!peutAnnuler} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Annuler la dernière action (Ctrl+Z)"><Undo2 size={14} /></button>
             <button onClick={refaire} disabled={!peutRefaire} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Refaire (Ctrl+Y)"><Redo2 size={14} /></button>
             {autoSaveMsg && <span className="text-[11px] text-emerald-600 whitespace-nowrap">{autoSaveMsg}</span>}
