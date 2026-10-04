@@ -375,16 +375,16 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
               </tr>
             </thead>
             <tbody>
-              {blocs.map(b => (
+              {blocs.map((b, bi) => (
                 <Fragment key={b.poste ?? "__hors_poste"}>
                   {aDesPostes && (
-                    <tr className="bg-ink-50 border-b border-ink-100">
+                    <tr className={cn("border-b border-ink-100", bi % 2 === 1 ? "bg-ink-100" : "bg-white")}>
                       <td colSpan={3} className="py-2 px-2 text-xs font-semibold uppercase tracking-wide text-ink-700">{b.poste ?? "Autres prestations"}</td>
                       <td className="py-2 text-right text-xs font-semibold text-ink-900">{fmt(totalItems(b.items))}</td>
                     </tr>
                   )}
                   {b.items.map(({ l }, k) => (
-                    <tr key={k} className="border-b border-ink-50">
+                    <tr key={k} className={cn("border-b border-ink-50", aDesPostes && bi % 2 === 1 && "bg-ink-100")}>
                       <td className="py-2.5 pr-2">
                         <span className={cn("badge text-xs mr-1.5", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
                           {l.type_branche === "service" ? "S" : "M"}
