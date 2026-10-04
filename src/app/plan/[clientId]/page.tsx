@@ -502,10 +502,10 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
     }
     const tf = `text-anchor="middle" font-family="monospace"`;
     s += `<g ${tf}>`
-      + `<text x="${pos.x.toFixed(1)}" y="${(pos.y - 2).toFixed(1)}" font-size="10" font-weight="bold" fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="round">${escapeXml(nom)}</text>`
-      + `<text x="${pos.x.toFixed(1)}" y="${(pos.y - 2).toFixed(1)}" font-size="10" font-weight="bold" fill="#111">${escapeXml(nom)}</text>`
-      + `<text x="${pos.x.toFixed(1)}" y="${(pos.y + 9).toFixed(1)}" font-size="8" fill="none" stroke="#fff" stroke-width="2.6" stroke-linejoin="round">${surf}</text>`
-      + `<text x="${pos.x.toFixed(1)}" y="${(pos.y + 9).toFixed(1)}" font-size="8" fill="#555">${surf}</text></g>`;
+      + (p.masquerNom ? "" : `<text x="${pos.x.toFixed(1)}" y="${(pos.y - 2).toFixed(1)}" font-size="10" font-weight="bold" fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="round">${escapeXml(nom)}</text>`
+      + `<text x="${pos.x.toFixed(1)}" y="${(pos.y - 2).toFixed(1)}" font-size="10" font-weight="bold" fill="#111">${escapeXml(nom)}</text>`)
+      + (p.masquerDimensions ? "" : `<text x="${pos.x.toFixed(1)}" y="${(pos.y + 9).toFixed(1)}" font-size="8" fill="none" stroke="#fff" stroke-width="2.6" stroke-linejoin="round">${surf}</text>`
+      + `<text x="${pos.x.toFixed(1)}" y="${(pos.y + 9).toFixed(1)}" font-size="8" fill="#555">${surf}</text>`) + `</g>`;
   });
 
   // Cotes d'implantation (option d'impression) : une cote par appareillage mural — sa distance
@@ -519,7 +519,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
   }
   // Cotes des pièces : dimension intérieure de chaque mur (face finie à face finie) + épaisseurs.
   if (showCotesPieces) {
-    const cotesP: Cote[] = niveauResultat.pieces.flatMap(pc => {
+    const cotesP: Cote[] = niveauResultat.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => {
       const { utile } = geometrieMurs(pc);
       return pc.contour.map((_, i): Cote => {
         const a = utile[i], b = utile[(i + 1) % utile.length];
@@ -527,7 +527,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       });
     });
     filtrerCotesLisibles(cotesP, toPx, [], 12, 22).forEach(c => { s += coteSvgString(c, toPx); });
-    niveauResultat.pieces.forEach(pc => pc.contour.forEach((_, i) => {
+    niveauResultat.pieces.filter(pc => !pc.masquerDimensions).forEach(pc => pc.contour.forEach((_, i) => {
       const sp = murDe(pc, i);
       // Centre et direction de la bande de structure : là où l'épaisseur se lit sur le mur.
       const qs = geometrieMurs(pc).quads[i].structure.map(toPx);
@@ -1883,6 +1883,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const [zoom, setZoom] = useState(1);
   const [pasSnapCm, setPasSnapCm] = useState(1);
+  // Retour visuel pendant le déplacement d'une pièce : proximité (≤ 10 cm) / alignement exact avec les sommets des autres pièces.
+  const [alignPiece, setAlignPiece] = useState<{ x?: { pos: number; ecartCm: number }; y?: { pos: number; ecartCm: number } } | null>(null);
   const [aimantActif, setAimantActif] = useState(false);
   reglageAimant.pasM = pasSnapCm / 100;
   reglageAimant.aimant = aimantActif;
@@ -2001,6 +2003,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       } else if (dragMode.kind === "piece") {
         const dxM = arrondiGrille((e.clientX - dragMode.startX) / (PX_PER_M * zoom));
         const dyM = arrondiGrille((e.clientY - dragMode.startY) / (PX_PER_M * zoom));
+        const niveauA = niveaux.find(n => n.id === niveauActifId) ?? null;
+        const autresPts = (niveauA?.pieces ?? []).filter(p => p.id !== dragMode.pieceId).flatMap(p => p.contour);
+        let ax: { pos: number; ecartCm: number } | undefined, ay: { pos: number; ecartCm: number } | undefined;
+        dragMode.startContour.forEach(pt => {
+          const nx = pt.x + dxM, ny = pt.y + dyM;
+          autresPts.forEach(c => {
+            const ex = Math.round(Math.abs(c.x - nx) * 100), ey = Math.round(Math.abs(c.y - ny) * 100);
+            if (ex <= 10 && (!ax || ex < ax.ecartCm)) ax = { pos: c.x, ecartCm: ex };
+            if (ey <= 10 && (!ay || ey < ay.ecartCm)) ay = { pos: c.y, ecartCm: ey };
+          });
+        });
+        setAlignPiece(ax || ay ? { x: ax, y: ay } : null);
         updateNiveauActif(n => ({
           ...n,
           pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : {
@@ -2188,6 +2202,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       setDragEndTick(t => t + 1);
       setDragMode({ kind: "none" });
       setSnapGuide(null);
+      setAlignPiece(null);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -4054,7 +4069,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       ? cotesAppareillage({ x: selectedAppareillage.x, y: selectedAppareillage.y }, pieceDeSelectedAppareillage.contour, selectedAppareillage.type, true, repereCotes(pieceDeSelectedAppareillage))
       : [];
     const cotesPieces: Cote[] = showCotesPieces
-      ? niveauActif.pieces.flatMap(pc => {
+      ? niveauActif.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => {
           const { utile } = geometrieMurs(pc);
           return pc.contour.map((_, i): Cote => {
             const a = utile[i], b = utile[(i + 1) % utile.length];
@@ -4091,7 +4106,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // Épaisseur de chaque mur (cm) — structure, + doublage — posée sur le mur, uniquement si le trait
   // est assez épais à l'écran pour la porter (sinon elle ne servirait qu'à encombrer).
-  const epaisseursMurs = showCotesPieces && niveauActif ? niveauActif.pieces.flatMap(pc => {
+  const epaisseursMurs = showCotesPieces && niveauActif ? niveauActif.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => {
     const g = geometrieMurs(pc);
     return g.quads.flatMap(q => {
       const sp = murDe(pc, q.i);
@@ -5139,10 +5154,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 return (
                   <g key={`etiq-${piece.id}`}>
                     <g style={{ pointerEvents: "none" }} textAnchor="middle" fontFamily="monospace">
-                      <text x={x} y={y - 3} fontSize={12} fontWeight={700} fill="none" stroke="#fff" strokeWidth={4} strokeLinejoin="round">{nom}</text>
-                      <text x={x} y={y - 3} fontSize={12} fontWeight={700} fill="#1c1917">{nom}</text>
-                      <text x={x} y={y + 11} fontSize={10} fill="none" stroke="#fff" strokeWidth={3.5} strokeLinejoin="round">{surf}</text>
-                      <text x={x} y={y + 11} fontSize={10} fill="#78716c">{surf}</text>
+                      {!piece.masquerNom && <>
+                        <text x={x} y={y - 3} fontSize={12} fontWeight={700} fill="none" stroke="#fff" strokeWidth={4} strokeLinejoin="round">{nom}</text>
+                        <text x={x} y={y - 3} fontSize={12} fontWeight={700} fill="#1c1917">{nom}</text>
+                      </>}
+                      {!piece.masquerDimensions && <>
+                        <text x={x} y={y + 11} fontSize={10} fill="none" stroke="#fff" strokeWidth={3.5} strokeLinejoin="round">{surf}</text>
+                        <text x={x} y={y + 11} fontSize={10} fill="#78716c">{surf}</text>
+                      </>}
                     </g>
                     {piece.verrouillee && (
                       <text x={x + w / 2 - 2} y={y - h / 2 + 4} textAnchor="end" fontSize={11} style={{ pointerEvents: "none" }}>🔒</text>
@@ -5319,6 +5338,36 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 });
               })()}
 
+              {dragMode.kind === "piece" && alignPiece && (() => {
+                const COUL_OK = "#16A34A", COUL_PROCHE = "#F59E0B";
+                const items: { axe: "X" | "Y"; pos: number; ecartCm: number }[] = [
+                  ...(alignPiece.x ? [{ axe: "X" as const, ...alignPiece.x }] : []),
+                  ...(alignPiece.y ? [{ axe: "Y" as const, ...alignPiece.y }] : []),
+                ];
+                return (
+                  <g style={{ pointerEvents: "none" }}>
+                    {items.map(it => {
+                      const ok = it.ecartCm === 0, col = ok ? COUL_OK : COUL_PROCHE;
+                      const q = it.axe === "X" ? toScreen({ x: it.pos, y: 0 }) : toScreen({ x: 0, y: it.pos });
+                      return it.axe === "X"
+                        ? <line key="ax" x1={q.x} y1={0} x2={q.x} y2={H} stroke={col} strokeWidth={ok ? 2 : 1} strokeDasharray="4,3" opacity={ok ? 0.95 : 0.6} />
+                        : <line key="ay" x1={0} y1={q.y} x2={W} y2={q.y} stroke={col} strokeWidth={ok ? 2 : 1} strokeDasharray="4,3" opacity={ok ? 0.95 : 0.6} />;
+                    })}
+                    {items.map((it, i) => {
+                      const ok = it.ecartCm === 0, col = ok ? COUL_OK : COUL_PROCHE;
+                      const txt = ok ? `${it.axe} : aligné ✔` : `${it.axe} : à ${it.ecartCm} cm de l'alignement`;
+                      const w = txt.length * 7 + 16;
+                      return (
+                        <g key={`b${it.axe}`} transform={`translate(${W / 2 - w / 2} ${12 + i * 28})`} fontFamily="monospace">
+                          <rect width={w} height={22} rx={6} fill="#fff" stroke={col} strokeWidth={1.5} />
+                          <text x={w / 2} y={15} textAnchor="middle" fontSize={12} fontWeight={700} fill={ok ? "#15803D" : "#B45309"}>{txt}</text>
+                        </g>
+                      );
+                    })}
+                  </g>
+                );
+              })()}
+
               {guideActif?.x !== undefined && (() => {
                 const p = toScreen({ x: guideActif.x, y: 0 });
                 return <line x1={p.x} y1={0} x2={p.x} y2={H} stroke="#F59E0B" strokeWidth={1} strokeDasharray="4,3" opacity={0.7} />;
@@ -5419,6 +5468,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   title={selectedPiece.verrouillee ? "Pièce verrouillée — cliquer pour déverrouiller" : "Verrouiller la pièce : plus aucun déplacement (pièce, sommets, murs, appareillages, meubles, portes/fenêtres, nom)"}>
                   {selectedPiece.verrouillee ? <><Lock size={13} /> Verrouillée</> : <><Unlock size={13} /> Verrouiller</>}
                 </button>
+                <button onClick={() => updateNiveauActif(n => ({ ...n, pieces: n.pieces.map(p => p.id === selectedPiece.id ? { ...p, masquerNom: p.masquerNom ? undefined : true } : p) }))}
+                  className={`${selectedPiece.masquerNom ? "btn-ghost" : "btn-volt"} !px-2 !py-1.5 !text-xs`}
+                  title={selectedPiece.masquerNom ? "Nom masqué — cliquer pour l'afficher" : "Masquer le nom de cette pièce"}>Nom</button>
+                <button onClick={() => updateNiveauActif(n => ({ ...n, pieces: n.pieces.map(p => p.id === selectedPiece.id ? { ...p, masquerDimensions: p.masquerDimensions ? undefined : true } : p) }))}
+                  className={`${selectedPiece.masquerDimensions ? "btn-ghost" : "btn-volt"} !px-2 !py-1.5 !text-xs`}
+                  title={selectedPiece.masquerDimensions ? "Dimensions masquées — cliquer pour les afficher" : "Masquer les dimensions de cette pièce (surface, cotes des murs, épaisseurs)"}>Dimensions</button>
                 {selectedPiece.nomDecalage && !selectedPiece.verrouillee && (
                   <button onClick={() => reinitialiserNomPiece(selectedPiece.id)} className="btn-ghost !px-2 !py-1.5 !text-xs" title="Replacer le nom et la surface automatiquement">↺ Nom</button>
                 )}
