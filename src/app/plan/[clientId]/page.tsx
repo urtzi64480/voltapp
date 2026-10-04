@@ -544,7 +544,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
   // Cotes d'ouvertures (chaîne le long de la face intérieure) et cotes extérieures / hors-tout.
   if (showCotesOuv || showCotesExt) {
     const cotesA: Cote[] = [
-      ...(showCotesOuv ? niveauResultat.pieces.flatMap(pc => cotesOuvertures(pc, niveauResultat.pieces)) : []),
+      ...(showCotesOuv ? niveauResultat.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => cotesOuvertures(pc, niveauResultat.pieces)) : []),
       ...(showCotesExt ? [...cotesExterieures(niveauResultat.pieces), ...coteHorsTout(niveauResultat.pieces)] : []),
     ];
     filtrerCotesLisibles(cotesA, toPx, [], 10, 20).forEach(c => { s += coteSvgString(c, toPx); });
@@ -4083,7 +4083,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           .flatMap(a => cotesAppareillage({ x: a.x, y: a.y }, pc.contour, a.type, false, repereCotes(pc))))
       : [];
     const cotesArchi: Cote[] = [
-      ...(showCotesOuv ? niveauActif.pieces.flatMap(pc => cotesOuvertures(pc, niveauActif.pieces)) : []),
+      ...(showCotesOuv ? niveauActif.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => cotesOuvertures(pc, niveauActif.pieces)) : []),
       ...(showCotesExt ? [...cotesExterieures(niveauActif.pieces), ...coteHorsTout(niveauActif.pieces)] : []),
     ];
     return filtrerCotesLisibles([...cotesPieces, ...cotesArchi, ...autres], toScreen, prioritaires)
@@ -4679,7 +4679,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         </circle>
                       );
                     })}
-                    {(() => {
+                    {!piece.masquerDimensions && (() => {
                       const utileP = geometrieMurs(piece).utile;
                       return piece.contour.map((pt, i) => {
                       const aU = utileP[i], bU = utileP[(i + 1) % utileP.length];
@@ -5473,7 +5473,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   title={selectedPiece.masquerNom ? "Nom masqué — cliquer pour l'afficher" : "Masquer le nom de cette pièce"}>Nom</button>
                 <button onClick={() => updateNiveauActif(n => ({ ...n, pieces: n.pieces.map(p => p.id === selectedPiece.id ? { ...p, masquerDimensions: p.masquerDimensions ? undefined : true } : p) }))}
                   className={`${selectedPiece.masquerDimensions ? "btn-ghost" : "btn-volt"} !px-2 !py-1.5 !text-xs`}
-                  title={selectedPiece.masquerDimensions ? "Dimensions masquées — cliquer pour les afficher" : "Masquer les dimensions de cette pièce (surface, cotes des murs, épaisseurs)"}>Dimensions</button>
+                  title={selectedPiece.masquerDimensions ? "Dimensions masquées — cliquer pour les afficher" : "Masquer toutes les dimensions de cette pièce (surface, longueur et largeur des murs, cotes, épaisseurs)"}>Dimensions</button>
                 {selectedPiece.nomDecalage && !selectedPiece.verrouillee && (
                   <button onClick={() => reinitialiserNomPiece(selectedPiece.id)} className="btn-ghost !px-2 !py-1.5 !text-xs" title="Replacer le nom et la surface automatiquement">↺ Nom</button>
                 )}
