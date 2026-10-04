@@ -3560,9 +3560,34 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setCursorPx({ x: e.clientX - rect.left, y: e.clientY - rect.top });
   };
 
+  // Sélection d'une pièce par son id (liste déroulante, clic sur son étiquette, Ctrl+clic en cascade).
+  const selectionnerPiece = (id: number) => {
+    setMode("select");
+    setSelectedPieceId(id);
+    setSelectedAppareillageId(null);
+    setSelectedTableau(false);
+    setSelectedOuvertureId(null); setSelectedBoite(null);
+    setSelectedWaypoint(null);
+    setSelectedMeubleId(null);
+    setPanelResetTick(t => t + 1);
+  };
+
   const onPieceDown = (piece: Piece, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode || mode === "dessiner" || mode === "cloison" || mode === "zone" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) return;
     e.stopPropagation();
+    // Ctrl (ou Cmd) + clic : sélectionne la pièce SOUS celle du dessus, à l'endroit cliqué (clics répétés = on descend, puis on boucle).
+    if ((e.ctrlKey || e.metaKey) && niveauActif) {
+      const rect = svgRef.current?.getBoundingClientRect();
+      if (rect) {
+        const m = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        const dessous = [...niveauActif.pieces].reverse().filter(pc => pointDansPolygone(m, pc.contour));
+        if (dessous.length > 1) {
+          const i = dessous.findIndex(pc => pc.id === selectedPieceId);
+          selectionnerPiece(dessous[(i + 1) % dessous.length].id);
+          return;
+        }
+      }
+    }
     if (selectedPieceId === piece.id) {
       if (piece.verrouillee) return; // pièce verrouillée : sélectionnée mais jamais déplacée
       setDragMode({ kind: "piece", pieceId: piece.id, startX: e.clientX, startY: e.clientY, startContour: piece.contour });
@@ -4244,6 +4269,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               {modeFocus ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
             </button>
             <ReglageAimant pasCm={pasSnapCm} setPasCm={setPasSnapCm} aimant={aimantActif} setAimant={setAimantActif} />
+            {niveauActif && niveauActif.pieces.length > 0 && (
+              <select value={selectedPieceId ?? ""} onChange={e => { if (e.target.value !== "") selectionnerPiece(Number(e.target.value)); }}
+                title="Sélectionner une pièce par son nom (utile quand elle est cachée sous une autre — sinon Ctrl+clic pour descendre d'une pièce)"
+                className="rounded-lg border border-ink-200 bg-white px-1 py-1 text-xs text-ink-900 max-w-[9rem]">
+                <option value="">Pièce…</option>
+                {niveauActif.pieces.map(pc => <option key={pc.id} value={pc.id}>{pc.nom || PIECE_TYPES[pc.type].label}</option>)}
+              </select>
+            )}
             <button onClick={annuler} disabled={!peutAnnuler} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Annuler la dernière action (Ctrl+Z)"><Undo2 size={14} /></button>
             <button onClick={refaire} disabled={!peutRefaire} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Refaire (Ctrl+Y)"><Redo2 size={14} /></button>
             {autoSaveMsg && <span className="text-[11px] text-emerald-600 whitespace-nowrap">{autoSaveMsg}</span>}
@@ -4287,6 +4320,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             )}
             <Link href={`/predevis/${clientId}${qsProjet(projet.id)}`} className="btn-ghost"><Receipt size={15} /> Pré-devis</Link>
             <ReglageAimant pasCm={pasSnapCm} setPasCm={setPasSnapCm} aimant={aimantActif} setAimant={setAimantActif} />
+            {niveauActif && niveauActif.pieces.length > 0 && (
+              <select value={selectedPieceId ?? ""} onChange={e => { if (e.target.value !== "") selectionnerPiece(Number(e.target.value)); }}
+                title="Sélectionner une pièce par son nom (utile quand elle est cachée sous une autre — sinon Ctrl+clic pour descendre d'une pièce)"
+                className="rounded-lg border border-ink-200 bg-white px-1 py-1 text-xs text-ink-900 max-w-[9rem]">
+                <option value="">Pièce…</option>
+                {niveauActif.pieces.map(pc => <option key={pc.id} value={pc.id}>{pc.nom || PIECE_TYPES[pc.type].label}</option>)}
+              </select>
+            )}
             <button onClick={annuler} disabled={!peutAnnuler} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Annuler la dernière action (Ctrl+Z)"><Undo2 size={14} /></button>
             <button onClick={refaire} disabled={!peutRefaire} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Refaire (Ctrl+Y)"><Redo2 size={14} /></button>
             {autoSaveMsg && <span className="text-[11px] text-emerald-600 whitespace-nowrap">{autoSaveMsg}</span>}
@@ -5153,6 +5194,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 const poigneeActive = piece.id === selectedPieceId && mode === "select";
                 return (
                   <g key={`etiq-${piece.id}`}>
+                    {!(piece.masquerNom && piece.masquerDimensions) && piece.id !== selectedPieceId && mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingMeuble && (
+                      <rect x={x - w / 2} y={y - h / 2} width={w} height={h} fill="transparent" style={{ cursor: "pointer", pointerEvents: "all" }}
+                        onPointerDown={e => { e.stopPropagation(); selectionnerPiece(piece.id); }}>
+                        <title>Sélectionner cette pièce</title>
+                      </rect>
+                    )}
                     <g style={{ pointerEvents: "none" }} textAnchor="middle" fontFamily="monospace">
                       {!piece.masquerNom && <>
                         <text x={x} y={y - 3} fontSize={12} fontWeight={700} fill="none" stroke="#fff" strokeWidth={4} strokeLinejoin="round">{nom}</text>
