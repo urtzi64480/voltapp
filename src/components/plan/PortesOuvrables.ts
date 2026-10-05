@@ -155,18 +155,66 @@ export function creerPorteBattante(p: {
   return { cadre, swing };
 }
 
-// Porte coulissante : un panneau plein qui, fermé, remplit l'ouverture et, ouvert, se « gare » contre le mur
-// voisin du côté choisi (cote = +1 « droite », −1 « gauche »). Le groupe « mobile » glisse le long du mur.
-export function creerPorteCoulissante(p: { larg: number; haut: number; epMur: number }): THREE.Group {
+// Porte coulissante « en applique » : un vantail plein qui, fermé, recouvre l'ouverture et, ouvert, glisse sur la face
+// INTÉRIEURE du mur voisin du côté choisi (cote = +1 « droite », −1 « gauche »), suspendu à un rail. Il reste donc visible
+// ouvert comme fermé (il ne s'enfonce pas dans l'épaisseur du mur).
+//  larg / haut : dimensions de l'ouverture (m) ; epMur : épaisseur totale du mur (m) ; faceInt : signe de z côté intérieur.
+// « cadre » : encadrement fixe + rail (de l'ouverture jusqu'au bout de la zone de parking) ; « mobile » : vantail à animer
+// (position.x = signe × course × ouverture, course = larg — voir appliquerOuverturePorte).
+export function creerPorteCoulissante(p: { larg: number; haut: number; epMur: number; cote: number; faceInt: number }): { cadre: THREE.Group; mobile: THREE.Group } {
+  const { larg, haut, epMur, cote, faceInt } = p;
+  const cadre = new THREE.Group();
   const mobile = new THREE.Group();
-  const panneau = new THREE.Mesh(
-    new THREE.BoxGeometry(p.larg, p.haut, p.epMur * 0.4),
-    new THREE.MeshStandardMaterial({ color: 0xd6c7a1 }),
-  );
-  panneau.position.set(0, p.haut / 2, 0);
-  panneau.castShadow = true; panneau.receiveShadow = true;
-  mobile.add(panneau);
-  return mobile;
+  const matCadre = new THREE.MeshStandardMaterial({ color: 0xe7e0d2, roughness: 0.6 });
+  const matRail = new THREE.MeshStandardMaterial({ color: 0x9ca3af, metalness: 0.6, roughness: 0.4 });
+  const matVantail = new THREE.MeshStandardMaterial({ color: 0xf3eee4, roughness: 0.55 });
+  const matPanneau = new THREE.MeshStandardMaterial({ color: 0xe3dccd, roughness: 0.6 });
+  const matInox = new THREE.MeshStandardMaterial({ color: 0xc7cdd3, metalness: 0.7, roughness: 0.3 });
+
+  // Encadrement (chambranle de 2 cm) sur toute l'épaisseur du mur.
+  const prof = epMur + 0.02, ep = 0.02;
+  const ajouterCadre = (w: number, h: number, x: number, y: number) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, prof), matCadre);
+    m.position.set(x, y, 0);
+    m.castShadow = true; m.receiveShadow = true;
+    cadre.add(m);
+  };
+  ajouterCadre(ep, haut, -(larg / 2 - ep / 2), haut / 2);
+  ajouterCadre(ep, haut, larg / 2 - ep / 2, haut / 2);
+  ajouterCadre(larg, ep, 0, haut - ep / 2);
+
+  // Rail apparent au-dessus de l'ouverture, côté intérieur : de l'ouverture jusqu'au bout de la zone de parking.
+  const zFace = faceInt * (epMur / 2 + 0.03);   // axe du vantail : devant la face intérieure du mur
+  const longRail = larg * 2 + 0.1;
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(longRail, 0.04, 0.05), matRail);
+  rail.position.set(cote * (larg / 2) , haut + 0.04, zFace);
+  rail.castShadow = true; rail.receiveShadow = true;
+  cadre.add(rail);
+
+  // Vantail : plein, 4 cm, avec deux panneaux moulurés et une poignée cuvette ; origine du groupe = centre de l'ouverture.
+  const t = 0.04;
+  const lw = larg + 0.04;                 // recouvre légèrement l'encadrement
+  const lh = Math.max(0.5, haut - 0.01);
+  const leaf = new THREE.Mesh(new THREE.BoxGeometry(lw, lh, t), matVantail);
+  leaf.position.set(0, 0.01 + lh / 2, zFace);
+  leaf.castShadow = true; leaf.receiveShadow = true;
+  mobile.add(leaf);
+  [[0.72, 0.34], [0.28, 0.30]].forEach(([yf, hf]) => {
+    for (const face of [1, -1]) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(lw * 0.7, lh * hf, 0.006), matPanneau);
+      m.position.set(0, 0.01 + lh * yf, zFace + face * (t / 2));
+      mobile.add(m);
+    }
+  });
+  // Poignée cuvette inox sur la face intérieure, côté bord de fermeture (opposé au parking), à ~1 m.
+  const cuvette = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.14, 0.012), matInox);
+  cuvette.position.set(-cote * (lw / 2 - 0.07), Math.min(1.0, lh * 0.5), zFace + faceInt * (t / 2 + 0.006));
+  mobile.add(cuvette);
+  // Taquet de suspension sur le rail.
+  const chariot = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 0.03), matInox);
+  chariot.position.set(0, haut + 0.01, zFace);
+  mobile.add(chariot);
+  return { cadre, mobile };
 }
 
 // Baie vitrée coulissante à 2 vantaux : un vantail FIXE et un vantail MOBILE qui glisse, devant le fixe (rail avant),

@@ -276,21 +276,21 @@ export function construireMurAvecOuvertures(
       }
     }
 
-    // Porte coulissante : panneau qui remplit l'ouverture fermé et se gare contre le mur voisin ouvert
-    // (ouverte par défaut, comme avant : le panneau était toujours dessiné « garé »).
+    // Porte coulissante en applique : vantail suspendu à un rail, sur la face intérieure du mur. Fermée par défaut ;
+    // elle glisse le long du mur du côté choisi (clic dessus ou panneau « Ouvrants »).
     if (avecContenu && o.proprietaire && o.type === "porte_coulissante") {
       const cote = o.coulisseVers === "gauche" ? -1 : 1;
       const centreOuv = (debut + fin) / 2;
-      const decalagePanneau = epaisseur * 0.3;
+      const hC = Math.max(0.5, Math.min(hOuverture, hauteurMur - 0.06));
       const pivot = new THREE.Group();
-      pivot.position.set(a.x + ux * centreOuv + nx * (decalage + decalagePanneau), hAllege, a.y + uy * centreOuv + ny * (decalage + decalagePanneau));
+      pivot.position.set(a.x + ux * centreOuv + nx * decalage, hAllege, a.y + uy * centreOuv + ny * decalage);
       pivot.rotation.y = -angle;
-      const mobile = creerPorteCoulissante({ larg: fin - debut, haut: hOuverture, epMur: epaisseur });
-      pivot.add(mobile);
+      const { cadre, mobile } = creerPorteCoulissante({ larg: fin - debut, haut: hC, epMur: epaisseur, cote, faceInt: sensInterieur });
+      pivot.add(cadre, mobile);
       scene.add(pivot);
-      const reg: PorteRegistre = { id: o.id ?? -1, genre: "coulissante", mobile, signe: cote, course: fin - debut, defaut: 100 };
+      const reg: PorteRegistre = { id: o.id ?? -1, genre: "coulissante", mobile, signe: cote, course: fin - debut, defaut: 0 };
       if (o.id != null) {
-        mobile.traverse(obj => { obj.userData.porteId = o.id; });
+        pivot.traverse(obj => { obj.userData.porteId = o.id; });
         enregistrerPorte?.(reg);
       }
       appliquerOuverturePorte(reg, reg.defaut);
@@ -1296,7 +1296,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
     const liste: { id: number; label: string; lieu: string; defaut: number }[] = [];
     const ajouter = (o: Ouverture, lieu: string) => {
       if (o.type === "porte") liste.push({ id: o.id, label: LABEL_USAGE_PORTE[o.usage ?? "interieure"], lieu, defaut: 0 });
-      else if (o.type === "porte_coulissante") liste.push({ id: o.id, label: "Porte coulissante", lieu, defaut: 100 });
+      else if (o.type === "porte_coulissante") liste.push({ id: o.id, label: "Porte coulissante", lieu, defaut: 0 });
       else if (o.type === "porte_garage") liste.push({ id: o.id, label: "Porte de garage", lieu, defaut: 0 });
       else if (o.type === "baie_vitree") liste.push({ id: o.id, label: "Baie vitrée", lieu, defaut: 0 });
       else if (o.type === "fenetre") {
