@@ -17,6 +17,8 @@ import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/l
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
 import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante, creerBaieVitree, creerPorteGarage, creerFenetreBattante } from "@/components/plan/PortesOuvrables";
 import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
+import { calculerEscalier, hauteurTotaleEscalierCm, EscalierEntrant } from "@/lib/escaliers";
+import { creerEscalier3D, geometrieSolPercee, aretesGardeCorpsTremie, creerGardeCorpsTremie } from "@/components/plan/Escalier3D";
 import { cloisonsDeZone, ouverturesEffectivesZone } from "@/lib/zones";
 import { SaisonSoleil, LABEL_SAISON_SOLEIL, LATITUDE_DEFAUT, elevationMidi, directionSoleilMidi } from "@/lib/soleil";
 import { parametresMur3D, geometrieMurs, surfaceUtile, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT, preparerMurs, pointDansCouche2 } from "@/lib/murs";
@@ -281,14 +283,15 @@ export function construireMurAvecOuvertures(
     if (avecContenu && o.proprietaire && o.type === "porte_coulissante") {
       const cote = o.coulisseVers === "gauche" ? -1 : 1;
       const centreOuv = (debut + fin) / 2;
-      const hC = Math.max(0.5, Math.min(hOuverture, hauteurMur - 0.06));
+      const galandage = o.montage === "galandage";
+      const hC = Math.max(0.5, Math.min(hOuverture, hauteurMur - (galandage ? 0.01 : 0.06)));
       const pivot = new THREE.Group();
       pivot.position.set(a.x + ux * centreOuv + nx * decalage, hAllege, a.y + uy * centreOuv + ny * decalage);
       pivot.rotation.y = -angle;
-      const { cadre, mobile } = creerPorteCoulissante({ larg: fin - debut, haut: hC, epMur: epaisseur, cote, faceInt: sensInterieur });
+      const { cadre, mobile } = creerPorteCoulissante({ larg: fin - debut, haut: hC, epMur: epaisseur, cote, faceInt: sensInterieur, galandage });
       pivot.add(cadre, mobile);
       scene.add(pivot);
-      const reg: PorteRegistre = { id: o.id ?? -1, genre: "coulissante", mobile, signe: cote, course: fin - debut, defaut: 0 };
+      const reg: PorteRegistre = { id: o.id ?? -1, genre: "coulissante", mobile, signe: cote, course: fin - debut + (galandage ? 0 : 0.04), defaut: 0 };   // en applique le vantail déborde de 2 cm sur chaque chambranle : il doit les dégager en s'ouvrant
       if (o.id != null) {
         pivot.traverse(obj => { obj.userData.porteId = o.id; });
         enregistrerPorte?.(reg);
@@ -532,7 +535,10 @@ const Vue3D = forwardRef<Vue3DHandle, {
   orientationNord?: number;
   // Actions « circuits » du plan (générer / afficher les circuits) : affichées dans l'onglet « Vue » du bandeau.
   circuitsAction?: React.ReactNode;
-}>(function Vue3D({ niveau, resultat, showCircuits, orientationNord = 0, circuitsAction }, ref) {
+  // Escaliers des AUTRES niveaux qui arrivent sur celui-ci (voir escaliersEntrants, lib/escaliers.ts) : leur trémie perce le
+  // sol et le bas de l'escalier apparaît dessous. À mémoïser côté appelant (un nouveau tableau reconstruit la scène).
+  escaliersEntrants?: EscalierEntrant[];
+}>(function Vue3D({ niveau, resultat, showCircuits, orientationNord = 0, circuitsAction, escaliersEntrants }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -686,7 +692,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
     (niveau.zones ?? []).forEach(z => (z.ouvertures ?? []).forEach(o => liveOuvParId.set(o.id, o)));
     const ouverturesVivantes = (ouvs: OuvertureEffective[]): OuvertureEffective[] => ouvs.map(o => {
       const l = o.id != null ? liveOuvParId.get(o.id) : undefined;
-      return l ? { ...o, usage: l.usage, charniere: l.charniere, ouvreVersInterieur: l.ouvreVersInterieur, coulisseVers: l.coulisseVers, battants: l.battants } : o;
+      return l ? { ...o, usage: l.usage, charniere: l.charniere, ouvreVersInterieur: l.ouvreVersInterieur, coulisseVers: l.coulisseVers, battants: l.battants, montage: l.montage } : o;
     });
     // Chaque porte construite s'inscrit ici : son ouverture initiale = celle déjà forcée par la vue, sinon sa valeur par défaut.
     const enregistrerPorte = (reg: PorteRegistre) => {
@@ -709,6 +715,8 @@ const Vue3D = forwardRef<Vue3DHandle, {
       });
     });
 
+    const tremies = (escaliersEntrants ?? []).map(en => en.calcul.tremie);
+
     // Sol + murs par pièce
     niveauResultat.pieces.forEach(piece => {
       if (piece.contour.length < 3) return;
@@ -718,10 +726,13 @@ const Vue3D = forwardRef<Vue3DHandle, {
       // Rotation -90° autour de x : (x, y) de la forme → (x, 0, -y). On passe donc -y pour retomber sur z = y du plan
       // (comme les murs et les appareillages) — sans cela le sol était en MIROIR par rapport aux murs.
       const shape = new THREE.Shape(piece.contour.map(p => new THREE.Vector2(p.x, -p.y)));
-      const solGeo = new THREE.ShapeGeometry(shape);
+      // Trémie(s) d'escalier qui arrivent sur ce niveau : le sol est reconstruit sans elles (coordonnées déjà dans le repère
+      // de la scène, donc sans rotation). Aucune trémie sur cette pièce → sol habituel, strictement inchangé.
+      const solPercee = tremies.length > 0 ? geometrieSolPercee(piece.contour, tremies) : null;
+      const solGeo = solPercee ?? new THREE.ShapeGeometry(shape);
       const solMat = new THREE.MeshStandardMaterial({ color: spec.color, side: THREE.DoubleSide });
       const sol = new THREE.Mesh(solGeo, solMat);
-      sol.rotation.x = -Math.PI / 2;
+      if (!solPercee) sol.rotation.x = -Math.PI / 2;
       sol.receiveShadow = true;
       scene.add(sol);
 
@@ -731,7 +742,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
       // (fenêtres, portes) — une pièce sans ouverture au soleil n'a aucune ombre portée. Pas de plafond sur une
       // pièce « Extérieur » (terrasse). Découpé sur la surface utile : le dessus des murs reste éclairé.
       if (piece.type !== "exterieur" && surfaceUtile(piece) != null) {
-        const { utile } = geometrieMurs(piece);
+        const { utileComplet: utile } = geometrieMurs(piece);
         const hPlafond = piece.hauteurPlafond ?? hauteurPlafond;
         const plafGeo = new THREE.ShapeGeometry(new THREE.Shape(utile.map(p => new THREE.Vector2(p.x, -p.y))));
         const plafMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, colorWrite: false, depthWrite: false });
@@ -1042,6 +1053,18 @@ const Vue3D = forwardRef<Vue3DHandle, {
           rayon: Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2 + 3, hauteur: hauteurPlafond }
       : { cx: 0, cz: 0, rayon: 8, hauteur: hauteurPlafond };
 
+    // Escaliers : ceux qui PARTENT de ce niveau (entiers, posés au sol) et ceux qui y ARRIVENT (décalés d'une hauteur d'étage vers
+    // le bas : on les voit sortir par la trémie, avec un garde-corps sur les côtés de la trémie qui ne longent pas un mur).
+    (niveau.escaliers ?? []).forEach(esc => {
+      scene.add(creerEscalier3D(calculerEscalier(esc, hauteurTotaleEscalierCm(esc, niveau)), esc));
+    });
+    (escaliersEntrants ?? []).forEach(en => {
+      const bas = creerEscalier3D(en.calcul, en.escalier);
+      bas.position.y = -en.calcul.hauteurTotale / 100;
+      scene.add(bas);
+      scene.add(creerGardeCorpsTremie(aretesGardeCorpsTremie(en.calcul, en.escalier, niveauResultat.pieces.map(p => p.contour)), en.escalier));
+    });
+
     // Sol extérieur « receveur d'ombre » : transparent, il ne montre que les ombres — celle du bâtiment au sol,
     // dehors (le plan n'a de sol que dans les pièces, l'ombre tombait donc dans le vide).
     {
@@ -1188,7 +1211,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
       voletsRef.current.clear();
       portesRef.current.clear();
     };
-  }, [niveau, resultat, showCircuits, niveauResultat]);
+  }, [niveau, resultat, showCircuits, niveauResultat, escaliersEntrants]);
 
   // Applique l'état courant (interrupteurs allumés + mode nuit) aux objets three.js déjà
   // construits, sans reconstruire la scène. Dépend aussi de [niveauResultat, showCircuits]
@@ -1296,7 +1319,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
     const liste: { id: number; label: string; lieu: string; defaut: number }[] = [];
     const ajouter = (o: Ouverture, lieu: string) => {
       if (o.type === "porte") liste.push({ id: o.id, label: LABEL_USAGE_PORTE[o.usage ?? "interieure"], lieu, defaut: 0 });
-      else if (o.type === "porte_coulissante") liste.push({ id: o.id, label: "Porte coulissante", lieu, defaut: 0 });
+      else if (o.type === "porte_coulissante") liste.push({ id: o.id, label: o.montage === "galandage" ? "Porte à galandage" : "Porte coulissante", lieu, defaut: 0 });
       else if (o.type === "porte_garage") liste.push({ id: o.id, label: "Porte de garage", lieu, defaut: 0 });
       else if (o.type === "baie_vitree") liste.push({ id: o.id, label: "Baie vitrée", lieu, defaut: 0 });
       else if (o.type === "fenetre") {

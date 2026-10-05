@@ -155,14 +155,16 @@ export function creerPorteBattante(p: {
   return { cadre, swing };
 }
 
-// Porte coulissante « en applique » : un vantail plein qui, fermé, recouvre l'ouverture et, ouvert, glisse sur la face
-// INTÉRIEURE du mur voisin du côté choisi (cote = +1 « droite », −1 « gauche »), suspendu à un rail. Il reste donc visible
-// ouvert comme fermé (il ne s'enfonce pas dans l'épaisseur du mur).
+// Porte coulissante : un vantail plein qui, fermé, remplit l'ouverture et, ouvert, glisse du côté choisi (cote = +1 « droite »,
+// −1 « gauche »). Deux montages :
+//  • « en applique » (défaut) : vantail suspendu à un rail, sur la face INTÉRIEURE du mur voisin — il reste visible ouvert ;
+//  • « galandage » : le vantail coulisse DANS l'épaisseur du mur voisin (cassette) et disparaît entièrement à l'ouverture ;
+//    il est donc posé au milieu du mur, sans rail apparent.
 //  larg / haut : dimensions de l'ouverture (m) ; epMur : épaisseur totale du mur (m) ; faceInt : signe de z côté intérieur.
-// « cadre » : encadrement fixe + rail (de l'ouverture jusqu'au bout de la zone de parking) ; « mobile » : vantail à animer
-// (position.x = signe × course × ouverture, course = larg — voir appliquerOuverturePorte).
-export function creerPorteCoulissante(p: { larg: number; haut: number; epMur: number; cote: number; faceInt: number }): { cadre: THREE.Group; mobile: THREE.Group } {
-  const { larg, haut, epMur, cote, faceInt } = p;
+// « cadre » : encadrement fixe (+ rail en applique) ; « mobile » : vantail à animer (position.x = signe × course × ouverture,
+// course = larg — voir appliquerOuverturePorte).
+export function creerPorteCoulissante(p: { larg: number; haut: number; epMur: number; cote: number; faceInt: number; galandage?: boolean }): { cadre: THREE.Group; mobile: THREE.Group } {
+  const { larg, haut, epMur, cote, faceInt, galandage = false } = p;
   const cadre = new THREE.Group();
   const mobile = new THREE.Group();
   const matCadre = new THREE.MeshStandardMaterial({ color: 0xe7e0d2, roughness: 0.6 });
@@ -183,18 +185,22 @@ export function creerPorteCoulissante(p: { larg: number; haut: number; epMur: nu
   ajouterCadre(ep, haut, larg / 2 - ep / 2, haut / 2);
   ajouterCadre(larg, ep, 0, haut - ep / 2);
 
-  // Rail apparent au-dessus de l'ouverture, côté intérieur : de l'ouverture jusqu'au bout de la zone de parking.
-  const zFace = faceInt * (epMur / 2 + 0.03);   // axe du vantail : devant la face intérieure du mur
-  const longRail = larg * 2 + 0.1;
-  const rail = new THREE.Mesh(new THREE.BoxGeometry(longRail, 0.04, 0.05), matRail);
-  rail.position.set(cote * (larg / 2) , haut + 0.04, zFace);
-  rail.castShadow = true; rail.receiveShadow = true;
-  cadre.add(rail);
+  // Axe du vantail : au MILIEU du mur en galandage (il glisse dans l'épaisseur) ; devant la face intérieure en applique.
+  const t = galandage ? Math.min(0.04, Math.max(0.02, epMur * 0.5)) : 0.04;
+  const zFace = galandage ? 0 : faceInt * (epMur / 2 + 0.03);
+  if (!galandage) {
+    // Rail apparent au-dessus de l'ouverture, côté intérieur : de l'ouverture jusqu'au bout de la zone de parking.
+    const longRail = larg * 2 + 0.1;
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(longRail, 0.04, 0.05), matRail);
+    rail.position.set(cote * (larg / 2), haut + 0.04, zFace);
+    rail.castShadow = true; rail.receiveShadow = true;
+    cadre.add(rail);
+  }
 
-  // Vantail : plein, 4 cm, avec deux panneaux moulurés et une poignée cuvette ; origine du groupe = centre de l'ouverture.
-  const t = 0.04;
-  const lw = larg + 0.04;                 // recouvre légèrement l'encadrement
-  const lh = Math.max(0.5, haut - 0.01);
+  // Vantail : plein, avec deux panneaux moulurés et une poignée cuvette ; origine du groupe = centre de l'ouverture.
+  // En galandage il remplit l'entre-chambranles (il ne recouvre pas l'encadrement, puisqu'il rentre dans le mur).
+  const lw = galandage ? larg - 2 * ep - 0.004 : larg + 0.04;
+  const lh = Math.max(0.5, galandage ? haut - ep - 0.01 : haut - 0.01);
   const leaf = new THREE.Mesh(new THREE.BoxGeometry(lw, lh, t), matVantail);
   leaf.position.set(0, 0.01 + lh / 2, zFace);
   leaf.castShadow = true; leaf.receiveShadow = true;
@@ -206,14 +212,20 @@ export function creerPorteCoulissante(p: { larg: number; haut: number; epMur: nu
       mobile.add(m);
     }
   });
-  // Poignée cuvette inox sur la face intérieure, côté bord de fermeture (opposé au parking), à ~1 m.
-  const cuvette = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.14, 0.012), matInox);
-  cuvette.position.set(-cote * (lw / 2 - 0.07), Math.min(1.0, lh * 0.5), zFace + faceInt * (t / 2 + 0.006));
-  mobile.add(cuvette);
-  // Taquet de suspension sur le rail.
-  const chariot = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 0.03), matInox);
-  chariot.position.set(0, haut + 0.01, zFace);
-  mobile.add(chariot);
+  // Poignée cuvette inox, côté bord de fermeture (opposé au parking), à ~1 m : sur la face intérieure en applique,
+  // sur les DEUX faces en galandage (on le manœuvre des deux côtés).
+  const faces = galandage ? [1, -1] : [faceInt];
+  faces.forEach(face => {
+    const cuvette = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.14, 0.012), matInox);
+    cuvette.position.set(-cote * (lw / 2 - 0.07), Math.min(1.0, lh * 0.5), zFace + face * (t / 2 + 0.006));
+    mobile.add(cuvette);
+  });
+  if (!galandage) {
+    // Taquet de suspension sur le rail.
+    const chariot = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 0.03), matInox);
+    chariot.position.set(0, haut + 0.01, zFace);
+    mobile.add(chariot);
+  }
   return { cadre, mobile };
 }
 
