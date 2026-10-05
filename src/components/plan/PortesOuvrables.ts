@@ -19,12 +19,17 @@ export interface PorteRegistre {
   signe: number;                       // battante / basculante : sens de rotation ; coulissante : côté vers lequel le panneau se gare (+1 / −1)
   course: number;                      // coulissante : course du panneau en mètres (= largeur de l'ouverture)
   defaut: number;                      // ouverture initiale : 0 fermée … 100 ouverte
+  mobile2?: THREE.Group;               // battante à DEUX vantaux (fenêtre double battant) : second vantail, piloté avec le premier
+  signe2?: number;                     // sens de rotation du second vantail
 }
 
 // Applique une ouverture (0..100) à une porte déjà construite.
 export function appliquerOuverturePorte(p: PorteRegistre, pct: number): void {
   const f = Math.max(0, Math.min(100, pct)) / 100;
-  if (p.genre === "battante") p.mobile.rotation.y = p.signe * ANGLE_PORTE_MAX * f;
+  if (p.genre === "battante") {
+    p.mobile.rotation.y = p.signe * ANGLE_PORTE_MAX * f;
+    if (p.mobile2) p.mobile2.rotation.y = (p.signe2 ?? p.signe) * ANGLE_PORTE_MAX * f;
+  }
   else if (p.genre === "basculante") p.mobile.rotation.x = p.signe * ANGLE_GARAGE_MAX * f;
   else p.mobile.position.x = p.signe * p.course * f;
 }
@@ -250,4 +255,77 @@ export function creerPorteGarage(p: { larg: number; haut: number; epMur: number 
   poignee.position.set(0, -lh * 0.55, 0);
   mobile.add(poignee);
   return { cadre, mobile };
+}
+
+// Fenêtre à battant(s) : dormant fixe (« cadre ») + 1 ou 2 vantaux vitrés pivotant autour de leur charnière.
+//  larg / haut : dimensions de l'ouverture dans le mur (m) ; epMur : épaisseur de la couche porteuse (m) ;
+//  battants : 1 = simple battant (charnière du côté hs : −1 = côté du 1er sommet = « gauche », +1 = « droite »),
+//             2 = double battant (charnières aux deux jambages, hs ignoré) ;
+//  faceInt : signe de z côté intérieur de la pièce (la poignée est posée sur la face intérieure).
+// « swing » = vantail de la charnière gauche (ou unique) ; « swing2 » = vantail de la charnière droite (double battant).
+// Chaque vantail s'anime avec rotation.y (voir appliquerOuverturePorte : signe = sensBattement × hs du vantail).
+// Le vitrage ne projette pas d'ombre : le soleil passe à travers.
+export function creerFenetreBattante(p: {
+  larg: number; haut: number; epMur: number; battants: 1 | 2; hs: number; faceInt: number;
+}): { cadre: THREE.Group; swing: THREE.Group; swing2?: THREE.Group } {
+  const { larg, haut, epMur, battants, faceInt } = p;
+  const cadre = new THREE.Group();
+  const matBlanc = new THREE.MeshStandardMaterial({ color: 0xf5f5f4, roughness: 0.45 });
+  const matVitre = new THREE.MeshStandardMaterial({ color: 0xbae6fd, transparent: true, opacity: 0.3, roughness: 0.05, depthWrite: false });
+  const matPoignee = new THREE.MeshStandardMaterial({ color: 0xc7cdd3, metalness: 0.7, roughness: 0.3 });
+  const prof = Math.min(0.12, epMur + 0.02);
+  const epD = 0.05;   // dormant : 5 cm
+  const eV = 0.045;   // profilé de vantail : 4,5 cm
+  const dV = 0.04;    // épaisseur du vantail
+
+  const barre = (cible: THREE.Group, w: number, h: number, d: number, x: number, y: number) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), matBlanc);
+    m.position.set(x, y, 0);
+    m.castShadow = true; m.receiveShadow = true;
+    cible.add(m);
+  };
+  // Dormant : 4 profilés sur le pourtour de l'ouverture.
+  barre(cadre, epD, haut, prof, -(larg / 2 - epD / 2), haut / 2);
+  barre(cadre, epD, haut, prof, larg / 2 - epD / 2, haut / 2);
+  barre(cadre, larg, epD, prof, 0, haut - epD / 2);
+  barre(cadre, larg, epD, prof, 0, epD / 2);
+
+  const jeu = 0.003;
+  const lh = Math.max(0.2, haut - 2 * epD - 2 * jeu);
+  const yBas = epD + jeu;
+  // Un vantail : charnière à l'origine du groupe (posé sur le jambage hsV), bord libre à −hsV × lw.
+  const vantail = (hsV: number, lw: number): THREE.Group => {
+    const g = new THREE.Group();
+    g.position.set(hsV * (larg / 2 - epD - jeu), yBas, 0);
+    const dx = (frac: number) => -hsV * lw * frac;
+    const part = (w: number, h: number, x: number, y: number) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, dV), matBlanc);
+      m.position.set(x, y, 0);
+      m.castShadow = true; m.receiveShadow = true;
+      g.add(m);
+    };
+    part(eV, lh, -hsV * eV / 2, lh / 2);                 // montant côté charnière
+    part(eV, lh, -hsV * (lw - eV / 2), lh / 2);          // montant côté bord libre
+    part(lw, eV, dx(0.5), lh - eV / 2);                  // traverse haute
+    part(lw, eV, dx(0.5), eV / 2);                       // traverse basse
+    const vitre = new THREE.Mesh(new THREE.BoxGeometry(Math.max(0.05, lw - 2 * eV), Math.max(0.05, lh - 2 * eV), 0.008), matVitre);
+    vitre.position.set(dx(0.5), lh / 2, 0);
+    g.add(vitre);
+    // Poignée sur la face intérieure, côté bord libre, à mi-hauteur du vantail.
+    const hy = lh * 0.5;
+    const xP = dx(1) + hsV * (eV / 2);
+    const rosace = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.05, 0.01), matPoignee);
+    rosace.position.set(xP, hy, faceInt * (dV / 2 + 0.005));
+    const bras = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.1, 0.014), matPoignee);
+    bras.position.set(xP, hy - 0.04, faceInt * (dV / 2 + 0.017));
+    g.add(rosace, bras);
+    return g;
+  };
+
+  if (battants === 2) {
+    const lw = Math.max(0.1, larg / 2 - epD - jeu - 0.002);
+    return { cadre, swing: vantail(-1, lw), swing2: vantail(1, lw) };
+  }
+  const lw = Math.max(0.15, larg - 2 * epD - 2 * jeu);
+  return { cadre, swing: vantail(p.hs, lw) };
 }

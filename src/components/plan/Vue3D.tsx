@@ -12,10 +12,10 @@
 
 import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, HAUTEUR_PERSONNE_M, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, battantsFenetre, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, HAUTEUR_PERSONNE_M, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
-import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante, creerBaieVitree, creerPorteGarage } from "@/components/plan/PortesOuvrables";
+import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante, creerBaieVitree, creerPorteGarage, creerFenetreBattante } from "@/components/plan/PortesOuvrables";
 import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
 import { cloisonsDeZone, ouverturesEffectivesZone } from "@/lib/zones";
 import { SaisonSoleil, LABEL_SAISON_SOLEIL, LATITUDE_DEFAUT, elevationMidi, directionSoleilMidi } from "@/lib/soleil";
@@ -220,7 +220,31 @@ export function construireMurAvecOuvertures(
     if (hLinteauBas < hauteurMur - 0.01) ajouterPan((debut + fin) / 2, fin - debut, (hLinteauBas + hauteurMur) / 2, hauteurMur - hLinteauBas);
     if (hAllege > 0.01) ajouterPan((debut + fin) / 2, fin - debut, hAllege / 2, hAllege);
 
-    if (avecContenu && o.proprietaire && o.type === "fenetre") {
+    // Fenêtre à battant(s) : dormant + 1 ou 2 vantaux vitrés pivotants, fermés par défaut ; s'ouvrent en cliquant dessus
+    // ou depuis le panneau « Ouvrants » (voir PortesOuvrables.ts). Vers l'intérieur par défaut, comme le plan 2D.
+    const nbBattants = o.type === "fenetre" ? battantsFenetre(o) : 0;
+    if (avecContenu && o.proprietaire && o.type === "fenetre" && nbBattants > 0) {
+      const hF = Math.max(0.3, Math.min(hOuverture, hauteurMur - hAllege - 0.01));
+      const hs = o.charniere === "droite" ? 1 : -1;
+      const sensBattement = (o.ouvreVersInterieur === false ? -1 : 1) * sensInterieur;
+      const centreOuv = (debut + fin) / 2;
+      const pivot = new THREE.Group();
+      pivot.position.set(a.x + ux * centreOuv + nx * decalage, hAllege, a.y + uy * centreOuv + ny * decalage);
+      pivot.rotation.y = -angle;
+      const { cadre, swing, swing2 } = creerFenetreBattante({ larg: fin - debut, haut: hF, epMur: epaisseur, battants: nbBattants as 1 | 2, hs, faceInt: sensInterieur });
+      pivot.add(cadre, swing);
+      if (swing2) pivot.add(swing2);
+      scene.add(pivot);
+      if (o.id != null) {
+        // Double battant : vantail gauche (charnière −1) et vantail droit (charnière +1) ; simple battant : un seul vantail.
+        const reg: PorteRegistre = nbBattants === 2
+          ? { id: o.id, genre: "battante", mobile: swing, signe: sensBattement * -1, mobile2: swing2, signe2: sensBattement, course: 0, defaut: 0 }
+          : { id: o.id, genre: "battante", mobile: swing, signe: sensBattement * hs, course: 0, defaut: 0 };
+        pivot.traverse(obj => { obj.userData.porteId = o.id; });
+        appliquerOuverturePorte(reg, reg.defaut);
+        enregistrerPorte?.(reg);
+      }
+    } else if (avecContenu && o.proprietaire && o.type === "fenetre") {
       const vitreGeo = new THREE.BoxGeometry(fin - debut, hOuverture, 0.01);
       const vitreMat = new THREE.MeshStandardMaterial({ color: 0xBAE6FD, transparent: true, opacity: 0.35 });
       const vitre = new THREE.Mesh(vitreGeo, vitreMat);
@@ -662,7 +686,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
     (niveau.zones ?? []).forEach(z => (z.ouvertures ?? []).forEach(o => liveOuvParId.set(o.id, o)));
     const ouverturesVivantes = (ouvs: OuvertureEffective[]): OuvertureEffective[] => ouvs.map(o => {
       const l = o.id != null ? liveOuvParId.get(o.id) : undefined;
-      return l ? { ...o, usage: l.usage, charniere: l.charniere, ouvreVersInterieur: l.ouvreVersInterieur, coulisseVers: l.coulisseVers } : o;
+      return l ? { ...o, usage: l.usage, charniere: l.charniere, ouvreVersInterieur: l.ouvreVersInterieur, coulisseVers: l.coulisseVers, battants: l.battants } : o;
     });
     // Chaque porte construite s'inscrit ici : son ouverture initiale = celle déjà forcée par la vue, sinon sa valeur par défaut.
     const enregistrerPorte = (reg: PorteRegistre) => {
@@ -1275,6 +1299,10 @@ const Vue3D = forwardRef<Vue3DHandle, {
       else if (o.type === "porte_coulissante") liste.push({ id: o.id, label: "Porte coulissante", lieu, defaut: 100 });
       else if (o.type === "porte_garage") liste.push({ id: o.id, label: "Porte de garage", lieu, defaut: 0 });
       else if (o.type === "baie_vitree") liste.push({ id: o.id, label: "Baie vitrée", lieu, defaut: 0 });
+      else if (o.type === "fenetre") {
+        const nb = battantsFenetre(o);
+        if (nb > 0) liste.push({ id: o.id, label: nb === 2 ? "Fenêtre double battant" : "Fenêtre simple battant", lieu, defaut: 0 });
+      }
     };
     niveau.pieces.forEach(p => (p.ouvertures ?? []).forEach(o => ajouter(o, p.nom)));
     (niveau.zones ?? []).forEach(z => (z.ouvertures ?? []).forEach(o => ajouter(o, z.nom || "Zone")));
