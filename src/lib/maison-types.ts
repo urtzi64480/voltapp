@@ -117,7 +117,7 @@ export function commandeCetteLumiere(a: Pick<AppareillagePlace, "commandePourIds
 // Porte, porte coulissante, porte de garage basculante, fenêtre, ou simple ouverture murale
 // (sans porte, entièrement dimensionnée à la main) placée sur un mur (segment du contour) d'une
 // pièce — pas un objet libre comme un appareillage : contrainte à glisser le long du mur qui la porte.
-// « baie_vitree » = baie vitrée coulissante à 2 vantaux (un fixe, un mobile qui glisse devant) — s'ouvre en 3D.
+// « baie_vitree » = baie vitrée coulissante à N vantaux (1 à 4, tous de même largeur et tous mobiles) — s'ouvre en 3D.
 export type OuvertureType = "porte" | "porte_coulissante" | "porte_garage" | "baie_vitree" | "fenetre" | "ouverture";
 
 // Usage d'une porte battante : intérieure (entre deux pièces), d'entrée (porte principale) ou de service
@@ -175,6 +175,19 @@ export interface Ouverture {
   // Porte coulissante uniquement — montage : « applique » (défaut) = vantail sur rail, devant le mur voisin ; « galandage » =
   // le vantail coulisse DANS l'épaisseur du mur voisin (« cassette ») et disparaît entièrement à l'ouverture.
   montage?: "applique" | "galandage";
+  // Baie vitrée uniquement — nombre de vantaux (1 à 4), TOUS de même largeur et TOUS mobiles (chacun sur son rail). Absent : 2.
+  nbVantaux?: number;
+}
+
+export const NB_VANTAUX_BAIE_MAX = 4;
+// Nombre de vantaux effectif d'une baie vitrée — SOURCE UNIQUE (plan 2D, vue 3D, panneau).
+export function nbVantauxBaie(o: { nbVantaux?: number }): number {
+  return Math.max(1, Math.min(NB_VANTAUX_BAIE_MAX, Math.round(o.nbVantaux ?? 2)));
+}
+// Largeur (cm) de chaque vantail : égale pour tous, avec un recouvrement de 3 cm entre vantaux voisins.
+export const RECOUVREMENT_VANTAUX_CM = 3;
+export function largeurVantailBaieCm(largeurBaieCm: number, nb: number): number {
+  return (largeurBaieCm + (nb - 1) * RECOUVREMENT_VANTAUX_CM) / nb;
 }
 
 // Nombre de battants effectif d'une fenêtre — SOURCE UNIQUE (plan 2D, vue 3D, panneau).
@@ -198,7 +211,7 @@ export function nouvelleOuverture(type: OuvertureType, segIndex: number, positio
       return { id: uidMaison(), type, segIndex, position, largeur: 240, hauteur: 200, allege: 0 };
     case "baie_vitree":
       // Baie vitrée coulissante standard : 240 × 215 cm, jusqu'au sol, le vantail mobile glisse vers la droite.
-      return { id: uidMaison(), type, segIndex, position, largeur: 240, hauteur: 215, allege: 0, coulisseVers: "droite" };
+      return { id: uidMaison(), type, segIndex, position, largeur: 240, hauteur: 215, allege: 0, coulisseVers: "droite", nbVantaux: 2 };
     case "fenetre":
       // Fenêtre standard : 100 × 120 cm, allège 90 cm, double battant ouvrant vers l'intérieur.
       return { id: uidMaison(), type, segIndex, position, largeur: 100, hauteur: 120, allege: 90, battants: 2, charniere: "gauche", ouvreVersInterieur: true };
@@ -267,6 +280,7 @@ export interface OuvertureEffective {
   ouvreVersInterieur?: boolean;
   battants?: 0 | 1 | 2;
   montage?: "applique" | "galandage";
+  nbVantaux?: number;
 }
 
 export function ouverturesEffectivesMur(pieces: Piece[], piece: Piece, segIndex: number): OuvertureEffective[] {
@@ -274,7 +288,7 @@ export function ouverturesEffectivesMur(pieces: Piece[], piece: Piece, segIndex:
   const longueur = distance(a, b) || 1;
   const propres: OuvertureEffective[] = (piece.ouvertures ?? [])
     .filter(o => o.segIndex === segIndex)
-    .map(o => ({ type: o.type, position: o.position, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: true, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur, battants: o.battants, montage: o.montage }));
+    .map(o => ({ type: o.type, position: o.position, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: true, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur, battants: o.battants, montage: o.montage, nbVantaux: o.nbVantaux }));
 
   const projetees: OuvertureEffective[] = [];
   trouverMursJumeaux(pieces, piece, segIndex).forEach(j => {
@@ -284,7 +298,7 @@ export function ouverturesEffectivesMur(pieces: Piece[], piece: Piece, segIndex:
       const t = positionSurSegment(centreM, a, b);
       const tM = t * longueur;
       if (tM < j.loM - 0.01 || tM > j.hiM + 0.01) return; // hors du recouvrement réel — pas vraiment mitoyen ici
-      projetees.push({ type: o.type, position: t, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: false, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur, battants: o.battants, montage: o.montage });
+      projetees.push({ type: o.type, position: t, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: false, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur, battants: o.battants, montage: o.montage, nbVantaux: o.nbVantaux });
     });
   });
   return [...propres, ...projetees];
