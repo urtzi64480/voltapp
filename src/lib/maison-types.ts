@@ -168,6 +168,18 @@ export interface Ouverture {
   coulisseVers?: "gauche" | "droite";
   // Porte battante uniquement — intérieure (défaut si absent), d'entrée ou de service.
   usage?: UsagePorte;
+  // Fenêtre uniquement — nombre de battants : 0 = vitrage fixe, 1 = simple battant (charnière : « charniere »),
+  // 2 = double battant (deux vantaux, charnières aux deux jambages). Absent (anciens plans) : voir battantsFenetre().
+  // Le sens d'ouverture (vers l'intérieur par défaut) réutilise « ouvreVersInterieur ».
+  battants?: 0 | 1 | 2;
+}
+
+// Nombre de battants effectif d'une fenêtre — SOURCE UNIQUE (plan 2D, vue 3D, panneau).
+// Valeur explicite si présente ; sinon, pour les fenêtres créées avant cette option : double battant dès 90 cm de large.
+export function battantsFenetre(o: { type: OuvertureType; largeur: number; battants?: 0 | 1 | 2 }): 0 | 1 | 2 {
+  if (o.type !== "fenetre") return 0;
+  if (o.battants !== undefined) return o.battants;
+  return o.largeur >= 90 ? 2 : 1;
 }
 
 export function nouvelleOuverture(type: OuvertureType, segIndex: number, position: number, usage: UsagePorte = "interieure"): Ouverture {
@@ -185,7 +197,8 @@ export function nouvelleOuverture(type: OuvertureType, segIndex: number, positio
       // Baie vitrée coulissante standard : 240 × 215 cm, jusqu'au sol, le vantail mobile glisse vers la droite.
       return { id: uidMaison(), type, segIndex, position, largeur: 240, hauteur: 215, allege: 0, coulisseVers: "droite" };
     case "fenetre":
-      return { id: uidMaison(), type, segIndex, position, largeur: 100, hauteur: 120, allege: 90 };
+      // Fenêtre standard : 100 × 120 cm, allège 90 cm, double battant ouvrant vers l'intérieur.
+      return { id: uidMaison(), type, segIndex, position, largeur: 100, hauteur: 120, allege: 90, battants: 2, charniere: "gauche", ouvreVersInterieur: true };
     case "ouverture":
     default:
       return { id: uidMaison(), type, segIndex, position, largeur: 100, hauteur: 100, allege: 0 };
@@ -249,6 +262,7 @@ export interface OuvertureEffective {
   usage?: UsagePorte;
   charniere?: "gauche" | "droite";
   ouvreVersInterieur?: boolean;
+  battants?: 0 | 1 | 2;
 }
 
 export function ouverturesEffectivesMur(pieces: Piece[], piece: Piece, segIndex: number): OuvertureEffective[] {
@@ -256,7 +270,7 @@ export function ouverturesEffectivesMur(pieces: Piece[], piece: Piece, segIndex:
   const longueur = distance(a, b) || 1;
   const propres: OuvertureEffective[] = (piece.ouvertures ?? [])
     .filter(o => o.segIndex === segIndex)
-    .map(o => ({ type: o.type, position: o.position, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: true, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur }));
+    .map(o => ({ type: o.type, position: o.position, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: true, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur, battants: o.battants }));
 
   const projetees: OuvertureEffective[] = [];
   trouverMursJumeaux(pieces, piece, segIndex).forEach(j => {
@@ -266,7 +280,7 @@ export function ouverturesEffectivesMur(pieces: Piece[], piece: Piece, segIndex:
       const t = positionSurSegment(centreM, a, b);
       const tM = t * longueur;
       if (tM < j.loM - 0.01 || tM > j.hiM + 0.01) return; // hors du recouvrement réel — pas vraiment mitoyen ici
-      projetees.push({ type: o.type, position: t, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: false, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur });
+      projetees.push({ type: o.type, position: t, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: false, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur, battants: o.battants });
     });
   });
   return [...propres, ...projetees];
@@ -288,9 +302,9 @@ export interface Piece {
   // meubles, portes/fenêtres et son étiquette ne peuvent être déplacés ou redimensionnés au
   // glisser (protection contre les fausses manipulations). Les propriétés restent éditables.
   verrouillee?: boolean;
+  // Affichage de l'étiquette : nom et/ou dimensions (surface, cotes des murs, épaisseurs) masqués pour cette pièce.
   // Couleur de fond de la pièce sur le plan 2D (pastel au choix) ; absent = couleur du type de pièce.
   couleurFond?: string;
-  // Affichage de l'étiquette : nom et/ou dimensions (surface, cotes des murs, épaisseurs) masqués pour cette pièce.
   masquerNom?: boolean;
   masquerDimensions?: boolean;
   // Murs de la pièce : un par côté du contour (murs[i] = mur du sommet i au sommet i+1). Le contour
