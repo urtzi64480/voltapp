@@ -82,6 +82,17 @@ const COULEURS_FOND_PIECE: { nom: string; hex: string }[] = [
   { nom: "Jaune", hex: "#FBF0C0" },
 ];
 
+// Alignement d'une pièce en cours de déplacement : angles/faces EXTÉRIEURS (tracé hors-tout) ou INTÉRIEURS (face finie,
+// selon les épaisseurs de murs) de la pièce déplacée comparés à ceux des autres pièces.
+type FaceKind = "ext" | "int";
+const NOM_FACE: Record<FaceKind, string> = { ext: "extérieur", int: "intérieur" };
+type AlignInfo = {
+  x?: { pos: number; ecartCm: number; kM: FaceKind; kO: FaceKind };
+  y?: { pos: number; ecartCm: number; kM: FaceKind; kO: FaceKind };
+  mur?: { a: Point; dir: Point; ecartCm: number; kM: FaceKind; kO: FaceKind };
+  coin?: { m: Point; o: Point; dxCm: number; dyCm: number; kM: FaceKind; kO: FaceKind };
+};
+
 function arrondiGrille(v: number, pas: number = reglageAimant.pasM): number {
   return Number((Math.round(v / pas) * pas).toFixed(4));
 }
@@ -1892,7 +1903,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [zoom, setZoom] = useState(1);
   const [pasSnapCm, setPasSnapCm] = useState(1);
   // Retour visuel pendant le déplacement d'une pièce : proximité (≤ 10 cm) / alignement exact avec les sommets des autres pièces.
-  const [alignPiece, setAlignPiece] = useState<{ x?: { pos: number; ecartCm: number }; y?: { pos: number; ecartCm: number }; mur?: { a: Point; dir: Point; ecartCm: number } } | null>(null);
+  const [alignPiece, setAlignPiece] = useState<AlignInfo | null>(null);
   const [aimantActif, setAimantActif] = useState(false);
   reglageAimant.pasM = pasSnapCm / 100;
   reglageAimant.aimant = aimantActif;
@@ -2012,33 +2023,46 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const dxM = arrondiGrille((e.clientX - dragMode.startX) / (PX_PER_M * zoom));
         const dyM = arrondiGrille((e.clientY - dragMode.startY) / (PX_PER_M * zoom));
         const niveauA = niveaux.find(n => n.id === niveauActifId) ?? null;
-        const autresPts = (niveauA?.pieces ?? []).filter(p => p.id !== dragMode.pieceId).flatMap(p => p.contour);
-        let ax: { pos: number; ecartCm: number } | undefined, ay: { pos: number; ecartCm: number } | undefined;
-        dragMode.startContour.forEach(pt => {
-          const nx = pt.x + dxM, ny = pt.y + dyM;
-          autresPts.forEach(c => {
-            const ex = Math.round(Math.abs(c.x - nx) * 100), ey = Math.round(Math.abs(c.y - ny) * 100);
-            if (ex <= 10 && (!ax || ex < ax.ecartCm)) ax = { pos: c.x, ecartCm: ex };
-            if (ey <= 10 && (!ay || ey < ay.ecartCm)) ay = { pos: c.y, ecartCm: ey };
-          });
-        });
-        // Murs obliques (tout angle) : un mur de la pièce déplacée parallèle à un mur d'une autre pièce → distance entre les deux droites.
-        let am: { a: Point; dir: Point; ecartCm: number } | undefined;
-        const ctrA = dragMode.startContour.map(pt => ({ x: pt.x + dxM, y: pt.y + dyM }));
-        const unit = (a: Point, b: Point) => { const L = Math.hypot(b.x - a.x, b.y - a.y); return L < 0.01 ? null : { x: (b.x - a.x) / L, y: (b.y - a.y) / L }; };
-        ctrA.forEach((a, i) => {
-          const b = ctrA[(i + 1) % ctrA.length];
-          const u = unit(a, b);
-          if (!u || Math.abs(u.x) < 1e-6 || Math.abs(u.y) < 1e-6) return;   // murs horizontaux/verticaux : déjà couverts par X / Y
-          (niveauA?.pieces ?? []).filter(p => p.id !== dragMode.pieceId).forEach(pc => pc.contour.forEach((f, j) => {
-            const g = pc.contour[(j + 1) % pc.contour.length];
-            const v = unit(f, g);
-            if (!v || Math.abs(u.x * v.y - u.y * v.x) > 0.01) return;      // pas parallèles (~0,6° de tolérance)
-            const ecartCm = Math.round(Math.abs(v.x * (a.y - f.y) - v.y * (a.x - f.x)) * 100);
-            if (ecartCm <= 10 && (!am || ecartCm < am.ecartCm)) am = { a: f, dir: v, ecartCm };
+        const pieceM = niveauA?.pieces.find(p => p.id === dragMode.pieceId);
+        if (niveauA && pieceM) {
+          // Faces de chaque pièce : extérieure (tracé hors-tout) et intérieure (face finie, selon les épaisseurs de murs).
+          const dep = { x: dragMode.startContour[0].x + dxM - pieceM.contour[0].x, y: dragMode.startContour[0].y + dyM - pieceM.contour[0].y };
+          const facesDe = (pc: Piece, d: Point): { k: FaceKind; pts: Point[] }[] => {
+            const g = geometrieMurs(pc);
+            const dec = (pts: Point[]) => pts.map(q => ({ x: q.x + d.x, y: q.y + d.y }));
+            const res: { k: FaceKind; pts: Point[] }[] = [{ k: "ext", pts: dec(g.exterieur) }];
+            if (g.utile.length === pc.contour.length) res.push({ k: "int", pts: dec(g.utile) });
+            return res;
+          };
+          const facesM = facesDe(pieceM, dep);
+          const facesO = niveauA.pieces.filter(p => p.id !== pieceM.id).flatMap(pc => facesDe(pc, { x: 0, y: 0 }));
+          const ptsM = facesM.flatMap(f => f.pts.map(pt => ({ pt, k: f.k })));
+          const ptsO = facesO.flatMap(f => f.pts.map(pt => ({ pt, k: f.k })));
+          let ax: AlignInfo["x"], ay: AlignInfo["y"], coin: (AlignInfo["coin"] & { d: number }) | undefined, am: AlignInfo["mur"];
+          // Angles (n'importe quel angle de mur) : chaque angle de la pièce déplacée contre chaque angle des autres pièces.
+          ptsM.forEach(m => ptsO.forEach(o => {
+            const ex = Math.round(Math.abs(o.pt.x - m.pt.x) * 100), ey = Math.round(Math.abs(o.pt.y - m.pt.y) * 100);
+            if (ex <= 10 && (!ax || ex < ax.ecartCm)) ax = { pos: o.pt.x, ecartCm: ex, kM: m.k, kO: o.k };
+            if (ey <= 10 && (!ay || ey < ay.ecartCm)) ay = { pos: o.pt.y, ecartCm: ey, kM: m.k, kO: o.k };
+            if (ex <= 10 && ey <= 10) {
+              const d = Math.hypot(ex, ey);
+              if (!coin || d < coin.d) coin = { m: m.pt, o: o.pt, dxCm: ex, dyCm: ey, kM: m.k, kO: o.k, d };
+            }
           }));
-        });
-        setAlignPiece(ax || ay || am ? { x: ax, y: ay, mur: am } : null);
+          // Murs obliques parallèles (faces extérieures / intérieures) : distance entre les deux droites.
+          const unit = (a: Point, b: Point) => { const L = Math.hypot(b.x - a.x, b.y - a.y); return L < 0.01 ? null : { x: (b.x - a.x) / L, y: (b.y - a.y) / L }; };
+          facesM.forEach(fm => fm.pts.forEach((a, i) => {
+            const u = unit(a, fm.pts[(i + 1) % fm.pts.length]);
+            if (!u || Math.abs(u.x) < 1e-6 || Math.abs(u.y) < 1e-6) return;   // horizontaux/verticaux : couverts par X / Y
+            facesO.forEach(fo => fo.pts.forEach((f, j) => {
+              const v = unit(f, fo.pts[(j + 1) % fo.pts.length]);
+              if (!v || Math.abs(u.x * v.y - u.y * v.x) > 0.01) return;      // pas parallèles (~0,6°)
+              const ecartCm = Math.round(Math.abs(v.x * (a.y - f.y) - v.y * (a.x - f.x)) * 100);
+              if (ecartCm <= 10 && (!am || ecartCm < am.ecartCm)) am = { a: f, dir: v, ecartCm, kM: fm.k, kO: fo.k };
+            }));
+          }));
+          setAlignPiece(ax || ay || coin || am ? { x: ax, y: ay, mur: am, coin } : null);
+        } else setAlignPiece(null);
         updateNiveauActif(n => ({
           ...n,
           pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : {
@@ -5411,36 +5435,43 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
               {dragMode.kind === "piece" && alignPiece && (() => {
                 const COUL_OK = "#16A34A", COUL_PROCHE = "#F59E0B";
-                const items: { axe: "X" | "Y" | "Mur"; pos: number; ecartCm: number }[] = [
-                  ...(alignPiece.x ? [{ axe: "X" as const, ...alignPiece.x }] : []),
-                  ...(alignPiece.y ? [{ axe: "Y" as const, ...alignPiece.y }] : []),
-                  ...(alignPiece.mur ? [{ axe: "Mur" as const, pos: 0, ecartCm: alignPiece.mur.ecartCm }] : []),
+                const al = alignPiece;
+                const nf = (a: FaceKind, b: FaceKind) => `${NOM_FACE[a]} ↔ ${NOM_FACE[b]}`;
+                const items: { key: string; ok: boolean; texte: string }[] = [
+                  ...(al.coin ? [{ key: "coin", ok: al.coin.dxCm === 0 && al.coin.dyCm === 0,
+                    texte: al.coin.dxCm === 0 && al.coin.dyCm === 0 ? `Angle ${nf(al.coin.kM, al.coin.kO)} : coïncident ✔` : `Angle ${nf(al.coin.kM, al.coin.kO)} : ΔX ${al.coin.dxCm} · ΔY ${al.coin.dyCm} cm` }] : []),
+                  ...(al.x ? [{ key: "x", ok: al.x.ecartCm === 0, texte: al.x.ecartCm === 0 ? `X aligné ✔ (${nf(al.x.kM, al.x.kO)})` : `X : à ${al.x.ecartCm} cm (${nf(al.x.kM, al.x.kO)})` }] : []),
+                  ...(al.y ? [{ key: "y", ok: al.y.ecartCm === 0, texte: al.y.ecartCm === 0 ? `Y aligné ✔ (${nf(al.y.kM, al.y.kO)})` : `Y : à ${al.y.ecartCm} cm (${nf(al.y.kM, al.y.kO)})` }] : []),
+                  ...(al.mur ? [{ key: "mur", ok: al.mur.ecartCm === 0, texte: al.mur.ecartCm === 0 ? `Mur oblique aligné ✔ (${nf(al.mur.kM, al.mur.kO)})` : `Mur oblique : à ${al.mur.ecartCm} cm (${nf(al.mur.kM, al.mur.kO)})` }] : []),
                 ];
+                const trait = (ok: boolean) => ({ stroke: ok ? COUL_OK : COUL_PROCHE, strokeWidth: ok ? 2 : 1, strokeDasharray: "4,3", opacity: ok ? 0.95 : 0.6 });
                 return (
                   <g style={{ pointerEvents: "none" }}>
-                    {alignPiece.mur && (() => {
-                      const m = alignPiece.mur, ok = m.ecartCm === 0, col = ok ? COUL_OK : COUL_PROCHE;
+                    {al.mur && (() => {
+                      const m = al.mur;
                       const p1 = toScreen({ x: m.a.x - m.dir.x * 200, y: m.a.y - m.dir.y * 200 });
                       const p2 = toScreen({ x: m.a.x + m.dir.x * 200, y: m.a.y + m.dir.y * 200 });
-                      return <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke={col} strokeWidth={ok ? 2 : 1} strokeDasharray="4,3" opacity={ok ? 0.95 : 0.6} />;
+                      return <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} {...trait(m.ecartCm === 0)} />;
                     })()}
-                    {items.map(it => {
-                      const ok = it.ecartCm === 0, col = ok ? COUL_OK : COUL_PROCHE;
-                      if (it.axe === "Mur") return null;
-                      const q = it.axe === "X" ? toScreen({ x: it.pos, y: 0 }) : toScreen({ x: 0, y: it.pos });
-                      return it.axe === "X"
-                        ? <line key="ax" x1={q.x} y1={0} x2={q.x} y2={H} stroke={col} strokeWidth={ok ? 2 : 1} strokeDasharray="4,3" opacity={ok ? 0.95 : 0.6} />
-                        : <line key="ay" x1={0} y1={q.y} x2={W} y2={q.y} stroke={col} strokeWidth={ok ? 2 : 1} strokeDasharray="4,3" opacity={ok ? 0.95 : 0.6} />;
-                    })}
-                    {items.map((it, i) => {
-                      const ok = it.ecartCm === 0, col = ok ? COUL_OK : COUL_PROCHE;
-                      const nomAxe = it.axe === "Mur" ? "Mur oblique" : it.axe;
-                      const txt = ok ? `${nomAxe} : aligné ✔` : `${nomAxe} : à ${it.ecartCm} cm de l'alignement`;
-                      const w = txt.length * 7 + 16;
+                    {al.x && <line x1={toScreen({ x: al.x.pos, y: 0 }).x} y1={0} x2={toScreen({ x: al.x.pos, y: 0 }).x} y2={H} {...trait(al.x.ecartCm === 0)} />}
+                    {al.y && <line x1={0} y1={toScreen({ x: 0, y: al.y.pos }).y} x2={W} y2={toScreen({ x: 0, y: al.y.pos }).y} {...trait(al.y.ecartCm === 0)} />}
+                    {al.coin && (() => {
+                      const ok = al.coin.dxCm === 0 && al.coin.dyCm === 0, col = ok ? COUL_OK : COUL_PROCHE;
+                      const po = toScreen(al.coin.o), pm = toScreen(al.coin.m);
                       return (
-                        <g key={`b${it.axe}`} transform={`translate(${W / 2 - w / 2} ${12 + i * 28})`} fontFamily="monospace">
+                        <g>
+                          <circle cx={po.x} cy={po.y} r={9} fill="none" stroke={col} strokeWidth={2.5} />
+                          <circle cx={pm.x} cy={pm.y} r={4} fill={col} />
+                        </g>
+                      );
+                    })()}
+                    {items.map((it, i) => {
+                      const col = it.ok ? COUL_OK : COUL_PROCHE;
+                      const w = it.texte.length * 6.6 + 16;
+                      return (
+                        <g key={`b${it.key}`} transform={`translate(${W / 2 - w / 2} ${12 + i * 28})`} fontFamily="monospace">
                           <rect width={w} height={22} rx={6} fill="#fff" stroke={col} strokeWidth={1.5} />
-                          <text x={w / 2} y={15} textAnchor="middle" fontSize={12} fontWeight={700} fill={ok ? "#15803D" : "#B45309"}>{txt}</text>
+                          <text x={w / 2} y={15} textAnchor="middle" fontSize={11.5} fontWeight={700} fill={it.ok ? "#15803D" : "#B45309"}>{it.texte}</text>
                         </g>
                       );
                     })}
