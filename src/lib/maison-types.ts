@@ -567,7 +567,9 @@ export interface Escalier {
   hauteurCm?: number;            // cm — hauteur à franchir ; absent = hauteur sous plafond du niveau + épaisseur de plancher
   epaisseurPlancher: number;     // cm — plancher entre les deux niveaux (sert à la hauteur de passage)
   nbMarches?: number;            // nombre de CONTREMARCHES ; absent = calculé (≈ 17,5 cm chacune)
-  giron?: number;                // cm ; absent = Blondel (2h + g = 64)
+  giron?: number;                // cm ; absent = déduit de l'encombrement imposé, sinon Blondel (2h + g = 64)
+  longueurHorsTout?: number;     // cm — encombrement imposé dans le sens de la 1re volée : le nombre de marches et le giron s'en déduisent
+  largeurHorsTout?: number;      // cm — encombrement imposé en travers (quart / demi-tournant) : déduit le giron (quart) ou l'emmarchement (demi)
   sens: "gauche" | "droite";     // virage à gauche / à droite (tournants et hélicoïdal)
   tournant?: EscalierTournant;   // quart / demi-tournant : palier ou marches balancées
   nbMarchesVolee1?: number;      // marches avant le virage ; absent = moitié

@@ -62,6 +62,9 @@ export interface CalculEscalier {
   tremieZone: number;                    // nombre de marches comprises sous la trémie
   poteau?: { centre: Point; rayon: number };   // m
   emprise: { minX: number; minY: number; maxX: number; maxY: number };
+  empriseCm: { longueur: number; largeur: number };    // encombrement obtenu (sens de la 1re volée × travers), cm
+  tremieCm: { longueur: number; largeur: number };     // dimensions de la trémie (même repère), cm
+  emmarchementCm: number;                              // largeur utile des marches, cm
   avertissements: string[];
 }
 
@@ -71,11 +74,77 @@ export function hauteurTotaleEscalierCm(e: Escalier, source: Niveau): number {
   return Math.round((source.hauteurPlafond ?? 2.5) * 100 + (e.epaisseurPlancher ?? EPAISSEUR_PLANCHER_DEFAUT_CM));
 }
 
-export function parametresEscalier(e: Escalier, hauteurTotaleCm: number): { H: number; n: number; h: number; g: number } {
+export interface Dimensionnement { H: number; n: number; h: number; g: number; L: number; n1?: number; }
+
+// Dimensionnement AUTOMATIQUE : tout se calcule à partir de la hauteur à franchir ; chaque valeur renseignée par
+// l'utilisateur est respectée et le reste se recalcule autour. Ordre de priorité du giron : giron imposé > déduit de
+// l'encombrement imposé (longueur / largeur hors-tout) > Blondel. Le nombre de marches, s'il n'est pas imposé, est choisi
+// (entre 15 et 21 cm de hauteur de marche) pour que 2h + g soit au plus près de 64 cm avec l'encombrement demandé.
+export function dimensionner(e: Escalier, hauteurTotaleCm: number): Dimensionnement {
   const H = Math.max(50, hauteurTotaleCm);
-  const n = Math.max(3, Math.round(e.nbMarches ?? Math.round(H / HAUTEUR_MARCHE_CIBLE_CM)));
+  const Ls = e.longueurHorsTout && e.longueurHorsTout > 0 ? e.longueurHorsTout : undefined;
+  const Lt = e.largeurHorsTout && e.largeurHorsTout > 0 ? e.largeurHorsTout : undefined;
+  const balancees = e.tournant === "balancees";
+  let L = Math.max(40, e.largeur || 90);
+  if (e.type === "demi_tournant" && Lt) L = Math.max(40, (Lt - (balancees ? 0 : Math.max(0, e.jour ?? 10))) / 2);
+  const gImpose = e.giron && e.giron > 5 ? e.giron : undefined;
+  const nImpose = e.nbMarches ? Math.max(3, Math.round(e.nbMarches)) : undefined;
+  const n1Impose = e.nbMarchesVolee1 ? Math.round(e.nbMarchesVolee1) : undefined;
+
+  // Pour n marches : giron (et 1re volée) que l'encombrement impose ; undefined s'il ne contraint rien.
+  const deduire = (n: number): { g: number; n1?: number } | undefined => {
+    if (e.type === "helicoidal") return undefined;
+    if (e.type === "droit") return Ls && n > 1 ? { g: Ls / (n - 1) } : undefined;
+    const quart = e.type === "quart_tournant";
+    const nb = balancees ? clamp(clamp(Math.round(e.nbBalancees ?? (quart ? 3 : 6)), quart ? 2 : 3, quart ? 6 : 10), quart ? 2 : 3, n - 2) : 0;
+    // nb de pas (hors palier / éventail) de la volée 1 et de la volée 2 selon n1 ; −1 pour un palier (il compte comme une marche)
+    const pas1 = (n1: number) => (balancees ? n1 : n1 - 1);
+    const pas2 = (n1: number) => (balancees ? n - n1 - nb - 1 : n - n1 - 1);
+    const gS = (n1: number) => (Ls && pas1(n1) > 0 ? (Ls - L) / pas1(n1) : undefined);
+    const gT = (n1: number) => (quart && Lt && pas2(n1) > 0 ? (Lt - L) / pas2(n1) : undefined);
+    const n1Defaut = balancees ? Math.ceil((n - nb) / 2) : Math.ceil(n / 2);
+    const n1Max = balancees ? n - nb - 1 : n - 1;
+    const combine = (n1: number): number | undefined => {
+      const a = gS(n1), b = gT(n1);
+      const valides = [a, b].filter((v): v is number => v !== undefined && v > 0);
+      return valides.length ? valides.reduce((x, y) => x + y, 0) / valides.length : undefined;
+    };
+    if (n1Impose) { const n1 = clamp(n1Impose, 1, n1Max); const g = combine(n1); return g ? { g, n1 } : undefined; }
+    if (quart && Ls && Lt) {
+      // Les deux dimensions imposées : on cherche la répartition des marches entre les volées qui les respecte au mieux.
+      let meilleur: { g: number; n1: number; ecart: number } | undefined;
+      for (let n1 = 1; n1 <= n1Max; n1++) {
+        const a = gS(n1), b = gT(n1);
+        if (!a || !b || a <= 0 || b <= 0) continue;
+        const ecart = Math.abs(a - b);
+        if (!meilleur || ecart < meilleur.ecart) meilleur = { g: (a + b) / 2, n1, ecart };
+      }
+      return meilleur ? { g: meilleur.g, n1: meilleur.n1 } : undefined;
+    }
+    const g = combine(clamp(n1Defaut, 1, n1Max));
+    return g ? { g } : undefined;
+  };
+
+  const nAuto = Math.max(3, Math.round(H / HAUTEUR_MARCHE_CIBLE_CM));
+  let n = nImpose ?? nAuto;
+  if (!nImpose && !gImpose && (Ls || Lt) && e.type !== "helicoidal") {
+    let meilleur: { n: number; score: number } | undefined;
+    for (let c = Math.max(3, Math.ceil(H / 21)); c <= Math.floor(H / 15); c++) {
+      const d = deduire(c);
+      if (!d) continue;
+      const score = Math.abs(2 * (H / c) + d.g - BLONDEL_CM) + (d.g < 22 || d.g > 32 ? 20 : 0);
+      if (!meilleur || score < meilleur.score) meilleur = { n: c, score };
+    }
+    if (meilleur) n = meilleur.n;
+  }
   const h = H / n;
-  const g = e.giron && e.giron > 5 ? e.giron : Math.max(22, Math.min(32, Math.round((BLONDEL_CM - 2 * h) * 2) / 2));
+  const dd = gImpose ? undefined : deduire(n);
+  const g = gImpose ?? dd?.g ?? clamp(Math.round((BLONDEL_CM - 2 * h) * 2) / 2, 22, 32);
+  return { H, n, h, g, L, n1: n1Impose ? undefined : dd?.n1 };
+}
+
+export function parametresEscalier(e: Escalier, hauteurTotaleCm: number): { H: number; n: number; h: number; g: number } {
+  const { H, n, h, g } = dimensionner(e, hauteurTotaleCm);
   return { H, n, h, g };
 }
 
@@ -96,8 +165,7 @@ interface Local {
   marchesParTour?: number;               // hélicoïdal
 }
 
-function genererLocal(e: Escalier, n: number, g: number): Local {
-  const L = Math.max(40, e.largeur || 90);
+function genererLocal(e: Escalier, n: number, g: number, L: number, n1Auto?: number): Local {
 
   // Volée droite : nbMarches marches de giron g, qui partent de P0 (milieu de l'arête d'entrée) dans la direction u.
   const volee = (P0: P, u: P, nbMarches: number, idx0: number): MarcheLocale[] => {
@@ -150,7 +218,7 @@ function genererLocal(e: Escalier, n: number, g: number): Local {
       const U: P = { s: 1, t: 0 }, V: P = { s: 0, t: -1 };       // volée 1 vers +s, volée 2 vers −t (virage à gauche)
       if (e.tournant === "balancees") {
         const nb = clamp(rep(e.nbBalancees, 3, 2, 6), 2, n - 2);
-        const n1 = rep(e.nbMarchesVolee1, Math.ceil((n - nb) / 2), 1, n - nb - 1);
+        const n1 = rep(e.nbMarchesVolee1 ?? n1Auto, Math.ceil((n - nb) / 2), 1, n - nb - 1);
         const n2 = n - n1 - nb, s0 = n1 * g;
         const marches = [
           ...volee({ s: 0, t: 0 }, U, n1, 0),
@@ -159,7 +227,7 @@ function genererLocal(e: Escalier, n: number, g: number): Local {
         ];
         return { marches, finRiser: finDeVolee({ s: s0 + L / 2, t: -L / 2 }, V, n2 - 1), dirSortie: V };
       }
-      const n1 = rep(e.nbMarchesVolee1, Math.ceil(n / 2), 1, n - 1);
+      const n1 = rep(e.nbMarchesVolee1 ?? n1Auto, Math.ceil(n / 2), 1, n - 1);
       const n2 = n - n1, s0 = (n1 - 1) * g;
       const palier: MarcheLocale = {
         poly: [{ s: s0, t: -L / 2 }, { s: s0 + L, t: -L / 2 }, { s: s0 + L, t: L / 2 }, { s: s0, t: L / 2 }], idx: n1, type: "palier",
@@ -175,7 +243,7 @@ function genererLocal(e: Escalier, n: number, g: number): Local {
       const U: P = { s: 1, t: 0 }, V: P = { s: -1, t: 0 };       // volée 1 vers +s, volée 2 en sens inverse (virage à gauche)
       if (e.tournant === "balancees") {
         const nb = clamp(rep(e.nbBalancees, 6, 3, 10), 3, n - 2);
-        const n1 = rep(e.nbMarchesVolee1, Math.ceil((n - nb) / 2), 1, n - nb - 1);
+        const n1 = rep(e.nbMarchesVolee1 ?? n1Auto, Math.ceil((n - nb) / 2), 1, n - nb - 1);
         const n2 = n - n1 - nb, s0 = n1 * g;
         const P2: P = { s: s0, t: -L };
         const marches = [
@@ -186,7 +254,7 @@ function genererLocal(e: Escalier, n: number, g: number): Local {
         return { marches, finRiser: finDeVolee(P2, V, n2 - 1), dirSortie: V };
       }
       const jour = Math.max(0, e.jour ?? 10);
-      const n1 = rep(e.nbMarchesVolee1, Math.ceil(n / 2), 1, n - 1);
+      const n1 = rep(e.nbMarchesVolee1 ?? n1Auto, Math.ceil(n / 2), 1, n - 1);
       const n2 = n - n1, s0 = (n1 - 1) * g;
       const tmin = -L / 2 - jour - L, tmax = L / 2;
       const bords: MarcheLocale["bords"] = [
@@ -239,8 +307,9 @@ const miroir = (p: P): P => ({ s: p.s, t: -p.t });
 
 // ─── Calcul complet ─────────────────────────────────────────────────────────────────────────────────────
 export function calculerEscalier(e: Escalier, hauteurTotaleCm: number): CalculEscalier {
-  const { H, n, h, g: gParam } = parametresEscalier(e, hauteurTotaleCm);
-  let loc = genererLocal(e, n, gParam);
+  const dim = dimensionner(e, hauteurTotaleCm);
+  const { H, n, h, g: gParam, L } = dim;
+  let loc = genererLocal(e, n, gParam, L, dim.n1);
   const g = loc.giron ?? gParam;
   if (e.sens === "droite" && e.type !== "droit") {
     loc = {
@@ -289,13 +358,22 @@ export function calculerEscalier(e: Escalier, hauteurTotaleCm: number): CalculEs
     maxX: Math.max(...tousPts.map(p => p.x)), maxY: Math.max(...tousPts.map(p => p.y)),
   };
 
+  // Encombrement obtenu et dimensions de la trémie (repère local : sens de la montée × travers).
+  const etendue = (pts: P[]) => ({
+    longueur: Math.round(Math.max(...pts.map(p => p.s)) - Math.min(...pts.map(p => p.s))),
+    largeur: Math.round(Math.max(...pts.map(p => p.t)) - Math.min(...pts.map(p => p.t))),
+  });
+  const empriseCm = etendue(loc.marches.flatMap(m => m.poly));
+  const tremieCm = etendue(tremieLocale);
+  const emmarchementCm = loc.rayonTremie ? Math.round(loc.rayonTremie - (loc.poteau?.rayon ?? 0)) : Math.round(L);
+
   // Contrôles de confort et de sécurité.
   const blondel = Math.round((2 * h + g) * 10) / 10;
   const avertissements: string[] = [];
   if (blondel < 60 || blondel > 66) avertissements.push(`Confort : 2h + g = ${blondel} cm (idéal entre 60 et 66).`);
   if (h > 20) avertissements.push(`Marches trop hautes : ${h.toFixed(1)} cm (maximum conseillé 20 cm).`);
   if (g < 21) avertissements.push(`Giron trop court : ${g.toFixed(1)} cm (minimum conseillé 21 cm).`);
-  if (e.type !== "helicoidal" && (e.largeur || 90) < 70) avertissements.push(`Emmarchement étroit : ${e.largeur} cm (minimum conseillé 70 cm, 80 cm en habitation).`);
+  if (e.type !== "helicoidal" && L < 70) avertissements.push(`Emmarchement étroit : ${Math.round(L)} cm (minimum conseillé 70 cm, 80 cm en habitation).`);
   if (e.type === "helicoidal" && (e.diametre ?? DIAMETRE_HELICE_DEFAUT_CM) < 120) avertissements.push(`Diamètre faible : ${e.diametre} cm (minimum conseillé 120 cm).`);
   if (e.type === "helicoidal") {
     const R = (e.diametre ?? DIAMETRE_HELICE_DEFAUT_CM) / 2, r0 = clamp((e.diametrePoteau ?? DIAMETRE_POTEAU_DEFAUT_CM) / 2, 2, R - 25);
@@ -306,6 +384,10 @@ export function calculerEscalier(e: Escalier, hauteurTotaleCm: number): CalculEs
     const separation = Math.round(loc.marchesParTour * h);
     if (separation < hp) avertissements.push(`Hélice de ${loc.tours.toFixed(2)} tours : échappée de ${separation} cm entre deux tours (minimum ${hp} cm) — augmente le diamètre ou réduis le giron.`);
   }
+  if (e.longueurHorsTout && e.type !== "helicoidal" && Math.abs(empriseCm.longueur - e.longueurHorsTout) > 2)
+    avertissements.push(`Longueur demandée ${Math.round(e.longueurHorsTout)} cm : emprise obtenue ${empriseCm.longueur} cm (nombre de marches, giron ou volée imposés).`);
+  if (e.largeurHorsTout && (e.type === "quart_tournant" || e.type === "demi_tournant") && Math.abs(empriseCm.largeur - e.largeurHorsTout) > 2)
+    avertissements.push(`Largeur demandée ${Math.round(e.largeurHorsTout)} cm : emprise obtenue ${empriseCm.largeur} cm (nombre de marches, giron ou volée imposés).`);
   if (loc.marches.length > 0 && marches.length !== n - 1) avertissements.push("Nombre de marches ajusté pour que le virage tienne dans la hauteur.");
 
   return {
@@ -314,7 +396,7 @@ export function calculerEscalier(e: Escalier, hauteurTotaleCm: number): CalculEs
     finRiser: { a: monde(loc.finRiser[0]), b: monde(loc.finRiser[1]), zBas: (n - 1) * h / 100, zHaut: H / 100 },
     tremie, tremieZone: zone.length,
     poteau: loc.poteau ? { centre: { x: e.x, y: e.y }, rayon: loc.poteau.rayon / 100 } : undefined,
-    emprise, avertissements,
+    emprise, empriseCm, tremieCm, emmarchementCm, avertissements,
   };
 }
 
