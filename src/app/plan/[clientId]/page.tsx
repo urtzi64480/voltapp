@@ -35,6 +35,7 @@ import { cotesOuvertures, cotesExterieures, coteHorsTout } from "@/lib/cotes-arc
 import { normaliserAngle } from "@/lib/soleil";
 import { posesTroncons, hauteursTroncons } from "@/lib/pose-circuits";
 import { creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurCircuit } from "@/lib/longueurs-circuits";
+import { fusionnerPieces, voisinesFusionnables } from "@/lib/fusion-pieces";
 import { migrerModeleMurs, aimanterSurFaceMur, preparerMurs, definirMitoyens, mitoyensDe, longueursUtilesCm, geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
 import { accrocherSurContour, apercuCloison, appliquerCloison, OptionsCloison, PointAccroche } from "@/lib/cloisons";
 import type { CloisonZone } from "@/lib/zones";
@@ -3001,6 +3002,22 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }));
   };
 
+  // Fusionne la pièce « idPrincipale » avec une pièce adjacente : une seule pièce (contour union, murs, appareillages,
+  // meubles et ouvertures conservés — seules les ouvertures du mur commun disparaissent). Voir lib/fusion-pieces.ts.
+  const fusionnerAvecPiece = (idPrincipale: number, idAutre: number) => {
+    const A = niveauActif?.pieces.find(p => p.id === idPrincipale);
+    const B = niveauActif?.pieces.find(p => p.id === idAutre);
+    if (!A || !B) return;
+    const r = fusionnerPieces(A, B);
+    if (!r.ok) { alert(r.erreur); return; }
+    const nom = (p: Piece) => p.nom || PIECE_TYPES[p.type].label;
+    const avert = r.ouverturesSupprimees > 0 ? `\n\n${r.ouverturesSupprimees} porte(s)/fenêtre(s) posée(s) sur le mur commun seront supprimées.` : "";
+    if (!window.confirm(`Fusionner « ${nom(B)} » dans « ${nom(A)} » ?${avert}`)) return;
+    updateNiveauActif(n => ({ ...n, pieces: n.pieces.filter(p => p.id !== idAutre).map(p => p.id === idPrincipale ? r.piece : p) }));
+    setSelectedPieceId(idPrincipale); setSelectedAppareillageId(null); setSelectedOuvertureId(null); setSelectedMeubleId(null);
+    setEditingSegment(null);
+  };
+
   // Repositionne une ouverture pour qu'elle soit exactement à distanceCm d'une extrémité
   // du mur qui la porte (donc du mur perpendiculaire/coin à cette extrémité) — largeur
   // inchangée, seule sa position glisse le long du mur pour respecter la cote demandée.
@@ -5812,6 +5829,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   title={selectedPiece.verrouillee ? "Pièce verrouillée — cliquer pour déverrouiller" : "Verrouiller la pièce : plus aucun déplacement (pièce, sommets, murs, appareillages, meubles, portes/fenêtres, nom)"}>
                   {selectedPiece.verrouillee ? <><Lock size={13} /> Verrouillée</> : <><Unlock size={13} /> Verrouiller</>}
                 </button>
+                {(() => {
+                  const voisines = niveauActif && !selectedPiece.verrouillee ? voisinesFusionnables(niveauActif.pieces.filter(p => !p.verrouillee), selectedPiece) : [];
+                  if (voisines.length === 0) return null;
+                  return (
+                    <select value="" className="input !py-1 !text-xs !w-auto"
+                      title="Fusionner cette pièce avec une pièce adjacente (mur commun) : une seule pièce, au contour réuni"
+                      onChange={e => { if (e.target.value) fusionnerAvecPiece(selectedPiece.id, Number(e.target.value)); }}>
+                      <option value="">Fusionner avec…</option>
+                      {voisines.map(v => <option key={v.id} value={v.id}>{v.nom || PIECE_TYPES[v.type].label}</option>)}
+                    </select>
+                  );
+                })()}
                 <button onClick={() => updateNiveauActif(n => ({ ...n, pieces: n.pieces.map(p => p.id === selectedPiece.id ? { ...p, masquerNom: p.masquerNom ? undefined : true } : p) }))}
                   className={`${selectedPiece.masquerNom ? "btn-ghost" : "btn-volt"} !px-2 !py-1.5 !text-xs`}
                   title={selectedPiece.masquerNom ? "Nom masqué — cliquer pour l'afficher" : "Masquer le nom de cette pièce"}>Nom</button>
