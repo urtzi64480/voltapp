@@ -127,7 +127,7 @@ export interface Cote {
 }
 // Repère « faces finies » : les cotes se lisent d'un angle intérieur à l'autre (ce que l'on mesure
 // avec un mètre sur place), pas d'axe à axe. utile = contour de la face intérieure finie.
-export interface RepereCotes { utile: Point[]; epaisseurTotaleM: (segIndex: number) => number; }
+export interface RepereCotes { utile: Point[]; utileFin?: Point[]; epaisseurTotaleM: (segIndex: number) => number; }
 
 // detail = true : les deux cotes le long du mur (coin gauche et coin droit) — utile pour
 // caler un appareillage sélectionné ; false : une seule cote, vers le coin le plus proche.
@@ -139,7 +139,7 @@ export function cotesAppareillage(pt: Point, contour: Point[], type: Appareillag
   if (anc && anc.distance <= TOLERANCE_MUR_M) {
     // Avec un repère : coins et pied pris sur la face intérieure finie du mur ; sinon, sur l'axe.
     const A = repere ? repere.utile[anc.segIndex] : contour[anc.segIndex];
-    const B = repere ? repere.utile[(anc.segIndex + 1) % n] : contour[(anc.segIndex + 1) % n];
+    const B = repere ? (repere.utileFin?.[anc.segIndex] ?? repere.utile[(anc.segIndex + 1) % n]) : contour[(anc.segIndex + 1) % n];
     const pied = repere ? projeterSurSegment(pt, A, B) : anc.pied;
     const dA = Math.hypot(pied.x - A.x, pied.y - A.y), dB = Math.hypot(pied.x - B.x, pied.y - B.y);
     const decalageM = repere ? repere.epaisseurTotaleM(anc.segIndex) : 0;
@@ -149,7 +149,7 @@ export function cotesAppareillage(pt: Point, contour: Point[], type: Appareillag
   }
   const base = repere ? repere.utile : contour;
   const murs = base.map((a, i) => {
-    const b = base[(i + 1) % n];
+    const b = repere?.utileFin?.[i] ?? base[(i + 1) % n];
     const pied = projeterSurSegment(pt, a, b);
     const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
     return { pied, d: Math.hypot(pt.x - pied.x, pt.y - pied.y), ux: (b.x - a.x) / l, uy: (b.y - a.y) / l };

@@ -86,6 +86,31 @@ export function decalerContour(contour: Point[], offsets: number[]): Point[] {
 }
 
 
+// Comme decalerContour, mais avec UN POINT DE DÉPART ET UN POINT D'ARRIVÉE PAR CÔTÉ : debut[i] = début du côté i décalé,
+// fin[i] = fin du côté i décalé. Aux angles, les deux sont confondus (onglet). Seule différence : quand deux côtés
+// consécutifs sont ALIGNÉS (même direction) mais d'épaisseurs différentes, chacun garde son épaisseur jusqu'au sommet et
+// le raccord est un DÉCROCHEMENT DROIT (perpendiculaire au mur) — pas un biais qui « compense » les deux épaisseurs.
+export function decalerContourAretes(contour: Point[], offsets: number[]): { debut: Point[]; fin: Point[] } {
+  const n = contour.length;
+  const unique = decalerContour(contour, offsets);
+  const debut = unique.map(p => ({ ...p })), fin = unique.map((_, i) => ({ ...unique[(i + 1) % n] }));   // fin[i] = point du sommet SUIVANT
+  const normales = contour.map((_, i) => normaleInterieure(contour, i));
+  const dirs = contour.map((a, i) => {
+    const b = contour[(i + 1) % n];
+    const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    return { x: (b.x - a.x) / l, y: (b.y - a.y) / l };
+  });
+  for (let i = 0; i < n; i++) {
+    const j = (i - 1 + n) % n, v = contour[i];
+    const den = dirs[j].x * dirs[i].y - dirs[j].y * dirs[i].x, dot = dirs[j].x * dirs[i].x + dirs[j].y * dirs[i].y;
+    if (Math.abs(den) < 1e-6 && dot > 0 && Math.abs(offsets[j] - offsets[i]) > 1e-9) {
+      debut[i] = { x: v.x + normales[i].x * offsets[i], y: v.y + normales[i].y * offsets[i] };
+      fin[j] = { x: v.x + normales[j].x * offsets[j], y: v.y + normales[j].y * offsets[j] };
+    }
+  }
+  return { debut, fin };
+}
+
 // Positions (m, vers l'INTÉRIEUR de la pièce, depuis la ligne du contour) des faces du mur i, de l'extérieur à
 // l'intérieur : exterieure (face externe de la structure = le tracé lui-même, donc 0) · structureInt · doublageInt
 // (face interne du doublage = face externe de la finition) · utile (face intérieure FINIE, après les 3 couches).
@@ -103,43 +128,50 @@ export interface QuadMur {
 }
 export interface GeometrieMurs {
   quads: QuadMur[];
-  utile: Point[];                // contour de la face intérieure finie (surface utile)
+  utile: Point[];                // face intérieure finie : DÉBUT de chaque mur (utile[i] → utileFin[i] = face du mur i)
+  utileFin: Point[];             // face intérieure finie : FIN de chaque mur (= utile[i + 1] sauf décrochement entre deux murs alignés)
+  utileComplet: Point[];         // polygone de la face intérieure finie AVEC les décrochements (pour surface / aplat) — = utile sans décrochement
   exterieur: Point[];            // contour de la face extérieure de la structure (hors-tout)
 }
 
 export function geometrieMurs(piece: Piece): GeometrieMurs {
   const c = piece.contour, n = c.length;
   const plans = c.map((_, i) => plansMur(piece, i));
-  const ext = decalerContour(c, plans.map(p => p.exterieure));
-  const int = decalerContour(c, plans.map(p => p.structureInt));
-  const dbl = decalerContour(c, plans.map(p => p.doublageInt));
-  const utile = decalerContour(c, plans.map(p => p.utile));
+  const ext = decalerContourAretes(c, plans.map(p => p.exterieure));
+  const int = decalerContourAretes(c, plans.map(p => p.structureInt));
+  const dbl = decalerContourAretes(c, plans.map(p => p.doublageInt));
+  const utile = decalerContourAretes(c, plans.map(p => p.utile));
   const quads: QuadMur[] = c.map((_, i) => {
-    const k = (i + 1) % n;
     const m = murDe(piece, i);
     return {
       i, type: typeMur(piece, i),
-      structure: [ext[i], ext[k], int[k], int[i]],
+      structure: [ext.debut[i], ext.fin[i], int.fin[i], int.debut[i]],
       structureNulle: !(m.epaisseur > 0),
-      doublage: m.doublage > 0 ? [int[i], int[k], dbl[k], dbl[i]] : null,
-      finition: (m.finition ?? 0) > 0 ? [dbl[i], dbl[k], utile[k], utile[i]] : null,
+      doublage: m.doublage > 0 ? [int.debut[i], int.fin[i], dbl.fin[i], dbl.debut[i]] : null,
+      finition: (m.finition ?? 0) > 0 ? [dbl.debut[i], dbl.fin[i], utile.fin[i], utile.debut[i]] : null,
     };
   });
-  return { quads, utile, exterieur: ext };
+  const meme = (p: Point, q: Point) => Math.abs(p.x - q.x) < 1e-9 && Math.abs(p.y - q.y) < 1e-9;
+  const complet: Point[] = [];
+  c.forEach((_, i) => {
+    complet.push(utile.debut[i]);
+    if (!meme(utile.fin[i], utile.debut[(i + 1) % n])) complet.push(utile.fin[i]);   // décrochement : on garde les deux points
+  });
+  return { quads, utile: utile.debut, utileFin: utile.fin, utileComplet: complet, exterieur: ext.debut };
 }
 
 // Surface utile (m²) = aire de la face intérieure finie. null si les épaisseurs sont incompatibles avec
 // la taille de la pièce (le contour décalé se retourne ou se coupe).
 export function surfaceUtile(piece: Piece): number | null {
-  const { utile } = geometrieMurs(piece);
+  const { utileComplet: utile } = geometrieMurs(piece);
   const brute = aireDuPolygone(piece.contour);
   const u = aireDuPolygone(utile);
   if (utile.length < 3 || u <= 0 || u > brute + 1e-9) return null;
   return orientation(utile) === orientation(piece.contour) ? u : null;
 }
 export function longueurUtileCm(piece: Piece, i: number): number {
-  const { utile } = geometrieMurs(piece);
-  const a = utile[i], b = utile[(i + 1) % utile.length];
+  const { utile, utileFin } = geometrieMurs(piece);
+  const a = utile[i], b = utileFin[i];
   return Math.round(Math.hypot(b.x - a.x, b.y - a.y) * 100);
 }
 export function longueursUtilesCm(piece: Piece): number[] {
@@ -251,10 +283,10 @@ export function hauteurAppareilM(a: AppareillagePlace): number {
 export function pointDansCouche2(pieces: Piece[], pt: Point, tol = 0.35): { pieceId: number; i: number; point: Point } | null {
   let meilleur: { pieceId: number; i: number; point: Point; d: number } | null = null;
   for (const p of pieces) {
-    const { utile } = geometrieMurs(p);
+    const { utile, utileFin } = geometrieMurs(p);
     const n = p.contour.length;
     for (let i = 0; i < n; i++) {
-      const A = utile[i], B = utile[(i + 1) % n];
+      const A = utile[i], B = utileFin[i];
       const L = Math.hypot(B.x - A.x, B.y - A.y);
       if (L < 1e-6) continue;
       const u = { x: (B.x - A.x) / L, y: (B.y - A.y) / L };

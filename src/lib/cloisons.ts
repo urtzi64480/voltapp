@@ -245,7 +245,7 @@ export interface OptionsCloison {
   epaisseurCm: number;                              // structure de la cloison (identique des deux côtés)
   // Porte posée au milieu du plus long tronçon de la cloison (null = aucune). Elle appartient à la
   // NOUVELLE pièce et s'ouvre vers la pièce d'origine ; les deux faces sont percées (mur mitoyen).
-  porte: "porte" | "porte_coulissante" | "ouverture" | null;
+  porte: "porte" | "porte_coulissante" | "porte_galandage" | "ouverture" | null;
 }
 
 export interface ResultatCloison {
@@ -345,16 +345,20 @@ export function appliquerCloison(pieces: Piece[], pieceId: number, chemin: Point
     let meilleur = -1, lmax = 0;
     arNouv.forEach((a, idx) => { if (a.kind === "cloison") { const l = distance(a.de, a.vers); if (l > lmax) { lmax = l; meilleur = idx; } } });
     const largeurCm = 90;
-    if (meilleur >= 0 && lmax * 100 >= largeurCm + 20) {
+    // Galandage : il faut loger le vantail dans la cloison, à côté de l'ouverture (au centre : longueur ≥ 3 × la largeur).
+    const longueurMin = opts.porte === "porte_galandage" ? 3 * largeurCm : largeurCm + 20;
+    if (meilleur >= 0 && lmax * 100 >= longueurMin) {
       const base = nouvelle.ouvertures ?? [];
       const o: Ouverture = opts.porte === "porte"
         ? { id: 0, type: "porte", segIndex: meilleur, position: 0.5, largeur: largeurCm, hauteur: 204, allege: 0, charniere: "gauche", ouvreVersInterieur: false }
-        : opts.porte === "porte_coulissante"
-          ? { id: 0, type: "porte_coulissante", segIndex: meilleur, position: 0.5, largeur: largeurCm, hauteur: 204, allege: 0, coulisseVers: "droite" }
+        : opts.porte === "porte_coulissante" || opts.porte === "porte_galandage"
+          ? { id: 0, type: "porte_coulissante", segIndex: meilleur, position: 0.5, largeur: largeurCm, hauteur: 204, allege: 0, coulisseVers: "droite", montage: opts.porte === "porte_galandage" ? "galandage" : "applique" }
           : { id: 0, type: "ouverture", segIndex: meilleur, position: 0.5, largeur: largeurCm, hauteur: 204, allege: 0 };
       nouvelle.ouvertures = [...base, { ...o, id: uidMaison() }];
     } else {
-      avertissement = "Tronçon de cloison trop court pour une porte de 90 cm : pose-la ensuite avec l'outil « Porte / fenêtre ».";
+      avertissement = opts.porte === "porte_galandage"
+        ? "Tronçon de cloison trop court pour une porte à galandage de 90 cm (il faut au moins 2,70 m pour loger le vantail) : pose-la ensuite avec l'outil « Porte / fenêtre »."
+        : "Tronçon de cloison trop court pour une porte de 90 cm : pose-la ensuite avec l'outil « Porte / fenêtre ».";
     }
   }
 

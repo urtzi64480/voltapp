@@ -159,7 +159,7 @@ export function decoupeOuvertureZone(c: CloisonZone, position: number, largeurCm
 // ─── Ouvertures (portes dans une cloison de zone) ────────────────────────────────────────────
 export function ouverturesEffectivesZone(z: Zone, i: number): OuvertureEffective[] {
   return (z.ouvertures ?? []).filter(o => o.segIndex === i)
-    .map(o => ({ type: o.type, position: o.position, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: true, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur, battants: o.battants }));
+    .map(o => ({ type: o.type, position: o.position, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: true, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur, battants: o.battants, montage: o.montage }));
 }
 
 // Position (0..1) valide pour une ouverture de largeur donnée sur un côté de longueur L (m) : l'ouverture reste

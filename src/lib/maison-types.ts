@@ -172,6 +172,9 @@ export interface Ouverture {
   // 2 = double battant (deux vantaux, charnières aux deux jambages). Absent (anciens plans) : voir battantsFenetre().
   // Le sens d'ouverture (vers l'intérieur par défaut) réutilise « ouvreVersInterieur ».
   battants?: 0 | 1 | 2;
+  // Porte coulissante uniquement — montage : « applique » (défaut) = vantail sur rail, devant le mur voisin ; « galandage » =
+  // le vantail coulisse DANS l'épaisseur du mur voisin (« cassette ») et disparaît entièrement à l'ouverture.
+  montage?: "applique" | "galandage";
 }
 
 // Nombre de battants effectif d'une fenêtre — SOURCE UNIQUE (plan 2D, vue 3D, panneau).
@@ -189,7 +192,7 @@ export function nouvelleOuverture(type: OuvertureType, segIndex: number, positio
       return { id: uidMaison(), type, segIndex, position, largeur: dim.largeur, hauteur: dim.hauteur, allege: 0, charniere: "gauche", ouvreVersInterieur: true, usage };
     }
     case "porte_coulissante":
-      return { id: uidMaison(), type, segIndex, position, largeur: 90, hauteur: 204, allege: 0, coulisseVers: "droite" };
+      return { id: uidMaison(), type, segIndex, position, largeur: 90, hauteur: 204, allege: 0, coulisseVers: "droite", montage: "applique" };
     case "porte_garage":
       // Porte de garage basculante standard : 240 × 200 cm, jusqu'au sol.
       return { id: uidMaison(), type, segIndex, position, largeur: 240, hauteur: 200, allege: 0 };
@@ -263,6 +266,7 @@ export interface OuvertureEffective {
   charniere?: "gauche" | "droite";
   ouvreVersInterieur?: boolean;
   battants?: 0 | 1 | 2;
+  montage?: "applique" | "galandage";
 }
 
 export function ouverturesEffectivesMur(pieces: Piece[], piece: Piece, segIndex: number): OuvertureEffective[] {
@@ -270,7 +274,7 @@ export function ouverturesEffectivesMur(pieces: Piece[], piece: Piece, segIndex:
   const longueur = distance(a, b) || 1;
   const propres: OuvertureEffective[] = (piece.ouvertures ?? [])
     .filter(o => o.segIndex === segIndex)
-    .map(o => ({ type: o.type, position: o.position, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: true, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur, battants: o.battants }));
+    .map(o => ({ type: o.type, position: o.position, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: true, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur, battants: o.battants, montage: o.montage }));
 
   const projetees: OuvertureEffective[] = [];
   trouverMursJumeaux(pieces, piece, segIndex).forEach(j => {
@@ -280,7 +284,7 @@ export function ouverturesEffectivesMur(pieces: Piece[], piece: Piece, segIndex:
       const t = positionSurSegment(centreM, a, b);
       const tM = t * longueur;
       if (tM < j.loM - 0.01 || tM > j.hiM + 0.01) return; // hors du recouvrement réel — pas vraiment mitoyen ici
-      projetees.push({ type: o.type, position: t, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: false, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur, battants: o.battants });
+      projetees.push({ type: o.type, position: t, largeur: o.largeur, hauteur: o.hauteur, allege: o.allege, coulisseVers: o.coulisseVers, proprietaire: false, id: o.id, usage: o.usage, charniere: o.charniere, ouvreVersInterieur: o.ouvreVersInterieur, battants: o.battants, montage: o.montage });
     });
   });
   return [...propres, ...projetees];
@@ -536,6 +540,49 @@ export interface Niveau {
   // liaison verticale (gaine technique, autre niveau…) qui n'est pas dessinée sur le plan —
   // paramétrable indépendamment sur chaque étage.
   distanceArriveeGainesTableau?: number;
+  // Escaliers qui PARTENT de ce niveau (voir Escalier ci-dessous, lib/escaliers.ts). L'étage desservi
+  // (Escalier.niveauDestId) en reçoit automatiquement la trémie, calculée — jamais stockée.
+  escaliers?: Escalier[];
+}
+
+// ─── ESCALIERS ──────────────────────────────────────────────────────────────────────────────
+// Un escalier est posé sur le niveau où il PART et mène à un autre niveau (niveauDestId). Tout est paramétrable ;
+// ce qui n'est pas renseigné (nb de marches, giron, hauteur) est calculé (formule de Blondel, hauteur du niveau).
+// Repère local (cm) : s = sens de la montée de la 1re volée, t = à droite quand on monte ; rotation 0 = la montée
+// va vers le HAUT du plan, rotation en degrés dans le sens horaire. (x, y) = milieu du pied de la 1re marche
+// (centre de l'hélice pour un hélicoïdal). Voir lib/escaliers.ts.
+export type EscalierType = "droit" | "quart_tournant" | "demi_tournant" | "helicoidal";
+export type EscalierTournant = "palier" | "balancees";
+export type EscalierStructure = "limons_lateraux" | "limon_central" | "massif" | "marches_seules" | "poteau_central";
+export type EscalierRampe = "aucune" | "gauche" | "droite" | "deux_cotes";
+export type EscalierMateriau = "bois" | "beton" | "metal" | "blanc";
+export interface Escalier {
+  id: number;
+  nom?: string;
+  type: EscalierType;
+  x: number; y: number;          // mètres
+  rotation: number;              // degrés, sens horaire
+  niveauDestId?: number;         // niveau desservi (absent = escalier qui ne mène nulle part : aucune trémie)
+  largeur: number;               // cm — emmarchement
+  hauteurCm?: number;            // cm — hauteur à franchir ; absent = hauteur sous plafond du niveau + épaisseur de plancher
+  epaisseurPlancher: number;     // cm — plancher entre les deux niveaux (sert à la hauteur de passage)
+  nbMarches?: number;            // nombre de CONTREMARCHES ; absent = calculé (≈ 17,5 cm chacune)
+  giron?: number;                // cm ; absent = Blondel (2h + g = 64)
+  sens: "gauche" | "droite";     // virage à gauche / à droite (tournants et hélicoïdal)
+  tournant?: EscalierTournant;   // quart / demi-tournant : palier ou marches balancées
+  nbMarchesVolee1?: number;      // marches avant le virage ; absent = moitié
+  nbBalancees?: number;          // marches balancées du virage (quart : 3 par défaut, demi : 6)
+  jour?: number;                 // cm — vide entre les 2 volées d'un demi-tournant à palier
+  diametre?: number;             // cm — hélicoïdal : diamètre extérieur
+  diametrePoteau?: number;       // cm — hélicoïdal : diamètre du noyau central
+  structure: EscalierStructure;
+  rampe: EscalierRampe;
+  contremarches: boolean;
+  epaisseurMarche?: number;      // cm — 4 par défaut
+  hauteurPassage?: number;       // cm — échappée minimale sous le plancher du niveau desservi (190 par défaut) : détermine la trémie
+  jeuTremie?: number;            // cm — marge de la trémie autour de l'escalier (0 par défaut)
+  materiau: EscalierMateriau;
+  couleur?: string;              // hex — remplace la couleur des marches
 }
 
 export interface Maison {
@@ -593,6 +640,7 @@ export function reamorcerCompteurId(niveaux: Niveau[]): void {
     (n.circuitsManuels ?? []).forEach(m => { max = Math.max(max, m.id); });
     Object.values(n.liaisonWaypoints ?? {}).forEach(liste => liste.forEach(w => { max = Math.max(max, w.id); }));
     Object.values(n.boitesDerivation ?? {}).forEach(liste => liste.forEach(b => { max = Math.max(max, b.id); }));
+    (n.escaliers ?? []).forEach(e => { max = Math.max(max, e.id); });
   });
   if (max >= _uidM) _uidM = max;
 }
@@ -636,7 +684,8 @@ export function dedupliquerIds(niveaux: Niveau[]): { niveaux: Niveau[]; correcti
       return { ...m, id: nouvMId };
     });
     const zones = (n.zones ?? []).map(z => ({ ...z, id: prendre(z.id), ouvertures: z.ouvertures ? z.ouvertures.map(o => ({ ...o, id: prendre(o.id) })) : z.ouvertures }));
-    return { ...n, id: nouvId, pieces, ...(n.zones ? { zones } : {}), circuitsManuels: n.circuitsManuels ? circuitsManuels : n.circuitsManuels };
+    const escaliers = (n.escaliers ?? []).map(e => ({ ...e, id: prendre(e.id) }));
+    return { ...n, id: nouvId, pieces, ...(n.zones ? { zones } : {}), ...(n.escaliers ? { escaliers } : {}), circuitsManuels: n.circuitsManuels ? circuitsManuels : n.circuitsManuels };
   });
 
   if (corrections === 0) return { niveaux, corrections: 0 };

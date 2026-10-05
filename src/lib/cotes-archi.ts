@@ -16,7 +16,7 @@ const RANG_HORS_TOUT = 3;
 // Mesurée sur la face intérieure FINIE (ce que l'on relève sur place).
 export function cotesOuvertures(piece: Piece, pieces: Piece[]): Cote[] {
   const c = piece.contour, n = c.length;
-  const { utile } = geometrieMurs(piece);
+  const { utile, utileFin } = geometrieMurs(piece);
   const out: Cote[] = [];
   c.forEach((a, i) => {
     const ops = ouverturesEffectivesMur(pieces, piece, i);
@@ -25,7 +25,7 @@ export function cotesOuvertures(piece: Piece, pieces: Piece[]): Cote[] {
     const L = Math.hypot(b.x - a.x, b.y - a.y);
     if (L < 1e-6) return;
     const u = { x: (b.x - a.x) / L, y: (b.y - a.y) / L };
-    const Au = utile[i], Bu = utile[(i + 1) % n];
+    const Au = utile[i], Bu = utileFin[i];
     const Lu = Math.hypot(Bu.x - Au.x, Bu.y - Au.y);
     if (Lu < 1e-6) return;
     const uu = { x: (Bu.x - Au.x) / Lu, y: (Bu.y - Au.y) / Lu };
