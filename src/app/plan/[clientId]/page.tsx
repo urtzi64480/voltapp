@@ -28,7 +28,7 @@ import {
   cheminSegment, longueurBranchesEclairage, centroidePoints, assombrirCouleur, pointsOndulesEntre,
   BoiteDerivation, migrerBoitesDerivation,
   Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, nouvelleVoiture, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
-  estCommande, estCommandeDouble, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre,
+  estCommande, estCommandeDouble, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M,
 } from "@/lib/maison-types";
 import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillageSymbolSvgString, PALETTE, labelAppareillage, labelAppareillagePlace, initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 import { cotesOuvertures, cotesExterieures, coteHorsTout } from "@/lib/cotes-archi";
@@ -1454,7 +1454,7 @@ function u_aide(u: UsagePorte): string {
 }
 
 const LABEL_OUVERTURE: Record<OuvertureType, string> = {
-  porte: "Porte", porte_coulissante: "Porte coulissante", porte_garage: "Porte de garage basculante", baie_vitree: "Baie vitrée coulissante", fenetre: "Fenêtre (1 ou 2 battants)", ouverture: "Ouverture murale",
+  porte: "Porte", porte_coulissante: "Porte coulissante", porte_garage: "Porte de garage basculante", baie_vitree: "Baie vitrée coulissante", fenetre: "Fenêtre", ouverture: "Ouverture murale",
 };
 
 function OuvertureIcon({ type, size = 16, color = "currentColor" }: { type: OuvertureType; size?: number; color?: string }) {
@@ -1892,7 +1892,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [zoom, setZoom] = useState(1);
   const [pasSnapCm, setPasSnapCm] = useState(1);
   // Retour visuel pendant le déplacement d'une pièce : proximité (≤ 10 cm) / alignement exact avec les sommets des autres pièces.
-  const [alignPiece, setAlignPiece] = useState<{ x?: { pos: number; ecartCm: number }; y?: { pos: number; ecartCm: number } } | null>(null);
+  const [alignPiece, setAlignPiece] = useState<{ x?: { pos: number; ecartCm: number }; y?: { pos: number; ecartCm: number }; mur?: { a: Point; dir: Point; ecartCm: number } } | null>(null);
   const [aimantActif, setAimantActif] = useState(false);
   reglageAimant.pasM = pasSnapCm / 100;
   reglageAimant.aimant = aimantActif;
@@ -2022,7 +2022,23 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             if (ey <= 10 && (!ay || ey < ay.ecartCm)) ay = { pos: c.y, ecartCm: ey };
           });
         });
-        setAlignPiece(ax || ay ? { x: ax, y: ay } : null);
+        // Murs obliques (tout angle) : un mur de la pièce déplacée parallèle à un mur d'une autre pièce → distance entre les deux droites.
+        let am: { a: Point; dir: Point; ecartCm: number } | undefined;
+        const ctrA = dragMode.startContour.map(pt => ({ x: pt.x + dxM, y: pt.y + dyM }));
+        const unit = (a: Point, b: Point) => { const L = Math.hypot(b.x - a.x, b.y - a.y); return L < 0.01 ? null : { x: (b.x - a.x) / L, y: (b.y - a.y) / L }; };
+        ctrA.forEach((a, i) => {
+          const b = ctrA[(i + 1) % ctrA.length];
+          const u = unit(a, b);
+          if (!u || Math.abs(u.x) < 1e-6 || Math.abs(u.y) < 1e-6) return;   // murs horizontaux/verticaux : déjà couverts par X / Y
+          (niveauA?.pieces ?? []).filter(p => p.id !== dragMode.pieceId).forEach(pc => pc.contour.forEach((f, j) => {
+            const g = pc.contour[(j + 1) % pc.contour.length];
+            const v = unit(f, g);
+            if (!v || Math.abs(u.x * v.y - u.y * v.x) > 0.01) return;      // pas parallèles (~0,6° de tolérance)
+            const ecartCm = Math.round(Math.abs(v.x * (a.y - f.y) - v.y * (a.x - f.x)) * 100);
+            if (ecartCm <= 10 && (!am || ecartCm < am.ecartCm)) am = { a: f, dir: v, ecartCm };
+          }));
+        });
+        setAlignPiece(ax || ay || am ? { x: ax, y: ay, mur: am } : null);
         updateNiveauActif(n => ({
           ...n,
           pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : {
@@ -2821,7 +2837,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }));
     setSelectedOuvertureId(null); setSelectedBoite(null);
   };
-  const modifierOuverture = (ouvertureId: number, patch: Partial<Pick<Ouverture, "largeur" | "hauteur" | "allege" | "charniere" | "ouvreVersInterieur" | "coulisseVers" | "usage" | "battants">>) => {
+  const modifierOuverture = (ouvertureId: number, patch: Partial<Pick<Ouverture, "largeur" | "hauteur" | "allege" | "charniere" | "ouvreVersInterieur" | "coulisseVers" | "usage">>) => {
     updateNiveauActif(n => ({
       ...n,
       pieces: n.pieces.map(p => ({
@@ -4817,42 +4833,6 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         vantail = { hinge: toScreen(hinge), bout: toScreen(bout), arc: arcM.map(toScreen) };
                       }
 
-                      // Fenêtre à battant(s) : un ou deux vantaux (trait + arc de débattement), comme une porte — calculés en mètres
-                      // puis projetés point par point. Double battant : charnières aux deux jambages, chaque vantail = demi-largeur.
-                      const vantauxFenetre: { hinge: Point; bout: Point; arc: Point[] }[] = [];
-                      const nbBattants = o.type === "fenetre" ? battantsFenetre(o) : 0;
-                      if (nbBattants > 0) {
-                        const largeurM = o.largeur / 100;
-                        const dxw = b.x - a.x, dyw = b.y - a.y;
-                        const longueurMur = Math.hypot(dxw, dyw) || 1;
-                        const dirX = dxw / longueurMur, dirY = dyw / longueurMur;
-                        const jambeA = { x: centreFace.x - dirX * (largeurM / 2), y: centreFace.y - dirY * (largeurM / 2) };
-                        const jambeB = { x: centreFace.x + dirX * (largeurM / 2), y: centreFace.y + dirY * (largeurM / 2) };
-                        let nx = -dirY, ny = dirX;
-                        const cPiece = centroide(piece.contour);
-                        if (nx * (cPiece.x - centreM.x) + ny * (cPiece.y - centreM.y) < 0) { nx = -nx; ny = -ny; }
-                        if (o.ouvreVersInterieur === false) { nx = -nx; ny = -ny; }
-                        const ajouterVantail = (hinge: Point, autre: Point, longM: number) => {
-                          const bout = { x: hinge.x + nx * longM, y: hinge.y + ny * longM };
-                          const ang1 = Math.atan2(bout.y - hinge.y, bout.x - hinge.x), ang2 = Math.atan2(autre.y - hinge.y, autre.x - hinge.x);
-                          let delta = ang2 - ang1;
-                          while (delta > Math.PI) delta -= 2 * Math.PI;
-                          while (delta < -Math.PI) delta += 2 * Math.PI;
-                          const N = 8;
-                          const arcM: Point[] = [];
-                          for (let k = 0; k <= N; k++) {
-                            const ang = ang1 + delta * (k / N);
-                            arcM.push({ x: hinge.x + longM * Math.cos(ang), y: hinge.y + longM * Math.sin(ang) });
-                          }
-                          vantauxFenetre.push({ hinge: toScreen(hinge), bout: toScreen(bout), arc: arcM.map(toScreen) });
-                        };
-                        if (nbBattants === 2) {
-                          ajouterVantail(jambeA, centreFace, largeurM / 2);
-                          ajouterVantail(jambeB, centreFace, largeurM / 2);
-                        } else if (o.charniere === "droite") ajouterVantail(jambeB, jambeA, largeurM);
-                        else ajouterVantail(jambeA, jambeB, largeurM);
-                      }
-
                       return (
                         <g key={`ouv-${o.id}`} onPointerDown={e => onOuverturePointerDown(piece, o, e)}
                           style={{ cursor: mode === "select" && !placementType && !placingTableau && !placingOuverture ? (piece.verrouillee ? "pointer" : "grab") : "default" }}>
@@ -4905,12 +4885,6 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                               <polyline points={vantail.arc.map(p => `${p.x},${p.y}`).join(" ")} fill="none" stroke={couleur} strokeWidth={1} strokeDasharray="3,2" />
                             </>
                           )}
-                          {vantauxFenetre.map((v, k) => (
-                            <g key={`vf-${k}`} pointerEvents="none">
-                              <line x1={v.hinge.x} y1={v.hinge.y} x2={v.bout.x} y2={v.bout.y} stroke={couleur} strokeWidth={1.2} />
-                              <polyline points={v.arc.map(p => `${p.x},${p.y}`).join(" ")} fill="none" stroke={couleur} strokeWidth={0.9} strokeDasharray="3,2" />
-                            </g>
-                          ))}
                           {isSel && <circle cx={pC.x} cy={pC.y} r={largeurPx / 2 + 6} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
                         </g>
                       );
@@ -5437,14 +5411,22 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
               {dragMode.kind === "piece" && alignPiece && (() => {
                 const COUL_OK = "#16A34A", COUL_PROCHE = "#F59E0B";
-                const items: { axe: "X" | "Y"; pos: number; ecartCm: number }[] = [
+                const items: { axe: "X" | "Y" | "Mur"; pos: number; ecartCm: number }[] = [
                   ...(alignPiece.x ? [{ axe: "X" as const, ...alignPiece.x }] : []),
                   ...(alignPiece.y ? [{ axe: "Y" as const, ...alignPiece.y }] : []),
+                  ...(alignPiece.mur ? [{ axe: "Mur" as const, pos: 0, ecartCm: alignPiece.mur.ecartCm }] : []),
                 ];
                 return (
                   <g style={{ pointerEvents: "none" }}>
+                    {alignPiece.mur && (() => {
+                      const m = alignPiece.mur, ok = m.ecartCm === 0, col = ok ? COUL_OK : COUL_PROCHE;
+                      const p1 = toScreen({ x: m.a.x - m.dir.x * 200, y: m.a.y - m.dir.y * 200 });
+                      const p2 = toScreen({ x: m.a.x + m.dir.x * 200, y: m.a.y + m.dir.y * 200 });
+                      return <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke={col} strokeWidth={ok ? 2 : 1} strokeDasharray="4,3" opacity={ok ? 0.95 : 0.6} />;
+                    })()}
                     {items.map(it => {
                       const ok = it.ecartCm === 0, col = ok ? COUL_OK : COUL_PROCHE;
+                      if (it.axe === "Mur") return null;
                       const q = it.axe === "X" ? toScreen({ x: it.pos, y: 0 }) : toScreen({ x: 0, y: it.pos });
                       return it.axe === "X"
                         ? <line key="ax" x1={q.x} y1={0} x2={q.x} y2={H} stroke={col} strokeWidth={ok ? 2 : 1} strokeDasharray="4,3" opacity={ok ? 0.95 : 0.6} />
@@ -5452,7 +5434,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     })}
                     {items.map((it, i) => {
                       const ok = it.ecartCm === 0, col = ok ? COUL_OK : COUL_PROCHE;
-                      const txt = ok ? `${it.axe} : aligné ✔` : `${it.axe} : à ${it.ecartCm} cm de l'alignement`;
+                      const nomAxe = it.axe === "Mur" ? "Mur oblique" : it.axe;
+                      const txt = ok ? `${nomAxe} : aligné ✔` : `${nomAxe} : à ${it.ecartCm} cm de l'alignement`;
                       const w = txt.length * 7 + 16;
                       return (
                         <g key={`b${it.axe}`} transform={`translate(${W / 2 - w / 2} ${12 + i * 28})`} fontFamily="monospace">
@@ -6159,48 +6142,6 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         onChange={e => { if (e.target.value !== "") modifierOuverture(o.id, { allege: Number(e.target.value) }); }} />
                     </div>
                   )}
-                  {o.type === "fenetre" && (() => {
-                    const nb = battantsFenetre(o);
-                    const bouton = (actif: boolean, label: string, onClick: () => void) => (
-                      <button onClick={onClick}
-                        className={`flex-1 !text-xs px-2 py-1 rounded-md border transition-colors ${
-                          actif ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"
-                        }`}>
-                        {label}
-                      </button>
-                    );
-                    return (
-                      <>
-                        <div className="flex items-center gap-2 text-xs text-ink-500">
-                          <span className="shrink-0 w-24">Battants</span>
-                          <div className="flex gap-1 flex-1">
-                            {bouton(nb === 0, "Fixe", () => modifierOuverture(o.id, { battants: 0 }))}
-                            {bouton(nb === 1, "Simple", () => modifierOuverture(o.id, { battants: 1 }))}
-                            {bouton(nb === 2, "Double", () => modifierOuverture(o.id, { battants: 2 }))}
-                          </div>
-                        </div>
-                        {nb === 1 && (
-                          <div className="flex items-center gap-2 text-xs text-ink-500">
-                            <span className="shrink-0 w-24">Charnière</span>
-                            <div className="flex gap-1 flex-1">
-                              {bouton((o.charniere ?? "gauche") === "gauche", "Gauche", () => modifierOuverture(o.id, { charniere: "gauche" }))}
-                              {bouton(o.charniere === "droite", "Droite", () => modifierOuverture(o.id, { charniere: "droite" }))}
-                            </div>
-                          </div>
-                        )}
-                        {nb > 0 && (
-                          <div className="flex items-center gap-2 text-xs text-ink-500">
-                            <span className="shrink-0 w-24">Ouvre vers</span>
-                            <div className="flex gap-1 flex-1">
-                              {bouton(o.ouvreVersInterieur !== false, "Intérieur", () => modifierOuverture(o.id, { ouvreVersInterieur: true }))}
-                              {bouton(o.ouvreVersInterieur === false, "Extérieur", () => modifierOuverture(o.id, { ouvreVersInterieur: false }))}
-                            </div>
-                          </div>
-                        )}
-                        {nb > 0 && <p className="text-[11px] text-ink-400">S'ouvre en 3D en cliquant dessus ou depuis « Ouvrants ».</p>}
-                      </>
-                    );
-                  })()}
                   {o.type === "porte" && (
                     <>
                       <div className="flex items-center gap-2 text-xs text-ink-500">
