@@ -72,7 +72,7 @@ const CIRCUIT_KEYS_MANUELS = Object.keys(CIRCUITS).filter(k => !["general", "par
 // Réglage de précision du plan (modifiable dans la barre d'outils) : pas de la grille au centimètre par défaut,
 // aimantation aux sommets des autres pièces désactivée par défaut, Alt = désactivation momentanée.
 // Variable de module : lue au moment du geste par tous les outils (dessin, sommets, déplacements…).
-const reglageAimant = { pasM: 0.01, aimant: false, alt: false };
+const reglageAimant = { pasM: 0.01, aimant: false, alt: false, murs: true };
 
 // Couleurs de fond proposées pour une pièce sur le plan 2D (pastel).
 const COULEURS_FOND_PIECE: { nom: string; hex: string }[] = [
@@ -92,6 +92,80 @@ type AlignInfo = {
   mur?: { a: Point; dir: Point; ecartCm: number; kM: FaceKind; kO: FaceKind };
   coin?: { m: Point; o: Point; dxCm: number; dyCm: number; kM: FaceKind; kO: FaceKind };
 };
+
+// ─── Alignement automatique des segments sur les murs adjacents ──────────────────────────────────────
+// Un sommet qu'on crée ou qu'on déplace s'aligne sur : l'horizontale / la verticale, la parallèle ou la perpendiculaire
+// d'un mur voisin (pour chacun des segments qui l'entourent), ou le prolongement d'un mur voisin. Deux contraintes
+// compatibles se combinent (le sommet tombe alors à l'intersection exacte).
+type SegRef = { a: Point; b: Point };
+type ResultatAlignMurs = { point: Point; lignes: { q: Point; d: Point }[]; labels: string[] };
+type ContrainteAlign = { q: Point; d: Point; dist: number; label: string };
+
+function segmentsReferenceNiveau(niveau: Niveau | null, pieceId?: number, sommetIndex?: number): SegRef[] {
+  if (!niveau) return [];
+  const res: SegRef[] = [];
+  niveau.pieces.forEach(pc => {
+    const n = pc.contour.length;
+    pc.contour.forEach((a, i) => {
+      if (pc.id === pieceId && sommetIndex !== undefined && (i === sommetIndex || (i + 1) % n === sommetIndex)) return;
+      res.push({ a, b: pc.contour[(i + 1) % n] });
+    });
+  });
+  return res;
+}
+
+function alignerSurMurs(pt: Point, voisins: Point[], refs: SegRef[], seuilM: number): ResultatAlignMurs | null {
+  const unite = (a: Point, b: Point) => { const L = Math.hypot(b.x - a.x, b.y - a.y); return L < 0.01 ? null : { x: (b.x - a.x) / L, y: (b.y - a.y) / L }; };
+  const proches = refs.filter(r => distanceAuSegment(pt, r.a, r.b) <= 3);
+  const dirs: { d: Point; label: string }[] = [
+    { d: { x: 1, y: 0 }, label: "Segment horizontal" },
+    { d: { x: 0, y: 1 }, label: "Segment vertical" },
+  ];
+  for (const r of proches) {
+    const u = unite(r.a, r.b);
+    if (!u) continue;
+    dirs.push({ d: u, label: "Segment parallèle au mur adjacent" });
+    dirs.push({ d: { x: -u.y, y: u.x }, label: "Segment perpendiculaire au mur adjacent" });
+  }
+  const contraintes: ContrainteAlign[] = [];
+  for (const q of voisins) {
+    if (Math.hypot(pt.x - q.x, pt.y - q.y) < 0.05) continue;
+    let best: ContrainteAlign | null = null;
+    for (const { d, label } of dirs) {
+      const dist = Math.abs(d.x * (pt.y - q.y) - d.y * (pt.x - q.x));
+      if (dist <= seuilM && (!best || dist < best.dist)) best = { q, d, dist, label };
+    }
+    if (best) contraintes.push(best);
+  }
+  let colin: ContrainteAlign | null = null;
+  for (const r of proches) {
+    const u = unite(r.a, r.b);
+    if (!u) continue;
+    const dist = Math.abs(u.x * (pt.y - r.a.y) - u.y * (pt.x - r.a.x));
+    if (dist <= seuilM && (!colin || dist < colin.dist)) colin = { q: r.a, d: u, dist, label: "Point sur le prolongement du mur adjacent" };
+  }
+  if (colin) contraintes.push(colin);
+  if (contraintes.length === 0) return null;
+  contraintes.sort((a, b) => a.dist - b.dist);
+  const c1 = contraintes[0], c2 = contraintes[1];
+  const t1 = (pt.x - c1.q.x) * c1.d.x + (pt.y - c1.q.y) * c1.d.y;
+  let point: Point = { x: c1.q.x + c1.d.x * t1, y: c1.q.y + c1.d.y * t1 };
+  const lignes = [{ q: c1.q, d: c1.d }];
+  const labels = [c1.label];
+  if (c2) {
+    const cross = c1.d.x * c2.d.y - c1.d.y * c2.d.x;
+    if (Math.abs(cross) > 0.05) {
+      const t = ((c2.q.x - c1.q.x) * c2.d.y - (c2.q.y - c1.q.y) * c2.d.x) / cross;
+      const inter = { x: c1.q.x + c1.d.x * t, y: c1.q.y + c1.d.y * t };
+      if (Math.hypot(inter.x - pt.x, inter.y - pt.y) <= seuilM * 2.5) { point = inter; lignes.push({ q: c2.q, d: c2.d }); labels.push(c2.label); }
+    }
+  }
+  return { point: { x: Number(point.x.toFixed(3)), y: Number(point.y.toFixed(3)) }, lignes, labels };
+}
+
+function rectangleDepuis(a: Point, b: Point): Point[] {
+  return [{ x: a.x, y: a.y }, { x: b.x, y: a.y }, { x: b.x, y: b.y }, { x: a.x, y: b.y }];
+}
 
 function arrondiGrille(v: number, pas: number = reglageAimant.pasM): number {
   return Number((Math.round(v / pas) * pas).toFixed(4));
@@ -158,11 +232,13 @@ function snapAvecAlignement(m: Point, candidats: Point[], seuilM: number): Resul
   return { point: { x, y }, guideX, guideY };
 }
 
-function ReglageAimant({ pasCm, setPasCm, aimant, setAimant }: { pasCm: number; setPasCm: (v: number) => void; aimant: boolean; setAimant: (v: boolean) => void }) {
+function ReglageAimant({ pasCm, setPasCm, aimant, setAimant, murs, setMurs }: { pasCm: number; setPasCm: (v: number) => void; aimant: boolean; setAimant: (v: boolean) => void; murs: boolean; setMurs: (v: boolean) => void }) {
   return (
     <div className="flex items-center gap-1">
       <button onClick={() => setAimant(!aimant)} className={`btn-ghost !px-2 !py-1 !text-xs ${aimant ? "!bg-ink-900 !text-volt-400" : ""}`}
         title="Aimanter aux sommets des autres pièces (maintenir Alt pour désactiver momentanément)">Aimant</button>
+      <button onClick={() => setMurs(!murs)} className={`btn-ghost !px-2 !py-1 !text-xs ${murs ? "!bg-ink-900 !text-volt-400" : ""}`}
+        title="Aligner automatiquement les segments créés ou déplacés sur les murs adjacents : horizontal/vertical, parallèle, perpendiculaire, prolongement (maintenir Alt pour désactiver momentanément)">Murs ∥</button>
       <select value={pasCm} onChange={e => setPasCm(Number(e.target.value))} title="Pas de placement"
         className="rounded-lg border border-ink-200 bg-white px-1 py-1 text-xs text-ink-900">
         <option value={1}>1 cm</option>
@@ -1801,6 +1877,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null);
   const [selectedZoneOuv, setSelectedZoneOuv] = useState<{ zoneId: number; ouvId: number } | null>(null);
   const [drawingPoints, setDrawingPoints] = useState<Point[]>([]);
+  // Dessin d'une pièce : rectangle à 4 côtés (2 clics) ou forme libre point par point.
+  const [formeDessin, setFormeDessin] = useState<"libre" | "rectangle">("rectangle");
+  const [alignMurs, setAlignMurs] = useState(true);
+  const [alignSeg, setAlignSeg] = useState<ResultatAlignMurs | null>(null);
+  reglageAimant.murs = alignMurs;
   const [pendingContour, setPendingContour] = useState<Point[] | null>(null);
   const [cursorPx, setCursorPx] = useState<Point | null>(null);
 
@@ -2011,8 +2092,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const niveauCourant = niveaux.find(n => n.id === niveauActifId) ?? null;
         const candidats = pointsReferenceNiveau(niveauCourant, dragMode.pieceId, dragMode.vertexIndex);
         const seuilM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
-        const { point: m, guideX, guideY } = snapAvecAlignement(raw, candidats, seuilM);
-        setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
+        const base = snapAvecAlignement(raw, candidats, seuilM);
+        let m = base.point;
+        let al: ResultatAlignMurs | null = null;
+        const pcV = niveauCourant?.pieces.find(p => p.id === dragMode.pieceId);
+        if (niveauCourant && pcV && reglageAimant.murs && !reglageAimant.alt) {
+          const nV = pcV.contour.length, v = dragMode.vertexIndex;
+          al = alignerSurMurs(raw, [pcV.contour[(v - 1 + nV) % nV], pcV.contour[(v + 1) % nV]], segmentsReferenceNiveau(niveauCourant, pcV.id, v), seuilM);
+          if (al) m = al.point;
+        }
+        setAlignSeg(al);
+        setSnapGuide(!al && (base.guideX !== undefined || base.guideY !== undefined) ? { x: base.guideX, y: base.guideY } : null);
         updateNiveauActif(n => ({
           ...n,
           pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : {
@@ -2251,6 +2341,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       setDragMode({ kind: "none" });
       setSnapGuide(null);
       setAlignPiece(null);
+      setAlignSeg(null);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -2297,6 +2388,46 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const cxM = (minX + maxX) / 2, cyM = (minY + maxY) / 2;
     setZoom(newZoom);
     setPan({ x: rect.width / 2 - cxM * PX_PER_M * newZoom, y: rect.height / 2 - cyM * PX_PER_M * newZoom });
+  };
+
+  // Point de dessin (curseur) : grille / aimant aux sommets, puis alignement automatique sur les murs adjacents.
+  const snapDessin = (m: Point): ResultatSnap & { align?: ResultatAlignMurs } => {
+    const seuilM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
+    const base = snapAvecAlignement(m, [...pointsReferenceNiveau(niveauActif), ...drawingPoints], seuilM);
+    if (!reglageAimant.murs || reglageAimant.alt) return base;
+    const voisins = formeDessin === "rectangle" ? [] : drawingPoints.slice(-1);
+    const al = alignerSurMurs(m, voisins, segmentsReferenceNiveau(niveauActif), seuilM);
+    return al ? { point: al.point, align: al } : base;
+  };
+
+  // Plier un mur : insère un sommet sur le segment (la forme ne change pas à l'insertion), puis le fait glisser.
+  const insererSommetPiece = (pieceId: number, segIndex: number, e: React.PointerEvent) => {
+    e.stopPropagation();
+    const piece = niveauActif?.pieces.find(p => p.id === pieceId);
+    if (!piece || piece.verrouillee || cheminementDessin || liaisonLumiereMode) return;
+    const n = piece.contour.length;
+    const a = piece.contour[segIndex], b = piece.contour[(segIndex + 1) % n];
+    const rect = svgRef.current?.getBoundingClientRect();
+    let t = 0.5;
+    if (rect) t = Math.min(0.95, Math.max(0.05, positionSurSegment(toMeters(e.clientX - rect.left, e.clientY - rect.top), a, b)));
+    const pt = { x: Number((a.x + (b.x - a.x) * t).toFixed(3)), y: Number((a.y + (b.y - a.y) * t).toFixed(3)) };
+    updateNiveauActif(niv => ({
+      ...niv,
+      pieces: niv.pieces.map(p => {
+        if (p.id !== pieceId) return p;
+        const contour = [...p.contour.slice(0, segIndex + 1), pt, ...p.contour.slice(segIndex + 1)];
+        const mursAvant = mursDe(p);
+        const murs = p.murs ? [...mursAvant.slice(0, segIndex + 1), { ...mursAvant[segIndex] }, ...mursAvant.slice(segIndex + 1)] : undefined;
+        const ouvertures = (p.ouvertures ?? []).map(o => {
+          if (o.segIndex > segIndex) return { ...o, segIndex: o.segIndex + 1 };
+          if (o.segIndex < segIndex) return o;
+          return o.position < t ? { ...o, position: o.position / t } : { ...o, segIndex: segIndex + 1, position: (o.position - t) / (1 - t) };
+        });
+        return { ...p, contour, murs, ouvertures };
+      }),
+    }));
+    if (editingSegment?.pieceId === pieceId) setEditingSegment(null);
+    setDragMode({ kind: "vertex", pieceId, vertexIndex: segIndex + 1 });
   };
 
   const finirDessin = (points: Point[]) => {
@@ -3446,13 +3577,19 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const m = toMeters(px, py);
 
     if (mode === "dessiner") {
+      if (formeDessin === "rectangle") {
+        const { point: pr } = snapDessin(m);
+        if (drawingPoints.length === 0) { setDrawingPoints([pr]); return; }
+        const p0 = drawingPoints[0];
+        if (Math.abs(pr.x - p0.x) < 0.1 || Math.abs(pr.y - p0.y) < 0.1) return;
+        finirDessin(rectangleDepuis(p0, pr));
+        return;
+      }
       if (drawingPoints.length >= 3) {
         const first = toScreen(drawingPoints[0]);
         if (Math.hypot(px - first.x, py - first.y) < 12) { finirDessin(drawingPoints); return; }
       }
-      const seuilM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
-      const candidats = [...pointsReferenceNiveau(niveauActif), ...drawingPoints];
-      const { point: mSnap } = snapAvecAlignement(m, candidats, seuilM);
+      const { point: mSnap } = snapDessin(m);
       setDrawingPoints(pts => [...pts, mSnap]);
       return;
     }
@@ -4107,12 +4244,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const selectedPiece = niveauActif?.pieces.find(p => p.id === selectedPieceId) ?? null;
 
   const seuilAlignementM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
-  let curseurSnap: ResultatSnap | null = null;
-  if (mode === "dessiner" && cursorPx) {
-    const mCurseur = toMeters(cursorPx.x, cursorPx.y);
-    const candidatsCurseur = [...pointsReferenceNiveau(niveauActif), ...drawingPoints];
-    curseurSnap = snapAvecAlignement(mCurseur, candidatsCurseur, seuilAlignementM);
-  }
+  let curseurSnap: (ResultatSnap & { align?: ResultatAlignMurs }) | null = null;
+  if (mode === "dessiner" && cursorPx) curseurSnap = snapDessin(toMeters(cursorPx.x, cursorPx.y));
+  const alignAffiche: ResultatAlignMurs | null = dragMode.kind === "vertex" ? alignSeg : mode === "dessiner" ? (curseurSnap?.align ?? null) : null;
   const curseurCl = mode === "cloison" && cursorPx && !cloisonEnAttente ? curseurCloison(toMeters(cursorPx.x, cursorPx.y)) : null;
   const cloisonAffichee: Point[] = cloisonEnAttente ? cloisonEnAttente.chemin : cloisonPoints;
   const curseurZ = mode === "zone" && cursorPx && !zoneEnAttente ? curseurZone(toMeters(cursorPx.x, cursorPx.y)) : null;
@@ -4316,7 +4450,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               title={modeFocus ? "Quitter le plein écran (Échap)" : "Plein écran"}>
               {modeFocus ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
             </button>
-            <ReglageAimant pasCm={pasSnapCm} setPasCm={setPasSnapCm} aimant={aimantActif} setAimant={setAimantActif} />
+            <ReglageAimant pasCm={pasSnapCm} setPasCm={setPasSnapCm} aimant={aimantActif} setAimant={setAimantActif} murs={alignMurs} setMurs={setAlignMurs} />
             {niveauActif && niveauActif.pieces.length > 0 && (
               <select value={selectedPieceId ?? ""} onChange={e => { if (e.target.value !== "") selectionnerPiece(Number(e.target.value)); }}
                 title="Sélectionner une pièce par son nom (utile quand elle est cachée sous une autre — sinon Ctrl+clic pour descendre d'une pièce)"
@@ -4367,7 +4501,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               <button onClick={() => setShowPrintForm(true)} className="btn-ghost"><Printer size={15} /> Imprimer</button>
             )}
             <Link href={`/predevis/${clientId}${qsProjet(projet.id)}`} className="btn-ghost"><Receipt size={15} /> Pré-devis</Link>
-            <ReglageAimant pasCm={pasSnapCm} setPasCm={setPasSnapCm} aimant={aimantActif} setAimant={setAimantActif} />
+            <ReglageAimant pasCm={pasSnapCm} setPasCm={setPasSnapCm} aimant={aimantActif} setAimant={setAimantActif} murs={alignMurs} setMurs={setAlignMurs} />
             {niveauActif && niveauActif.pieces.length > 0 && (
               <select value={selectedPieceId ?? ""} onChange={e => { if (e.target.value !== "") selectionnerPiece(Number(e.target.value)); }}
                 title="Sélectionner une pièce par son nom (utile quand elle est cachée sous une autre — sinon Ctrl+clic pour descendre d'une pièce)"
@@ -4452,6 +4586,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           <button onClick={entrerModeDessiner} className={`btn-ghost !text-xs ${mode === "dessiner" ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <Pencil size={13} /> Dessiner une pièce
           </button>
+          {mode === "dessiner" && (
+            <div className="flex items-center gap-1">
+              <button onClick={() => { setFormeDessin("rectangle"); setDrawingPoints([]); }} title="Rectangle à 4 côtés : 2 clics (un coin, puis le coin opposé). Tu pourras ensuite plier ses murs en forme complexe."
+                className={`btn-ghost !px-2 !py-1 !text-xs ${formeDessin === "rectangle" ? "!bg-ink-900 !text-volt-400" : ""}`}>▭ Rectangle</button>
+              <button onClick={() => { setFormeDessin("libre"); setDrawingPoints([]); }} title="Forme libre : un clic par sommet"
+                className={`btn-ghost !px-2 !py-1 !text-xs ${formeDessin === "libre" ? "!bg-ink-900 !text-volt-400" : ""}`}>Libre</button>
+            </div>
+          )}
           <button onClick={entrerModeCloison} disabled={!niveauActif}
             title="Monter une cloison (mur intérieur) : clic pour chaque point, Entrée pour terminer. Elle ne modifie aucune pièce : on peut ensuite la nommer, la déplacer à la souris, y percer une porte ou la supprimer"
             className={`btn-ghost !text-xs disabled:opacity-40 ${mode === "zone" && zoneCloisonSeule ? "!bg-ink-900 !text-volt-400" : ""}`}>
@@ -4766,6 +4908,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                           onDoubleClick={e => { e.stopPropagation(); supprimerSommetPiece(piece.id, i); }}>
                           <title>{peutSupprimer ? "Double-clic pour supprimer ce sommet" : "Une pièce doit garder au moins 3 sommets"}</title>
                         </circle>
+                      );
+                    })}
+                    {isSelected && mode === "select" && !piece.verrouillee && !placementType && piece.contour.map((pt, i) => {
+                      const b = piece.contour[(i + 1) % piece.contour.length];
+                      const pa = toScreen(pt), pb = toScreen(b);
+                      if (Math.hypot(pb.x - pa.x, pb.y - pa.y) < 40) return null;
+                      const nIn = normaleInterieure(piece.contour, i);
+                      const mx = (pa.x + pb.x) / 2 - nIn.x * 16, my = (pa.y + pb.y) / 2 - nIn.y * 16;
+                      return (
+                        <g key={`plus${i}`} style={{ cursor: "copy" }} onPointerDown={e => insererSommetPiece(piece.id, i, e)}>
+                          <circle cx={mx} cy={my} r={8} fill="#F59E0B" stroke="#fff" strokeWidth={1.5} />
+                          <path d={`M${mx - 4} ${my}H${mx + 4}M${mx} ${my - 4}V${my + 4}`} stroke="#fff" strokeWidth={2} strokeLinecap="round" />
+                          <title>Glisser pour plier ce mur (ajoute un sommet) — il s'aligne sur les murs adjacents</title>
+                        </g>
                       );
                     })}
                     {!piece.masquerDimensions && (() => {
@@ -5479,6 +5635,28 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 );
               })()}
 
+              {alignAffiche && (() => {
+                const labels = Array.from(new Set(alignAffiche.labels));
+                return (
+                  <g style={{ pointerEvents: "none" }}>
+                    {alignAffiche.lignes.map((l, i) => {
+                      const p1 = toScreen({ x: l.q.x - l.d.x * 200, y: l.q.y - l.d.y * 200 });
+                      const p2 = toScreen({ x: l.q.x + l.d.x * 200, y: l.q.y + l.d.y * 200 });
+                      return <line key={i} x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="#16A34A" strokeWidth={1.5} strokeDasharray="4,3" opacity={0.9} />;
+                    })}
+                    {labels.map((txt, i) => {
+                      const t = `${txt} ✔`, w = t.length * 6.6 + 16;
+                      return (
+                        <g key={`al${i}`} transform={`translate(${W / 2 - w / 2} ${12 + i * 28})`} fontFamily="monospace">
+                          <rect width={w} height={22} rx={6} fill="#fff" stroke="#16A34A" strokeWidth={1.5} />
+                          <text x={w / 2} y={15} textAnchor="middle" fontSize={11.5} fontWeight={700} fill="#15803D">{t}</text>
+                        </g>
+                      );
+                    })}
+                  </g>
+                );
+              })()}
+
               {guideActif?.x !== undefined && (() => {
                 const p = toScreen({ x: guideActif.x, y: 0 });
                 return <line x1={p.x} y1={0} x2={p.x} y2={H} stroke="#F59E0B" strokeWidth={1} strokeDasharray="4,3" opacity={0.7} />;
@@ -5547,7 +5725,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 );
               })()}
 
-              {mode === "dessiner" && drawingPoints.length > 0 && (
+              {mode === "dessiner" && drawingPoints.length > 0 && (formeDessin === "rectangle" ? (() => {
+                const p0 = drawingPoints[0], p1 = curseurSnap?.point ?? p0;
+                const rc = rectangleDepuis(p0, p1);
+                const pts = rc.map(toScreen).map(q => `${q.x},${q.y}`).join(" ");
+                const c0 = toScreen(p0);
+                return (
+                  <>
+                    <polygon points={pts} fill="#F59E0B" fillOpacity={0.12} stroke="#F59E0B" strokeWidth={2} strokeDasharray="6,4" />
+                    <circle cx={c0.x} cy={c0.y} r={7} fill="#F59E0B" stroke="#F59E0B" strokeWidth={2} />
+                    <EtiquetteLongueur key="rw" aPx={toScreen(rc[0])} bPx={toScreen(rc[1])} texte={`${Math.abs(p1.x - p0.x).toFixed(2)} m`} actif />
+                    <EtiquetteLongueur key="rh" aPx={toScreen(rc[1])} bPx={toScreen(rc[2])} texte={`${Math.abs(p1.y - p0.y).toFixed(2)} m`} actif />
+                  </>
+                );
+              })() : (
                 <>
                   <polyline
                     points={[...drawingPoints.map(toScreen), ...(curseurSnap ? [toScreen(curseurSnap.point)] : [])].map(p => `${p.x},${p.y}`).join(" ")}
@@ -5565,7 +5756,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     return <EtiquetteLongueur key="live" aPx={toScreen(last)} bPx={toScreen(curseurSnap!.point)} texte={`${distance(last, curseurSnap!.point).toFixed(2)} m`} actif />;
                   })()}
                 </>
-              )}
+              ))}
             </svg>
 
             {selectedPiece && mode === "select" && (
