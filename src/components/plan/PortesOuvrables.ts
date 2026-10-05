@@ -229,54 +229,70 @@ export function creerPorteCoulissante(p: { larg: number; haut: number; epMur: nu
   return { cadre, mobile };
 }
 
-// Baie vitrée coulissante à 2 vantaux : un vantail FIXE et un vantail MOBILE qui glisse, devant le fixe (rail avant),
-// de la moitié de la largeur. cote = +1 « droite » / −1 « gauche » : sens dans lequel le vantail mobile coulisse.
-// Fermée, le mobile occupe la moitié opposée ; ouverte, il recouvre le fixe et libère la moitié de la baie.
-// « cadre » : dormant fixe (+ vantail fixe) ; « mobile » : vantail à animer (position.x, voir appliquerOuverturePorte,
-// course = larg / 2). Le vitrage ne projette pas d'ombre : le soleil passe à travers.
-export function creerBaieVitree(p: { larg: number; haut: number; epMur: number; cote: number }): { cadre: THREE.Group; mobile: THREE.Group } {
+// Identifiant (clé de l'état ouvert / fermé) du vantail k d'une baie vitrée : le 1er garde l'id de l'ouverture, les suivants
+// s'en déduisent — chaque vantail s'ouvre et se ferme indépendamment (clic en 3D, ou onglet « Ouvrants »).
+export const idVantailBaie = (idOuverture: number, k: number): number => (k === 0 ? idOuverture : idOuverture + k * 10_000_000);
+
+// Baie vitrée coulissante à N vantaux (1 à 4), TOUS de même largeur et TOUS mobiles, chacun sur son propre rail (rails décalés
+// en profondeur : les vantaux se croisent sans se toucher). Fermée, les vantaux se recouvrent de 3 cm ; chacun glisse vers le
+// côté « cote » (+1 droite / −1 gauche) jusqu'à se ranger sur la pile de l'autre extrémité de la baie — sauf celui qui est déjà de
+// ce côté, qui part dans l'autre sens. Une baie à 1 vantail glisse devant le mur voisin.
+// « cadre » : dormant fixe ; chaque entrée de « vantaux » : { groupe, signe, course } à animer avec appliquerOuverturePorte
+// (position.x = signe × course × ouverture). Le vitrage ne projette pas d'ombre : le soleil passe à travers.
+export function creerBaieVitree(p: { larg: number; haut: number; epMur: number; cote: number; nb: number; faceInt?: number }): {
+  cadre: THREE.Group; vantaux: { groupe: THREE.Group; signe: number; course: number }[];
+} {
   const { larg, haut, epMur, cote } = p;
+  const nb = Math.max(1, Math.min(4, Math.round(p.nb)));
   const cadre = new THREE.Group();
-  const mobile = new THREE.Group();
   const matAlu = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.4, metalness: 0.5 });
   const matVitre = new THREE.MeshStandardMaterial({ color: 0xbae6fd, transparent: true, opacity: 0.28, roughness: 0.05, depthWrite: false });
-  const prof = Math.min(0.12, epMur + 0.02);
+  const matPoignee = new THREE.MeshStandardMaterial({ color: 0xc7cdd3, metalness: 0.7, roughness: 0.3 });
+  const d = 0.03, pas = 0.034;                                   // épaisseur d'un vantail ; écart entre deux rails
+  const prof = Math.max(Math.min(0.12, epMur + 0.02), (nb - 1) * pas + d + 0.01);
 
-  // Dormant : 4 profilés sur le pourtour de l'ouverture + seuil.
-  const ep = 0.05;
-  const barre = (cible: THREE.Group, w: number, h: number, d: number, x: number, y: number, z: number) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), matAlu);
+  const barre = (cible: THREE.Group, w: number, h: number, dp: number, x: number, y: number, z: number) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, dp), matAlu);
     m.position.set(x, y, z);
     m.castShadow = true; m.receiveShadow = true;
     cible.add(m);
   };
+  // Dormant : 4 profilés sur le pourtour de l'ouverture + seuil.
+  const ep = 0.05;
   barre(cadre, ep, haut, prof, -(larg / 2 - ep / 2), haut / 2, 0);
   barre(cadre, ep, haut, prof, larg / 2 - ep / 2, haut / 2, 0);
   barre(cadre, larg, ep, prof, 0, haut - ep / 2, 0);
   barre(cadre, larg, 0.03, prof, 0, 0.015, 0);
 
-  // Un vantail = cadre alu (4 profilés fins) + vitre. cx : centre du vantail ; z : rail (avant / arrière).
-  const vantail = (cible: THREE.Group, cx: number, z: number) => {
-    const w = larg / 2 + 0.03;           // léger recouvrement central
-    const h = haut - ep - 0.035;
-    const y0 = 0.03;
-    const e = 0.04, d = 0.035;
-    barre(cible, e, h, d, cx - w / 2 + e / 2, y0 + h / 2, z);
-    barre(cible, e, h, d, cx + w / 2 - e / 2, y0 + h / 2, z);
-    barre(cible, w, e, d, cx, y0 + h - e / 2, z);
-    barre(cible, w, e, d, cx, y0 + e / 2, z);
+  const ov = 0.03;                                               // recouvrement entre vantaux voisins
+  const w = (larg + (nb - 1) * ov) / nb;                         // largeur de chaque vantail (identique pour tous)
+  const h = haut - ep - 0.035, y0 = 0.03, e = 0.04;
+  const iFin = cote > 0 ? nb - 1 : 0;                            // vantail déjà rangé du côté « glisse vers »
+  const vantaux: { groupe: THREE.Group; signe: number; course: number }[] = [];
+  for (let i = 0; i < nb; i++) {
+    const groupe = new THREE.Group();
+    const cx = -larg / 2 + w / 2 + i * (w - ov);
+    // Un seul vantail : posé devant la face intérieure du mur (il se range le long du mur voisin, visible) ; sinon, un rail par vantail.
+    const z = nb === 1 ? (p.faceInt ?? 0) * (epMur / 2 + d / 2 + 0.01) : (i - (nb - 1) / 2) * pas;
+    // Cadre alu du vantail (4 profilés fins) + vitre.
+    barre(groupe, e, h, d, cx - w / 2 + e / 2, y0 + h / 2, z);
+    barre(groupe, e, h, d, cx + w / 2 - e / 2, y0 + h / 2, z);
+    barre(groupe, w, e, d, cx, y0 + h - e / 2, z);
+    barre(groupe, w, e, d, cx, y0 + e / 2, z);
     const vitre = new THREE.Mesh(new THREE.BoxGeometry(w - 2 * e, h - 2 * e, 0.008), matVitre);
     vitre.position.set(cx, y0 + h / 2, z);
-    cible.add(vitre);
-  };
-  const xFixe = cote * (larg / 4);        // le fixe est du côté vers lequel le mobile glisse
-  vantail(cadre, xFixe, -0.022);
-  vantail(mobile, -xFixe, 0.022);          // le mobile démarre sur l'autre moitié
-  // Poignée du vantail mobile, côté bord de fermeture (milieu de la baie).
-  const poignee = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.18, 0.03), new THREE.MeshStandardMaterial({ color: 0xc7cdd3, metalness: 0.7, roughness: 0.3 }));
-  poignee.position.set(-xFixe + cote * (larg / 4 - 0.06), 1.05, 0.048);
-  mobile.add(poignee);
-  return { cadre, mobile };
+    groupe.add(vitre);
+
+    // Sens d'ouverture : vers « cote », sauf pour le vantail déjà de ce côté qui part dans l'autre sens.
+    const dir = nb === 1 ? cote : i === iFin ? -cote : cote;
+    const cible = nb === 1 ? cote * larg : dir * (larg / 2 - w / 2);   // 1 vantail : il se range devant le mur voisin
+    // Poignée côté opposé au sens d'ouverture (bord de fermeture), face intérieure.
+    const poignee = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.18, 0.03), matPoignee);
+    poignee.position.set(cx - dir * (w / 2 - 0.06), 1.05, z + d / 2 + 0.012);
+    groupe.add(poignee);
+    vantaux.push({ groupe, signe: Math.sign(cible - cx) || dir, course: Math.abs(cible - cx) });
+  }
+  return { cadre, vantaux };
 }
 
 // Porte de garage basculante : tablier plein à 3 rainures + poignée, suspendu à son bord haut. Le groupe « mobile » a son

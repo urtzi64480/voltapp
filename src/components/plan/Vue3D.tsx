@@ -12,10 +12,10 @@
 
 import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, battantsFenetre, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, HAUTEUR_PERSONNE_M, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, battantsFenetre, nbVantauxBaie, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, HAUTEUR_PERSONNE_M, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
-import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante, creerBaieVitree, creerPorteGarage, creerFenetreBattante } from "@/components/plan/PortesOuvrables";
+import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante, creerBaieVitree, idVantailBaie, creerPorteGarage, creerFenetreBattante } from "@/components/plan/PortesOuvrables";
 import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
 import { calculerEscalier, hauteurTotaleEscalierCm, EscalierEntrant } from "@/lib/escaliers";
 import { creerEscalier3D, geometrieSolPercee, aretesGardeCorpsTremie, creerGardeCorpsTremie } from "@/components/plan/Escalier3D";
@@ -298,7 +298,7 @@ export function construireMurAvecOuvertures(
       }
       appliquerOuverturePorte(reg, reg.defaut);
     }
-    // Baie vitrée coulissante (2 vantaux) : fermée par défaut ; le vantail mobile glisse devant le fixe.
+    // Baie vitrée coulissante (1 à 4 vantaux de même largeur, TOUS mobiles) : fermée par défaut ; chaque vantail s'ouvre seul.
     if (avecContenu && o.proprietaire && o.type === "baie_vitree") {
       const cote = o.coulisseVers === "gauche" ? -1 : 1;
       const centreOuv = (debut + fin) / 2;
@@ -306,15 +306,19 @@ export function construireMurAvecOuvertures(
       const pivot = new THREE.Group();
       pivot.position.set(a.x + ux * centreOuv + nx * decalage, hAllege, a.y + uy * centreOuv + ny * decalage);
       pivot.rotation.y = -angle;
-      const { cadre, mobile } = creerBaieVitree({ larg: fin - debut, haut: hB, epMur: epaisseur, cote });
-      pivot.add(cadre, mobile);
+      const { cadre, vantaux } = creerBaieVitree({ larg: fin - debut, haut: hB, epMur: epaisseur, cote, nb: nbVantauxBaie(o), faceInt: sensInterieur });
+      pivot.add(cadre);
+      vantaux.forEach(v => pivot.add(v.groupe));
       scene.add(pivot);
-      const reg: PorteRegistre = { id: o.id ?? -1, genre: "coulissante", mobile, signe: cote, course: (fin - debut) / 2, defaut: 0 };
-      if (o.id != null) {
-        pivot.traverse(obj => { obj.userData.porteId = o.id; });
-        enregistrerPorte?.(reg);
-      }
-      appliquerOuverturePorte(reg, reg.defaut);
+      vantaux.forEach((v, k) => {
+        const id = idVantailBaie(o.id ?? -1, k);
+        const reg: PorteRegistre = { id, genre: "coulissante", mobile: v.groupe, signe: v.signe, course: v.course, defaut: 0 };
+        if (o.id != null) {
+          v.groupe.traverse(obj => { obj.userData.porteId = id; });   // chaque vantail se clique séparément (pas le dormant)
+          enregistrerPorte?.(reg);
+        }
+        appliquerOuverturePorte(reg, reg.defaut);
+      });
     }
 
     // Porte de garage basculante : tablier plein suspendu à son bord haut ; fermée par défaut, elle bascule vers
@@ -692,7 +696,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
     (niveau.zones ?? []).forEach(z => (z.ouvertures ?? []).forEach(o => liveOuvParId.set(o.id, o)));
     const ouverturesVivantes = (ouvs: OuvertureEffective[]): OuvertureEffective[] => ouvs.map(o => {
       const l = o.id != null ? liveOuvParId.get(o.id) : undefined;
-      return l ? { ...o, usage: l.usage, charniere: l.charniere, ouvreVersInterieur: l.ouvreVersInterieur, coulisseVers: l.coulisseVers, battants: l.battants, montage: l.montage } : o;
+      return l ? { ...o, usage: l.usage, charniere: l.charniere, ouvreVersInterieur: l.ouvreVersInterieur, coulisseVers: l.coulisseVers, battants: l.battants, montage: l.montage, nbVantaux: l.nbVantaux } : o;
     });
     // Chaque porte construite s'inscrit ici : son ouverture initiale = celle déjà forcée par la vue, sinon sa valeur par défaut.
     const enregistrerPorte = (reg: PorteRegistre) => {
@@ -1321,7 +1325,10 @@ const Vue3D = forwardRef<Vue3DHandle, {
       if (o.type === "porte") liste.push({ id: o.id, label: LABEL_USAGE_PORTE[o.usage ?? "interieure"], lieu, defaut: 0 });
       else if (o.type === "porte_coulissante") liste.push({ id: o.id, label: o.montage === "galandage" ? "Porte à galandage" : "Porte coulissante", lieu, defaut: 0 });
       else if (o.type === "porte_garage") liste.push({ id: o.id, label: "Porte de garage", lieu, defaut: 0 });
-      else if (o.type === "baie_vitree") liste.push({ id: o.id, label: "Baie vitrée", lieu, defaut: 0 });
+      else if (o.type === "baie_vitree") {
+        const nb = nbVantauxBaie(o);
+        for (let k = 0; k < nb; k++) liste.push({ id: idVantailBaie(o.id, k), label: nb > 1 ? `Baie vitrée — vantail ${k + 1}/${nb}` : "Baie vitrée", lieu, defaut: 0 });
+      }
       else if (o.type === "fenetre") {
         const nb = battantsFenetre(o);
         if (nb > 0) liste.push({ id: o.id, label: nb === 2 ? "Fenêtre double battant" : "Fenêtre simple battant", lieu, defaut: 0 });
