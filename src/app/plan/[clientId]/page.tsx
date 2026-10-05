@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useState, useRef, useCallback, useEffect, Fragment } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo, Fragment } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
@@ -29,7 +29,12 @@ import {
   BoiteDerivation, migrerBoitesDerivation,
   Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, nouvelleVoiture, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
   estCommande, estCommandeDouble, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre,
+  Escalier, EscalierType, EscalierTournant,
 } from "@/lib/maison-types";
+import {
+  calculerEscalier, hauteurTotaleEscalierCm, escaliersEntrants as lireEscaliersEntrants, nouvelEscalier,
+  LABEL_ESCALIER_TYPE, LABEL_STRUCTURE, LABEL_RAMPE, LABEL_MATERIAU, COULEUR_MATERIAU, DIAMETRE_HELICE_DEFAUT_CM, DIAMETRE_POTEAU_DEFAUT_CM,
+} from "@/lib/escaliers";
 import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillageSymbolSvgString, PALETTE, labelAppareillage, labelAppareillagePlace, initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 import { cotesOuvertures, cotesExterieures, coteHorsTout } from "@/lib/cotes-archi";
 import { normaliserAngle } from "@/lib/soleil";
@@ -252,7 +257,8 @@ function ReglageAimant({ pasCm, setPasCm, aimant, setAimant, murs, setMurs }: { 
 
 // Repère de lecture des cotes d'une pièce : face intérieure finie des murs (ce qu'on mesure sur place).
 function repereCotes(piece: Piece): RepereCotes {
-  return { utile: geometrieMurs(piece).utile, epaisseurTotaleM: i => epaisseurTotaleM(piece, i) };
+  const g = geometrieMurs(piece);
+  return { utile: g.utile, utileFin: g.utileFin, epaisseurTotaleM: i => epaisseurTotaleM(piece, i) };
 }
 
 // Rendu d'une cote sur le plan 2D : ligne de cote décalée hors de la pièce (appareillage au
@@ -325,6 +331,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
     ...pieces.flatMap(p => p.contour),
     ...(n.zones ?? []).flatMap(z => z.contour),
     ...(n.tableauPos ? [n.tableauPos] : []),
+    ...(n.escaliers ?? []).flatMap(esc => { const c = calculerEscalier(esc, hauteurTotaleEscalierCm(esc, n)); return [{ x: c.emprise.minX, y: c.emprise.minY }, { x: c.emprise.maxX, y: c.emprise.maxY }]; }),
   ];
   if (allPts.length === 0) {
     return `<svg width="500" height="100"><text x="10" y="30" font-size="12" font-family="monospace">Aucune pièce dessinée</text></svg>`;
@@ -383,6 +390,19 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       });
     });
   });
+  // Escaliers de ce niveau : marches, flèche de montée, contour de la trémie (pointillés) à l'étage desservi.
+  (n.escaliers ?? []).forEach(esc => {
+    const c = calculerEscalier(esc, hauteurTotaleEscalierCm(esc, n));
+    c.marches.forEach(m => { s += `<polygon points="${ptsPx(m.poly)}" fill="${m.type === "palier" ? "#e7e5e4" : "#fff"}" stroke="#57534e" stroke-width="0.5"/>`; });
+    if (esc.niveauDestId != null) s += `<polygon points="${ptsPx(c.tremie)}" fill="none" stroke="#a16207" stroke-width="0.6" stroke-dasharray="3,2"/>`;
+    const centres = c.marches.map(m => toPx(centroide(m.poly)));
+    if (centres.length >= 2) {
+      s += `<polyline points="${centres.map(q => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(" ")}" fill="none" stroke="#44403c" stroke-width="0.7"/>`;
+      const fin = centres[centres.length - 1], av = centres[centres.length - 2], ang = Math.atan2(fin.y - av.y, fin.x - av.x);
+      s += `<polygon points="${[0, 2.4, -2.4].map((d, k) => `${(fin.x + (k === 0 ? 5 : 3) * Math.cos(ang + d)).toFixed(1)},${(fin.y + (k === 0 ? 5 : 3) * Math.sin(ang + d)).toFixed(1)}`).join(" ")}" fill="#44403c"/>`;
+      s += `<text x="${centres[0].x.toFixed(1)}" y="${(centres[0].y + 8).toFixed(1)}" font-size="6" font-family="monospace" fill="#292524" text-anchor="middle">${escapeXml(esc.nom || "Escalier")} · ${c.nbMarches} marches</text>`;
+    }
+  });
   // Zones : fond léger + limites virtuelles en pointillés, cloisons en épaisseur (percées de leurs portes), nom + surface.
   (n.zones ?? []).forEach(z => {
     if (z.ferme && z.contour.length >= 3) s += `<polygon points="${ptsPx(z.contour)}" fill="#a78bfa" fill-opacity="0.13" stroke="none"/>`;
@@ -409,10 +429,10 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       + `</g>`;
   });
   niveauResultat.pieces.forEach(p => {
-    const utileP = geometrieMurs(p).utile;
+    const gU = geometrieMurs(p), utileP = gU.utile;
     p.contour.forEach((_, i) => {
       // Longueur INTÉRIEURE (face finie à face finie), posée côté pièce contre le mur.
-      const aU = toPx(utileP[i]), bU = toPx(utileP[(i + 1) % utileP.length]);
+      const aU = toPx(utileP[i]), bU = toPx(gU.utileFin[i]);
       const nIn = normaleInterieure(p.contour, i);
       const lx = (aU.x + bU.x) / 2 + nIn.x * 7, ly = (aU.y + bU.y) / 2 + nIn.y * 7;
       s += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" font-size="6" text-anchor="middle" font-family="monospace" fill="#444">${(longueurUtileCm(p, i) / 100).toFixed(2)}m</text>`;
@@ -616,9 +636,9 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
   // Cotes des pièces : dimension intérieure de chaque mur (face finie à face finie) + épaisseurs.
   if (showCotesPieces) {
     const cotesP: Cote[] = niveauResultat.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => {
-      const { utile } = geometrieMurs(pc);
+      const { utile, utileFin } = geometrieMurs(pc);
       return pc.contour.map((_, i): Cote => {
-        const a = utile[i], b = utile[(i + 1) % utile.length];
+        const a = utile[i], b = utileFin[i];
         return { kind: "mur", a, b, valeurCm: Math.round(Math.hypot(b.x - a.x, b.y - a.y) * 100), normale: normaleInterieure(pc.contour, i), interieur: true, decalageM: 0 };
       });
     });
@@ -802,6 +822,7 @@ type DragMode =
   | { kind: "nomPiece"; pieceId: number; startX: number; startY: number; startOffset: Point }
   | { kind: "appareillage"; pieceId: number; appareillageId: number }
   | { kind: "meuble"; pieceId: number; meubleId: number }
+  | { kind: "escalier"; escalierId: number; offX: number; offY: number }
   | { kind: "personne"; pieceId: number }
   | { kind: "voiture"; pieceId: number }
   | { kind: "ouverture"; pieceId: number; ouvertureId: number }
@@ -1017,7 +1038,8 @@ function CloisonForm({ piece, pieces, chemin, onValidate, onCancel }: {
               <select className="input" value={porte ?? ""} onChange={e => setPorte((e.target.value || null) as OptionsCloison["porte"])}>
                 <option value="">Aucune</option>
                 <option value="porte">Porte battante</option>
-                <option value="porte_coulissante">Porte coulissante</option>
+                <option value="porte_coulissante">Porte coulissante (sur rail)</option>
+                <option value="porte_galandage">Porte à galandage (dans la cloison)</option>
                 <option value="ouverture">Passage sans porte</option>
               </select>
             </div>
@@ -1067,7 +1089,13 @@ function OuvertureZoneSymbole({ c, o, toScreen, zoom, selectionnee, actif, onDow
   } else if (o.type === "porte_coulissante") {
     const cote = o.coulisseVers === "gauche" ? -1 : 1;
     const q0 = pt(cote > 0 ? s + w / 2 : s - w / 2 - w, 0), q1 = pt(cote > 0 ? s + w / 2 + w : s - w / 2, 0);
-    corps = <polygon points={[q0, q1, { x: q1.x + nx * 0.03, y: q1.y + ny * 0.03 }, { x: q0.x + nx * 0.03, y: q0.y + ny * 0.03 }].map(P).join(" ")} fill={couleur} opacity={0.45} />;
+    const poche = [q0, q1, { x: q1.x + nx * 0.03, y: q1.y + ny * 0.03 }, { x: q0.x + nx * 0.03, y: q0.y + ny * 0.03 }].map(P).join(" ");
+    corps = o.montage === "galandage"
+      ? (<>
+          <polygon points={poche} fill="none" stroke={couleur} strokeWidth={1} strokeDasharray="3,2" />
+          <line x1={e0.x} y1={e0.y} x2={e1.x} y2={e1.y} stroke={couleur} strokeWidth={2} />
+        </>)
+      : <polygon points={poche} fill={couleur} opacity={0.45} />;
   } else if (o.type === "fenetre" || o.type === "baie_vitree") {
     corps = (<>
       <line x1={toScreen(pt(s - w / 2, 0.03)).x} y1={toScreen(pt(s - w / 2, 0.03)).y} x2={toScreen(pt(s + w / 2, 0.03)).x} y2={toScreen(pt(s + w / 2, 0.03)).y} stroke={couleur} strokeWidth={1.5} />
@@ -1919,7 +1947,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [placingOuverture, setPlacingOuverture] = useState<OuvertureType | null>(null);
   // Usage de la porte battante en cours de pose : intérieure (défaut), d'entrée ou de service.
   const [placingUsagePorte, setPlacingUsagePorte] = useState<UsagePorte>("interieure");
+  // Montage de la porte coulissante en cours de pose : « applique » (sur rail, visible ouverte) ou « galandage » (dans le mur).
+  const [placingMontage, setPlacingMontage] = useState<"applique" | "galandage">("applique");
   const [ouvertureMenuOpen, setOuvertureMenuOpen] = useState(false);
+  const [escalierMenuOpen, setEscalierMenuOpen] = useState(false);
+  const [selectedEscalierId, setSelectedEscalierId] = useState<number | null>(null);
   const [selectedOuvertureId, setSelectedOuvertureId] = useState<number | null>(null);
   const [selectedBoite, setSelectedBoite] = useState<{ label: string; boiteId: number } | null>(null);
   const [circuitsManuelsOpen, setCircuitsManuelsOpen] = useState(false);
@@ -2058,6 +2090,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   }, [projet.id]);
 
   const niveauActif = niveaux.find(n => n.id === niveauActifId) ?? null;
+  // Escaliers : ceux qui partent de ce niveau (avec leur calcul) et ceux qui y arrivent (trémie à montrer / percer).
+  const calculsEscaliers = useMemo(
+    () => (niveauActif ? (niveauActif.escaliers ?? []).map(e => ({ e, calc: calculerEscalier(e, hauteurTotaleEscalierCm(e, niveauActif)) })) : []),
+    [niveauActif],
+  );
+  const entrantsEscalier = useMemo(() => (niveauActif ? lireEscaliersEntrants(niveaux, niveauActif.id) : []), [niveaux, niveauActif]);
 
   // Orientation du bâtiment : angle entre le haut du plan et le Nord (voir Niveau.orientationNord). Commune à tous les
   // niveaux — stockée sur chacun pour suivre l'annuler/refaire et la sauvegarde sans rien changer au format du plan.
@@ -2203,6 +2241,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           ...n,
           pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : { ...p, nomDecalage: { x: dragMode.startOffset.x + dxM, y: dragMode.startOffset.y + dyM } }),
         }));
+      } else if (dragMode.kind === "escalier") {
+        // Escalier : déplacé sur la grille du plan, en gardant le décalage pris au moment de l'attraper.
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const raw = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        const x = arrondiGrille(raw.x + dragMode.offX), y = arrondiGrille(raw.y + dragMode.offY);
+        updateNiveauActif(n => ({ ...n, escaliers: (n.escaliers ?? []).map(es => es.id === dragMode.escalierId ? { ...es, x, y } : es) }));
       } else if (dragMode.kind === "meuble") {
         // Aligné sur la grille du plan, comme une pièce (arrondiGrille) — pas de snap
         // d'alignement sur les murs/autres points, pas assez pertinent pour du mobilier.
@@ -2337,7 +2382,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       // (porte/fenêtre), "boite" et "pointArrivee" (purement cosmétiques/informatifs) ne
       // changent jamais la composition électrique du plan — les exclure évite de
       // réinitialiser les circuits générés à chaque simple clic ou déplacement de ces éléments.
-      if (dragBougeRef.current && !["liaison", "pan", "ouverture", "boite", "pointArrivee", "meuble", "personne", "voiture", "nomPiece", "zone", "zoneSommet"].includes(dragMode.kind)) invalidateResultat();
+      if (dragBougeRef.current && !["liaison", "pan", "ouverture", "boite", "pointArrivee", "meuble", "escalier", "personne", "voiture", "nomPiece", "zone", "zoneSommet"].includes(dragMode.kind)) invalidateResultat();
       setDragEndTick(t => t + 1);
       setDragMode({ kind: "none" });
       setSnapGuide(null);
@@ -2588,6 +2633,23 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       setSelectedZoneId(null); setSelectedZoneOuv(null);
     }
   }, [selectedPieceId, selectedAppareillageId, selectedOuvertureId, selectedMeubleId, selectedTableau]);
+  // Sélectionner autre chose qu'un escalier referme son panneau (jamais deux panneaux à la fois) ; changer de niveau aussi.
+  useEffect(() => {
+    if (selectedPieceId != null || selectedAppareillageId != null || selectedOuvertureId != null || selectedMeubleId != null || selectedTableau) setSelectedEscalierId(null);
+  }, [selectedPieceId, selectedAppareillageId, selectedOuvertureId, selectedMeubleId, selectedTableau]);
+  useEffect(() => { setSelectedEscalierId(null); setEscalierMenuOpen(false); }, [niveauActifId]);
+  // Suppr : supprime l'escalier sélectionné (hors saisie de texte).
+  useEffect(() => {
+    if (selectedEscalierId == null || mode !== "select") return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      if (e.key === "Delete") { e.preventDefault(); supprimerEscalier(selectedEscalierId); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEscalierId, mode]);
   // Clavier : Retour arrière = retire le dernier point, Échap = annule le tracé puis quitte l'outil.
   useEffect(() => {
     if (mode !== "zone" || zoneEnAttente) return;
@@ -2734,8 +2796,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setLiaisonLumiereMode(null);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedPointArrivee(false); setSelectedMeubleId(null);
   };
-  const armerPlacementOuverture = (t: OuvertureType | null, usage: UsagePorte = "interieure") => {
-    setPlacingOuverture(t); setPlacingUsagePorte(usage); setMode("select"); setPlacementType(null); setPlacingTableau(false); setPlacingMeuble(false); setDrawingPoints([]);
+  const armerPlacementOuverture = (t: OuvertureType | null, usage: UsagePorte = "interieure", montage: "applique" | "galandage" = "applique") => {
+    setPlacingOuverture(t); setPlacingUsagePorte(usage); setPlacingMontage(montage); setMode("select"); setPlacementType(null); setPlacingTableau(false); setPlacingMeuble(false); setDrawingPoints([]);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
   };
@@ -2993,13 +3055,45 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }));
     setSelectedOuvertureId(null); setSelectedBoite(null);
   };
-  const modifierOuverture = (ouvertureId: number, patch: Partial<Pick<Ouverture, "largeur" | "hauteur" | "allege" | "charniere" | "ouvreVersInterieur" | "coulisseVers" | "usage" | "battants">>) => {
+  const modifierOuverture = (ouvertureId: number, patch: Partial<Pick<Ouverture, "largeur" | "hauteur" | "allege" | "charniere" | "ouvreVersInterieur" | "coulisseVers" | "usage" | "battants" | "montage">>) => {
     updateNiveauActif(n => ({
       ...n,
       pieces: n.pieces.map(p => ({
         ...p, ouvertures: (p.ouvertures ?? []).map(o => o.id === ouvertureId ? { ...o, ...patch } : o),
       })),
     }));
+  };
+
+  // ─── ESCALIERS ──────────────────────────────────────────────────────────────────────────────────────────
+  const deselectionnerAutres = () => {
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
+    setSelectedMeubleId(null); setSelectedWaypoint(null); setSelectedPointArrivee(false);
+  };
+  // Crée un escalier au centre de la vue (puis il se déplace / se règle comme les autres objets).
+  const ajouterEscalier = (type: EscalierType, tournant?: EscalierTournant) => {
+    if (!niveauActif || vue3D) { setEscalierMenuOpen(false); return; }   // le centre de la vue n'existe qu'en 2D
+    const rect = svgRef.current?.getBoundingClientRect();
+    const c = rect ? toMeters(rect.width / 2, rect.height / 2) : { x: 0, y: 0 };
+    const esc = nouvelEscalier(type, arrondiGrille(c.x), arrondiGrille(c.y), niveauActif, niveaux, tournant);
+    updateNiveauActif(n => ({ ...n, escaliers: [...(n.escaliers ?? []), esc] }));
+    deselectionnerAutres(); setSelectedEscalierId(esc.id); setEscalierMenuOpen(false); setPanelResetTick(t => t + 1);
+  };
+  const modifierEscalier = (id: number, patch: Partial<Escalier>) => {
+    updateNiveauActif(n => ({ ...n, escaliers: (n.escaliers ?? []).map(es => (es.id === id ? { ...es, ...patch } : es)) }));
+  };
+  const supprimerEscalier = (id: number) => {
+    updateNiveauActif(n => ({ ...n, escaliers: (n.escaliers ?? []).filter(es => es.id !== id) }));
+    setSelectedEscalierId(null);
+  };
+  const onEscalierPointerDown = (esc: Escalier, e: React.PointerEvent) => {
+    if (cheminementDessin || liaisonLumiereMode) return;
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) { e.stopPropagation(); return; }
+    e.stopPropagation();
+    deselectionnerAutres(); setSelectedEscalierId(esc.id); setPanelResetTick(t => t + 1);
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const m = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+    setDragMode({ kind: "escalier", escalierId: esc.id, offX: esc.x - m.x, offY: esc.y - m.y });
   };
 
   // Fusionne la pièce « idPrincipale » avec une pièce adjacente : une seule pièce (contour union, murs, appareillages,
@@ -3723,6 +3817,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       const cz = niveauActif ? trouverCloisonZone(niveauActif.zones ?? [], m, seuilM) : null;
       if (cz) {
         const nouvelleZ = nouvelleOuverture(placingOuverture, cz.segIndex, cz.t, placingUsagePorte);
+        if (placingOuverture === "porte_coulissante") nouvelleZ.montage = placingMontage;
         const posZ = positionOuvertureValide(cz.t, nouvelleZ.largeur, longueurCote(cz.zone, cz.segIndex));
         if (posZ == null) { messageZone(`Cette cloison est trop courte pour une ${LABEL_OUVERTURE[placingOuverture].toLowerCase()} de ${nouvelleZ.largeur} cm.`, 3200); return; }
         nouvelleZ.position = posZ;
@@ -3737,6 +3832,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         return;
       }
       const nouvelle = nouvelleOuverture(placingOuverture, mur.segIndex, mur.t, placingUsagePorte);
+      if (placingOuverture === "porte_coulissante") nouvelle.montage = placingMontage;
       updateNiveauActif(n => ({
         ...n,
         pieces: n.pieces.map(p => p.id === mur.piece.id ? { ...p, ouvertures: [...(p.ouvertures ?? []), nouvelle] } : p),
@@ -4294,9 +4390,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       : [];
     const cotesPieces: Cote[] = showCotesPieces
       ? niveauActif.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => {
-          const { utile } = geometrieMurs(pc);
+          const { utile, utileFin } = geometrieMurs(pc);
           return pc.contour.map((_, i): Cote => {
-            const a = utile[i], b = utile[(i + 1) % utile.length];
+            const a = utile[i], b = utileFin[i];
             return { kind: "mur", a, b, valeurCm: Math.round(Math.hypot(b.x - a.x, b.y - a.y) * 100), normale: normaleInterieure(pc.contour, i), interieur: true, decalageM: 0 };
           });
         })
@@ -4315,6 +4411,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       .filter((g): g is GeoCote => g != null);
   })();
   const selectedMeuble = niveauActif?.pieces.flatMap(p => p.meubles ?? []).find(m => m.id === selectedMeubleId) ?? null;
+  const selectedEscalier = niveauActif?.escaliers?.find(es => es.id === selectedEscalierId) ?? null;
 
   const colorMap = resultat ? construireColorMap(resultat, niveaux) : new Map<number, string>();
 
@@ -4635,23 +4732,48 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           <div className="relative">
             <button onClick={() => setOuvertureMenuOpen(o => !o)}
               className={`btn-ghost !text-xs ${placingOuverture ? "!bg-ink-900 !text-volt-400" : ""}`}>
-              <OuvertureIcon type={placingOuverture ?? "porte"} size={13} /> {placingOuverture ? (placingOuverture === "porte" ? LABEL_USAGE_PORTE[placingUsagePorte] : LABEL_OUVERTURE[placingOuverture]) : "Porte / fenêtre"}
+              <OuvertureIcon type={placingOuverture ?? "porte"} size={13} /> {placingOuverture ? (placingOuverture === "porte" ? LABEL_USAGE_PORTE[placingUsagePorte] : placingOuverture === "porte_coulissante" && placingMontage === "galandage" ? "Porte à galandage" : LABEL_OUVERTURE[placingOuverture]) : "Porte / fenêtre"}
             </button>
             {ouvertureMenuOpen && (
               <div className="absolute z-20 top-full left-0 mt-1 card card-inner !p-1 flex flex-col shadow-lg w-56">
                 {([
                   { t: "porte", usage: "interieure" }, { t: "porte", usage: "entree" }, { t: "porte", usage: "service" },
-                  { t: "porte_coulissante" }, { t: "porte_garage" }, { t: "baie_vitree" }, { t: "fenetre" }, { t: "ouverture" },
-                ] as { t: OuvertureType; usage?: UsagePorte }[]).map(({ t, usage }) => {
-                  const actif = placingOuverture === t && (t !== "porte" || placingUsagePorte === usage);
+                  { t: "porte_coulissante", montage: "applique" }, { t: "porte_coulissante", montage: "galandage" },
+                  { t: "porte_garage" }, { t: "baie_vitree" }, { t: "fenetre" }, { t: "ouverture" },
+                ] as { t: OuvertureType; usage?: UsagePorte; montage?: "applique" | "galandage" }[]).map(({ t, usage, montage }) => {
+                  const actif = placingOuverture === t && (t !== "porte" || placingUsagePorte === usage) && (t !== "porte_coulissante" || placingMontage === montage);
+                  const libelle = usage ? LABEL_USAGE_PORTE[usage] : montage === "galandage" ? "Porte à galandage (dans le mur)" : montage === "applique" ? "Porte coulissante (sur rail)" : LABEL_OUVERTURE[t];
                   return (
-                    <button key={`${t}-${usage ?? ""}`}
-                      onClick={() => { armerPlacementOuverture(actif ? null : t, usage); setOuvertureMenuOpen(false); }}
+                    <button key={`${t}-${usage ?? ""}-${montage ?? ""}`}
+                      onClick={() => { armerPlacementOuverture(actif ? null : t, usage, montage); setOuvertureMenuOpen(false); }}
                       className={`flex items-center gap-2 !text-xs px-2 py-1.5 rounded-md hover:bg-ink-50 ${actif ? "text-volt-600 font-semibold" : "text-ink-600"}`}>
-                      <OuvertureIcon type={t} size={14} /> {usage ? LABEL_USAGE_PORTE[usage] : LABEL_OUVERTURE[t]}
+                      <OuvertureIcon type={t} size={14} /> {libelle}
                     </button>
                   );
                 })}
+              </div>
+            )}
+          </div>
+          <div className="relative">
+            <button onClick={() => setEscalierMenuOpen(o => !o)} className={`btn-ghost !text-xs ${escalierMenuOpen ? "!bg-ink-900 !text-volt-400" : ""}`}
+              title="Ajouter un escalier (droit, tournant, hélicoïdal) qui dessert un autre niveau : sa trémie apparaît sur l'étage desservi">
+              🪜 Escalier
+            </button>
+            {escalierMenuOpen && (
+              <div className="absolute z-20 top-full left-0 mt-1 card card-inner !p-1 flex flex-col shadow-lg w-64">
+                {([
+                  { t: "droit", label: "Droit" },
+                  { t: "quart_tournant", tournant: "palier", label: "Quart tournant — avec palier" },
+                  { t: "quart_tournant", tournant: "balancees", label: "Quart tournant — marches balancées" },
+                  { t: "demi_tournant", tournant: "palier", label: "Demi-tournant — avec palier" },
+                  { t: "demi_tournant", tournant: "balancees", label: "Demi-tournant — marches balancées" },
+                  { t: "helicoidal", label: "Hélicoïdal" },
+                ] as { t: EscalierType; tournant?: EscalierTournant; label: string }[]).map(o => (
+                  <button key={`${o.t}-${o.tournant ?? ""}`} onClick={() => ajouterEscalier(o.t, o.tournant)}
+                    className="flex items-center gap-2 !text-xs px-2 py-1.5 rounded-md hover:bg-ink-50 text-ink-600 text-left">
+                    {o.label}
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -4800,7 +4922,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             )}
             {vue3D ? (
               niveauActif ? (
-                <Vue3D ref={vue3DRef} niveau={niveauActif} resultat={resultat} showCircuits={showCircuits} orientationNord={orientationNord} circuitsAction={blocCircuits} />
+                <Vue3D ref={vue3DRef} niveau={niveauActif} resultat={resultat} showCircuits={showCircuits} orientationNord={orientationNord} circuitsAction={blocCircuits} escaliersEntrants={entrantsEscalier} />
               ) : null
             ) : (
               <>
@@ -4942,9 +5064,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       );
                     })}
                     {!piece.masquerDimensions && (() => {
-                      const utileP = geometrieMurs(piece).utile;
+                      const gU = geometrieMurs(piece), utileP = gU.utile;
                       return piece.contour.map((pt, i) => {
-                      const aU = utileP[i], bU = utileP[(i + 1) % utileP.length];
+                      const aU = utileP[i], bU = gU.utileFin[i];
                       const nIn = normaleInterieure(piece.contour, i);
                       const mil = { x: (aU.x + bU.x) / 2, y: (aU.y + bU.y) / 2 };
                       const m0 = toScreen(mil), m1 = toScreen({ x: mil.x + nIn.x * 0.1, y: mil.y + nIn.y * 0.1 });
@@ -5105,6 +5227,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                             {o.type === "porte_coulissante" && (() => {
                               const cote = o.coulisseVers === "gauche" ? -1 : 1;
                               const xPanneau = cote > 0 ? largeurPx / 2 : -largeurPx / 2 - largeurPx;
+                              // Galandage : la « cassette » dans le mur est en pointillés (le vantail y rentre), le vantail fermé barre l'ouverture.
+                              if (o.montage === "galandage") return (
+                                <>
+                                  <rect x={xPanneau} y={-3} width={largeurPx} height={6} fill="none" stroke={couleur} strokeWidth={1} strokeDasharray="3,2" />
+                                  <line x1={-largeurPx / 2} y1={0} x2={largeurPx / 2} y2={0} stroke={couleur} strokeWidth={2} />
+                                </>
+                              );
                               return <rect x={xPanneau} y={-3} width={largeurPx} height={6} fill={couleur} opacity={0.45} />;
                             })()}
                           </g>
@@ -5299,6 +5428,66 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   return elements;
                 });
               })()}
+
+              {/* Escaliers qui ARRIVENT sur ce niveau : trémie hachurée, non éditable (elle se règle depuis le niveau de départ). */}
+              {entrantsEscalier.map(({ escalier, source, calcul }) => {
+                const pts = (poly: Point[]) => poly.map(q => { const sp = toScreen(q); return `${sp.x},${sp.y}`; }).join(" ");
+                const c = toScreen(centroide(calcul.tremie));
+                return (
+                  <g key={`esc-in-${escalier.id}`} style={{ pointerEvents: "none" }}>
+                    <defs>
+                      <pattern id={`hachure-tremie-${escalier.id}`} patternUnits="userSpaceOnUse" width="7" height="7" patternTransform="rotate(45)">
+                        <line x1="0" y1="0" x2="0" y2="7" stroke="#a16207" strokeWidth="1" />
+                      </pattern>
+                    </defs>
+                    <polygon points={pts(calcul.tremie)} fill={`url(#hachure-tremie-${escalier.id})`} stroke="#a16207" strokeWidth={1.4} />
+                    {calcul.marches.slice(-calcul.tremieZone).map((m, i) => (
+                      <polygon key={i} points={pts(m.poly)} fill="none" stroke="#a16207" strokeWidth={0.7} strokeDasharray="3,2" />
+                    ))}
+                    <text x={c.x} y={c.y} textAnchor="middle" fontSize="9" fontWeight="700" fill="#713f12" stroke="#fff" strokeWidth={3} paintOrder="stroke">
+                      Trémie · escalier depuis {source.nom || NIVEAU_TYPES[source.type]}
+                    </text>
+                  </g>
+                );
+              })}
+
+              {/* Escaliers qui PARTENT de ce niveau : marches, flèche de montée, contour de la trémie (en pointillés) à l'étage desservi. */}
+              {calculsEscaliers.map(({ e: esc, calc }) => {
+                const sel = esc.id === selectedEscalierId;
+                const actif = mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingMeuble;
+                const pts = (poly: Point[]) => poly.map(q => { const sp = toScreen(q); return `${sp.x},${sp.y}`; }).join(" ");
+                const centres = calc.marches.map(m => toScreen(centroide(m.poly)));
+                const dest = esc.niveauDestId != null ? niveaux.find(n => n.id === esc.niveauDestId) : undefined;
+                const moy = centres.length ? { x: centres.reduce((a, q) => a + q.x, 0) / centres.length, y: centres.reduce((a, q) => a + q.y, 0) / centres.length } : toScreen({ x: esc.x, y: esc.y });
+                const n = centres.length;
+                const fin = n >= 2 ? centres[n - 1] : null, avant = n >= 2 ? centres[n - 2] : null;
+                const ang = fin && avant ? Math.atan2(fin.y - avant.y, fin.x - avant.x) : 0;
+                const tete = fin ? [
+                  { x: fin.x + 9 * Math.cos(ang), y: fin.y + 9 * Math.sin(ang) },
+                  { x: fin.x + 5 * Math.cos(ang + 2.4), y: fin.y + 5 * Math.sin(ang + 2.4) },
+                  { x: fin.x + 5 * Math.cos(ang - 2.4), y: fin.y + 5 * Math.sin(ang - 2.4) },
+                ] : [];
+                return (
+                  <g key={`esc-${esc.id}`} onPointerDown={ev => onEscalierPointerDown(esc, ev)} style={{ cursor: actif ? (sel ? "grab" : "pointer") : "default" }}>
+                    {calc.marches.map((m, i) => (
+                      <polygon key={i} points={pts(m.poly)} fill={m.type === "palier" ? "#d6d3d1" : "#fafaf9"} fillOpacity={0.92}
+                        stroke={sel ? "#F59E0B" : "#57534e"} strokeWidth={sel ? 1.5 : 0.9} />
+                    ))}
+                    {calc.poteau && <circle cx={toScreen(calc.poteau.centre).x} cy={toScreen(calc.poteau.centre).y} r={calc.poteau.rayon * PX_PER_M * zoom} fill="#78716c" style={{ pointerEvents: "none" }} />}
+                    {dest && <polygon points={pts(calc.tremie)} fill="none" stroke="#a16207" strokeWidth={1} strokeDasharray="5,3" opacity={0.7} style={{ pointerEvents: "none" }} />}
+                    {centres.length >= 2 && (
+                      <g style={{ pointerEvents: "none" }}>
+                        <circle cx={centres[0].x} cy={centres[0].y} r={3} fill="#44403c" />
+                        <polyline points={centres.map(q => `${q.x},${q.y}`).join(" ")} fill="none" stroke="#44403c" strokeWidth={1.2} />
+                        <polygon points={tete.map(q => `${q.x},${q.y}`).join(" ")} fill="#44403c" />
+                      </g>
+                    )}
+                    <text x={moy.x} y={moy.y} textAnchor="middle" fontSize="9" fontWeight="700" fill="#292524" stroke="#fff" strokeWidth={3} paintOrder="stroke" style={{ pointerEvents: "none" }}>
+                      {esc.nom || "Escalier"} · {calc.nbMarches} marches{dest ? ` ↑ ${dest.nom || NIVEAU_TYPES[dest.type]}` : ""}
+                    </text>
+                  </g>
+                );
+              })}
 
               {niveauActif?.pieces.flatMap(piece => (piece.meubles ?? []).map(m => ({ piece, m }))).map(({ piece, m }) => {
                 const p = toScreen({ x: m.x, y: m.y });
@@ -5817,6 +6006,129 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 </>
               ))}
             </svg>
+
+            {selectedEscalier && niveauActif && mode === "select" && (() => {
+              const esc = selectedEscalier;
+              const calc = calculerEscalier(esc, hauteurTotaleEscalierCm(esc, niveauActif));
+              const maj = (patch: Partial<Escalier>) => modifierEscalier(esc.id, patch);
+              const dest = esc.niveauDestId != null ? niveaux.find(n => n.id === esc.niveauDestId) : undefined;
+              const nomNiveau = (n: Niveau) => n.nom || NIVEAU_TYPES[n.type];
+              const alertes = [...calc.avertissements];
+              if (!dest) alertes.push("Aucun niveau desservi : l'escalier ne mène nulle part (pas de trémie).");
+              else if (dest.pieces.length > 0 && !trouverPiece(centroide(calc.tremie), dest.pieces)) alertes.push(`La trémie n'est dans aucune pièce de « ${nomNiveau(dest)} » : déplace l'escalier.`);
+              const ligne = (label: string, contenu: ReactNode) => (
+                <div className="flex items-center gap-2 text-xs text-ink-500"><span className="shrink-0 w-28">{label}</span>{contenu}</div>
+              );
+              const num = (label: string, valeur: number | undefined, onVal: (v: number | undefined) => void, o: { placeholder?: string; min?: number; step?: number } = {}) =>
+                ligne(label, (
+                  <input type="number" min={o.min} step={o.step} placeholder={o.placeholder} className="input !py-1 !text-xs !w-24"
+                    key={`esc-${esc.id}-${label}-${dragEndTick}`} defaultValue={valeur ?? ""}
+                    onChange={ev => { const v = ev.target.value; if (v === "") onVal(undefined); else { const x = Number(v); if (!Number.isNaN(x)) onVal(x); } }} />
+                ));
+              const choix = <T extends string>(label: string, valeur: T, options: [T, string][], onVal: (v: T) => void) =>
+                ligne(label, (
+                  <select className="input !py-1 !text-xs flex-1" value={valeur} onChange={ev => onVal(ev.target.value as T)}>
+                    {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                ));
+              const tournant = esc.type === "quart_tournant" || esc.type === "demi_tournant";
+              const changerType = (t: EscalierType) => maj({
+                type: t,
+                tournant: t === "quart_tournant" || t === "demi_tournant" ? (esc.tournant ?? "palier") : undefined,
+                structure: t === "helicoidal"
+                  ? (esc.structure === "limons_lateraux" || esc.structure === "limon_central" ? "poteau_central" : esc.structure)
+                  : (esc.structure === "poteau_central" ? "limons_lateraux" : esc.structure),
+                ...(t === "helicoidal" ? { diametre: esc.diametre ?? DIAMETRE_HELICE_DEFAUT_CM, diametrePoteau: esc.diametrePoteau ?? DIAMETRE_POTEAU_DEFAUT_CM } : {}),
+              });
+              const structures: [Escalier["structure"], string][] = (esc.type === "helicoidal"
+                ? ["poteau_central", "massif", "marches_seules"]
+                : ["limons_lateraux", "limon_central", "massif", "marches_seules"]
+              ).map(k => [k as Escalier["structure"], LABEL_STRUCTURE[k as Escalier["structure"]]]);
+              const couleurDefaut = `#${COULEUR_MATERIAU[esc.materiau].toString(16).padStart(6, "0")}`;
+              const tourner = (d: number) => { maj({ rotation: (((esc.rotation + d) % 360) + 360) % 360 }); setDragEndTick(t => t + 1); };
+              return (
+                <DraggablePanel key={`esc-${esc.id}-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex flex-col gap-1.5 shadow-lg w-80 max-h-[75vh] overflow-y-auto">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-ink-900">🪜 {esc.nom || "Escalier"} <span className="text-xs font-normal text-ink-400">· {LABEL_ESCALIER_TYPE[esc.type]}</span></p>
+                    <button onClick={() => supprimerEscalier(esc.id)} className="btn-danger !px-2 !py-1" title="Supprimer l'escalier (Suppr)"><Trash2 size={13} /></button>
+                  </div>
+                  <p className="text-[11px] text-ink-500">
+                    {calc.nbMarches} marches de {calc.hMarche.toFixed(1)} cm · giron {calc.giron.toFixed(1)} cm · pente {calc.pente.toFixed(0)}° · Blondel {calc.blondel} · hauteur {calc.hauteurTotale} cm
+                  </p>
+                  {alertes.length > 0 && (
+                    <ul className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 list-disc list-inside">
+                      {alertes.map((a, i) => <li key={i}>{a}</li>)}
+                    </ul>
+                  )}
+                  {ligne("Nom", (
+                    <input type="text" className="input !py-1 !text-xs flex-1" placeholder="Escalier" key={`esc-${esc.id}-nom`} defaultValue={esc.nom ?? ""}
+                      onChange={ev => maj({ nom: ev.target.value || undefined })} />
+                  ))}
+                  {choix<EscalierType>("Type", esc.type, [["droit", "Droit"], ["quart_tournant", "Quart tournant"], ["demi_tournant", "Demi-tournant"], ["helicoidal", "Hélicoïdal"]], changerType)}
+                  {ligne("Dessert", (
+                    <select className="input !py-1 !text-xs flex-1" value={esc.niveauDestId ?? ""} onChange={ev => maj({ niveauDestId: ev.target.value === "" ? undefined : Number(ev.target.value) })}>
+                      <option value="">— Aucun —</option>
+                      {niveaux.filter(n => n.id !== niveauActif.id).map(n => <option key={n.id} value={n.id}>{nomNiveau(n)}</option>)}
+                    </select>
+                  ))}
+
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-400 mt-1">Dimensions (cm) — vide = calcul auto</p>
+                  {num("Hauteur à franchir", esc.hauteurCm, v => maj({ hauteurCm: v }), { placeholder: String(calc.hauteurTotale), min: 50 })}
+                  {num("Épaisseur plancher", esc.epaisseurPlancher, v => v !== undefined && maj({ epaisseurPlancher: v }), { min: 0 })}
+                  {num("Nb de marches", esc.nbMarches, v => maj({ nbMarches: v === undefined ? undefined : Math.round(v) }), { placeholder: String(calc.nbMarches), min: 3 })}
+                  {num("Giron", esc.giron, v => maj({ giron: v }), { placeholder: calc.giron.toFixed(1), min: 10 })}
+                  {esc.type !== "helicoidal" && num("Largeur (emmarchement)", esc.largeur, v => v !== undefined && maj({ largeur: v }), { min: 40 })}
+                  {num("Épaisseur marche", esc.epaisseurMarche, v => maj({ epaisseurMarche: v }), { placeholder: "4", min: 1 })}
+
+                  {esc.type === "helicoidal" && (
+                    <>
+                      {num("Diamètre extérieur", esc.diametre, v => maj({ diametre: v }), { placeholder: String(DIAMETRE_HELICE_DEFAUT_CM), min: 80 })}
+                      {num("Diamètre poteau", esc.diametrePoteau, v => maj({ diametrePoteau: v }), { placeholder: String(DIAMETRE_POTEAU_DEFAUT_CM), min: 4 })}
+                    </>
+                  )}
+                  {tournant && (
+                    <>
+                      {choix<"palier" | "balancees">("Virage", esc.tournant ?? "palier", [["palier", "Avec palier"], ["balancees", "Marches balancées"]], v => maj({ tournant: v }))}
+                      {num("Marches 1re volée", esc.nbMarchesVolee1, v => maj({ nbMarchesVolee1: v === undefined ? undefined : Math.round(v) }), { placeholder: "auto", min: 1 })}
+                      {esc.tournant === "balancees" && num("Marches balancées", esc.nbBalancees, v => maj({ nbBalancees: v === undefined ? undefined : Math.round(v) }), { placeholder: esc.type === "quart_tournant" ? "3" : "6", min: 2 })}
+                      {esc.type === "demi_tournant" && esc.tournant !== "balancees" && num("Jour entre volées", esc.jour, v => maj({ jour: v }), { placeholder: "10", min: 0 })}
+                    </>
+                  )}
+                  {esc.type !== "droit" && choix<"gauche" | "droite">("Sens du virage", esc.sens, [["gauche", "À gauche"], ["droite", "À droite"]], v => maj({ sens: v }))}
+
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-400 mt-1">Aspect</p>
+                  {choix<Escalier["structure"]>("Structure", esc.structure, structures, v => maj({ structure: v }))}
+                  {choix<Escalier["rampe"]>("Garde-corps", esc.rampe, (["aucune", "gauche", "droite", "deux_cotes"] as const).map(k => [k, LABEL_RAMPE[k]] as [Escalier["rampe"], string]), v => maj({ rampe: v }))}
+                  {choix<Escalier["materiau"]>("Matériau", esc.materiau, (["bois", "beton", "metal", "blanc"] as const).map(k => [k, LABEL_MATERIAU[k]] as [Escalier["materiau"], string]), v => maj({ materiau: v }))}
+                  {ligne("Couleur marches", (
+                    <div className="flex items-center gap-2 flex-1">
+                      <input type="color" value={esc.couleur ?? couleurDefaut} onChange={ev => maj({ couleur: ev.target.value })} className="w-8 h-6 p-0 border border-ink-200 rounded" />
+                      {esc.couleur && <button onClick={() => maj({ couleur: undefined })} className="text-[11px] text-volt-600 underline">↺ matériau</button>}
+                    </div>
+                  ))}
+                  {ligne("Contremarches", (
+                    <label className="flex items-center gap-1.5 text-xs text-ink-600"><input type="checkbox" checked={esc.contremarches} onChange={ev => maj({ contremarches: ev.target.checked })} /> pleines (décocher = ajourées)</label>
+                  ))}
+
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-400 mt-1">Trémie (étage desservi)</p>
+                  {num("Hauteur de passage", esc.hauteurPassage, v => maj({ hauteurPassage: v }), { placeholder: "190", min: 100 })}
+                  {num("Jeu autour", esc.jeuTremie, v => maj({ jeuTremie: v }), { placeholder: "0", min: 0 })}
+
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-400 mt-1">Position</p>
+                  {num("X (cm)", Math.round(esc.x * 100), v => v !== undefined && maj({ x: v / 100 }))}
+                  {num("Y (cm)", Math.round(esc.y * 100), v => v !== undefined && maj({ y: v / 100 }))}
+                  {ligne("Rotation (°)", (
+                    <div className="flex items-center gap-1.5">
+                      <input type="number" className="input !py-1 !text-xs !w-16" key={`esc-${esc.id}-rot-${dragEndTick}`} defaultValue={Math.round(esc.rotation)}
+                        onChange={ev => { const x = Number(ev.target.value); if (ev.target.value !== "" && !Number.isNaN(x)) maj({ rotation: x }); }} />
+                      <button onClick={() => tourner(-90)} className="btn-ghost !px-2 !py-1 !text-xs" title="Tourner de 90° vers la gauche">↺ 90</button>
+                      <button onClick={() => tourner(90)} className="btn-ghost !px-2 !py-1 !text-xs" title="Tourner de 90° vers la droite">↻ 90</button>
+                    </div>
+                  ))}
+                  <p className="text-[11px] text-ink-400">Glisse l'escalier sur le plan pour le déplacer. La montée va vers le haut du plan à 0°.</p>
+                </DraggablePanel>
+              );
+            })()}
 
             {selectedPiece && mode === "select" && (
               <DraggablePanel key={`${selectedPiece.id}-${panelResetTick}`} corner="bl" className="card card-inner !p-3 flex items-center gap-3 shadow-lg">
@@ -6352,6 +6664,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       </div>
                     </>
                   )}
+                  {o.type === "porte_coulissante" && (
+                    <>
+                      <div className="flex items-center gap-2 text-xs text-ink-500">
+                        <span className="shrink-0 w-24">Montage</span>
+                        {segmente(o.montage !== "galandage", "Sur rail", "Galandage", () => majO({ montage: "applique" }), () => majO({ montage: "galandage" }))}
+                      </div>
+                      {o.montage === "galandage" && <p className="text-[11px] text-ink-500 -mt-1">Le vantail coulisse dans l&apos;épaisseur de la cloison (≈ 9 cm minimum) : prévois {o.largeur} cm de cloison pleine de son côté.</p>}
+                    </>
+                  )}
                   {(o.type === "porte_coulissante" || o.type === "baie_vitree") && (
                     <div className="flex items-center gap-2 text-xs text-ink-500">
                       <span className="shrink-0 w-24">Glisse vers</span>
@@ -6511,6 +6832,35 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       </div>
                     </>
                   )}
+                  {o.type === "porte_coulissante" && (() => {
+                    const galandage = o.montage === "galandage";
+                    const aP = piece.contour[o.segIndex], bP = piece.contour[(o.segIndex + 1) % piece.contour.length];
+                    const Lcm = distance(aP, bP) * 100;
+                    const placeCm = (o.coulisseVers ?? "droite") === "droite" ? Lcm - o.position * Lcm - o.largeur / 2 : o.position * Lcm - o.largeur / 2;
+                    const epCm = epaisseurTotaleM(piece, o.segIndex) * 100;
+                    return (
+                      <>
+                        <div className="flex items-center gap-2 text-xs text-ink-500">
+                          <span className="shrink-0 w-24">Montage</span>
+                          <div className="flex gap-1 flex-1">
+                            {([["applique", "Sur rail"], ["galandage", "Galandage"]] as const).map(([k, lib]) => (
+                              <button key={k} onClick={() => modifierOuverture(o.id, { montage: k })}
+                                className={`flex-1 !text-xs px-2 py-1 rounded-md border transition-colors ${
+                                  (galandage ? "galandage" : "applique") === k ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"
+                                }`}>{lib}</button>
+                            ))}
+                          </div>
+                        </div>
+                        {galandage && (
+                          <div className="text-[11px] text-ink-500 flex flex-col gap-0.5">
+                            <span>Le vantail coulisse dans l&apos;épaisseur du mur : il disparaît entièrement à l&apos;ouverture.</span>
+                            {placeCm < o.largeur + 2 && <span className="text-amber-700">⚠ Pas assez de mur de ce côté pour loger le vantail : {Math.round(placeCm)} cm disponibles, {o.largeur} cm nécessaires.</span>}
+                            {epCm < 9 && <span className="text-amber-700">⚠ Mur de {Math.round(epCm)} cm : trop mince pour un galandage (≈ 9 cm minimum).</span>}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                   {(o.type === "porte_coulissante" || o.type === "baie_vitree") && (
                     <div className="flex items-center gap-2 text-xs text-ink-500">
                       <span className="shrink-0 w-24">Glisse vers</span>
