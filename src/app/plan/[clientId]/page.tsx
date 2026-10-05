@@ -28,7 +28,7 @@ import {
   cheminSegment, longueurBranchesEclairage, centroidePoints, assombrirCouleur, pointsOndulesEntre,
   BoiteDerivation, migrerBoitesDerivation,
   Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, nouvelleVoiture, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
-  estCommande, estCommandeDouble, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre,
+  estCommande, estCommandeDouble, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM,
   Escalier, EscalierType, EscalierTournant,
 } from "@/lib/maison-types";
 import {
@@ -1099,7 +1099,12 @@ function OuvertureZoneSymbole({ c, o, toScreen, zoom, selectionnee, actif, onDow
         </>)
       : <polygon points={poche} fill={couleur} opacity={0.45} />;
   } else if (o.type === "fenetre" || o.type === "baie_vitree") {
+    const nbV = o.type === "baie_vitree" ? nbVantauxBaie(o) : 1;
     corps = (<>
+      {Array.from({ length: nbV - 1 }, (_, k) => {
+        const sx = s - w / 2 + ((k + 1) * w) / nbV, a0 = toScreen(pt(sx, -0.03)), a1 = toScreen(pt(sx, 0.03));
+        return <line key={`vant-${k}`} x1={a0.x} y1={a0.y} x2={a1.x} y2={a1.y} stroke={couleur} strokeWidth={1} />;
+      })}
       <line x1={toScreen(pt(s - w / 2, 0.03)).x} y1={toScreen(pt(s - w / 2, 0.03)).y} x2={toScreen(pt(s + w / 2, 0.03)).x} y2={toScreen(pt(s + w / 2, 0.03)).y} stroke={couleur} strokeWidth={1.5} />
       <line x1={toScreen(pt(s - w / 2, -0.03)).x} y1={toScreen(pt(s - w / 2, -0.03)).y} x2={toScreen(pt(s + w / 2, -0.03)).x} y2={toScreen(pt(s + w / 2, -0.03)).y} stroke={couleur} strokeWidth={1.5} />
     </>);
@@ -3081,7 +3086,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }));
     setSelectedOuvertureId(null); setSelectedBoite(null);
   };
-  const modifierOuverture = (ouvertureId: number, patch: Partial<Pick<Ouverture, "largeur" | "hauteur" | "allege" | "charniere" | "ouvreVersInterieur" | "coulisseVers" | "usage" | "battants" | "montage">>) => {
+  const modifierOuverture = (ouvertureId: number, patch: Partial<Pick<Ouverture, "largeur" | "hauteur" | "allege" | "charniere" | "ouvreVersInterieur" | "coulisseVers" | "usage" | "battants" | "montage" | "nbVantaux">>) => {
     updateNiveauActif(n => ({
       ...n,
       pieces: n.pieces.map(p => ({
@@ -5266,14 +5271,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                               </>
                             )}
                             {o.type === "baie_vitree" && (() => {
-                              // Deux rails : vantail fixe (moitié côté « glisse vers ») et vantail mobile (autre moitié), flèche = sens.
+                              // Deux rails ; N vantaux de même largeur (en quinconce, un sur deux par rail), flèche = sens d'ouverture.
                               const cote = o.coulisseVers === "gauche" ? -1 : 1;
-                              const x0 = cote > 0 ? -largeurPx / 2 : 0;
+                              const nbV = nbVantauxBaie(o);
+                              const recPx = (RECOUVREMENT_VANTAUX_CM / (o.largeur || 1)) * largeurPx;
+                              const wV = (largeurPx + (nbV - 1) * recPx) / nbV;
                               return (
                                 <>
                                   <line x1={-largeurPx / 2} y1={-3} x2={largeurPx / 2} y2={-3} stroke={couleur} strokeWidth={1.5} />
                                   <line x1={-largeurPx / 2} y1={3} x2={largeurPx / 2} y2={3} stroke={couleur} strokeWidth={1.5} />
-                                  <rect x={x0} y={1} width={largeurPx / 2} height={4} fill={couleur} opacity={0.4} />
+                                  {Array.from({ length: nbV }, (_, k) => (
+                                    <rect key={k} x={-largeurPx / 2 + k * (wV - recPx)} y={k % 2 === 0 ? -5 : 1} width={wV} height={4} fill={couleur} opacity={0.4} />
+                                  ))}
                                   <polyline points={`${-cote * largeurPx / 6},0 ${cote * largeurPx / 6},0 ${cote * largeurPx / 6 - cote * 4},-3 ${cote * largeurPx / 6},0 ${cote * largeurPx / 6 - cote * 4},3`}
                                     fill="none" stroke={couleur} strokeWidth={1} />
                                 </>
@@ -6788,6 +6797,19 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       {o.montage === "galandage" && <p className="text-[11px] text-ink-500 -mt-1">Le vantail coulisse dans l&apos;épaisseur de la cloison (≈ 9 cm minimum) : prévois {o.largeur} cm de cloison pleine de son côté.</p>}
                     </>
                   )}
+                  {o.type === "baie_vitree" && (
+                    <div className="flex items-center gap-2 text-xs text-ink-500">
+                      <span className="shrink-0 w-24">Vantaux</span>
+                      <div className="flex gap-1 flex-1">
+                        {Array.from({ length: NB_VANTAUX_BAIE_MAX }, (_, k) => k + 1).map(k => (
+                          <button key={k} onClick={() => majO({ nbVantaux: k })}
+                            className={`flex-1 !text-xs px-2 py-1 rounded-md border transition-colors ${
+                              nbVantauxBaie(o) === k ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"
+                            }`}>{k}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {(o.type === "porte_coulissante" || o.type === "baie_vitree") && (
                     <div className="flex items-center gap-2 text-xs text-ink-500">
                       <span className="shrink-0 w-24">Glisse vers</span>
@@ -6973,6 +6995,27 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                             {epCm < 9 && <span className="text-amber-700">⚠ Mur de {Math.round(epCm)} cm : trop mince pour un galandage (≈ 9 cm minimum).</span>}
                           </div>
                         )}
+                      </>
+                    );
+                  })()}
+                  {o.type === "baie_vitree" && (() => {
+                    const nbV = nbVantauxBaie(o);
+                    return (
+                      <>
+                        <div className="flex items-center gap-2 text-xs text-ink-500">
+                          <span className="shrink-0 w-24">Vantaux</span>
+                          <div className="flex gap-1 flex-1">
+                            {Array.from({ length: NB_VANTAUX_BAIE_MAX }, (_, k) => k + 1).map(k => (
+                              <button key={k} onClick={() => modifierOuverture(o.id, { nbVantaux: k })}
+                                className={`flex-1 !text-xs px-2 py-1 rounded-md border transition-colors ${
+                                  nbV === k ? "bg-ink-900 border-ink-900 text-volt-400" : "bg-ink-50 border-ink-200 text-ink-600 hover:border-ink-400"
+                                }`}>{k}</button>
+                            ))}
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-ink-500 -mt-1">
+                          {nbV} vantail{nbV > 1 ? "x" : ""} de {largeurVantailBaieCm(o.largeur, nbV).toFixed(1)} cm (recouvrement {RECOUVREMENT_VANTAUX_CM} cm), tous mobiles : en 3D, clique un vantail ou utilise « Ouvrants ».
+                        </p>
                       </>
                     );
                   })()}
