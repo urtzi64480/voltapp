@@ -41,6 +41,7 @@ import { normaliserAngle } from "@/lib/soleil";
 import { posesTroncons, hauteursTroncons } from "@/lib/pose-circuits";
 import { creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurCircuit } from "@/lib/longueurs-circuits";
 import { fusionnerPieces, voisinesFusionnables } from "@/lib/fusion-pieces";
+import { decalerNiveau } from "@/lib/deplacer-niveau";
 import { migrerModeleMurs, aimanterSurFaceMur, preparerMurs, definirMitoyens, mitoyensDe, longueursUtilesCm, geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
 import { accrocherSurContour, apercuCloison, appliquerCloison, OptionsCloison, PointAccroche } from "@/lib/cloisons";
 import type { CloisonZone } from "@/lib/zones";
@@ -823,6 +824,7 @@ type DragMode =
   | { kind: "appareillage"; pieceId: number; appareillageId: number }
   | { kind: "meuble"; pieceId: number; meubleId: number }
   | { kind: "escalier"; escalierId: number; offX: number; offY: number }
+  | { kind: "niveau"; startX: number; startY: number; dx0: number; dy0: number }
   | { kind: "personne"; pieceId: number }
   | { kind: "voiture"; pieceId: number }
   | { kind: "ouverture"; pieceId: number; ouvertureId: number }
@@ -1952,6 +1954,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [ouvertureMenuOpen, setOuvertureMenuOpen] = useState(false);
   const [escalierMenuOpen, setEscalierMenuOpen] = useState(false);
   const [selectedEscalierId, setSelectedEscalierId] = useState<number | null>(null);
+  // Déplacement de tout l'étage : niveau d'origine (pour annuler et pour un décalage absolu) + décalage courant (m).
+  const [deplacementNiveau, setDeplacementNiveau] = useState<{ depart: Niveau; dx: number; dy: number } | null>(null);
+  const departNiveauRef = useRef<Niveau | null>(null);
   const [selectedOuvertureId, setSelectedOuvertureId] = useState<number | null>(null);
   const [selectedBoite, setSelectedBoite] = useState<{ label: string; boiteId: number } | null>(null);
   const [circuitsManuelsOpen, setCircuitsManuelsOpen] = useState(false);
@@ -2241,6 +2246,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           ...n,
           pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : { ...p, nomDecalage: { x: dragMode.startOffset.x + dxM, y: dragMode.startOffset.y + dyM } }),
         }));
+      } else if (dragMode.kind === "niveau") {
+        // Déplacement de tout l'étage : décalage ABSOLU par rapport au niveau d'origine (jamais cumulatif), sur la grille.
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const raw = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+        appliquerDecalageNiveau(arrondiGrille(dragMode.dx0 + raw.x - dragMode.startX), arrondiGrille(dragMode.dy0 + raw.y - dragMode.startY));
       } else if (dragMode.kind === "escalier") {
         // Escalier : déplacé sur la grille du plan, en gardant le décalage pris au moment de l'attraper.
         const rect = svgRef.current?.getBoundingClientRect();
@@ -2637,7 +2648,22 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   useEffect(() => {
     if (selectedPieceId != null || selectedAppareillageId != null || selectedOuvertureId != null || selectedMeubleId != null || selectedTableau) setSelectedEscalierId(null);
   }, [selectedPieceId, selectedAppareillageId, selectedOuvertureId, selectedMeubleId, selectedTableau]);
-  useEffect(() => { setSelectedEscalierId(null); setEscalierMenuOpen(false); }, [niveauActifId]);
+  useEffect(() => { setSelectedEscalierId(null); setEscalierMenuOpen(false); departNiveauRef.current = null; setDeplacementNiveau(null); }, [niveauActifId]);
+  // Déplacement d'étage : flèches du clavier = 1 cm (Maj : 10 cm) ; Échap = annuler.
+  useEffect(() => {
+    if (!deplacementNiveau) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      const pas = e.shiftKey ? 0.1 : 0.01;
+      const d = e.key === "ArrowLeft" ? [-pas, 0] : e.key === "ArrowRight" ? [pas, 0] : e.key === "ArrowUp" ? [0, -pas] : e.key === "ArrowDown" ? [0, pas] : null;
+      if (d) { e.preventDefault(); appliquerDecalageNiveau(Math.round((deplacementNiveau.dx + d[0]) * 1000) / 1000, Math.round((deplacementNiveau.dy + d[1]) * 1000) / 1000); }
+      else if (e.key === "Escape") { e.preventDefault(); terminerDeplacementNiveau(true); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deplacementNiveau]);
   // Suppr : supprime l'escalier sélectionné (hors saisie de texte).
   useEffect(() => {
     if (selectedEscalierId == null || mode !== "select") return;
@@ -3085,6 +3111,37 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     updateNiveauActif(n => ({ ...n, escaliers: (n.escaliers ?? []).filter(es => es.id !== id) }));
     setSelectedEscalierId(null);
   };
+  // ─── DÉPLACER TOUT UN ÉTAGE ─────────────────────────────────────────────────────────────────────────────
+  // Pour caler un étage sur l'escalier qui y arrive : toutes les pièces, leur contenu, les zones, le tableau et les escaliers du
+  // niveau bougent ensemble. Le décalage est toujours calculé depuis le niveau d'origine (annulation exacte).
+  const demarrerDeplacementNiveau = () => {
+    if (!niveauActif || vue3D) return;
+    setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false); setPlacingPointArrivee(false);
+    setMode("select"); setEscalierMenuOpen(false); setOuvertureMenuOpen(false);
+    deselectionnerAutres(); setSelectedEscalierId(null);
+    departNiveauRef.current = niveauActif;
+    setDeplacementNiveau({ depart: niveauActif, dx: 0, dy: 0 });
+  };
+  const appliquerDecalageNiveau = (dx: number, dy: number) => {
+    const depart = departNiveauRef.current;
+    if (!depart) return;
+    setDeplacementNiveau(d => (d ? { ...d, dx, dy } : d));
+    setNiveaux(nvs => nvs.map(n => (n.id === depart.id ? decalerNiveau(depart, dx, dy) : n)));
+  };
+  const terminerDeplacementNiveau = (annuler: boolean) => {
+    const depart = departNiveauRef.current;
+    if (annuler && depart) setNiveaux(nvs => nvs.map(n => (n.id === depart.id ? depart : n)));
+    departNiveauRef.current = null;
+    setDeplacementNiveau(null);
+    invalidateResultat();   // les chemins de circuits calculés avant le déplacement ne sont plus à la bonne place
+  };
+  const onDeplacementNiveauDown = (e: React.PointerEvent) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect || !deplacementNiveau) return;
+    const m = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+    setDragMode({ kind: "niveau", startX: m.x, startY: m.y, dx0: deplacementNiveau.dx, dy0: deplacementNiveau.dy });
+  };
+
   const onEscalierPointerDown = (esc: Escalier, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
     if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) { e.stopPropagation(); return; }
@@ -4777,6 +4834,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               </div>
             )}
           </div>
+          <button onClick={() => (deplacementNiveau ? terminerDeplacementNiveau(false) : demarrerDeplacementNiveau())}
+            className={`btn-ghost !text-xs ${deplacementNiveau ? "!bg-ink-900 !text-volt-400" : ""}`}
+            title="Déplacer tout l'étage d'un bloc (toutes les pièces et leur contenu, zones, tableau, escaliers) — pour le caler sur l'escalier qui y arrive">
+            ⤧ Déplacer l&apos;étage
+          </button>
           <button onClick={() => setCircuitsManuelsOpen(o => !o)} className={`btn-ghost !text-xs ${circuitsManuelsOpen ? "!bg-ink-900 !text-volt-400" : ""}`}>
             🎛️ Circuits manuels
           </button>
@@ -4929,11 +4991,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <svg
               ref={svgRef}
               className="w-full h-full block"
-              style={{ touchAction: "none", cursor: mode === "dessiner" || mode === "cloison" || mode === "zone" || placementType || placingTableau || placingPointArrivee || placingMeuble ? "crosshair" : "grab" }}
+              style={{ touchAction: "none", cursor: deplacementNiveau ? "move" : mode === "dessiner" || mode === "cloison" || mode === "zone" || placementType || placingTableau || placingPointArrivee || placingMeuble ? "crosshair" : "grab" }}
               onPointerDown={onBackgroundPointerDown}
               // Outil cloison : le clic gauche est traité ICI, avant les pièces / appareillages / portes (un
               // appareillage posé sur le mur ne doit pas avaler le départ de la cloison).
-              onPointerDownCapture={e => { if ((mode === "cloison" || mode === "zone") && e.button === 0) { e.stopPropagation(); onBackgroundPointerDown(e); } }}
+              onPointerDownCapture={e => {
+                if (deplacementNiveau && e.button === 0 && !e.shiftKey) { e.stopPropagation(); onDeplacementNiveauDown(e); return; }   // Maj + glisser = déplacer la vue
+                if ((mode === "cloison" || mode === "zone") && e.button === 0) { e.stopPropagation(); onBackgroundPointerDown(e); }
+              }}
               onPointerMove={onCanvasPointerMove}
               onWheel={handleWheel}
             >
@@ -5427,6 +5492,21 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   }
                   return elements;
                 });
+              })()}
+
+              {/* Pendant le déplacement d'étage : contours (pointillés bleus) des niveaux reliés par un escalier, pour caler les murs. */}
+              {deplacementNiveau && niveauActif && (() => {
+                const ids = new Set<number>();
+                (niveauActif.escaliers ?? []).forEach(es => { if (es.niveauDestId != null) ids.add(es.niveauDestId); });
+                entrantsEscalier.forEach(en => ids.add(en.source.id));
+                return niveaux.filter(n => ids.has(n.id) && n.id !== niveauActif.id).map(n => (
+                  <g key={`calque-${n.id}`} style={{ pointerEvents: "none" }}>
+                    {n.pieces.map(pc => (
+                      <polygon key={pc.id} points={pc.contour.map(q => { const sp = toScreen(q); return `${sp.x},${sp.y}`; }).join(" ")}
+                        fill="#2563eb" fillOpacity={0.05} stroke="#2563eb" strokeWidth={1.2} strokeDasharray="6,4" opacity={0.7} />
+                    ))}
+                  </g>
+                ));
               })()}
 
               {/* Escaliers qui ARRIVENT sur ce niveau : trémie hachurée, non éditable (elle se règle depuis le niveau de départ). */}
@@ -6007,6 +6087,38 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               ))}
             </svg>
 
+            {deplacementNiveau && niveauActif && (() => {
+              const liés = new Set<number>();
+              (niveauActif.escaliers ?? []).forEach(es => { if (es.niveauDestId != null) liés.add(es.niveauDestId); });
+              entrantsEscalier.forEach(en => liés.add(en.source.id));
+              const nomsLies = niveaux.filter(n => liés.has(n.id) && n.id !== niveauActif.id).map(n => n.nom || NIVEAU_TYPES[n.type]);
+              const cm = (v: number) => Math.round(v * 1000) / 10;
+              return (
+                <DraggablePanel key="deplacement-niveau" corner="bl" className="card card-inner !p-3 flex flex-col gap-2 shadow-lg w-80">
+                  <p className="text-sm font-semibold text-ink-900">⤧ Déplacer tout l&apos;étage <span className="text-xs font-normal text-ink-400">· {niveauActif.nom || NIVEAU_TYPES[niveauActif.type]}</span></p>
+                  <p className="text-[11px] text-ink-500">
+                    Glisse sur le plan : toutes les pièces et leur contenu, les zones, le tableau et les escaliers bougent ensemble. Maj + glisser = déplacer la vue · flèches = 1 cm (Maj : 10 cm) · Échap = annuler.
+                  </p>
+                  {nomsLies.length > 0 && <p className="text-[11px] text-blue-700">Contours en pointillés bleus : {nomsLies.join(", ")} (calage des murs). La trémie hachurée montre où arrive l&apos;escalier.</p>}
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0 w-24">Décalage X (cm)</span>
+                    <input type="number" className="input !py-1 !text-xs !w-24" key={`dn-x-${dragEndTick}-${cm(deplacementNiveau.dx)}`} defaultValue={cm(deplacementNiveau.dx)}
+                      onChange={ev => { const v = Number(ev.target.value); if (ev.target.value !== "" && !Number.isNaN(v)) appliquerDecalageNiveau(v / 100, deplacementNiveau.dy); }} />
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                    <span className="shrink-0 w-24">Décalage Y (cm)</span>
+                    <input type="number" className="input !py-1 !text-xs !w-24" key={`dn-y-${dragEndTick}-${cm(deplacementNiveau.dy)}`} defaultValue={cm(deplacementNiveau.dy)}
+                      onChange={ev => { const v = Number(ev.target.value); if (ev.target.value !== "" && !Number.isNaN(v)) appliquerDecalageNiveau(deplacementNiveau.dx, v / 100); }} />
+                  </div>
+                  {niveauActif.pieces.some(p => p.verrouillee) && <p className="text-[11px] text-ink-400">Les pièces verrouillées suivent aussi : c&apos;est le niveau entier qui se déplace.</p>}
+                  <div className="flex gap-2">
+                    <button onClick={() => terminerDeplacementNiveau(false)} className="btn-volt !text-xs flex-1">Terminer</button>
+                    <button onClick={() => terminerDeplacementNiveau(true)} className="btn-ghost !text-xs flex-1">Annuler le déplacement</button>
+                  </div>
+                </DraggablePanel>
+              );
+            })()}
+
             {selectedEscalier && niveauActif && mode === "select" && (() => {
               const esc = selectedEscalier;
               const calc = calculerEscalier(esc, hauteurTotaleEscalierCm(esc, niveauActif));
@@ -6055,6 +6167,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   <p className="text-[11px] text-ink-500">
                     {calc.nbMarches} marches de {calc.hMarche.toFixed(1)} cm · giron {calc.giron.toFixed(1)} cm · pente {calc.pente.toFixed(0)}° · Blondel {calc.blondel} · hauteur {calc.hauteurTotale} cm
                   </p>
+                  <p className="text-[11px] text-ink-500">Emprise {calc.empriseCm.longueur} × {calc.empriseCm.largeur} cm · emmarchement {calc.emmarchementCm} cm · trémie {calc.tremieCm.longueur} × {calc.tremieCm.largeur} cm</p>
                   {alertes.length > 0 && (
                     <ul className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 list-disc list-inside">
                       {alertes.map((a, i) => <li key={i}>{a}</li>)}
@@ -6072,12 +6185,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     </select>
                   ))}
 
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-400 mt-1">Dimensions (cm) — vide = calcul auto</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-400 mt-1">Dimensions (cm) — tout est calculé automatiquement ; renseigne une valeur pour l'imposer, le reste s'adapte</p>
                   {num("Hauteur à franchir", esc.hauteurCm, v => maj({ hauteurCm: v }), { placeholder: String(calc.hauteurTotale), min: 50 })}
                   {num("Épaisseur plancher", esc.epaisseurPlancher, v => v !== undefined && maj({ epaisseurPlancher: v }), { min: 0 })}
                   {num("Nb de marches", esc.nbMarches, v => maj({ nbMarches: v === undefined ? undefined : Math.round(v) }), { placeholder: String(calc.nbMarches), min: 3 })}
                   {num("Giron", esc.giron, v => maj({ giron: v }), { placeholder: calc.giron.toFixed(1), min: 10 })}
                   {esc.type !== "helicoidal" && num("Largeur (emmarchement)", esc.largeur, v => v !== undefined && maj({ largeur: v }), { min: 40 })}
+                  {esc.type !== "helicoidal" && num("Longueur hors-tout", esc.longueurHorsTout, v => maj({ longueurHorsTout: v }), { placeholder: String(calc.empriseCm.longueur), min: 100 })}
+                  {(esc.type === "quart_tournant" || esc.type === "demi_tournant") && num("Largeur hors-tout", esc.largeurHorsTout, v => maj({ largeurHorsTout: v }), { placeholder: String(calc.empriseCm.largeur), min: 80 })}
                   {num("Épaisseur marche", esc.epaisseurMarche, v => maj({ epaisseurMarche: v }), { placeholder: "4", min: 1 })}
 
                   {esc.type === "helicoidal" && (
