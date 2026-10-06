@@ -125,6 +125,7 @@ export function centreEtiquetteZone(z: Pick<Zone, "contour" | "ferme">): Point {
 // cloison : l'angle extérieur est comblé (sans cela les rectangles centrés sur l'axe laissent un coin vide).
 export interface CloisonZone { i: number; a: Point; b: Point; epaisseurM: number; extA: number; extB: number }
 export function cloisonsDeZone(z: Zone): CloisonZone[] {
+  if (z.escalierVisibleId != null) return [];     // zone « escalier visible » : simple emprise, jamais de cloison
   const n = z.contour.length, m = nbCotes(z.contour, z.ferme);
   const e = z.epaisseurCm / 100;
   const res: CloisonZone[] = [];

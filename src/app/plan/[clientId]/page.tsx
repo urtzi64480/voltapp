@@ -5066,10 +5066,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 const cloisons = cloisonsDeZone(z);
                 return (
                   <g key={`zone-${z.id}`}>
-                    {z.ferme && <polygon points={toPts(z.contour)} fill="#a78bfa" fillOpacity={0.14} stroke="none" style={{ pointerEvents: "none" }} />}
-                    {segmentsZone(z).filter(sg => z.cotes[sg.i] === "ouvert").map(sg => {
+                    {z.ferme && <polygon points={toPts(z.contour)} fill={z.escalierVisibleId != null ? "#f59e0b" : "#a78bfa"} fillOpacity={z.escalierVisibleId != null ? 0.22 : 0.14} stroke="none" style={{ pointerEvents: "none" }} />}
+                    {segmentsZone(z).filter(sg => z.cotes[sg.i] === "ouvert" || z.escalierVisibleId != null).map(sg => {
                       const a = toScreen(sg.a), b = toScreen(sg.b);
-                      return <line key={`zo-${sg.i}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#7c3aed" strokeWidth={1.6} strokeDasharray="7,5" style={{ pointerEvents: "none" }} />;
+                      return <line key={`zo-${sg.i}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={z.escalierVisibleId != null ? "#d97706" : "#7c3aed"} strokeWidth={1.6} strokeDasharray="7,5" style={{ pointerEvents: "none" }} />;
                     })}
                     {cloisons.map(c => (
                       <polygon key={`zc-${c.i}`} points={toPts(quadCloison(c))} fill="#78716c" stroke="#78716c" strokeWidth={0.6} strokeLinejoin="round" style={{ pointerEvents: "none" }} />
@@ -6715,6 +6715,25 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       onChange={e => { const v = parseFloat(e.target.value); if (v >= 1 && v <= 50) majZone(z.id, zz => ({ ...zz, epaisseurCm: v })); }} />
                   </div>
                   {z.ferme && (
+                    <div className="flex flex-col gap-1 border-t border-ink-100 pt-2">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">Escalier visible dans cette zone (vue 3D)</span>
+                      <select className="input !py-1 !text-xs" value={z.escalierVisibleId ?? ""}
+                        onChange={ev => majZone(z.id, zz => ({ ...zz, escalierVisibleId: ev.target.value === "" ? undefined : Number(ev.target.value) }))}>
+                        <option value="">Aucun — zone ordinaire</option>
+                        {entrantsEscalier.map(({ escalier, source }) => (
+                          <option key={escalier.id} value={escalier.id}>{escalier.nom || "Escalier"} · depuis {source.nom || NIVEAU_TYPES[source.type]}</option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-ink-500">
+                        {entrantsEscalier.length === 0
+                          ? "Aucun escalier n'arrive sur ce niveau : crée-le sur le niveau de départ et choisis ce niveau comme niveau desservi."
+                          : z.escalierVisibleId != null
+                            ? "En 3D, le sol est ouvert dans cette zone et l'escalier n'y est visible que là (rien de plus bas). Aucune cloison. Déplace les points orange pour changer la forme."
+                            : "Choisis un escalier pour ouvrir le sol en 3D dans cette zone et n'y montrer que lui."}
+                      </p>
+                    </div>
+                  )}
+                  {z.ferme && z.escalierVisibleId == null && (
                     <div className="flex flex-col gap-1 border-t border-ink-100 pt-2">
                       <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">Côtés</span>
                       {z.cotes.map((c, i) => (

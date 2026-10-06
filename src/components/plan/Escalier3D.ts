@@ -121,13 +121,57 @@ function garde(points: THREE.Vector3[], g: THREE.Group, matMain: THREE.Material,
 const teinte = (hex: number, k: number) => new THREE.Color(hex).multiplyScalar(k);
 
 // ─── Escalier ───────────────────────────────────────────────────────────────────────────────────────────
-export function creerEscalier3D(calc: CalculEscalier, e: Escalier): THREE.Group {
+// Triangles (convexes) d'un polygone SIMPLE quelconque (convexe ou non) : sert à percer le sol d'une zone de forme libre.
+export function trianglesDePolygone(poly: Point[]): Point[][] {
+  if (poly.length < 3) return [];
+  return THREE.ShapeUtils.triangulateShape(poly.map(p => new THREE.Vector2(p.x, p.y)), []).map(t => t.map(i => poly[i]));
+}
+
+// Découpe un matériau à des polygones QUELCONQUES (plan, mètres) : tout fragment hors des polygones est éliminé (règle
+// pair/impair sur les arêtes, repère monde de la scène : x = x du plan, z = y du plan). Aucune géométrie n'est modifiée.
+const MAX_ARETES_COUPE = 64;
+function decouperAuxPolygones(mat: THREE.Material, polys: Point[][]) {
+  const aretes: THREE.Vector4[] = [];
+  polys.forEach(poly => poly.forEach((a, i) => { const b = poly[(i + 1) % poly.length]; aretes.push(new THREE.Vector4(a.x, a.y, b.x, b.y)); }));
+  const nb = Math.min(aretes.length, MAX_ARETES_COUPE);
+  while (aretes.length < MAX_ARETES_COUPE) aretes.push(new THREE.Vector4());
+  aretes.length = MAX_ARETES_COUPE;
+  mat.onBeforeCompile = shader => {
+    shader.uniforms.uAretes = { value: aretes };
+    shader.uniforms.uNbAretes = { value: nb };
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec3 vPosMonde;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvPosMonde = (modelMatrix * vec4(transformed, 1.0)).xyz;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", `#include <common>
+varying vec3 vPosMonde;
+uniform vec4 uAretes[${MAX_ARETES_COUPE}];
+uniform int uNbAretes;
+bool dansLesZones(vec2 p) {
+  bool dedans = false;
+  for (int i = 0; i < ${MAX_ARETES_COUPE}; i++) {
+    if (i >= uNbAretes) break;
+    vec4 e = uAretes[i];
+    if (((e.y > p.y) != (e.w > p.y)) && (p.x < (e.z - e.x) * (p.y - e.y) / (e.w - e.y) + e.x)) dedans = !dedans;
+  }
+  return dedans;
+}`)
+      .replace("void main() {", "void main() {\n  if (!dansLesZones(vPosMonde.xz)) discard;");
+  };
+  mat.customProgramCacheKey = () => "decoupeZonesEscalier";
+  mat.needsUpdate = true;
+}
+
+// zones : si fournies, l'escalier n'est dessiné qu'à l'intérieur de ces polygones (escalier vu depuis le niveau desservi).
+export function creerEscalier3D(calc: CalculEscalier, e: Escalier, zones?: Point[][]): THREE.Group {
   const groupe = new THREE.Group();
   const hex = e.couleur && /^#?[0-9a-f]{6}$/i.test(e.couleur) ? parseInt(e.couleur.replace("#", ""), 16) : COULEUR_MATERIAU[e.materiau];
   const matMarche = new THREE.MeshStandardMaterial({ color: hex, roughness: 0.7 });
   const matStruct = new THREE.MeshStandardMaterial({ color: e.materiau === "metal" ? 0x4b5563 : teinte(hex, 0.82), roughness: 0.65, metalness: e.materiau === "metal" ? 0.5 : 0 });
   const matMain = new THREE.MeshStandardMaterial({ color: e.materiau === "bois" ? 0x7a5230 : 0x374151, roughness: 0.5, metalness: e.materiau === "bois" ? 0 : 0.6 });
   const matBalustre = new THREE.MeshStandardMaterial({ color: 0x4b5563, roughness: 0.4, metalness: 0.6 });
+
+  if (zones && zones.length > 0) [matMarche, matStruct, matMain, matBalustre].forEach(m => decouperAuxPolygones(m, zones));
 
   const ep = (e.epaisseurMarche ?? EPAISSEUR_MARCHE_DEFAUT_CM) / 100;
   const hM = calc.hMarche / 100, paillasse = EPAISSEUR_STRUCTURE_CM / 100;
@@ -211,6 +255,9 @@ export function creerEscalier3D(calc: CalculEscalier, e: Escalier): THREE.Group 
     });
     garde(pts, groupe, matMain, matBalustre);
   });
+
+  // Escalier vu à travers une zone : il ne projette aucune ombre (les parties masquées ne doivent pas en jeter).
+  if (zones && zones.length > 0) groupe.traverse(o => { o.castShadow = false; });
 
   return groupe;
 }

@@ -473,6 +473,10 @@ export interface Zone {
   // Portes / passages percés dans les cloisons de la zone. segIndex = index du côté (même convention que
   // Piece.ouvertures) ; position 0..1 le long de ce côté.
   ouvertures?: Ouverture[];
+  // Zone « escalier visible » (zone fermée tracée sur le niveau DESSERVI) : id de l'escalier d'un autre niveau qui arrive ici.
+  // En 3D, le sol est ouvert dans cette zone et cet escalier n'y est visible que dedans (rien de plus bas, rien à côté).
+  // Une telle zone n'a aucune cloison. Absent = zone ordinaire.
+  escalierVisibleId?: number;
 }
 export const EPAISSEUR_CLOISON_ZONE_CM = 10;
 

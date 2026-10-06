@@ -18,7 +18,7 @@ import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSail
 import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante, creerBaieVitree, idVantailBaie, creerPorteGarage, creerFenetreBattante } from "@/components/plan/PortesOuvrables";
 import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
 import { calculerEscalier, hauteurTotaleEscalierCm, EscalierEntrant } from "@/lib/escaliers";
-import { creerEscalier3D } from "@/components/plan/Escalier3D";
+import { creerEscalier3D, trianglesDePolygone, geometrieSolPercee, aretesGardeCorpsTremie, creerGardeCorpsTremie } from "@/components/plan/Escalier3D";
 import { cloisonsDeZone, ouverturesEffectivesZone } from "@/lib/zones";
 import { SaisonSoleil, LABEL_SAISON_SOLEIL, LATITUDE_DEFAUT, elevationMidi, directionSoleilMidi } from "@/lib/soleil";
 import { parametresMur3D, geometrieMurs, surfaceUtile, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT, preparerMurs, pointDansCouche2 } from "@/lib/murs";
@@ -539,11 +539,11 @@ const Vue3D = forwardRef<Vue3DHandle, {
   orientationNord?: number;
   // Actions « circuits » du plan (générer / afficher les circuits) : affichées dans l'onglet « Vue » du bandeau.
   circuitsAction?: React.ReactNode;
-  // Escaliers des AUTRES niveaux qui arrivent sur celui-ci : NON utilisé en 3D. Le sol d'un étage reste plein (aucun trou) et
-  // ce qui est sous le niveau affiché (bas de l'escalier, trémie) n'est jamais montré ; la trémie n'existe que sur le plan 2D.
-  // Propriété conservée pour ne pas toucher l'appelant.
+  // Escaliers des AUTRES niveaux qui arrivent sur celui-ci. Le sol reste PLEIN et ces escaliers restent invisibles, sauf dans les
+  // zones « escalier visible » tracées sur ce niveau (Zone.escalierVisibleId, forme libre) : le sol y est ouvert et l'escalier
+  // n'est dessiné que dedans — rien de plus bas, rien à côté. À mémoïser côté appelant.
   escaliersEntrants?: EscalierEntrant[];
-}>(function Vue3D({ niveau, resultat, showCircuits, orientationNord = 0, circuitsAction }, ref) {
+}>(function Vue3D({ niveau, resultat, showCircuits, orientationNord = 0, circuitsAction, escaliersEntrants }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -720,6 +720,12 @@ const Vue3D = forwardRef<Vue3DHandle, {
       });
     });
 
+    // Zones « escalier visible » de ce niveau (qui visent bien un escalier arrivant ici) : le sol y est ouvert (triangulées : la
+    // zone peut être concave) et l'escalier correspondant n'y est visible que dedans.
+    const idsEntrants = new Set((escaliersEntrants ?? []).map(en => en.escalier.id));
+    const zonesEscalier = (niveau.zones ?? []).filter(z => z.ferme && z.contour.length >= 3 && z.escalierVisibleId != null && idsEntrants.has(z.escalierVisibleId));
+    const tremies = zonesEscalier.flatMap(z => trianglesDePolygone(z.contour));
+
     // Sol + murs par pièce
     niveauResultat.pieces.forEach(piece => {
       if (piece.contour.length < 3) return;
@@ -729,12 +735,13 @@ const Vue3D = forwardRef<Vue3DHandle, {
       // Rotation -90° autour de x : (x, y) de la forme → (x, 0, -y). On passe donc -y pour retomber sur z = y du plan
       // (comme les murs et les appareillages) — sans cela le sol était en MIROIR par rapport aux murs.
       const shape = new THREE.Shape(piece.contour.map(p => new THREE.Vector2(p.x, -p.y)));
-      // Sol plein : jamais percé par la trémie d'un escalier qui arrive d'un autre niveau (on ne montre rien de ce qui est
-      // sous le niveau affiché).
-      const solGeo = new THREE.ShapeGeometry(shape);
+      // Sol plein, sauf dans les zones « escalier visible » (coordonnées déjà dans le repère de la scène, donc sans rotation).
+      // Aucune zone sur cette pièce → sol habituel, strictement inchangé.
+      const solPercee = tremies.length > 0 ? geometrieSolPercee(piece.contour, tremies) : null;
+      const solGeo = solPercee ?? new THREE.ShapeGeometry(shape);
       const solMat = new THREE.MeshStandardMaterial({ color: spec.color, side: THREE.DoubleSide });
       const sol = new THREE.Mesh(solGeo, solMat);
-      sol.rotation.x = -Math.PI / 2;
+      if (!solPercee) sol.rotation.x = -Math.PI / 2;
       sol.receiveShadow = true;
       scene.add(sol);
 
@@ -1055,10 +1062,19 @@ const Vue3D = forwardRef<Vue3DHandle, {
           rayon: Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2 + 3, hauteur: hauteurPlafond }
       : { cx: 0, cz: 0, rayon: 8, hauteur: hauteurPlafond };
 
-    // Escaliers qui PARTENT de ce niveau (entiers, posés au sol). Ceux qui y arrivent ne sont pas montrés : leur partie est
-    // sous le sol du niveau affiché.
+    // Escaliers qui PARTENT de ce niveau (entiers, posés au sol).
     (niveau.escaliers ?? []).forEach(esc => {
       scene.add(creerEscalier3D(calculerEscalier(esc, hauteurTotaleEscalierCm(esc, niveau)), esc));
+    });
+    // Escaliers qui ARRIVENT ici : visibles UNIQUEMENT dans leurs zones « escalier visible » (décalés d'une hauteur d'étage vers le
+    // bas, découpés à la forme de la zone), avec un garde-corps sur les côtés de la zone qui ne longent pas un mur.
+    (escaliersEntrants ?? []).forEach(en => {
+      const polys = zonesEscalier.filter(z => z.escalierVisibleId === en.escalier.id).map(z => z.contour);
+      if (polys.length === 0) return;
+      const bas = creerEscalier3D(en.calcul, en.escalier, polys);
+      bas.position.y = -en.calcul.hauteurTotale / 100;
+      scene.add(bas);
+      polys.forEach(poly => scene.add(creerGardeCorpsTremie(aretesGardeCorpsTremie({ ...en.calcul, tremie: poly }, en.escalier, niveauResultat.pieces.map(p => p.contour)), en.escalier)));
     });
 
     // Sol extérieur « receveur d'ombre » : transparent, il ne montre que les ombres — celle du bâtiment au sol,
@@ -1207,7 +1223,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
       voletsRef.current.clear();
       portesRef.current.clear();
     };
-  }, [niveau, resultat, showCircuits, niveauResultat]);
+  }, [niveau, resultat, showCircuits, niveauResultat, escaliersEntrants]);
 
   // Applique l'état courant (interrupteurs allumés + mode nuit) aux objets three.js déjà
   // construits, sans reconstruire la scène. Dépend aussi de [niveauResultat, showCircuits]
