@@ -50,6 +50,7 @@ import { enCm, estRectangle, redimensionnerMur, redimensionnerMurUtile, reporter
 import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece";
 import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
+import Vue3DMaison from "@/components/plan/Vue3DMaison";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
 
@@ -2017,6 +2018,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [showPrintForm, setShowPrintForm] = useState(false);
   const [show3DPrintForm, setShow3DPrintForm] = useState(false);
   const [vue3D, setVue3D] = useState(false);
+  const [vue3DTous, setVue3DTous] = useState(false);              // vue 3D de TOUTE la maison (tous les niveaux empilés)
+  const [masquerEtiquettes, setMasquerEtiquettes] = useState(false);   // plan 2D épuré : cache d'un coup tous les noms et toutes les dimensions des pièces
   const vue3DRef = useRef<Vue3DHandle>(null);
   const [pushing, setPushing] = useState(false);
   const [pushMsg, setPushMsg] = useState<string | null>(null);
@@ -4450,7 +4453,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const prioritaires = selectedAppareillage && pieceDeSelectedAppareillage && mode === "select"
       ? cotesAppareillage({ x: selectedAppareillage.x, y: selectedAppareillage.y }, pieceDeSelectedAppareillage.contour, selectedAppareillage.type, true, repereCotes(pieceDeSelectedAppareillage))
       : [];
-    const cotesPieces: Cote[] = showCotesPieces
+    const cotesPieces: Cote[] = showCotesPieces && !masquerEtiquettes
       ? niveauActif.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => {
           const { utile, utileFin } = geometrieMurs(pc);
           return pc.contour.map((_, i): Cote => {
@@ -4465,8 +4468,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           .flatMap(a => cotesAppareillage({ x: a.x, y: a.y }, pc.contour, a.type, false, repereCotes(pc))))
       : [];
     const cotesArchi: Cote[] = [
-      ...(showCotesOuv ? niveauActif.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => cotesOuvertures(pc, niveauActif.pieces)) : []),
-      ...(showCotesExt ? [...cotesExterieures(niveauActif.pieces), ...coteHorsTout(niveauActif.pieces)] : []),
+      ...(showCotesOuv && !masquerEtiquettes ? niveauActif.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => cotesOuvertures(pc, niveauActif.pieces)) : []),
+      ...(showCotesExt && !masquerEtiquettes ? [...cotesExterieures(niveauActif.pieces), ...coteHorsTout(niveauActif.pieces)] : []),
     ];
     return filtrerCotesLisibles([...cotesPieces, ...cotesArchi, ...autres], toScreen, prioritaires)
       .map(c => geometrieCote(c, toScreen, 14))
@@ -4489,7 +4492,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // Épaisseur de chaque mur (cm) — structure, + doublage — posée sur le mur, uniquement si le trait
   // est assez épais à l'écran pour la porter (sinon elle ne servirait qu'à encombrer).
-  const epaisseursMurs = showCotesPieces && niveauActif ? niveauActif.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => {
+  const epaisseursMurs = showCotesPieces && !masquerEtiquettes && niveauActif ? niveauActif.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => {
     const g = geometrieMurs(pc);
     return g.quads.flatMap(q => {
       const sp = murDe(pc, q.i);
@@ -4622,6 +4625,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <button onClick={handleGenerer} className="btn-ghost !px-2 !py-1 !text-xs" title="Générer les circuits"><Sparkles size={13} /> Générer</button>
             <button onClick={() => setShowCircuits(v => !v)} disabled={!resultat} className={`btn-ghost !px-2 !py-1 !text-xs disabled:opacity-40 ${resultat && showCircuits ? "!bg-ink-900 !text-volt-400" : ""}`} title="Afficher / masquer les circuits"><Eye size={13} /> Circuits</button>
             <button onClick={() => setVue3D(v => !v)} className={`btn-ghost !px-2 !py-1 !text-xs ${vue3D ? "!bg-ink-900 !text-volt-400" : ""}`}>{vue3D ? "Vue 2D" : "Vue 3D"}</button>
+            {vue3D && (
+              <button onClick={() => setVue3DTous(v => !v)} className={`btn-ghost !px-2 !py-1 !text-xs ${vue3DTous ? "!bg-ink-900 !text-volt-400" : ""}`}
+                title="Voir tous les étages empilés en 3D (sols, murs, escaliers) — masquer / afficher chaque niveau">Tous les étages</button>
+            )}
+            {!vue3D && (
+              <button onClick={() => setMasquerEtiquettes(v => !v)} className={`btn-ghost !px-2 !py-1 !text-xs ${masquerEtiquettes ? "!bg-ink-900 !text-volt-400" : ""}`}
+                title={masquerEtiquettes ? "Noms et dimensions des pièces masqués — cliquer pour les réafficher" : "Plan épuré : masquer d'un coup tous les noms et toutes les dimensions des pièces"}>Épuré</button>
+            )}
             <button onClick={() => setModeFocus(f => !f)} className={`btn-ghost !px-2 !py-1 ${modeFocus ? "!bg-ink-900 !text-volt-400" : ""}`}
               title={modeFocus ? "Quitter le plein écran (Échap)" : "Plein écran"}>
               {modeFocus ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
@@ -4671,8 +4682,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <button onClick={() => setVue3D(v => !v)} className={`btn-ghost ${vue3D ? "!bg-ink-900 !text-volt-400" : ""}`}>
               {vue3D ? "Vue 2D" : "Vue 3D"}
             </button>
+            {vue3D && (
+              <button onClick={() => setVue3DTous(v => !v)} className={`btn-ghost ${vue3DTous ? "!bg-ink-900 !text-volt-400" : ""}`}
+                title="Voir tous les étages empilés en 3D (sols, murs, escaliers) — masquer / afficher chaque niveau">Tous les étages</button>
+            )}
             {vue3D ? (
-              <button onClick={() => setShow3DPrintForm(true)} className="btn-ghost"><Printer size={15} /> Imprimer la vue 3D</button>
+              <button onClick={() => setShow3DPrintForm(true)} disabled={vue3DTous} title={vue3DTous ? "L'impression 3D se fait depuis la vue d'un seul niveau" : undefined}
+                className="btn-ghost disabled:opacity-40"><Printer size={15} /> Imprimer la vue 3D</button>
             ) : (
               <button onClick={() => setShowPrintForm(true)} className="btn-ghost"><Printer size={15} /> Imprimer</button>
             )}
@@ -4897,6 +4913,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               </button>
             );
           })()}
+          <button onClick={() => setMasquerEtiquettes(v => !v)} className={`${masquerEtiquettes ? "btn-volt" : "btn-ghost"} !text-xs`}
+            title={masquerEtiquettes ? "Noms et dimensions des pièces masqués — cliquer pour les réafficher" : "Plan épuré : masquer d'un coup tous les noms et toutes les dimensions des pièces (surfaces, longueurs de murs, cotes, épaisseurs) pour placer appareillages et circuits sur un écran dégagé"}>
+            {masquerEtiquettes ? "👁 Réafficher noms et cotes" : "🧹 Plan épuré"}
+          </button>
           <div className="relative">
             {(() => {
               const nb = [showCotes, showCotesPieces, showCotesExt, showCotesOuv].filter(Boolean).length;
@@ -4988,7 +5008,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               <BoussoleOrientation angle={orientationNord} onChange={definirOrientationNord} />
             )}
             {vue3D ? (
-              niveauActif ? (
+              vue3DTous ? (
+                <Vue3DMaison niveaux={niveaux} niveauActifId={niveauActifId} />
+              ) : niveauActif ? (
                 <Vue3D ref={vue3DRef} niveau={niveauActif} resultat={resultat} showCircuits={showCircuits} orientationNord={orientationNord} circuitsAction={blocCircuits} escaliersEntrants={entrantsEscalier} />
               ) : null
             ) : (
@@ -5133,7 +5155,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         </g>
                       );
                     })}
-                    {!piece.masquerDimensions && (() => {
+                    {!piece.masquerDimensions && !masquerEtiquettes && (() => {
                       const gU = geometrieMurs(piece), utileP = gU.utile;
                       return piece.contour.map((pt, i) => {
                       const aU = utileP[i], bU = gU.utileFin[i];
@@ -5735,18 +5757,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 const poigneeActive = piece.id === selectedPieceId && mode === "select";
                 return (
                   <g key={`etiq-${piece.id}`}>
-                    {!(piece.masquerNom && piece.masquerDimensions) && piece.id !== selectedPieceId && mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingMeuble && (
+                    {!(piece.masquerNom && piece.masquerDimensions) && !masquerEtiquettes && piece.id !== selectedPieceId && mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingMeuble && (
                       <rect x={x - w / 2} y={y - h / 2} width={w} height={h} fill="transparent" style={{ cursor: "pointer", pointerEvents: "all" }}
                         onPointerDown={e => { e.stopPropagation(); selectionnerPiece(piece.id); }}>
                         <title>Sélectionner cette pièce</title>
                       </rect>
                     )}
                     <g style={{ pointerEvents: "none" }} textAnchor="middle" fontFamily="monospace">
-                      {!piece.masquerNom && <>
+                      {!piece.masquerNom && !masquerEtiquettes && <>
                         <text x={x} y={y - 3} fontSize={12} fontWeight={700} fill="none" stroke="#fff" strokeWidth={4} strokeLinejoin="round">{nom}</text>
                         <text x={x} y={y - 3} fontSize={12} fontWeight={700} fill="#1c1917">{nom}</text>
                       </>}
-                      {!piece.masquerDimensions && <>
+                      {!piece.masquerDimensions && !masquerEtiquettes && <>
                         <text x={x} y={y + 11} fontSize={10} fill="none" stroke="#fff" strokeWidth={3.5} strokeLinejoin="round">{surf}</text>
                         <text x={x} y={y + 11} fontSize={10} fill="#78716c">{surf}</text>
                       </>}
@@ -5770,7 +5792,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 );
               })}
 
-              {(niveauActif?.zones ?? []).map(z => {
+              {!masquerEtiquettes && (niveauActif?.zones ?? []).map(z => {
                 const surf = surfaceZone(z);
                 const nom = z.nom || (z.ferme ? "Zone" : "Cloison");
                 const q = toScreen(centreEtiquetteZone(z));

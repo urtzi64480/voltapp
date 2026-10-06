@@ -104,7 +104,7 @@ function creerEtiquetteSprite(texte: string, couleurFond: string): THREE.Sprite 
 // s0..s1 : tranche, en mètres le long du mur depuis a, dans le sens a → (ux, uy) ; y0..y1 : hauteurs.
 function ajouterPrismeCouche(
   quad: { x: number; y: number }[], a: { x: number; y: number }, ux: number, uy: number,
-  s0: number, s1: number, y0: number, y1: number, mat: THREE.Material, scene: THREE.Scene,
+  s0: number, s1: number, y0: number, y1: number, mat: THREE.Material, scene: THREE.Object3D,
 ): void {
   if (y1 - y0 < 0.002 || s1 - s0 < 0.002) return;
   type Pt = { x: number; z: number; s: number };
@@ -157,7 +157,7 @@ function ajouterPrismeCouche(
 
 export function construireMurAvecOuvertures(
   a: { x: number; y: number }, b: { x: number; y: number }, hauteurMur: number,
-  ouvertures: OuvertureEffective[], epaisseur: number, murMat: THREE.Material, scene: THREE.Scene,
+  ouvertures: OuvertureEffective[], epaisseur: number, murMat: THREE.Material, scene: THREE.Object3D,
   // Une COUCHE de mur (structure ou doublage) : decalage = écart du centre de la couche à l'axe,
   // le long de la normale gauche ; extDebut/extFin = prolongement aux extrémités (comble le coin
   // avec le mur voisin) ; avecContenu = dessiner aussi vitrage / panneau coulissant (une seule
