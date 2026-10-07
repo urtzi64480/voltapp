@@ -56,7 +56,7 @@ const LABEL_NON_RACCORDE: Record<string, string> = {
   interrupteur: "Interrupteur", va_et_vient: "Va-et-vient", telerupteur: "Télérupteur",
   interrupteur_double: "Double interrupteur", va_et_vient_double: "Double va-et-vient", telerupteur_double: "Double bouton poussoir",
   prise: "Prise", prise_commandee: "Prise commandée", volet_roulant: "Volet roulant",
-  prise_dediee: "Prise dédiée",
+  prise_dediee: "Prise dédiée", prise_exterieure: "Prise extérieure",
 };
 
 export interface ResultatGeneration {

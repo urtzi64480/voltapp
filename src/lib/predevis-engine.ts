@@ -140,6 +140,7 @@ const LABEL_APPAREILLAGE: Record<string, string> = {
   interrupteur_double: "Double interrupteur", va_et_vient_double: "Double va-et-vient", telerupteur_double: "Double bouton télérupteur",
   point_lumineux: "Point lumineux (DCL)", applique: "Sortie applique",
   rj45: "Prise RJ45 (communication)",
+  prise_exterieure: "Prise extérieure (étanche IP44)",
 };
 // Une commande (interrupteur/va-et-vient/télérupteur) posée en domotique (AppareillagePlace.
 // domotique) est un produit différent d'un mécanisme filaire classique — module radio/wifi

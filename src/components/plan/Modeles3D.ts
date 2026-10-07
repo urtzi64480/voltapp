@@ -110,6 +110,23 @@ function modelePriseDediee(couleur?: string): THREE.Group {
   return g;
 }
 
+// Prise extérieure : boîtier étanche IP44 gris en saillie, prise 2P+T et clapet de protection
+// (repère bleu d'étanchéité).
+function modelePriseExterieure(): THREE.Group {
+  const g = new THREE.Group();
+  const gris = m(0x6b7280);
+  g.add(boite(0.09, 0.09, 0.03, gris, 0, 0, 0.015));                       // boîtier en saillie
+  const z = 0.03;
+  g.add(cylZ(0.03, 0.006, m(0x9ca3af), 0, 0, z + 0.003));                  // collerette
+  g.add(cylZ(0.024, 0.006, m(0xd1d5db), 0, 0, z + 0.008));                 // face de la prise
+  const alveole = m(0x111827);
+  g.add(cylZ(0.0045, 0.003, alveole, -0.01, 0, z + 0.0115));
+  g.add(cylZ(0.0045, 0.003, alveole, 0.01, 0, z + 0.0115));
+  g.add(cylZ(0.0035, 0.012, m(INOX, { metalness: 0.7 }), 0, 0.017, z + 0.012));
+  g.add(boite(0.07, 0.02, 0.008, m(0x2563eb), 0, 0.034, z + 0.004));       // clapet / repère IP44
+  return g;
+}
+
 // Prise RJ45 (communication) : plaque + embase rectangulaire avec volet anti-poussière, voyant
 // de repère bleu (câblage VDI, cat. 6 STP).
 function modeleRj45(couleur?: string): THREE.Group {
@@ -387,7 +404,7 @@ export function creerVoletRoulant(o: OptsVolet): ModeleVolet {
 const MONTAGE: Record<AppareillageType, Montage> = {
   prise: "mur", prise_commandee: "mur", interrupteur: "mur", va_et_vient: "mur", telerupteur: "mur",
   interrupteur_double: "mur", va_et_vient_double: "mur", telerupteur_double: "mur",
-  rj45: "mur", prise_dediee: "mur",
+  rj45: "mur", prise_dediee: "mur", prise_exterieure: "mur",
   applique: "mur", point_lumineux: "plafond",
   four: "sol_mur", plaque: "sol_mur", lave_linge: "sol_mur", lave_vaisselle: "sol_mur", seche_linge: "sol_mur",
   congelateur: "sol_mur", piscine: "sol_mur",
@@ -395,11 +412,11 @@ const MONTAGE: Record<AppareillageType, Montage> = {
   volet_roulant: "mur",
 };
 const DEMI_HAUTEUR: Partial<Record<AppareillageType, number>> = {
-  prise: 0.04, prise_commandee: 0.04, interrupteur: 0.04, va_et_vient: 0.04, telerupteur: 0.04, interrupteur_double: 0.04, va_et_vient_double: 0.04, telerupteur_double: 0.04, rj45: 0.04, prise_dediee: 0.04,
+  prise: 0.04, prise_commandee: 0.04, interrupteur: 0.04, va_et_vient: 0.04, telerupteur: 0.04, interrupteur_double: 0.04, va_et_vient_double: 0.04, telerupteur_double: 0.04, rj45: 0.04, prise_dediee: 0.04, prise_exterieure: 0.05,
   applique: 0.075, chauffe_eau: 0.5, chauffage: 0.225, clim: 0.14, seche_serviette: 0.6, irve: 0.18, vmc: 0.08, alarme: 0.14, volet_roulant: 0.12,
 };
 const SOMMET: Partial<Record<AppareillageType, number>> = {
-  prise: 0.045, prise_commandee: 0.045, interrupteur: 0.045, va_et_vient: 0.045, telerupteur: 0.045, interrupteur_double: 0.045, va_et_vient_double: 0.045, telerupteur_double: 0.045, rj45: 0.045, prise_dediee: 0.045,
+  prise: 0.045, prise_commandee: 0.045, interrupteur: 0.045, va_et_vient: 0.045, telerupteur: 0.045, interrupteur_double: 0.045, va_et_vient_double: 0.045, telerupteur_double: 0.045, rj45: 0.045, prise_dediee: 0.045, prise_exterieure: 0.055,
   applique: 0.08, point_lumineux: 0, four: 1.2, plaque: 0.9, lave_linge: 0.85, lave_vaisselle: 0.82, seche_linge: 0.85,
   congelateur: 0.85, piscine: 0.7, chauffe_eau: 0.45, chauffage: 0.23, clim: 0.14, seche_serviette: 0.6,
   irve: 0.18, vmc: 0.08, alarme: 0.2, volet_roulant: 0.1,
@@ -416,6 +433,7 @@ export function creerModeleAppareillage(type: AppareillageType, couleurCircuit?:
     case "prise": groupe = modelePrise(false, couleur); break;
     case "prise_commandee": groupe = modelePrise(true, couleur); break;
     case "prise_dediee": groupe = modelePriseDediee(couleur); break;
+    case "prise_exterieure": groupe = modelePriseExterieure(); break;
     case "rj45": groupe = modeleRj45(couleur); break;
     case "interrupteur": case "va_et_vient": case "telerupteur": groupe = modeleInterrupteur(type, couleur); break;
     case "interrupteur_double": groupe = modeleInterrupteurDouble("interrupteur", couleur); break;

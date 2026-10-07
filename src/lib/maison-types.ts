@@ -16,7 +16,7 @@ export type AppareillageType =
   | "chauffe_eau" | "chauffage" | "clim" | "seche_serviette" | "congelateur"
   | "irve" | "piscine" | "vmc" | "alarme"
   | "volet_roulant"
-  | "rj45" | "prise_dediee";
+  | "rj45" | "prise_dediee" | "prise_exterieure";
 
 export interface Point { x: number; y: number; }
 
@@ -449,6 +449,8 @@ export function familleCircuitManuelAppareillage(type: AppareillageType, pieceTy
     if (pieceType === "exterieur" || pieceType === "garage") return "exterieur";
     return "prise_16";
   }
+  // Prise extérieure (étanche IP44) : toujours sur le circuit « extérieur », quelle que soit la pièce.
+  if (type === "prise_exterieure") return "exterieur";
   if (type === "point_lumineux" || type === "applique") return "lumiere";
   // Volets roulants : un circuit dédié PARTAGÉ (NF C 15-100 : 16 A / 1,5 mm², tous les volets
   // sur le même circuit — idéalement répartis sur 2) et non un circuit par moteur.

@@ -5,6 +5,7 @@ export const PALETTE: { type: AppareillageType; label: string; categorie: string
   { type: "prise",           label: "Prise de courant",              categorie: "Prises" },
   { type: "prise_commandee", label: "Prise commandée",               categorie: "Prises" },
   { type: "prise_dediee",    label: "Prise dédiée (20 A / 32 A)",    categorie: "Prises" },
+  { type: "prise_exterieure", label: "Prise extérieure (étanche)",   categorie: "Prises" },
   { type: "rj45",            label: "Prise RJ45 (communication)",    categorie: "Prises" },
   { type: "point_lumineux",  label: "Point lumineux (plafond)",      categorie: "Éclairage" },
   { type: "applique",        label: "Applique murale",                categorie: "Éclairage" },
@@ -52,7 +53,7 @@ const DEDIE_INITIALES: Record<string, string> = {
 // même logique que les symboles 2D mais réduite à 1-3 caractères.
 const INITIALES_BASE: Record<string, string> = {
   prise: "P", prise_commandee: "PC", point_lumineux: "PL", applique: "AP",
-  interrupteur: "I", va_et_vient: "VV", telerupteur: "BP", rj45: "RJ", prise_dediee: "PD",
+  interrupteur: "I", va_et_vient: "VV", telerupteur: "BP", rj45: "RJ", prise_dediee: "PD", prise_exterieure: "PE",
   interrupteur_double: "I2", va_et_vient_double: "VV2", telerupteur_double: "BP2",
 };
 // usageDedie : pour une prise dédiée, l'étiquette est celle de l'appareil alimenté (F, LL, LV…).
@@ -113,6 +114,12 @@ const SYMBOLES: Record<AppareillageType, DefSymbole> = {
   // initialesAppareillage).
   prise_dediee: { oriente: true, prims: [
     { k: "p", d: "M 5.5 19 A 6.5 6.5 0 0 1 18.5 19 Z", f: true }, L(12, 19, 12, 7.5), L(8.5, 7.5, 15.5, 7.5),
+  ] },
+  // Prise extérieure (étanche IP44) : prise 2P+T dans un demi-cercle double (capot étanche), pour la
+  // distinguer d'une prise intérieure ; reste sur le circuit « extérieur ».
+  prise_exterieure: { oriente: true, prims: [
+    { k: "p", d: "M 3.5 19 A 8.5 8.5 0 0 1 20.5 19 Z" }, { k: "p", d: "M 6.5 19 A 5.5 5.5 0 0 1 17.5 19 Z" },
+    L(12, 19, 12, 9), L(8.5, 9, 15.5, 9),
   ] },
   // Prise de communication RJ45 : triangle posé sur le mur, pointe vers la pièce, repéré par un
   // carré plein (prise de communication — voltage faible, jamais sur un circuit de puissance).
