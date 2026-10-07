@@ -113,6 +113,15 @@ export interface Prestation {
 // de la prestation. Une seule offre est « principale » : elle est recopiée dans
 // prestations.prix_achat / prix_unitaire / liens_fournisseurs, pour que tout le code qui lit
 // ces colonnes (CRM, rentabilité, moteur pré-devis) continue de fonctionner tel quel.
+// Une pièce à acheter chez un fournisseur pour constituer l'article fini d'une offre (ex. mécanisme +
+// enjoliveur). Prix d'achat TTC UNITAIRE ; quantité = nombre de pièces pour UN article fini.
+export interface PieceOffre {
+  nom: string;
+  reference?: string | null;
+  quantite: number;
+  prix_achat?: number | null;
+}
+
 export interface PrestationFournisseur {
   id: string;
   user_id?: string;
@@ -124,6 +133,9 @@ export interface PrestationFournisseur {
   prix_vente?: number | null;
   principal: boolean;
   ordre?: number | null;
+  // Pièces à acheter pour constituer l'article fini chez ce fournisseur (colonne jsonb, migration 004).
+  // Si présentes, prix_achat = somme(quantite × prix_achat des pièces).
+  pieces?: PieceOffre[] | null;
   created_at?: string;
 }
 

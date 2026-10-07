@@ -4,8 +4,8 @@ import { supabase } from "@/lib/supabase";
 import { Prestation, PrestationFournisseur } from "@/types";
 import {
   attacherOffres, chargerOffres, draftsDepuisLegacy, draftsPourProduit, libelleOffre, miroirPrestation,
-  normaliserDrafts, nouvelleOffreDraft, offrePrincipale, offresDe, offresTriees, prixVenteOffre,
-  synchroniserOffres, rattacherParNom, OffreDraft, OffreNormalisee,
+  normaliserDrafts, nouvelleOffreDraft, nouvellePieceDraft, totalPiecesDrafts, offrePrincipale, offresDe, offresTriees, prixVenteOffre,
+  synchroniserOffres, rattacherParNom, OffreDraft, OffreNormalisee, PieceDraft,
 } from "@/lib/fournisseurs";
 import { fmt, UNITES, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
@@ -131,11 +131,13 @@ function MargeTag({ prixAchat, prixVente }: { prixAchat?: number | null; prixVen
   );
 }
 
-function MargeFields({ prixAchat, prixVente, onPrixAchatChange, onPrixVenteChange, typeBranche }: {
+function MargeFields({ prixAchat, prixVente, onPrixAchatChange, onPrixVenteChange, typeBranche, achatVerrouille }: {
   prixAchat: string; prixVente: string;
   onPrixAchatChange: (v: string) => void;
   onPrixVenteChange: (v: string) => void;
   typeBranche?: string;
+  // Prix d'achat calculé (somme des pièces de l'offre) : affiché mais non modifiable ici.
+  achatVerrouille?: boolean;
 }) {
   const [margePct, setMargePct] = useState("");
   // Mode de saisie du prix d'achat : "ttc" (par défaut — la plupart des fournisseurs
@@ -206,7 +208,9 @@ function MargeFields({ prixAchat, prixVente, onPrixAchatChange, onPrixVenteChang
               className={cn("px-2 py-0.5 text-xs font-medium transition-colors border-l border-emerald-300", modeAchat === "ht" ? "bg-emerald-700 text-white" : "bg-white text-emerald-700")}>HT</button>
           </div>
         </div>
-        {modeAchat === "ttc" ? (
+        {achatVerrouille ? (
+          <input className="input text-sm text-right bg-ink-50" type="number" readOnly tabIndex={-1} value={prixAchat} />
+        ) : modeAchat === "ttc" ? (
           <input className="input text-sm text-right" type="number" step="0.01" placeholder="0.00"
             value={prixAchat} onChange={e => handleAchatTTC(e.target.value)} />
         ) : (
@@ -214,7 +218,9 @@ function MargeFields({ prixAchat, prixVente, onPrixAchatChange, onPrixVenteChang
             value={achatHtSaisi} onChange={e => handleAchatHT(e.target.value)} />
         )}
         <p className="text-xs text-emerald-600 mt-1">
-          {modeAchat === "ttc"
+          {achatVerrouille
+            ? "Somme des pièces ci-dessous (TTC) — modifie les pièces pour changer ce prix"
+            : modeAchat === "ttc"
             ? "Prix payé au fournisseur, TVA incluse — laisser en TTC si le fournisseur ne détaille pas le HT"
             : `TVA 20% ajoutée automatiquement → ${fmt((parseFloat(achatHtSaisi) || 0) * 1.2)} TTC, non récupérable en franchise de TVA`}
         </p>
@@ -255,6 +261,14 @@ function FournisseursEditor({ offres, setOffres, fournisseursConnus }: {
   const maj = (cle: string, patch: Partial<OffreDraft>) =>
     setOffres(prev => prev.map(o => (o.cle === cle ? { ...o, ...patch } : o)));
   const definirPrincipal = (cle: string) => setOffres(prev => prev.map(o => ({ ...o, principal: o.cle === cle })));
+  // Pièces d'une offre : le prix d'achat de l'offre est recalculé à chaque modification (somme des pièces).
+  const majPieces = (cle: string, fn: (pieces: PieceDraft[]) => PieceDraft[]) =>
+    setOffres(prev => prev.map(o => {
+      if (o.cle !== cle) return o;
+      const pieces = fn(o.pieces ?? []);
+      const total = pieces.length > 0 ? totalPiecesDrafts(pieces) : null;
+      return { ...o, pieces, prixAchat: pieces.length > 0 ? (total != null ? String(total) : "") : o.prixAchat };
+    }));
   const ajouter = () => setOffres(prev => [...prev, nouvelleOffreDraft(prev.length === 0)]);
   const retirer = (cle: string) => setOffres(prev => {
     const n = prev.filter(o => o.cle !== cle);
@@ -293,7 +307,42 @@ function FournisseursEditor({ offres, setOffres, fournisseursConnus }: {
             <input className="input text-sm" placeholder="https://www.leroymerlin.fr/…"
               value={o.url} onChange={e => maj(o.cle, { url: e.target.value })} />
           </div>
+          <div className="rounded-lg border border-dashed border-ink-200 p-2.5 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <label className="label mb-0">Pièces à acheter pour cet article fini</label>
+                <p className="text-xs text-ink-400">Si ce fournisseur vend l'article en plusieurs morceaux (ex. mécanisme + enjoliveur), liste-les : le prix d'achat devient leur somme.</p>
+              </div>
+              <button type="button" onClick={() => majPieces(o.cle, ps => [...ps, nouvellePieceDraft()])}
+                className="btn-ghost !px-3 text-xs shrink-0"><Plus size={13} /> Pièce</button>
+            </div>
+            {(o.pieces ?? []).length > 0 && (
+              <div className="space-y-1.5">
+                <div className="hidden md:grid grid-cols-[3fr_2fr_70px_100px_28px] gap-2 text-[11px] text-ink-400 px-0.5">
+                  <span>Pièce</span><span>Référence</span><span className="text-right">Qté</span><span className="text-right">Prix achat TTC</span><span />
+                </div>
+                {(o.pieces ?? []).map(pc => (
+                  <div key={pc.cle} className="grid grid-cols-2 md:grid-cols-[3fr_2fr_70px_100px_28px] gap-2 items-center">
+                    <input className="input text-sm col-span-2 md:col-span-1" placeholder="Ex : Mécanisme, Plaque…"
+                      value={pc.nom} onChange={e => majPieces(o.cle, ps => ps.map(x => x.cle === pc.cle ? { ...x, nom: e.target.value } : x))} />
+                    <input className="input text-sm" placeholder="Réf."
+                      value={pc.reference} onChange={e => majPieces(o.cle, ps => ps.map(x => x.cle === pc.cle ? { ...x, reference: e.target.value } : x))} />
+                    <input className="input text-sm text-right" type="number" min="0" step="1" placeholder="Qté"
+                      value={pc.quantite} onChange={e => majPieces(o.cle, ps => ps.map(x => x.cle === pc.cle ? { ...x, quantite: e.target.value } : x))} />
+                    <input className="input text-sm text-right" type="number" step="0.01" placeholder="0.00"
+                      value={pc.prixAchat} onChange={e => majPieces(o.cle, ps => ps.map(x => x.cle === pc.cle ? { ...x, prixAchat: e.target.value } : x))} />
+                    <button type="button" aria-label="Retirer la pièce" onClick={() => majPieces(o.cle, ps => ps.filter(x => x.cle !== pc.cle))}
+                      className="text-red-500 hover:text-red-700 justify-self-end"><Trash2 size={14} /></button>
+                  </div>
+                ))}
+                {totalPiecesDrafts(o.pieces ?? []) == null && (
+                  <p className="text-xs text-amber-600">Renseigne le prix de chaque pièce pour obtenir le prix d'achat de l'article.</p>
+                )}
+              </div>
+            )}
+          </div>
           <MargeFields prixAchat={o.prixAchat} prixVente={o.prixVente} typeBranche="materiau"
+            achatVerrouille={(o.pieces ?? []).length > 0}
             onPrixAchatChange={v => maj(o.cle, { prixAchat: v })}
             onPrixVenteChange={v => maj(o.cle, { prixVente: v })} />
           <div className="flex items-center justify-between gap-3">
@@ -1153,6 +1202,11 @@ function CategorieBlock({
                                       {o.principal && <span className="ml-1.5 badge text-[10px] bg-volt-100 text-volt-700">Principal</span>}
                                     </p>
                                     {o.reference && <p className="text-ink-400 truncate">réf. {o.reference}</p>}
+                                    {(o.pieces ?? []).length > 0 && (
+                                      <p className="text-ink-500 truncate" title={(o.pieces ?? []).map(pc => `${pc.quantite}× ${pc.nom}`).join(", ")}>
+                                        {(o.pieces ?? []).length} pièces : {(o.pieces ?? []).map(pc => `${pc.quantite}× ${pc.nom}`).join(", ")}
+                                      </p>
+                                    )}
                                   </div>
                                   <span className="text-ink-400 shrink-0">{o.prix_achat != null ? `PA ${fmt(o.prix_achat)}` : "PA —"}</span>
                                   <MargeTag prixAchat={o.prix_achat} prixVente={pv} />
@@ -1516,7 +1570,7 @@ export default function CataloguePage() {
         const existantes = prestations.find(p => p.id === u.id)?.fournisseurs ?? [];
         const err = await synchroniserOffres(uid, u.id, rattacherParNom(existantes, u.offres));
         if (err) erreurs.push(`${u.data.nom} : ${err}`);
-      } else if (u.principale) {
+      } else if (u.principale && (u.principale.pieces ?? []).length === 0) {
         // Import « ancien format » sur un produit qui a des fournisseurs : on aligne l'offre principale.
         await supabase.from("prestation_fournisseurs").update({ prix_achat: u.data.prix_achat, prix_vente: u.data.prix_unitaire }).eq("id", u.principale.id);
       }

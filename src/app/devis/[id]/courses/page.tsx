@@ -16,6 +16,8 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   const [items, setItems] = useState<CourseItem[]>([]);
   const [lignesBrutes, setLignesBrutes] = useState<any[]>([]);
   const [parFournisseur, setParFournisseur] = useState(false);
+  // Pièces à acheter par offre fournisseur retenue sur les lignes (vue privée par fournisseur uniquement).
+  const [piecesParOffre, setPiecesParOffre] = useState<Record<string, { nom: string; quantite: number }[]>>({});
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -43,6 +45,17 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
           // Vue par fournisseur proposée (et activée) dès qu'une ligne en porte un.
           setParFournisseur(lignes.some((l: any) => String(l.fournisseur_nom ?? "").trim() !== ""));
           setChecked(((data as any).liste_courses_checked as Record<string, boolean>) || {});
+          // Offres en plusieurs pièces : chargées à part ; si la colonne n'existe pas encore (migration 004),
+          // l'erreur est ignorée et la liste reste celle des articles finis.
+          const idsOffres = Array.from(new Set(lignes.map((l: any) => l.fournisseur_id).filter(Boolean))) as string[];
+          if (idsOffres.length > 0) {
+            supabase.from("prestation_fournisseurs").select("id, pieces").in("id", idsOffres).then(({ data: offres, error }) => {
+              if (error || !offres) return;
+              const m: Record<string, { nom: string; quantite: number }[]> = {};
+              (offres as any[]).forEach(o => { if (Array.isArray(o.pieces) && o.pieces.length > 0) m[o.id] = o.pieces; });
+              setPiecesParOffre(m);
+            });
+          }
         }
         setLoading(false);
       });
@@ -195,7 +208,7 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
 
   const totalChecked = items.filter(it => checked[it.key]).length;
   const aDesFournisseurs = lignesBrutes.some(l => String(l.fournisseur_nom ?? "").trim() !== "");
-  const groupes = parFournisseur && aDesFournisseurs ? buildCourseItemsParFournisseur(lignesBrutes) : null;
+  const groupes = parFournisseur && aDesFournisseurs ? buildCourseItemsParFournisseur(lignesBrutes, piecesParOffre) : null;
 
   function renderItem(it: CourseItem, cle: string) {
     const isChecked = !!checked[it.key];

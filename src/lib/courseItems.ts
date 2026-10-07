@@ -70,7 +70,20 @@ export interface GroupeFournisseur {
   achat: number | null;
 }
 
-export function buildCourseItemsParFournisseur(lignes: any[]): GroupeFournisseur[] {
+// piecesParOffre : pièces à acheter par offre fournisseur (id d'offre -> pièces). Une ligne matériau dont
+// l'offre retenue est en plusieurs pièces est remplacée, dans la liste d'achat, par ces pièces (quantité
+// de la ligne × quantité de la pièce) : c'est ce qu'on achète réellement chez ce fournisseur.
+function eclaterEnPieces(l: any, piecesParOffre?: Record<string, { nom: string; quantite: number }[]>): any[] {
+  const pieces = l.fournisseur_id && piecesParOffre ? piecesParOffre[String(l.fournisseur_id)] : undefined;
+  if (!pieces || pieces.length === 0 || l.type_branche !== "materiau" || l.kit_description) return [l];
+  return pieces.map(pc => ({
+    nom: `${pc.nom} — ${l.nom}`,
+    quantite: (pc.quantite > 0 ? pc.quantite : 1) * (l.quantite || 1),
+    type_branche: "materiau", unite: l.unite, fournisseur_nom: l.fournisseur_nom, fournisseur_id: l.fournisseur_id,
+  }));
+}
+
+export function buildCourseItemsParFournisseur(lignes: any[], piecesParOffre?: Record<string, { nom: string; quantite: number }[]>): GroupeFournisseur[] {
   const parNom = new Map<string, any[]>();
   for (const l of lignes ?? []) {
     const nom = String(l.fournisseur_nom ?? "").trim();
@@ -80,7 +93,7 @@ export function buildCourseItemsParFournisseur(lignes: any[]): GroupeFournisseur
   }
   const groupes: GroupeFournisseur[] = [];
   parNom.forEach((ls, nom) => {
-    const items = buildCourseItems(ls);
+    const items = buildCourseItems(ls.flatMap(l => eclaterEnPieces(l, piecesParOffre)));
     if (items.length === 0) return;
     const matieres = ls.filter(l => l.type_branche === "materiau" && l.kit_ratio_service == null);
     const complet = matieres.length > 0 && matieres.every(l => l.prix_achat != null);

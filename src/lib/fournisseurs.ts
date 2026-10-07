@@ -10,7 +10,7 @@
 // exécuté), chargerOffres() renvoie ok=false et aucune offre — l'application fonctionne comme avant.
 
 import { supabase } from "@/lib/supabase";
-import type { Prestation, PrestationFournisseur } from "@/types";
+import type { PieceOffre, Prestation, PrestationFournisseur } from "@/types";
 
 // ─── Libellés & prix ────────────────────────────────────────────────────────
 
@@ -116,6 +116,18 @@ export interface OffreDraft {
   prixAchat: string;
   prixVente: string;
   principal: boolean;
+  // Pièces à acheter pour constituer l'article fini chez ce fournisseur (vide = article acheté tel quel).
+  pieces: PieceDraft[];
+  // L'offre avait des pièces en base : si on les retire toutes, il faut les effacer explicitement.
+  piecesEnBase?: boolean;
+}
+
+export interface PieceDraft {
+  cle: string;
+  nom: string;
+  reference: string;
+  quantite: string;
+  prixAchat: string;   // prix d'achat TTC unitaire
 }
 
 let compteurCle = 0;
@@ -125,7 +137,46 @@ function nouvelleCle(): string {
 }
 
 export function nouvelleOffreDraft(principal = false): OffreDraft {
-  return { cle: nouvelleCle(), fournisseur: "", reference: "", url: "", prixAchat: "", prixVente: "", principal };
+  return { cle: nouvelleCle(), fournisseur: "", reference: "", url: "", prixAchat: "", prixVente: "", principal, pieces: [] };
+}
+
+export function nouvellePieceDraft(): PieceDraft {
+  return { cle: nouvelleCle(), nom: "", reference: "", quantite: "1", prixAchat: "" };
+}
+
+function arrondi2(n: number): number { return Math.round(n * 100) / 100; }
+
+// Prix d'achat total (TTC) d'un article fini = somme quantité × prix de chaque pièce. null si aucune
+// pièce, ou si une pièce n'a pas de prix (un total partiel sous-estimerait le coût réel).
+export function totalPieces(pieces: { quantite: number; prix_achat?: number | null }[]): number | null {
+  if (pieces.length === 0) return null;
+  let total = 0;
+  for (const p of pieces) {
+    if (p.prix_achat == null) return null;
+    total += (p.quantite > 0 ? p.quantite : 1) * p.prix_achat;
+  }
+  return arrondi2(total);
+}
+
+// Même calcul sur les champs texte du formulaire (affichage en direct du total des pièces).
+export function totalPiecesDrafts(pieces: PieceDraft[]): number | null {
+  const n = normaliserPieces(pieces);
+  return totalPieces(n);
+}
+
+// Écarte les pièces entièrement vides ; quantité par défaut 1.
+export function normaliserPieces(pieces: PieceDraft[]): PieceOffre[] {
+  return (pieces ?? [])
+    .filter(p => p.nom.trim() || p.reference.trim() || p.prixAchat.trim())
+    .map((p, i) => {
+      const q = nombreOuNull(p.quantite);
+      return {
+        nom: p.nom.trim() || `Pièce ${i + 1}`,
+        reference: p.reference.trim() || null,
+        quantite: q != null && q > 0 ? q : 1,
+        prix_achat: nombreOuNull(p.prixAchat),
+      };
+    });
 }
 
 export function draftsDepuisOffres(offres: PrestationFournisseur[]): OffreDraft[] {
@@ -135,6 +186,11 @@ export function draftsDepuisOffres(offres: PrestationFournisseur[]): OffreDraft[
     prixAchat: o.prix_achat != null ? String(o.prix_achat) : "",
     prixVente: o.prix_vente != null ? String(o.prix_vente) : "",
     principal: o.principal,
+    pieces: (o.pieces ?? []).map(p => ({
+      cle: nouvelleCle(), nom: p.nom ?? "", reference: p.reference ?? "",
+      quantite: String(p.quantite ?? 1), prixAchat: p.prix_achat != null ? String(p.prix_achat) : "",
+    })),
+    piecesEnBase: (o.pieces ?? []).length > 0,
   }));
 }
 
@@ -172,6 +228,11 @@ export interface OffreNormalisee {
   prix_vente: number | null;
   principal: boolean;
   ordre: number;
+  // Pièces de l'offre. Absent/vide : article acheté tel quel. `effacerPieces` : l'offre en avait en base
+  // et on les a toutes retirées (la colonne n'est écrite que dans ces deux cas, pour rester compatible
+  // tant que la migration 004 n'est pas exécutée).
+  pieces?: PieceOffre[];
+  effacerPieces?: boolean;
 }
 
 function nombreOuNull(s: string): number | null {
@@ -189,7 +250,8 @@ export function normaliserUrl(u: string): string | null {
 // Écarte les offres entièrement vides, donne un nom à chacune et garantit UNE offre principale.
 export function normaliserDrafts(drafts: OffreDraft[]): OffreNormalisee[] {
   const gardees = drafts.filter(d =>
-    d.fournisseur.trim() || d.reference.trim() || d.url.trim() || d.prixAchat.trim() || d.prixVente.trim());
+    d.fournisseur.trim() || d.reference.trim() || d.url.trim() || d.prixAchat.trim() || d.prixVente.trim()
+    || normaliserPieces(d.pieces).length > 0);
   if (gardees.length === 0) return [];
   let idxPrincipal = gardees.findIndex(d => d.principal);
   if (idxPrincipal < 0) idxPrincipal = 0;
@@ -197,10 +259,16 @@ export function normaliserDrafts(drafts: OffreDraft[]): OffreNormalisee[] {
     const url = normaliserUrl(d.url);
     const estPrincipale = i === idxPrincipal;
     const nom = d.fournisseur.trim() || nomDepuisUrl(url) || (estPrincipale ? "Fournisseur principal" : `Fournisseur ${i + 1}`);
+    // Avec des pièces, le prix d'achat de l'offre EST la somme des pièces : tout le reste de l'application
+    // (miroir du produit, rentabilité du devis, marges) continue de lire un simple prix_achat.
+    const pieces = normaliserPieces(d.pieces);
+    const total = totalPieces(pieces);
     return {
       id: d.id, fournisseur: nom, reference: d.reference.trim() || null, url,
-      prix_achat: nombreOuNull(d.prixAchat), prix_vente: nombreOuNull(d.prixVente),
+      prix_achat: pieces.length > 0 ? total : nombreOuNull(d.prixAchat), prix_vente: nombreOuNull(d.prixVente),
       principal: estPrincipale, ordre: i,
+      ...(pieces.length > 0 ? { pieces } : {}),
+      ...(pieces.length === 0 && d.piecesEnBase ? { effacerPieces: true } : {}),
     };
   }).sort((a, b) => Number(b.principal) - Number(a.principal)).map((o, i) => ({ ...o, ordre: i }));
 }
@@ -234,6 +302,9 @@ export function rattacherParNom(existantes: PrestationFournisseur[], offres: Off
 }
 
 export function messageErreurOffres(message: string): string {
+  if (/pieces/i.test(message) && /(column|colonne|schema cache)/i.test(message)) {
+    return "La colonne des pièces est introuvable : exécute d'abord la migration 004_pieces_offres.sql dans Supabase.";
+  }
   if (/prestation_fournisseurs/i.test(message) && /(exist|schema cache|relation)/i.test(message)) {
     return "La table des fournisseurs est introuvable : exécute d'abord la migration 003_fournisseurs_produits.sql dans Supabase.";
   }
@@ -262,6 +333,8 @@ export async function synchroniserOffres(userId: string, prestationId: string, v
       fournisseur: o.fournisseur, reference: o.reference, url: o.url,
       prix_achat: o.prix_achat, prix_vente: o.prix_vente, principal: o.principal, ordre: o.ordre,
       updated_at: new Date().toISOString(),
+      ...(o.pieces && o.pieces.length > 0 ? { pieces: o.pieces } : {}),
+      ...(o.effacerPieces ? { pieces: null } : {}),
     };
     if (o.id && idsEnBase.has(o.id)) {
       const { error } = await supabase.from("prestation_fournisseurs").update(champs).eq("id", o.id);
