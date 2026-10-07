@@ -368,6 +368,7 @@ const SOUS_CATEGORIES_CONNUES: { code: string; label: string }[] = [
   { code: "boite_encastrement_3postes", label: "Boîte d'encastrement triple" },
   { code: "boite_encastrement_4postes", label: "Boîte d'encastrement quadruple" },
   { code: "boite_encastrement_dcl", label: "Boîte d'encastrement DCL (point lumineux)" },
+  { code: "plaque_1poste", label: "Plaque de finition simple (1 poste)" },
   { code: "plaque_2postes", label: "Plaque de finition double (2 postes)" },
   { code: "plaque_3postes", label: "Plaque de finition triple (3 postes)" },
   { code: "plaque_4postes", label: "Plaque de finition quadruple (4 postes)" },

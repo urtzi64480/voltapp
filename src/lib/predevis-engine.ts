@@ -44,6 +44,8 @@
 //    boîte d'encastrement de la taille de la plaque (jusqu'à 4 postes) et UNE plaque de finition
 //    (sous_categorie plaque_Npostes), jamais regroupées par proximité avec d'autres postes ; chaque
 //    poste reste chiffré à part (mécanisme). Les postes isolés gardent le regroupement par proximité.
+//    TOUTE boîte d'encastrement (simple à quadruple) induit la plaque de finition de même taille :
+//    une prise = 1 prise + 1 boîte simple + 1 plaque simple (plaque_1poste), etc.
 //  - Prise RJ45 (sous_categorie "rj45") : courant faible, aucun circuit de puissance. Le câble de
 //    communication (sous_categorie "cable_rj45", cat. 6 STP) est compté EN ÉTOILE depuis le tableau/
 //    coffret de communication du niveau jusqu'à chaque prise : distance « Manhattan » sur le plan
@@ -275,21 +277,24 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           if (c.groupeId != null) parPlaque.set(c.groupeId, (parPlaque.get(c.groupeId) ?? 0) + 1);
           else libres.push(c);
         });
+        // Chaque boîte d'encastrement reçoit sa plaque de finition de même taille : un poste isolé
+        // = 1 mécanisme + 1 boîte simple + 1 plaque simple ; double/triple/quadruple = idem à N postes.
         const parTaille = new Map<number, number>();
         const plaquesParTaille = new Map<number, number>();
-        parPlaque.forEach(nb => {
-          const t = Math.min(nb, MAX_POSTES_PLAQUE);
+        const compter = (t: number) => {
           parTaille.set(t, (parTaille.get(t) ?? 0) + 1);
-          if (t >= 2) plaquesParTaille.set(t, (plaquesParTaille.get(t) ?? 0) + 1);
-        });
-        grouperParProximite(libres, 0.20, 4).forEach(g => parTaille.set(g.length, (parTaille.get(g.length) ?? 0) + 1));
+          plaquesParTaille.set(t, (plaquesParTaille.get(t) ?? 0) + 1);
+        };
+        parPlaque.forEach(nb => compter(Math.min(nb, MAX_POSTES_PLAQUE)));
+        grouperParProximite(libres, 0.20, 4).forEach(g => compter(g.length));
         parTaille.forEach((nb, taille) => {
           ajouter(`boite_encastrement_${taille}${taille === 1 ? "poste" : "postes"}@${piece.id}`,
             `boite_encastrement_${taille}${taille === 1 ? "poste" : "postes"}`,
             `Boîte d'encastrement ${LABEL_POSTES(taille)}`, piece.nom || "Pièce", nb, "u");
         });
         plaquesParTaille.forEach((nb, taille) => {
-          ajouter(`plaque_${taille}postes@${piece.id}`, `plaque_${taille}postes`,
+          const codePlaque = `plaque_${taille}${taille === 1 ? "poste" : "postes"}`;
+          ajouter(`${codePlaque}@${piece.id}`, codePlaque,
             `Plaque de finition ${LABEL_POSTES(taille)}`, piece.nom || "Pièce", nb, "u");
         });
       }
