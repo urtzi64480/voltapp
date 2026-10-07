@@ -163,9 +163,8 @@ function LigneRow({ l, i, setLignes, showUnite, postes, produit, onChanger }: {
 
       <div className="flex items-center gap-2 pl-7 md:pl-0 md:shrink-0">
         {showUnite && <span className="text-xs text-ink-400 shrink-0">{l.unite}</span>}
-        <input type="number" min="1" step="0.5" value={l.quantite}
-          onChange={e => setLignes(prev => prev.map((x, idx) => idx === i ? { ...x, quantite: parseFloat(e.target.value) || 1 } : x))}
-          className="w-16 shrink-0 text-center text-sm border border-ink-200 rounded-lg py-1.5 bg-white" />
+        <ChampQuantite valeur={l.quantite}
+          onChange={q => setLignes(prev => prev.map((x, idx) => idx === i ? { ...x, quantite: q } : x))} />
         <span className="text-xs text-ink-400 shrink-0">×</span>
         <input type="number" min="0" step="0.5" value={l.prix_unitaire}
           onChange={e => setLignes(prev => prev.map((x, idx) => idx === i ? { ...x, prix_unitaire: parseFloat(e.target.value) || 0 } : x))}
@@ -179,6 +178,28 @@ function LigneRow({ l, i, setLignes, showUnite, postes, produit, onChanger }: {
           className="p-1.5 rounded-lg text-ink-300 hover:bg-red-50 hover:text-red-500 transition-colors shrink-0"><X size={14} /></button>
       </div>
     </div>
+  );
+}
+
+// Quantité d'une ligne : accepte les demi-unités (0,5 h de main d'œuvre, etc.). Le texte saisi est
+// gardé localement pour pouvoir taper « 0 » puis « 0,5 » sans être remplacé par 1 ; la quantité de
+// la ligne n'est mise à jour que pour une valeur > 0, et une saisie invalide est annulée à la sortie.
+function ChampQuantite({ valeur, onChange }: { valeur: number; onChange: (q: number) => void }) {
+  const [texte, setTexte] = useState(String(valeur));
+  const lire = (s: string) => parseFloat(s.replace(",", "."));
+  useEffect(() => {
+    if (lire(texte) !== valeur) setTexte(String(valeur));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [valeur]);
+  return (
+    <input type="number" inputMode="decimal" min="0.5" step="0.5" value={texte}
+      onChange={e => {
+        setTexte(e.target.value);
+        const n = lire(e.target.value);
+        if (Number.isFinite(n) && n > 0) onChange(n);
+      }}
+      onBlur={() => { const n = lire(texte); if (!(Number.isFinite(n) && n > 0)) setTexte(String(valeur)); }}
+      className="w-16 shrink-0 text-center text-sm border border-ink-200 rounded-lg py-1.5 bg-white" />
   );
 }
 

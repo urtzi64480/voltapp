@@ -72,7 +72,7 @@ function optionEffective(besoin: BesoinApparie, etat: EtatChoix, prestations: Pr
     const offre = etat.fournisseurId ? (p.fournisseurs ?? []).find(o => o.id === etat.fournisseurId) ?? null : null;
     const base: OptionArticle = {
       prestation_id: p.id, nom: p.nom, prix_unitaire: p.prix_unitaire, unite: p.unite,
-      type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire ?? null,
+      type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire && p.longueur_unitaire > 0 ? p.longueur_unitaire : null,
       quantiteMultiplicateur: multiplicateurPourArticle(besoin.sousCategorie, p.sous_categorie),
       sousCategorieArticle: p.sous_categorie ?? besoin.sousCategorie,
       image_url: p.image_url ?? null,

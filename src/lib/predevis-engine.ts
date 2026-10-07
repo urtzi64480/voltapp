@@ -524,7 +524,7 @@ function optionsPour(sousCategorie: string, prestations: Prestation[]): OptionAr
     const o = offrePrincipale(p.fournisseurs);
     return {
       prestation_id: p.id, nom: p.nom, prix_unitaire: prixVenteOffre(p, o), unite: p.unite,
-      type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire ?? null,
+      type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire && p.longueur_unitaire > 0 ? p.longueur_unitaire : null,
       quantiteMultiplicateur: 1, sousCategorieArticle: sousCategorie,
       image_url: p.image_url ?? null,
       ...champsFournisseurOption(o),

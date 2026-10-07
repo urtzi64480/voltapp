@@ -953,7 +953,7 @@ function CategorieBlock({
   editPrixVente, categories, marques, collapsed, fournisseursConnus,
   toggleCollapse, delCategorie, startEdit, saveEdit, del, onEditKit,
   setEditId, setEditData, setEditNewCat, setEditCatMode, setEditOffres,
-  setEditPrixVente,
+  setEditPrixVente, editEnBobine, setEditEnBobine, editLongueur, setEditLongueur,
 }: any) {
   const isOpen = !collapsed;
   const [collapsedMarques, setCollapsedMarques] = useState<Record<string, boolean>>({});
@@ -1102,10 +1102,10 @@ function CategorieBlock({
                                   <option value="moyenne">Moyenne gamme</option>
                                   <option value="haut">Haut de gamme</option>
                                 </select></div>
-                              <div><label className="label">Longueur bobine (m) — vide = vendu au mètre</label>
-                                <input className="input text-sm" type="number" step="1" placeholder="Ex : 25"
-                                  value={(editData as any).longueur_unitaire ?? p.longueur_unitaire ?? ""}
-                                  onChange={e => setEditData((d: any) => ({ ...d, longueur_unitaire: e.target.value ? parseFloat(e.target.value) : null }))} /></div>
+                              {(((editData as any).type_branche ?? p.type_branche) === "materiau") && (
+                                <BobineField small actif={editEnBobine} setActif={setEditEnBobine}
+                                  longueur={editLongueur} setLongueur={setEditLongueur} />
+                              )}
                             </div>
                             <FournisseursEditor offres={editOffres} setOffres={setEditOffres} fournisseursConnus={fournisseursConnus} />
                             <div><label className="label">Image du produit (URL)</label>
@@ -1315,6 +1315,35 @@ function CategorieBlock({
 
 // ─── Page principale ──────────────────────────────────────────────────────────
 
+// Longueur de bobine/rouleau à enregistrer : null si l'option est désactivée ou si la saisie
+// n'est pas un nombre > 0 (0, vide, texte) — un 0 ne doit JAMAIS compter comme une bobine.
+function longueurValide(actif: boolean, saisie: string): number | null {
+  if (!actif) return null;
+  const n = parseFloat(saisie.replace(",", "."));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// Bascule « Vendu en bobine / rouleau » + champ longueur (visible seulement si activé).
+function BobineField({ actif, setActif, longueur, setLongueur, small }: {
+  actif: boolean; setActif: (v: boolean) => void; longueur: string; setLongueur: (v: string) => void; small?: boolean;
+}) {
+  return (
+    <div>
+      <label className="label">Conditionnement</label>
+      <label className="flex items-center gap-2 text-sm text-ink-700 cursor-pointer select-none">
+        <input type="checkbox" checked={actif} onChange={e => setActif(e.target.checked)} />
+        Vendu en bobine / rouleau (longueur fixe)
+      </label>
+      {actif ? (
+        <input className={small ? "input text-sm mt-1.5" : "input mt-1.5"} type="number" min="0" step="any"
+          placeholder="Longueur (m) — ex : 25" value={longueur} onChange={e => setLongueur(e.target.value)} />
+      ) : (
+        <p className="text-xs text-ink-400 mt-1">Désactivé : vendu au mètre / à l'unité, rien n'apparaît sur le devis.</p>
+      )}
+    </div>
+  );
+}
+
 export default function CataloguePage() {
   const [prestations, setPrestations] = useState<PrestationExt[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -1334,6 +1363,11 @@ export default function CataloguePage() {
   const [formPrixVente, setFormPrixVente] = useState("");
   const [offresOk, setOffresOk] = useState(true);
   const [formLongueurUnitaire, setFormLongueurUnitaire] = useState("");
+  // Option « vendu en bobine / rouleau » : tant qu'elle est désactivée, aucune longueur n'est
+  // enregistrée (null) et le devis ne mentionne jamais bobine/rouleau.
+  const [formEnBobine, setFormEnBobine] = useState(false);
+  const [editEnBobine, setEditEnBobine] = useState(false);
+  const [editLongueur, setEditLongueur] = useState("");
   const [form, setForm] = useState({
     nom: "", description: "", unite: "forfait",
     type_branche: "service", categorie: "",
@@ -1394,6 +1428,10 @@ export default function CataloguePage() {
       prixVente = parseFloat(formPrixVente);
       if (isNaN(prixVente) || prixVente < 0) { alert("Le prix de vente est obligatoire."); return; }
     }
+    const longueurCreation = estMateriau ? longueurValide(formEnBobine, formLongueurUnitaire) : null;
+    if (estMateriau && formEnBobine && longueurCreation == null) {
+      alert("Indique une longueur de bobine/rouleau supérieure à 0, ou désactive l'option."); return;
+    }
     const { data, error } = await supabase.from("prestations").insert({
       user_id: session.user.id, nom: form.nom,
       description: form.description || null, prix_unitaire: prixVente,
@@ -1401,7 +1439,7 @@ export default function CataloguePage() {
       categorie: cat, actif: true, sous_categorie: form.sous_categorie || null,
       marque: form.marque || null, liens_fournisseurs: liens,
       image_url: form.image_url || null, gamme: form.gamme || null,
-      longueur_unitaire: formLongueurUnitaire !== "" ? parseFloat(formLongueurUnitaire) : null,
+      longueur_unitaire: longueurCreation,
     }).select().single();
     if (error) { alert("Erreur : " + error.message); return; }
     if (data) {
@@ -1417,7 +1455,7 @@ export default function CataloguePage() {
     }
     if (form.marque && !marques.includes(form.marque)) setMarques(m => [...m, form.marque].sort());
     setForm({ nom: "", description: "", unite: "forfait", type_branche: "service", categorie: "", sous_categorie: "", marque: "", image_url: "", gamme: "" });
-    setNewCat(""); setFormOffres([nouvelleOffreDraft(true)]); setFormPrixVente(""); setFormLongueurUnitaire(""); setShowForm(false);
+    setNewCat(""); setFormOffres([nouvelleOffreDraft(true)]); setFormPrixVente(""); setFormLongueurUnitaire(""); setFormEnBobine(false); setShowForm(false);
   }
 
   async function del(id: string) {
@@ -1439,10 +1477,15 @@ export default function CataloguePage() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) { alert("Session expirée."); return; }
 
+    // Longueur enregistrée seulement si l'option « bobine/rouleau » est activée ET > 0 ; sinon null.
+    const longueurEdition = typeFinal === "materiau" ? longueurValide(editEnBobine, editLongueur) : null;
+    if (typeFinal === "materiau" && editEnBobine && longueurEdition == null) {
+      alert("Indique une longueur de bobine/rouleau supérieure à 0, ou désactive l'option."); return;
+    }
     const dataToSave: any = {
       ...editData, categorie: finalCat,
       gamme: (editData as any).gamme || null,
-      longueur_unitaire: (editData as any).longueur_unitaire ?? null,
+      longueur_unitaire: longueurEdition,
     };
     // null = on ne touche pas aux offres ; tableau = état voulu des offres du produit.
     let offresN: OffreNormalisee[] | null = null;
@@ -1497,8 +1540,11 @@ export default function CataloguePage() {
       unite: p.unite, type_branche: p.type_branche, categorie: p.categorie,
       sous_categorie: p.sous_categorie ?? undefined, marque: p.marque ?? undefined,
       image_url: p.image_url ?? undefined,
-      gamme: (p as any).gamme ?? undefined, longueur_unitaire: (p as any).longueur_unitaire ?? undefined,
+      gamme: (p as any).gamme ?? undefined,
     } as any);
+    const longueurActuelle = (p as any).longueur_unitaire as number | null | undefined;
+    setEditEnBobine(!!longueurActuelle && longueurActuelle > 0);
+    setEditLongueur(longueurActuelle && longueurActuelle > 0 ? String(longueurActuelle) : "");
     setEditCatMode("select"); setEditNewCat("");
     // Offres du produit (ou reconstruites depuis les anciens champs prix d'achat / liens).
     setEditOffres(draftsPourProduit(p));
@@ -1524,7 +1570,7 @@ export default function CataloguePage() {
         prix_achat: r.prix_achat !== "" ? parseFloat(r.prix_achat) : null,
         prix_unitaire: parseFloat(r.prix_unitaire), image_url: r.image_url || null,
         gamme: ["entree", "moyenne", "haut"].includes(r.gamme) ? r.gamme : null,
-        longueur_unitaire: r.longueur_unitaire !== "" && !isNaN(parseFloat(r.longueur_unitaire)) ? parseFloat(r.longueur_unitaire) : null,
+        longueur_unitaire: estMateriau ? longueurValide(true, String(r.longueur_unitaire ?? "")) : null,
         liens_fournisseurs: r.liens_fournisseurs ? r.liens_fournisseurs.split("|").filter(Boolean) : [],
         actif: true,
       };
@@ -1598,7 +1644,7 @@ export default function CataloguePage() {
     editId, editData, editNewCat, editCatMode, editOffres, editPrixVente,
     categories, marques, fournisseursConnus, delCategorie, startEdit, saveEdit, del,
     setEditId, setEditData, setEditNewCat, setEditCatMode, setEditOffres,
-    setEditPrixVente,
+    setEditPrixVente, editEnBobine, setEditEnBobine, editLongueur, setEditLongueur,
     onEditKit: (p: PrestationExt) => setKitModal(p),
   };
 
@@ -1693,9 +1739,8 @@ export default function CataloguePage() {
                   <option value="haut">Haut de gamme</option>
                 </select></div>
               {form.type_branche === "materiau" && (
-                <div><label className="label">Longueur bobine (m) — vide = vendu au mètre</label>
-                  <input className="input" type="number" step="1" placeholder="Ex : 25"
-                    value={formLongueurUnitaire} onChange={e => setFormLongueurUnitaire(e.target.value)} /></div>
+                <BobineField actif={formEnBobine} setActif={setFormEnBobine}
+                  longueur={formLongueurUnitaire} setLongueur={setFormLongueurUnitaire} />
               )}
               {form.type_branche === "service" ? (
                 <div><label className="label">Prix unitaire (€) *</label>
@@ -1716,7 +1761,7 @@ export default function CataloguePage() {
               )}
             </div>
             <div className="flex gap-3 mt-4">
-              <button onClick={() => { setShowForm(false); setFormOffres([nouvelleOffreDraft(true)]); setFormPrixVente(""); setFormLongueurUnitaire(""); }}
+              <button onClick={() => { setShowForm(false); setFormOffres([nouvelleOffreDraft(true)]); setFormPrixVente(""); setFormLongueurUnitaire(""); setFormEnBobine(false); }}
                 className="btn-ghost flex-1 justify-center">Annuler</button>
               <button onClick={add} className="btn-volt flex-1 justify-center"><Save size={15} /> Enregistrer</button>
             </div>
