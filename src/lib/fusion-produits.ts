@@ -170,6 +170,9 @@ export async function fusionnerProduits(userId: string, referenceId: string, pro
   // La colonne marque doit exister (migration 006) : on le vérifie avant de toucher à quoi que ce soit.
   const test = await supabase.from("prestation_fournisseurs").select("marque").limit(1);
   if (test.error) return echec(test.error.message);
+  // Colonne image des offres (migration 007) : facultative. Présente, chaque offre reprise garde l'image
+  // de son produit d'origine (une image par marque) ; absente, on conserve le comportement d'avant.
+  const imageOk = !(await supabase.from("prestation_fournisseurs").select("image_url").limit(1)).error;
 
   const errKits = await reprendreKits(referenceId, idsAutres);
   if (errKits) return echec(`Kits : ${errKits}`);
@@ -213,6 +216,7 @@ export async function fusionnerProduits(userId: string, referenceId: string, pro
         reference: o.reference, url: o.url, prix_achat: o.prix_achat, prix_vente: o.prix_vente,
         principal: principale && i === 0, ordre: ordre++, updated_at: new Date().toISOString(),
         ...(o.marque ? { marque: o.marque } : {}),
+        ...(imageOk && p.id !== referenceId && p.image_url ? { image_url: p.image_url } : {}),
       });
     });
     return lignes;
@@ -241,6 +245,7 @@ export async function fusionnerProduits(userId: string, referenceId: string, pro
       const maj = await supabase.from("prestation_fournisseurs").update({
         prestation_id: referenceId, principal: false, ordre: ordre++, updated_at: new Date().toISOString(),
         ...(marque ? { marque } : {}),
+        ...(imageOk && !(o.image_url ?? "").trim() && p.image_url ? { image_url: p.image_url } : {}),
       }).eq("id", o.id);
       if (maj.error) return echec(`Offres : ${maj.error.message}`);
       connues.push({ marque: marque || null, prix_achat: o.prix_achat ?? null, prix_vente: o.prix_vente ?? null, url: o.url ?? null });
@@ -254,7 +259,9 @@ export async function fusionnerProduits(userId: string, referenceId: string, pro
 
   // ── Produit de référence ──
   const nom = nomFinal.trim() || ref.nom;
-  const image = ref.image_url || autres.find(p => p.image_url)?.image_url || null;
+  // Avec les images par offre, celles des autres produits sont portées par leurs offres : l'image du produit
+  // reste celle de la référence (reprendre celle d'un autre l'afficherait à tort sur les offres de la référence).
+  const image = imageOk ? (ref.image_url || null) : (ref.image_url || autres.find(p => p.image_url)?.image_url || null);
   const description = ref.description || autres.find(p => p.description)?.description || null;
   const majRef = await supabase.from("prestations").update({
     nom, image_url: image, description, liens_fournisseurs: urls,

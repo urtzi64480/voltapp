@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Search, X, Plus, Package, Wrench, Layers, ChevronDown, ChevronUp, Check, SlidersHorizontal, RotateCcw, ExternalLink } from "lucide-react";
 import { fmt, cn } from "@/lib/utils";
-import { libelleOffre, libelleOffreMarque, marqueOffre, marquesDe, offresTriees, offrePourFournisseur, offrePrincipale, prixVenteOffre, fourchettePrix, margePct } from "@/lib/fournisseurs";
+import { imageOffre, libelleOffre, libelleOffreMarque, marqueOffre, marquesDe, offresTriees, offrePourFournisseur, offrePrincipale, prixVenteOffre, fourchettePrix, margePct } from "@/lib/fournisseurs";
 import type { Prestation, PrestationFournisseur } from "@/types";
 
 export type PrestationPicker = Prestation & { kit_description?: string | null };
@@ -140,7 +140,7 @@ function ProduitLigne({ p, remplacement, filtreFournisseur, filtreMarque, prefer
   return (
     <div className={cn("rounded-xl border bg-white transition-colors", actuel ? "border-volt-400" : "border-ink-100 hover:border-ink-300")}>
       <div className="flex items-center gap-3 p-2.5">
-        <Vignette url={p.image_url} type={type} />
+        <Vignette url={type === "kit" ? p.image_url : imageOffre(p, offreDefaut)} type={type} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             <BadgeType type={type} />
@@ -182,6 +182,7 @@ function ProduitLigne({ p, remplacement, filtreFournisseur, filtreMarque, prefer
             const m = margePct(o.prix_achat, pv);
             return (
               <div key={o.id} className="flex items-center gap-3 px-3 py-2">
+                {imageOffre(p, o) && <Vignette url={imageOffre(p, o)} type={type} />}
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium text-ink-800 truncate">
                     {libelle(o)}

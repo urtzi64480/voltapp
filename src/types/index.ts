@@ -130,6 +130,8 @@ export interface PrestationFournisseur {
   // Marque de cette offre (colonne migration 006) : un même produit peut être proposé en plusieurs
   // marques, chacune avec ses prix. Absent/vide = marque du produit (prestations.marque).
   marque?: string | null;
+  // Image propre à cette marque / offre (colonne migration 007). Absent = image du produit.
+  image_url?: string | null;
   reference?: string | null;
   url?: string | null;
   prix_achat?: number | null;

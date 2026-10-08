@@ -75,7 +75,7 @@ import {
 } from "./longueurs-circuits";
 import { Prestation, Gamme, DevisLigne, PrestationFournisseur } from "@/types";
 import { nomAvecConditionnement } from "@/lib/utils";
-import { designationProduit, libelleOffre, offrePrincipale, offrePourFournisseur, prixVenteOffre } from "@/lib/fournisseurs";
+import { designationProduit, imageOffre, libelleOffre, offrePrincipale, offrePourFournisseur, prixVenteOffre } from "@/lib/fournisseurs";
 
 // ─── TYPES DE BESOIN ────────────────────────────────────────────────────────
 
@@ -509,7 +509,8 @@ function champsFournisseurOption(o?: PrestationFournisseur | null): Pick<OptionA
 export function optionAvecOffre(opt: OptionArticle, p: Prestation, offre: PrestationFournisseur | null): OptionArticle {
   const o = offre ?? offrePrincipale(p.fournisseurs) ?? null;
   // La désignation suit la marque de l'offre quand le produit existe en plusieurs marques.
-  return { ...opt, nom: designationProduit(p, o), prix_unitaire: prixVenteOffre(p, o), ...champsFournisseurOption(o) };
+  // L'image suit aussi l'offre : chaque marque peut avoir la sienne.
+  return { ...opt, nom: designationProduit(p, o), prix_unitaire: prixVenteOffre(p, o), image_url: imageOffre(p, o), ...champsFournisseurOption(o) };
 }
 
 // Article « au mètre » qui complète un reliquat de bobine : on cherche d'abord SON offre chez le
@@ -541,7 +542,7 @@ function optionsPour(sousCategorie: string, prestations: Prestation[]): OptionAr
       prestation_id: p.id, nom: designationProduit(p, o), prix_unitaire: prixVenteOffre(p, o), unite: p.unite,
       type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire && p.longueur_unitaire > 0 ? p.longueur_unitaire : null,
       quantiteMultiplicateur: 1, sousCategorieArticle: sousCategorie,
-      image_url: p.image_url ?? null,
+      image_url: imageOffre(p, o),
       ...champsFournisseurOption(o),
     };
   };
@@ -638,7 +639,7 @@ function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArt
       lignes.push({
         nom: designationProduit(auMetre, offreAuMetre), description: besoin.piece, quantite: Math.ceil(reliquat),
         prix_unitaire: prixVenteOffre(auMetre, offreAuMetre), unite: auMetre.unite, type_branche: auMetre.type_branche,
-        prestation_id: auMetre.id, ...champsLigneDepuisOption({ ...champsFournisseurOption(offreAuMetre), image_url: auMetre.image_url ?? null }),
+        prestation_id: auMetre.id, ...champsLigneDepuisOption({ ...champsFournisseurOption(offreAuMetre), image_url: imageOffre(auMetre, offreAuMetre) }),
       });
     } else if (lignes.length > 0) {
       lignes[0].quantite += 1; // pas d'article "au mètre" pour ce reliquat — une bobine/rouleau de plus

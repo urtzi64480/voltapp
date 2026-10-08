@@ -117,6 +117,12 @@ export function libelleOffreMarque(p: Pick<Prestation, "marque">, o: PrestationF
   return m ? `${m} · ${libelleOffre(o)}` : libelleOffre(o);
 }
 
+// Image d'une offre (colonne `image_url`, migration 007) : chaque marque peut avoir la sienne. Sans image
+// propre, l'offre reprend celle du produit. Sert partout où une vignette ou une photo de ligne est affichée.
+export function imageOffre(p: Pick<Prestation, "image_url">, o?: Pick<PrestationFournisseur, "image_url"> | null): string | null {
+  return (o?.image_url ?? "").trim() || (p.image_url ?? "").trim() || null;
+}
+
 // Offres d'un produit pour une marque donnée (comparaison insensible à la casse et aux accents).
 export function offresDeMarque(p: Pick<Prestation, "marque" | "fournisseurs">, marque: string): PrestationFournisseur[] {
   const k = normTexte(marque);
@@ -127,8 +133,8 @@ export function offresDeMarque(p: Pick<Prestation, "marque" | "fournisseurs">, m
 
 // Toutes les offres de l'utilisateur (RLS), paginées par 1000 (limite Supabase par requête).
 // marqueOk : la colonne `marque` existe (migration 006 exécutée). Déduit des lignes lues : sans
-// aucune offre, on ne peut pas savoir, et rien n'en dépend.
-export async function chargerOffres(): Promise<{ offres: PrestationFournisseur[]; ok: boolean; marqueOk: boolean }> {
+// aucune offre, on ne peut pas savoir, et rien n'en dépend. imageOk : idem pour `image_url` (migration 007).
+export async function chargerOffres(): Promise<{ offres: PrestationFournisseur[]; ok: boolean; marqueOk: boolean; imageOk: boolean }> {
   const offres: PrestationFournisseur[] = [];
   const TAILLE = 1000;
   for (let page = 0; page < 20; page++) {
@@ -139,13 +145,17 @@ export async function chargerOffres(): Promise<{ offres: PrestationFournisseur[]
       .range(page * TAILLE, page * TAILLE + TAILLE - 1);
     if (error) {
       console.error("Fournisseurs indisponibles (migration 003 exécutée ?) :", error.message);
-      return { offres: [], ok: false, marqueOk: false };
+      return { offres: [], ok: false, marqueOk: false, imageOk: false };
     }
     const lot = (data ?? []) as PrestationFournisseur[];
     offres.push(...lot);
     if (lot.length < TAILLE) break;
   }
-  return { offres, ok: true, marqueOk: offres.length === 0 || "marque" in offres[0] };
+  return {
+    offres, ok: true,
+    marqueOk: offres.length === 0 || "marque" in offres[0],
+    imageOk: offres.length === 0 || "image_url" in offres[0],
+  };
 }
 
 export function attacherOffres<T extends Prestation>(prestations: T[], offres: PrestationFournisseur[]): T[] {
@@ -189,6 +199,9 @@ export interface OffreDraft {
   piecesEnBase?: boolean;
   // L'offre avait une marque en base : si on la vide, il faut l'effacer explicitement.
   marqueEnBase?: boolean;
+  // Image propre à cette offre / marque (vide = image du produit), et son état en base.
+  imageUrl: string;
+  imageEnBase?: boolean;
 }
 
 export interface PieceDraft {
@@ -206,7 +219,7 @@ function nouvelleCle(): string {
 }
 
 export function nouvelleOffreDraft(principal = false): OffreDraft {
-  return { cle: nouvelleCle(), marque: "", fournisseur: "", reference: "", url: "", prixAchat: "", prixVente: "", principal, pieces: [] };
+  return { cle: nouvelleCle(), marque: "", fournisseur: "", reference: "", url: "", prixAchat: "", prixVente: "", principal, pieces: [], imageUrl: "" };
 }
 
 export function nouvellePieceDraft(): PieceDraft {
@@ -255,6 +268,7 @@ export function draftsDepuisOffres(offres: PrestationFournisseur[], marqueProdui
     cle: nouvelleCle(), id: o.id,
     marque: (o.marque ?? "").trim() || marqueProduit.trim(),
     marqueEnBase: !!(o.marque ?? "").trim(),
+    imageUrl: (o.image_url ?? "").trim(), imageEnBase: !!(o.image_url ?? "").trim(),
     fournisseur: o.fournisseur ?? "", reference: o.reference ?? "", url: o.url ?? "",
     prixAchat: o.prix_achat != null ? String(o.prix_achat) : "",
     prixVente: o.prix_vente != null ? String(o.prix_vente) : "",
@@ -311,6 +325,9 @@ export interface OffreNormalisee {
   effacerPieces?: boolean;
   // Idem pour la marque (colonne migration 006) : écrite seulement si renseignée, ou pour l'effacer.
   effacerMarque?: boolean;
+  // Image de l'offre (migration 007) : écrite seulement si renseignée, ou pour l'effacer.
+  image_url?: string | null;
+  effacerImage?: boolean;
 }
 
 function nombreOuNull(s: string): number | null {
@@ -328,7 +345,7 @@ export function normaliserUrl(u: string): string | null {
 // Écarte les offres entièrement vides, donne un nom à chacune et garantit UNE offre principale.
 export function normaliserDrafts(drafts: OffreDraft[]): OffreNormalisee[] {
   const gardees = drafts.filter(d =>
-    d.marque.trim() || d.fournisseur.trim() || d.reference.trim() || d.url.trim() || d.prixAchat.trim() || d.prixVente.trim()
+    d.marque.trim() || d.imageUrl.trim() || d.fournisseur.trim() || d.reference.trim() || d.url.trim() || d.prixAchat.trim() || d.prixVente.trim()
     || normaliserPieces(d.pieces).length > 0);
   if (gardees.length === 0) return [];
   let idxPrincipal = gardees.findIndex(d => d.principal);
@@ -342,6 +359,7 @@ export function normaliserDrafts(drafts: OffreDraft[]): OffreNormalisee[] {
     const pieces = normaliserPieces(d.pieces);
     const total = totalPieces(pieces);
     const marque = d.marque.trim() || null;
+    const image = normaliserUrl(d.imageUrl);
     return {
       id: d.id, marque, fournisseur: nom, reference: d.reference.trim() || null, url,
       prix_achat: pieces.length > 0 ? total : nombreOuNull(d.prixAchat), prix_vente: nombreOuNull(d.prixVente),
@@ -349,6 +367,8 @@ export function normaliserDrafts(drafts: OffreDraft[]): OffreNormalisee[] {
       ...(pieces.length > 0 ? { pieces } : {}),
       ...(pieces.length === 0 && d.piecesEnBase ? { effacerPieces: true } : {}),
       ...(!marque && d.marqueEnBase ? { effacerMarque: true } : {}),
+      ...(image ? { image_url: image } : {}),
+      ...(!image && d.imageEnBase ? { effacerImage: true } : {}),
     };
   }).sort((a, b) => Number(b.principal) - Number(a.principal)).map((o, i) => ({ ...o, ordre: i }));
 }
@@ -400,12 +420,16 @@ export function offresVersNormalisees(offres: PrestationFournisseur[], marquePro
     prix_achat: o.prix_achat ?? null, prix_vente: o.prix_vente ?? null,
     principal: o.principal, ordre: i,
     ...((o.pieces ?? []).length > 0 ? { pieces: o.pieces ?? [] } : {}),
+    ...((o.image_url ?? "").trim() ? { image_url: (o.image_url ?? "").trim() } : {}),
   }));
 }
 
 export function messageErreurOffres(message: string): string {
   if (/marque/i.test(message) && /(column|colonne|schema cache)/i.test(message)) {
     return "La colonne des marques est introuvable : exécute d'abord la migration 006_marques_offres.sql dans Supabase.";
+  }
+  if (/image_url/i.test(message) && /(column|colonne|schema cache)/i.test(message)) {
+    return "La colonne des images d'offre est introuvable : exécute d'abord la migration 007_images_offres.sql dans Supabase.";
   }
   if (/pieces/i.test(message) && /(column|colonne|schema cache)/i.test(message)) {
     return "La colonne des pièces est introuvable : exécute d'abord la migration 004_pieces_offres.sql dans Supabase.";
@@ -444,6 +468,9 @@ export async function synchroniserOffres(userId: string, prestationId: string, v
       // d'un produit sans marque reste possible tant que la migration n'a pas été exécutée.
       ...(o.marque ? { marque: o.marque } : {}),
       ...(!o.marque && o.effacerMarque ? { marque: null } : {}),
+      // Colonne image_url (migration 007) : même principe.
+      ...(o.image_url ? { image_url: o.image_url } : {}),
+      ...(!o.image_url && o.effacerImage ? { image_url: null } : {}),
     };
     if (o.id && idsEnBase.has(o.id)) {
       const { error } = await supabase.from("prestation_fournisseurs").update(champs).eq("id", o.id);

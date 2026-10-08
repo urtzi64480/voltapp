@@ -4,7 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { Prestation, PrestationFournisseur } from "@/types";
 import {
   attacherOffres, chargerOffres, draftsDepuisLegacy, draftsPourProduit, libelleOffre, libelleOffreMarque, marqueOffre, marquesDe,
-  miroirPrestation, normaliserDrafts, normTexte, nouvelleOffreDraft, nouvellePieceDraft, totalPiecesDrafts, offrePrincipale, offresDe,
+  miroirPrestation, normaliserDrafts, normTexte, nouvelleOffreDraft, nouvellePieceDraft, totalPiecesDrafts, offrePrincipale, offresDe, imageOffre, normaliserUrl,
   offresTriees, offresVersNormalisees, prixVenteOffre, synchroniserOffres, rattacherParNom, OffreDraft, OffreNormalisee, PieceDraft,
 } from "@/lib/fournisseurs";
 import { fmt, UNITES, cn } from "@/lib/utils";
@@ -257,9 +257,9 @@ function MargeFields({ prixAchat, prixVente, onPrixAchatChange, onPrixVenteChang
 // référence, son lien et ses propres prix d'achat / de vente — on ne recrée pas le produit pour
 // changer de marque. L'offre « principale » donne le prix par défaut (recopié dans le produit et
 // utilisé par le pré-devis tant qu'on n'en choisit pas une autre).
-function FournisseursEditor({ offres, setOffres, fournisseursConnus, marquesConnues, marqueOk }: {
+function FournisseursEditor({ offres, setOffres, fournisseursConnus, marquesConnues, marqueOk, imageOk, imageProduit }: {
   offres: OffreDraft[]; setOffres: (fn: (prev: OffreDraft[]) => OffreDraft[]) => void; fournisseursConnus: string[]; marquesConnues: string[];
-  marqueOk: boolean;
+  marqueOk: boolean; imageOk: boolean; imageProduit?: string | null;
 }) {
   const maj = (cle: string, patch: Partial<OffreDraft>) =>
     setOffres(prev => prev.map(o => (o.cle === cle ? { ...o, ...patch } : o)));
@@ -286,6 +286,7 @@ function FournisseursEditor({ offres, setOffres, fournisseursConnus, marquesConn
           <label className="label mb-0">Marques, fournisseurs & prix</label>
           <p className="text-xs text-ink-400">Une offre par marque (et par fournisseur), chacune avec son prix d'achat et de vente. Prix de vente vide = prix de l'offre principale.</p>
           {!marqueOk && <p className="text-xs text-amber-600">Saisie des marques indisponible tant que la migration 006_marques_offres.sql n'est pas exécutée dans Supabase.</p>}
+          {!imageOk && <p className="text-xs text-amber-600">Image par marque indisponible tant que la migration 007_images_offres.sql n'est pas exécutée dans Supabase.</p>}
         </div>
         <button type="button" onClick={ajouter} className="btn-ghost !px-3 text-xs shrink-0"><Plus size={13} /> Marque / fournisseur</button>
       </div>
@@ -318,6 +319,18 @@ function FournisseursEditor({ offres, setOffres, fournisseursConnus, marquesConn
             <label className="label">Lien du produit chez ce fournisseur</label>
             <input className="input text-sm" placeholder="https://www.leroymerlin.fr/…"
               value={o.url} onChange={e => maj(o.cle, { url: e.target.value })} />
+          </div>
+          <div>
+            <label className="label">Image de cette marque (URL)</label>
+            <div className="flex items-center gap-2">
+              <input className="input text-sm flex-1" placeholder={imageProduit ? "Vide = image du produit" : "https://…/photo.jpg"}
+                disabled={!imageOk} value={o.imageUrl} onChange={e => maj(o.cle, { imageUrl: e.target.value })} />
+              {(o.imageUrl.trim() || imageProduit) && (
+                <img src={o.imageUrl.trim() || imageProduit || ""} alt=""
+                  className={cn("h-10 w-10 shrink-0 object-contain rounded-lg border border-ink-100 p-0.5 bg-white", !o.imageUrl.trim() && "opacity-50")}
+                  onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+              )}
+            </div>
           </div>
           <div className="rounded-lg border border-dashed border-ink-200 p-2.5 space-y-2">
             <div className="flex items-center justify-between gap-2">
@@ -749,20 +762,20 @@ const CSV_HEADERS = [
   "marque", "unite", "prix_achat", "prix_unitaire", "gamme", "longueur_unitaire", "image_url", "liens_fournisseurs", "fournisseurs"
 ];
 
-// Colonne « fournisseurs » : offres séparées par |, champs séparés par ^ → nom^référence^lien^prix_achat^prix_vente^marque
-// (la première offre est la principale ; la marque est facultative — absente, c'est celle de la colonne « marque »).
+// Colonne « fournisseurs » : offres séparées par |, champs séparés par ^ → nom^référence^lien^prix_achat^prix_vente^marque^image
+// (la première offre est la principale ; marque et image sont facultatives — absentes, ce sont celles des colonnes « marque » / « image_url »).
 function nettoyerChampCSV(v: string): string { return v.replace(/[|^]/g, " ").trim(); }
 function fournisseursVersCSV(p: PrestationExt): string {
   return offresTriees(p.fournisseurs).map(o => [
     nettoyerChampCSV(libelleOffre(o)), nettoyerChampCSV(o.reference ?? ""), nettoyerChampCSV(o.url ?? ""),
-    o.prix_achat ?? "", o.prix_vente ?? "", nettoyerChampCSV(marqueOffre(p, o)),
+    o.prix_achat ?? "", o.prix_vente ?? "", nettoyerChampCSV(marqueOffre(p, o)), nettoyerChampCSV(o.image_url ?? ""),
   ].join("^")).join("|");
 }
-function fournisseursDepuisCSV(cell: string, marqueParDefaut = ""): OffreNormalisee[] {
+function fournisseursDepuisCSV(cell: string, marqueParDefaut = "", imageParDefaut = ""): OffreNormalisee[] {
   if (!cell || !cell.trim()) return [];
   const drafts: OffreDraft[] = cell.split("|").map(e => e.trim()).filter(Boolean).map((e, i) => {
-    const [nom = "", ref = "", url = "", pa = "", pv = "", marque = ""] = e.split("^").map(x => x.trim());
-    return { ...nouvelleOffreDraft(i === 0), marque: marque || marqueParDefaut, fournisseur: nom, reference: ref, url, prixAchat: pa, prixVente: pv };
+    const [nom = "", ref = "", url = "", pa = "", pv = "", marque = "", image = ""] = e.split("^").map(x => x.trim());
+    return { ...nouvelleOffreDraft(i === 0), marque: marque || marqueParDefaut, fournisseur: nom, reference: ref, url, prixAchat: pa, prixVente: pv, imageUrl: image || imageParDefaut };
   });
   return normaliserDrafts(drafts);
 }
@@ -937,7 +950,7 @@ function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (ro
 
 function CategorieBlock({
   cat, items, branche, editId, editData, editNewCat, editCatMode, editOffres,
-  editPrixVente, categories, marques, marqueOk, collapsed, fournisseursConnus,
+  editPrixVente, categories, marques, marqueOk, imageOk, collapsed, fournisseursConnus,
   toggleCollapse, delCategorie, startEdit, saveEdit, del, onEditKit,
   setEditId, setEditData, setEditNewCat, setEditCatMode, setEditOffres,
   setEditPrixVente, editEnBobine, setEditEnBobine, editLongueur, setEditLongueur,
@@ -1081,8 +1094,10 @@ function CategorieBlock({
                                   longueur={editLongueur} setLongueur={setEditLongueur} />
                               )}
                             </div>
-                            <FournisseursEditor offres={editOffres} setOffres={setEditOffres} fournisseursConnus={fournisseursConnus} marquesConnues={marques} marqueOk={marqueOk} />
+                            <FournisseursEditor offres={editOffres} setOffres={setEditOffres} fournisseursConnus={fournisseursConnus} marquesConnues={marques} marqueOk={marqueOk}
+                              imageOk={imageOk} imageProduit={(editData as any).image_url ?? p.image_url ?? null} />
                             <div><label className="label">Image du produit (URL)</label>
+                              <p className="text-xs text-ink-400 mb-1">Image par défaut : utilisée par toutes les marques qui n'ont pas la leur (voir chaque marque ci-dessus).</p>
                               <input className="input text-sm" placeholder="https://…/image-produit.jpg"
                                 value={(editData as any).image_url ?? p.image_url ?? ""}
                                 onChange={e => setEditData((d: any) => ({ ...d, image_url: e.target.value }))} />
@@ -1098,10 +1113,10 @@ function CategorieBlock({
                         ) : (
                           <div className={cn("flex items-center gap-3",
                             "md:grid md:grid-cols-[40px_2fr_90px_90px_120px_minmax(80px,auto)_80px]")}>
-                            <div className="hidden md:block"><ProduitThumb imageUrl={p.image_url ?? null} /></div>
+                            <div className="hidden md:block"><ProduitThumb imageUrl={imageOffre(p, offrePrincipale(p.fournisseurs))} /></div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 md:block">
-                                <div className="md:hidden shrink-0"><ProduitThumb imageUrl={p.image_url ?? null} /></div>
+                                <div className="md:hidden shrink-0"><ProduitThumb imageUrl={imageOffre(p, offrePrincipale(p.fournisseurs))} /></div>
                                 <div className="min-w-0">
                                   <p className="font-medium text-ink-900 text-sm truncate">{p.nom}</p>
                                   <p className="text-xs text-ink-400 truncate">{[marquesProduit.join(" / "), sousCat, p.description].filter(Boolean).join(" · ")}</p>
@@ -1172,6 +1187,7 @@ function CategorieBlock({
                               const pv = prixVenteOffre(p, o);
                               return (
                                 <div key={o.id} className="flex items-center gap-3 px-3 py-2 text-xs">
+                                  <ProduitThumb imageUrl={imageOffre(p, o)} />
                                   <div className="flex-1 min-w-0">
                                     <p className="font-medium text-ink-800 truncate">
                                       {libelleOffreMarque(p, o)}
@@ -1340,6 +1356,8 @@ export default function CataloguePage() {
   const [offresOk, setOffresOk] = useState(true);
   // Colonne `marque` des offres présente (migration 006) — voir chargerOffres().
   const [marqueOk, setMarqueOk] = useState(true);
+  // Colonne `image_url` des offres présente (migration 007) — image propre à chaque marque.
+  const [imageOk, setImageOk] = useState(true);
   const [showFusion, setShowFusion] = useState(false);
   const [formLongueurUnitaire, setFormLongueurUnitaire] = useState("");
   // Option « vendu en bobine / rouleau » : tant qu'elle est désactivée, aucune longueur n'est
@@ -1368,9 +1386,10 @@ export default function CataloguePage() {
       .order("categorie")
       .order("nom");
     // Offres fournisseurs (plusieurs fournisseurs / prix par produit)
-    const { offres, ok, marqueOk: colonneMarque } = await chargerOffres();
+    const { offres, ok, marqueOk: colonneMarque, imageOk: colonneImage } = await chargerOffres();
     setOffresOk(ok);
     setMarqueOk(colonneMarque);
+    setImageOk(colonneImage);
     const prests: PrestationExt[] = attacherOffres((data ?? []) as PrestationExt[], offres);
     setPrestations(prests);
     const cats = [...new Set(prests.map(p => p.categorie))].sort();
@@ -1532,8 +1551,11 @@ export default function CataloguePage() {
     setEditLongueur(longueurActuelle && longueurActuelle > 0 ? String(longueurActuelle) : "");
     setEditCatMode("select"); setEditNewCat("");
     // Offres du produit (ou reconstruites depuis les anciens champs prix d'achat / liens).
-    // Sans la colonne marque (migration 006 pas encore exécutée), aucune marque n'est lue ni écrite.
-    setEditOffres(draftsPourProduit(p).map(d => (marqueOk ? d : { ...d, marque: "", marqueEnBase: false })));
+    // Sans la colonne marque (migration 006) ou image (migration 007), ni marque ni image d'offre n'est lue ni écrite.
+    setEditOffres(draftsPourProduit(p).map(d => {
+      const avecMarque = marqueOk ? d : { ...d, marque: "", marqueEnBase: false };
+      return imageOk ? avecMarque : { ...avecMarque, imageUrl: "", imageEnBase: false };
+    }));
     setEditPrixVente(String(p.prix_unitaire));
   }
 
@@ -1551,7 +1573,9 @@ export default function CataloguePage() {
     for (const r of rows) {
       const estMateriau = r.type_branche === "materiau";
       const marqueLigne = marqueOk ? r.marque.trim() : "";
-      const offresCsv = estMateriau ? fournisseursDepuisCSV(r.fournisseurs, marqueLigne) : [];
+      // Colonne image d'offre absente (migration 007 non exécutée) : les images du CSV sont ignorées.
+      const sansImage = (l: OffreNormalisee[]): OffreNormalisee[] => (imageOk ? l : l.map(({ image_url: _i, effacerImage: _e, ...o }) => o));
+      const offresCsv = estMateriau ? sansImage(fournisseursDepuisCSV(r.fournisseurs, marqueLigne)) : [];
       let payload: any = {
         nom: r.nom, description: r.description || null,
         type_branche: r.type_branche as "service" | "materiau",
@@ -1583,7 +1607,9 @@ export default function CataloguePage() {
         const nouvelles = (offresCsv.length > 0 ? offresCsv : offresLegacy.length > 0 ? offresLegacy
           : normaliserDrafts([{ ...nouvelleOffreDraft(false), marque: marqueLigne, prixAchat: r.prix_achat, prixVente: r.prix_unitaire }]))
           .filter(o => !o.marque || !marquesExistantes.includes(normTexte(o.marque)))
-          .map(o => ({ ...o, id: undefined, principal: false }));
+          // Nouvelle marque sans image propre dans le CSV : elle prend l'image de la ligne (image_url du CSV).
+          .map(o => ({ ...o, id: undefined, principal: false,
+            ...(imageOk && !o.image_url && normaliserUrl(r.image_url) ? { image_url: normaliserUrl(r.image_url) } : {}) }));
         if (nouvelles.length > 0) ajoutsMarque.set(existing.id, [...(ajoutsMarque.get(existing.id) ?? []), ...nouvelles]);
         continue;
       }
@@ -1657,7 +1683,7 @@ export default function CataloguePage() {
 
   const sharedProps = {
     editId, editData, editNewCat, editCatMode, editOffres, editPrixVente,
-    categories, marques, marqueOk, fournisseursConnus, delCategorie, startEdit, saveEdit, del,
+    categories, marques, marqueOk, imageOk, fournisseursConnus, delCategorie, startEdit, saveEdit, del,
     setEditId, setEditData, setEditNewCat, setEditCatMode, setEditOffres,
     setEditPrixVente, editEnBobine, setEditEnBobine, editLongueur, setEditLongueur,
     onEditKit: (p: PrestationExt) => setKitModal(p),
@@ -1768,7 +1794,8 @@ export default function CataloguePage() {
                   <input className="input" type="number" step="0.5" placeholder="0.00"
                     value={formPrixVente} onChange={e => setFormPrixVente(e.target.value)} /></div>
               ) : (
-                <FournisseursEditor offres={formOffres} setOffres={setFormOffres} fournisseursConnus={fournisseursConnus} marquesConnues={marques} marqueOk={marqueOk} />
+                <FournisseursEditor offres={formOffres} setOffres={setFormOffres} fournisseursConnus={fournisseursConnus} marquesConnues={marques} marqueOk={marqueOk}
+                  imageOk={imageOk} imageProduit={form.image_url || null} />
               )}
               {form.type_branche === "materiau" && (
                 <>

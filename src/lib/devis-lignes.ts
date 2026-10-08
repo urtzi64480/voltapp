@@ -5,7 +5,7 @@
 import { supabase } from "@/lib/supabase";
 import { nomAvecConditionnement } from "@/lib/utils";
 import { posteDe } from "@/lib/postes";
-import { designationProduit, libelleOffre, offrePrincipale, prixVenteOffre } from "@/lib/fournisseurs";
+import { designationProduit, imageOffre, libelleOffre, offrePrincipale, prixVenteOffre } from "@/lib/fournisseurs";
 import type { DevisLigne, Prestation, PrestationFournisseur } from "@/types";
 
 export type LigneEdition = DevisLigne & { kit_description?: string | null; kit_ratio_service?: number | null };
@@ -39,7 +39,7 @@ export function ligneDepuisArticle(p: Prestation, offre: PrestationFournisseur |
     type_branche: p.type_branche,
     prestation_id: p.id,
     poste,
-    image_url: p.image_url ?? null,
+    image_url: imageOffre(p, o),
     ...champsFournisseur(o),
   };
 }
@@ -95,7 +95,8 @@ export function fusionnerLigne<T extends LigneEdition>(prev: T[], nouvelle: T): 
 export function changerFournisseurLigne<T extends LigneEdition>(l: T, p: Prestation, offre: PrestationFournisseur | null): T {
   const actuelle = (p.fournisseurs ?? []).find(x => x.id === l.fournisseur_id) ?? null;
   const nom = l.nom === nomLigneProduit(p, actuelle) ? nomLigneProduit(p, offre) : l.nom;
-  return { ...l, nom, prix_unitaire: prixVenteOffre(p, offre), ...champsFournisseur(offre) };
+  // L'image suit l'offre (chaque marque peut avoir la sienne ; sans image d'offre, celle du produit).
+  return { ...l, nom, prix_unitaire: prixVenteOffre(p, offre), image_url: imageOffre(p, offre), ...champsFournisseur(offre) };
 }
 
 // Remplace le produit d'une ligne par un autre (même quantité, même poste, même description
@@ -111,7 +112,7 @@ export function remplacerProduitLigne<T extends LigneEdition>(l: T, p: Prestatio
     unite: p.unite,
     type_branche: p.type_branche,
     prestation_id: p.id,
-    image_url: p.image_url ?? null,
+    image_url: imageOffre(p, o),
     ...champsFournisseur(o),
   };
 }
