@@ -9,7 +9,7 @@ export type PieceType = "sejour" | "chambre" | "cuisine" | "sdb" | "wc" | "circu
 
 export type AppareillageType =
   | "prise" | "prise_commandee"
-  | "point_lumineux" | "applique"
+  | "point_lumineux" | "applique" | "spot" | "spot_etanche"
   | "interrupteur" | "va_et_vient" | "telerupteur"
   | "interrupteur_double" | "va_et_vient_double" | "telerupteur_double"
   | "four" | "plaque" | "lave_linge" | "lave_vaisselle" | "seche_linge"
@@ -19,6 +19,23 @@ export type AppareillageType =
   | "rj45" | "prise_dediee" | "prise_exterieure";
 
 export interface Point { x: number; y: number; }
+
+// ─── LUMINAIRES ─────────────────────────────────────────────────────────────────────────────
+// Source unique : toute logique « est-ce un point lumineux ? posé au plafond ? étanche ? » passe par ici.
+//  - point_lumineux : sortie de plafond (boîte DCL) ; applique : sortie murale (boîte DCL) ;
+//  - spot : spot encastré au plafond (intérieur) ; spot_etanche : spot encastré étanche (IP65), pour salle de bains
+//    (volumes 1 et 2), extérieur, sous abri. Un spot compte comme UN point lumineux (8 maxi par circuit).
+export const TYPES_LUMIERE: AppareillageType[] = ["point_lumineux", "applique", "spot", "spot_etanche"];
+export function estLumiere(type?: AppareillageType): boolean {
+  return !!type && TYPES_LUMIERE.includes(type);
+}
+export function estSpot(type?: AppareillageType): boolean {
+  return type === "spot" || type === "spot_etanche";
+}
+// Luminaires de PLAFOND (jamais posés sur un mur, hauteur par défaut = plafond de la pièce).
+export function estLumierePlafond(type?: AppareillageType): boolean {
+  return type === "point_lumineux" || estSpot(type);
+}
 
 export interface AppareillagePlace {
   id: number;
@@ -44,8 +61,8 @@ export interface AppareillagePlace {
   // genererBreakersChauffage (maison-engine.ts). Valeur par défaut à la création :
   // PUISSANCE_CHAUFFAGE_DEFAUT_W (electrical-constants.ts).
   puissanceW?: number;
-  // Pour interrupteur / va_et_vient / telerupteur : ids des point_lumineux (ou applique)
-  // commandés — un interrupteur peut commander plusieurs points lumineux.
+  // Pour interrupteur / va_et_vient / telerupteur : ids des luminaires commandés (point_lumineux,
+  // applique, spot, spot_etanche) — un interrupteur peut commander plusieurs points lumineux.
   commandePourIds?: number[];
   // Doubles (interrupteur_double / va_et_vient_double / telerupteur_double) : UN mécanisme à DEUX
   // voies. commandePourIds = voie 1 ; commandePourIds2 = voie 2 (chacune commande ses propres
@@ -451,7 +468,7 @@ export function familleCircuitManuelAppareillage(type: AppareillageType, pieceTy
   }
   // Prise extérieure (étanche IP44) : toujours sur le circuit « extérieur », quelle que soit la pièce.
   if (type === "prise_exterieure") return "exterieur";
-  if (type === "point_lumineux" || type === "applique") return "lumiere";
+  if (estLumiere(type)) return "lumiere";
   // Volets roulants : un circuit dédié PARTAGÉ (NF C 15-100 : 16 A / 1,5 mm², tous les volets
   // sur le même circuit — idéalement répartis sur 2) et non un circuit par moteur.
   if (type === "volet_roulant") return "volets_roulants";

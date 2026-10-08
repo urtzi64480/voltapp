@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, battantsFenetre, nbVantauxBaie, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, HAUTEUR_PERSONNE_M, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, battantsFenetre, nbVantauxBaie, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, estLumiere, estLumierePlafond, estSpot, HAUTEUR_PERSONNE_M, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
 import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante, creerBaieVitree, idVantailBaie, creerPorteGarage, creerFenetreBattante } from "@/components/plan/PortesOuvrables";
@@ -52,10 +52,10 @@ interface InterrupteurUI {
 }
 
 // Hauteur d'installation (mètres) d'un appareillage : valeur saisie, sinon valeur par défaut
-// du type ; un point lumineux de plafond est, par défaut, AU plafond de sa pièce.
+// du type ; un luminaire de plafond (point lumineux, spot, spot étanche) est, par défaut, AU plafond de sa pièce.
 function hauteurInstallation(type: AppareillageType, hauteurCm: number | undefined, plafond: number): number {
   if (hauteurCm != null) return hauteurCm / 100;
-  if (type === "point_lumineux") return plafond;
+  if (estLumierePlafond(type)) return plafond;
   return HAUTEUR_DEFAUT[type] ?? 1.0;
 }
 
@@ -857,7 +857,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
         // Un luminaire de plafond se raccorde dans le plafond, à la hauteur de gaine : pas de petite montée parasite à chaque lampe.
         posApp.set(String(app.id), new THREE.Vector3(px, modele.montage === "plafond" ? Math.min(hCable, hauteurGaine) : hCable, pz));
 
-        // Point lumineux/applique : lumière réelle en plus du modèle, éteinte par défaut —
+        // Point lumineux/applique/spot : lumière réelle en plus du modèle, éteinte par défaut —
         // allumée/éteinte via le panneau de simulation (voir lumiereLightsRef, syncEclairage).
         // Un plafonnier éclaire vers le bas en cône (SpotLight, cible au sol) ; une applique
         // rayonne autour d'elle (PointLight), décalée de 12 cm devant le mur.
@@ -870,6 +870,16 @@ const Vue3D = forwardRef<Vue3DHandle, {
           light.shadow.mapSize.set(512, 512);
           light.shadow.camera.near = 0.1;
           light.shadow.camera.far = light.distance;
+          scene.add(light);
+          lumiereLightsRef.current.set(app.id, { light, mat: modele.ampoule });
+        } else if (estSpot(app.type) && modele.ampoule) {
+          // Spot encastré : faisceau plus étroit qu'un plafonnier, qui éclaire droit vers le sol. SANS ombre portée :
+          // une pièce compte facilement 6 à 12 spots, et chaque ombre ajoute une texture au shader (limite WebGL).
+          const light = new THREE.SpotLight(0xffe9c4, 0, 5, Math.PI / 4.2, 0.6, 1.5);
+          light.position.set(app.x, hCable - 0.02, app.y);
+          light.target.position.set(app.x, 0, app.y);
+          scene.add(light.target);
+          light.castShadow = false;
           scene.add(light);
           lumiereLightsRef.current.set(app.id, { light, mat: modele.ampoule });
         } else if (app.type === "applique" && modele.ampoule) {
@@ -1026,7 +1036,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
         // par défaut des coudes (sous plafond) ; sans boîte nommée, une seule implicite au
         // centroïde des lampes (comportement historique).
         if (breaker.circuit === "lumiere") {
-          const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
+          const lumieres = points.filter(a => estLumiere(a.type));
           const boitesExistantes = niveau.boitesDerivation?.[breaker.label] ?? [];
           const dessinerBoite3D = (pt: { x: number; y: number }, ancreId: string) => {
             const geo = new THREE.BoxGeometry(0.08, 0.05, 0.08);

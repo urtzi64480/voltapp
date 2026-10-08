@@ -40,6 +40,10 @@
 //    prise commandée, interrupteur, va-et-vient, télérupteur) — pas pour point lumineux/
 //    applique (rosette DCL, produit différent). Regroupées par pièce si à moins de 20cm
 //    les unes des autres, jusqu'à 4 postes par boîte.
+//  - SPOTS (sous_categorie "spot" / "spot_etanche") : un spot = UN point lumineux, chiffré à l'unité, sans boîte
+//    DCL ni boîte d'encastrement murale (il s'encastre dans le plafond). Il se raccorde comme tout luminaire :
+//    circuit lumière (8 points maxi), boîte de dérivation, retour lampe 1,5 mm². Un spot non étanche en salle de
+//    bains / extérieur déclenche une alerte (spot étanche IP44 mini à prévoir hors zone sèche).
 //  - Appareillages MULTIPLES (plaque double/triple/quadruple, AppareillagePlace.groupeId) : UNE
 //    boîte d'encastrement de la taille de la plaque (jusqu'à 4 postes) et UNE plaque de finition
 //    (sous_categorie plaque_Npostes), jamais regroupées par proximité avec d'autres postes ; chaque
@@ -61,7 +65,7 @@ import {
 import {
   genererCircuits, segmentsPourCircuit, ResultatGeneration, cleCircuitDedie,
 } from "./maison-engine";
-import { MAX_POSTES_PLAQUE, estCommande } from "./maison-types";
+import { MAX_POSTES_PLAQUE, estCommande, estLumiere } from "./maison-types";
 import {
   Breaker as TableauBreaker, BreakerRow, BREAKER_TYPES, CIRCUITS,
   effectiveSection, gaineRecommandee, uid, estCircuitSansDisjoncteur,
@@ -139,6 +143,7 @@ const LABEL_APPAREILLAGE: Record<string, string> = {
   interrupteur: "Interrupteur simple", va_et_vient: "Va-et-vient", telerupteur: "Bouton télérupteur",
   interrupteur_double: "Double interrupteur", va_et_vient_double: "Double va-et-vient", telerupteur_double: "Double bouton télérupteur",
   point_lumineux: "Point lumineux (DCL)", applique: "Sortie applique",
+  spot: "Spot encastré", spot_etanche: "Spot encastré étanche (IP65)",
   rj45: "Prise RJ45 (communication)",
   prise_exterieure: "Prise extérieure (étanche IP44)",
 };
@@ -267,8 +272,17 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           ajouter(`boite_encastrement_dcl@${piece.id}`, "boite_encastrement_dcl", "Boîte d'encastrement DCL",
             piece.nom || "Pièce", 1, "u");
         }
+        // Un spot s'encastre directement dans le plafond : aucune boîte DCL (contrairement au plafonnier / à l'applique).
         if (TYPES_ENCASTRABLES.includes(a.type)) clustersEncastrement.push({ id: a.id, x: a.x, y: a.y, groupeId: a.groupeId });
       });
+      // Spot non étanche en pièce humide ou à l'extérieur : à vérifier (volumes 1 et 2 d'une salle de bains =
+      // IPX4 mini, NF C 15-100). Une seule alerte par pièce, avec le nombre de spots concernés.
+      if (piece.type === "sdb" || piece.type === "exterieur") {
+        const nbSpotsNonEtanches = piece.appareillages.filter(a => a.type === "spot" && !a.dejaExistant).length;
+        if (nbSpotsNonEtanches > 0) {
+          alertes.push(`Pré-devis : ${nbSpotsNonEtanches} spot${nbSpotsNonEtanches > 1 ? "s" : ""} non étanche${nbSpotsNonEtanches > 1 ? "s" : ""} dans « ${piece.nom || "Pièce"} » — admis seulement hors volumes de protection ; sinon choisir des spots étanches (IP44 mini).`);
+        }
+      }
       if (clustersEncastrement.length > 0) {
         // Postes d'une même plaque multiple : une boîte + une plaque pour tout le groupe, sinon
         // regroupement par proximité (≤ 20 cm, 4 postes max) comme avant.
@@ -357,7 +371,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       if (estCircuitSansDisjoncteur(b)) return;
       const points = niveau.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
       if (b.circuit === "lumiere") {
-        const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
+        const lumieres = points.filter(a => estLumiere(a.type));
         const boitesExistantes = niveau.boitesDerivation?.[b.label] ?? [];
         const nbBoites = boitesExistantes.length > 0 ? boitesExistantes.length : (lumieres.length > 1 ? 1 : 0);
         if (nbBoites > 0) ajouter(`boite_derivation@${niveau.id}`, "boite_derivation", "Boîte de dérivation",
@@ -387,7 +401,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         // Liaison de commande = navette, ou retour commande <-> lampe (1,5 mm²). L'alimentation boîte/tableau -> commande,
         // elle, est du câblage normal du circuit (même section que le reste), pas un « retour lampe ».
         const typeA = idToAppareillage.get(seg.aId)?.type, typeB = idToAppareillage.get(seg.bId)?.type;
-        const estLampeType = (t?: AppareillageType) => t === "point_lumineux" || t === "applique";
+        const estLampeType = (t?: AppareillageType) => estLumiere(t);
         const estLiaisonCommande = seg.type === "navette"
           || (estCommandeType(typeA) && (estLampeType(typeB) || estCommandeType(typeB)))
           || (estCommandeType(typeB) && estLampeType(typeA));

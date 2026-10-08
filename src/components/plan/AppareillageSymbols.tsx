@@ -9,6 +9,8 @@ export const PALETTE: { type: AppareillageType; label: string; categorie: string
   { type: "rj45",            label: "Prise RJ45 (communication)",    categorie: "Prises" },
   { type: "point_lumineux",  label: "Point lumineux (plafond)",      categorie: "Éclairage" },
   { type: "applique",        label: "Applique murale",                categorie: "Éclairage" },
+  { type: "spot",            label: "Spot encastré (plafond)",        categorie: "Éclairage" },
+  { type: "spot_etanche",    label: "Spot encastré étanche (IP65)",   categorie: "Éclairage" },
   { type: "interrupteur",    label: "Interrupteur simple",           categorie: "Commandes" },
   { type: "va_et_vient",     label: "Va-et-vient",                    categorie: "Commandes" },
   { type: "telerupteur",     label: "Bouton poussoir (télérupteur)", categorie: "Commandes" },
@@ -52,7 +54,7 @@ const DEDIE_INITIALES: Record<string, string> = {
 // Initiales courtes par type — utilisées comme étiquette d'identification (ex. vue 3D),
 // même logique que les symboles 2D mais réduite à 1-3 caractères.
 const INITIALES_BASE: Record<string, string> = {
-  prise: "P", prise_commandee: "PC", point_lumineux: "PL", applique: "AP",
+  prise: "P", prise_commandee: "PC", point_lumineux: "PL", applique: "AP", spot: "SP", spot_etanche: "SE",
   interrupteur: "I", va_et_vient: "VV", telerupteur: "BP", rj45: "RJ", prise_dediee: "PD", prise_exterieure: "PE",
   interrupteur_double: "I2", va_et_vient_double: "VV2", telerupteur_double: "BP2",
 };
@@ -104,6 +106,16 @@ const SYMBOLES: Record<AppareillageType, DefSymbole> = {
   // Point d'éclairage en plafond : cercle barré d'une croix.
   point_lumineux: { oriente: false, prims: [
     { k: "c", cx: 12, cy: 12, r: 7 }, L(7.05, 7.05, 16.95, 16.95), L(16.95, 7.05, 7.05, 16.95),
+  ] },
+  // Spot encastré au plafond : petit cercle croisé, nettement plus petit que le point lumineux de plafond (rayon 5
+  // contre 7) pour qu'une rangée de spots se lise d'un coup d'œil sur le plan.
+  spot: { oriente: false, prims: [
+    { k: "c", cx: 12, cy: 12, r: 5 }, L(8.46, 8.46, 15.54, 15.54), L(15.54, 8.46, 8.46, 15.54),
+  ] },
+  // Spot étanche (IP65) : même spot, entouré d'un double cercle (joint d'étanchéité) — même convention
+  // que la prise extérieure étanche, pour le distinguer d'un spot ordinaire.
+  spot_etanche: { oriente: false, prims: [
+    { k: "c", cx: 12, cy: 12, r: 9 }, { k: "c", cx: 12, cy: 12, r: 5 }, L(8.46, 8.46, 15.54, 15.54), L(15.54, 8.46, 8.46, 15.54),
   ] },
   // Applique : point d'éclairage (cercle croisé) tangent à un trait épais = le mur.
   applique: { oriente: true, prims: [

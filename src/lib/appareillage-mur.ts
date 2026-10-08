@@ -4,7 +4,7 @@
 // contre le mur) et la vue 3D (projection sur la face intérieure du mur). Aucun état,
 // aucune dépendance React/three : uniquement des fonctions pures sur des Point en mètres.
 
-import { AppareillageType, AppareillagePlace, Piece, Point, pointDansPolygone, ouverturesEffectivesMur, ENTRAXE_POSTE_M, hauteurOuvertureDefautCm } from "@/lib/maison-types";
+import { AppareillageType, AppareillagePlace, Piece, Point, pointDansPolygone, ouverturesEffectivesMur, ENTRAXE_POSTE_M, hauteurOuvertureDefautCm, estLumierePlafond } from "@/lib/maison-types";
 
 export interface AncrageMur {
   segIndex: number;   // index du mur dans piece.contour (segment i → i+1)
@@ -13,10 +13,10 @@ export interface AncrageMur {
   normale: Point;     // vecteur unitaire du mur vers l'INTÉRIEUR de la pièce
 }
 
-// Seul le point lumineux de plafond n'est jamais posé sur un mur ; tout le reste
-// (prises, commandes, appliques, appareils dédiés) l'est.
+// Les luminaires de plafond (point lumineux, spots, spots étanches) ne sont jamais posés sur un mur ;
+// tout le reste (prises, commandes, appliques, appareils dédiés) l'est.
 export function estMural(type: AppareillageType): boolean {
-  return type !== "point_lumineux";
+  return !estLumierePlafond(type);
 }
 
 function projeterSurSegment(p: Point, a: Point, b: Point): Point {

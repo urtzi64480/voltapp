@@ -22,7 +22,7 @@
 //  - Une liaison domotique (sans fil) ne consomme aucun câble : elle est exclue (le pré-devis l'excluait déjà).
 
 import {
-  AppareillagePlace, Niveau, Piece, Point, PoseTroncon, SegmentCircuit, cleSegmentLiaison, trouverPiece,
+  AppareillagePlace, Niveau, Piece, Point, PoseTroncon, SegmentCircuit, cleSegmentLiaison, trouverPiece, estLumierePlafond,
 } from "@/lib/maison-types";
 import type { Breaker } from "@/lib/electrical-constants";
 import { segmentsPourCircuit } from "@/lib/maison-engine";
@@ -54,7 +54,7 @@ export function hauteurAncreFn(ctx: ContexteLongueurs): (id: string) => number {
     if (id === "boite" || id.startsWith("boite-")) return ctx.hauteurGaine;
     const a = parId.get(id);
     if (!a) return 1.0;
-    if (a.type === "point_lumineux") return Math.min(a.hauteur != null ? a.hauteur / 100 : Infinity, ctx.hauteurGaine);
+    if (estLumierePlafond(a.type)) return Math.min(a.hauteur != null ? a.hauteur / 100 : Infinity, ctx.hauteurGaine);
     return hauteurAppareilM(a);
   };
 }

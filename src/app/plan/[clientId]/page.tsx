@@ -28,7 +28,7 @@ import {
   cheminSegment, longueurBranchesEclairage, centroidePoints, assombrirCouleur, pointsOndulesEntre,
   BoiteDerivation, migrerBoitesDerivation,
   Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, nouvelleVoiture, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
-  estCommande, estCommandeDouble, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM,
+  estCommande, estCommandeDouble, estLumiere, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM,
   Escalier, EscalierType, EscalierTournant,
 } from "@/lib/maison-types";
 import {
@@ -505,7 +505,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
         }
       });
       if (showCircuits && breaker.circuit === "lumiere") {
-        const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
+        const lumieres = points.filter(a => estLumiere(a.type));
         const boitesExistantes = n.boitesDerivation?.[breaker.label] ?? [];
         const dessinerBoiteImprimee = (pt: Point, nom?: string) => {
           const pos = toPx(pt);
@@ -1428,7 +1428,7 @@ function CommandeLinkForm({ niveau, item, onValidate, onCancel }: {
   onValidate: (pointLumineuxIds: number[], pointLumineuxIds2: number[]) => void; onCancel: () => void;
 }) {
   const points = niveau.pieces.flatMap(p =>
-    p.appareillages.filter(a => a.type === "point_lumineux" || a.type === "applique").map(a => ({ a, pieceNom: p.nom })));
+    p.appareillages.filter(a => estLumiere(a.type)).map(a => ({ a, pieceNom: p.nom })));
   const double = estCommandeDouble(item.type);
   // Double : chaque lampe va sur la voie 1, la voie 2 ou aucune (jamais les deux). Par défaut, voie 1 = 1re lampe, voie 2 = 2e.
   const [choix, setChoix] = useState<number[]>(item.commandePourIds ?? (points[0] ? [points[0].a.id] : []));
@@ -3975,7 +3975,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const onAppareillagePointerDown = (piece: Piece, a: AppareillagePlace, e: React.PointerEvent) => {
     if (liaisonLumiereMode) {
       e.stopPropagation();
-      if (a.type === "point_lumineux" || a.type === "applique") {
+      if (estLumiere(a.type)) {
         handleClicLumierePourLiaison(a.id);
       } else {
         setPlacementError("Sélectionne un point lumineux pour créer une liaison directe.");
@@ -4134,7 +4134,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     let centre = origineCircuits(niveauActif) ?? { x: 0, y: 0 };
     if (breaker) {
       const lumieres = niveauActif.pieces.flatMap(p => p.appareillages)
-        .filter(a => a.circuitId === breaker.id && (a.type === "point_lumineux" || a.type === "applique"));
+        .filter(a => a.circuitId === breaker.id && (estLumiere(a.type)));
       if (lumieres.length > 0) centre = centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y })));
     }
     const existantes = niveauActif.boitesDerivation?.[label] ?? [];
@@ -5487,7 +5487,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   // — le câble les chaîne dans l'ordre, chaque lampe repart en étoile depuis
                   // la boîte la plus proche d'elle (voir construireBranchesCircuitEclairage).
                   if (breaker.circuit === "lumiere") {
-                    const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
+                    const lumieres = points.filter(a => estLumiere(a.type));
                     const boitesExistantes = niveauActif.boitesDerivation?.[breaker.label] ?? [];
                     if (boitesExistantes.length > 0) {
                       boitesExistantes.forEach(boite => {
@@ -5936,7 +5936,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               })()}
 
               {liaisonLumiereMode && niveauActif && (() => {
-                const points = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.type === "point_lumineux" || a.type === "applique");
+                const points = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => estLumiere(a.type));
                 return points.map(a => {
                   const p = toScreen({ x: a.x, y: a.y });
                   const estPremier = liaisonLumiereMode.premierId === a.id;
@@ -7285,7 +7285,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   {circuitsAffiches.map(item => {
                     const b = item.breaker;
                     const manuel = item.manuel;
-                    const estLumiere = b ? CIRCUITS[b.circuit]?.category === "lumiere" : manuel?.famille === "lumiere";
+                    const circuitEclairage = b ? CIRCUITS[b.circuit]?.category === "lumiere" : manuel?.famille === "lumiere";
                     const labelStockage = b ? b.label : manuel!.nom; // clé pour boitesDerivation
                     const nomAffichage = b ? nomAffiche(b) : manuel!.nom;
                     const couleur = b ? (colorMap.get(b.id) ?? "#666666") : (manuel!.couleur ?? "#78716c");
@@ -7321,7 +7321,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                             <Route size={12} />
                           </button>
                         )}
-                        {estLumiere && (
+                        {circuitEclairage && (
                           <>
                             <button onClick={e => { e.preventDefault(); e.stopPropagation(); ajouterBoiteDerivation(labelStockage); }}
                               className="btn-ghost !p-0.5 shrink-0" title="Ajouter une boîte de dérivation">

@@ -17,7 +17,7 @@ import {
 import {
   Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone,
   CircuitManuel, familleCircuitManuelAppareillage, couleurCircuit, USAGE_DEDIE_DEFAUT,
-  estCommande, baseCommande, commandeCetteLumiere,
+  estCommande, baseCommande, commandeCetteLumiere, estLumiere,
   SegmentCircuit, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage,
 } from "./maison-types";
 
@@ -57,6 +57,7 @@ const LABEL_NON_RACCORDE: Record<string, string> = {
   interrupteur_double: "Double interrupteur", va_et_vient_double: "Double va-et-vient", telerupteur_double: "Double bouton poussoir",
   prise: "Prise", prise_commandee: "Prise commandée", volet_roulant: "Volet roulant",
   prise_dediee: "Prise dédiée", prise_exterieure: "Prise extérieure",
+  point_lumineux: "Point lumineux", applique: "Applique", spot: "Spot", spot_etanche: "Spot étanche",
 };
 
 export interface ResultatGeneration {
@@ -532,7 +533,7 @@ export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[
   const manuel = breaker.manuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === breaker.manuelId) : undefined;
   const relieAuTableau = !manuel?.nonRelieTableau;
   if (breaker.circuit === "lumiere") {
-    const lumieres = points.filter(a => a.type === "point_lumineux" || a.type === "applique");
+    const lumieres = points.filter(a => estLumiere(a.type));
     const commandes = points.filter(a => estCommande(a.type));
     const boites = niveau.boitesDerivation?.[breaker.label] ?? [];
     const liaisonsDirectes = niveau.liaisonsDirectesLumiere?.[breaker.label] ?? [];

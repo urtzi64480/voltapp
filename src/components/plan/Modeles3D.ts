@@ -208,6 +208,30 @@ function modelePlafonnier(): { g: THREE.Group; verre: THREE.MeshStandardMaterial
   return { g, verre };
 }
 
+// Spot encastré (plafond) : collerette blanche affleurante (Ø 9 cm, trou de perçage ~ 7 cm) et face lumineuse
+// légèrement en retrait. Le « verre » est le matériau piloté par la simulation d'éclairage (allumé / éteint).
+function modeleSpot(): { g: THREE.Group; verre: THREE.MeshStandardMaterial } {
+  const g = new THREE.Group();
+  g.add(cylY(0.045, 0.006, m(BLANC), 0, -0.003, 0));                   // collerette affleurante au plafond
+  g.add(cylY(0.036, 0.004, m(GRIS_CLAIR), 0, -0.006, 0));              // réflecteur
+  const verre = m(0xfff3d6, { emissive: 0xffe0ab, emissiveIntensity: 0.15, transparent: true, opacity: 0.95, side: THREE.DoubleSide });
+  g.add(cylY(0.029, 0.003, verre, 0, -0.0075, 0));                     // face lumineuse (LED)
+  return { g, verre };
+}
+
+// Spot encastré étanche (IP65) : collerette plus large en inox, joint noir et verre bombé.
+function modeleSpotEtanche(): { g: THREE.Group; verre: THREE.MeshStandardMaterial } {
+  const g = new THREE.Group();
+  g.add(cylY(0.052, 0.008, m(INOX, { metalness: 0.6 }), 0, -0.004, 0));    // collerette inox
+  g.add(tore(0.037, 0.0035, m(NOIR), 0, -0.0095, 0, false));               // joint d'étanchéité
+  const verre = m(0xfff3d6, { emissive: 0xffe0ab, emissiveIntensity: 0.15, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
+  const bombe = new THREE.Mesh(new THREE.SphereGeometry(0.034, 20, 10, 0, Math.PI * 2, 0, Math.PI / 3), verre);
+  bombe.rotation.x = Math.PI;                                              // calotte bombée vers le bas
+  bombe.position.set(0, -0.0095, 0);
+  g.add(bombe);
+  return { g, verre };
+}
+
 function hublot(g: THREE.Group, x: number, y: number, z: number, r: number): void {
   g.add(tore(r, 0.018, m(INOX, { metalness: 0.6 }), x, y, z));
   g.add(cylZ(r - 0.01, 0.01, m(VERRE, { transparent: true, opacity: 0.85, metalness: 0.2, roughness: 0.15 }), x, y, z - 0.004));
@@ -405,7 +429,7 @@ const MONTAGE: Record<AppareillageType, Montage> = {
   prise: "mur", prise_commandee: "mur", interrupteur: "mur", va_et_vient: "mur", telerupteur: "mur",
   interrupteur_double: "mur", va_et_vient_double: "mur", telerupteur_double: "mur",
   rj45: "mur", prise_dediee: "mur", prise_exterieure: "mur",
-  applique: "mur", point_lumineux: "plafond",
+  applique: "mur", point_lumineux: "plafond", spot: "plafond", spot_etanche: "plafond",
   four: "sol_mur", plaque: "sol_mur", lave_linge: "sol_mur", lave_vaisselle: "sol_mur", seche_linge: "sol_mur",
   congelateur: "sol_mur", piscine: "sol_mur",
   chauffe_eau: "mur", chauffage: "mur", clim: "mur", seche_serviette: "mur", irve: "mur", vmc: "mur", alarme: "mur",
@@ -417,7 +441,7 @@ const DEMI_HAUTEUR: Partial<Record<AppareillageType, number>> = {
 };
 const SOMMET: Partial<Record<AppareillageType, number>> = {
   prise: 0.045, prise_commandee: 0.045, interrupteur: 0.045, va_et_vient: 0.045, telerupteur: 0.045, interrupteur_double: 0.045, va_et_vient_double: 0.045, telerupteur_double: 0.045, rj45: 0.045, prise_dediee: 0.045, prise_exterieure: 0.055,
-  applique: 0.08, point_lumineux: 0, four: 1.2, plaque: 0.9, lave_linge: 0.85, lave_vaisselle: 0.82, seche_linge: 0.85,
+  applique: 0.08, point_lumineux: 0, spot: 0, spot_etanche: 0, four: 1.2, plaque: 0.9, lave_linge: 0.85, lave_vaisselle: 0.82, seche_linge: 0.85,
   congelateur: 0.85, piscine: 0.7, chauffe_eau: 0.45, chauffage: 0.23, clim: 0.14, seche_serviette: 0.6,
   irve: 0.18, vmc: 0.08, alarme: 0.2, volet_roulant: 0.1,
 };
@@ -441,6 +465,8 @@ export function creerModeleAppareillage(type: AppareillageType, couleurCircuit?:
     case "telerupteur_double": groupe = modeleInterrupteurDouble("telerupteur", couleur); break;
     case "applique": { const r = modeleApplique(); groupe = r.g; ampoule = r.verre; break; }
     case "point_lumineux": { const r = modelePlafonnier(); groupe = r.g; ampoule = r.verre; break; }
+    case "spot": { const r = modeleSpot(); groupe = r.g; ampoule = r.verre; break; }
+    case "spot_etanche": { const r = modeleSpotEtanche(); groupe = r.g; ampoule = r.verre; break; }
     case "lave_linge": groupe = modeleLaveLinge(BLANC); break;
     case "seche_linge": groupe = modeleLaveLinge(BLANC); break;
     case "lave_vaisselle": groupe = modeleLaveVaisselle(); break;
@@ -466,9 +492,11 @@ export function creerModeleAppareillage(type: AppareillageType, couleurCircuit?:
   groupe.traverse(o => { if (o instanceof THREE.Mesh) { o.castShadow = montage === "sol_mur"; o.receiveShadow = montage === "sol_mur"; } });
   // Pastille de couleur du circuit (mode "Circuits") pour retrouver le circuit d'un coup d'œil.
   if (couleurCircuit && montage === "plafond") {
-    const anneau = new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.007, 8, 32), m(couleurCircuit, { emissive: couleurCircuit, emissiveIntensity: 0.4 }));
+    // Les spots sont petits et nombreux : un anneau proportionné (sinon la bague de circuit les engloutit).
+    const spot = type === "spot" || type === "spot_etanche";
+    const anneau = new THREE.Mesh(new THREE.TorusGeometry(spot ? (type === "spot" ? 0.056 : 0.063) : 0.095, spot ? 0.004 : 0.007, 8, 32), m(couleurCircuit, { emissive: couleurCircuit, emissiveIntensity: 0.4 }));
     anneau.rotation.x = Math.PI / 2;
-    anneau.position.set(0, -0.02, 0);
+    anneau.position.set(0, spot ? -0.005 : -0.02, 0);
     groupe.add(anneau);
   }
   if (couleurCircuit && montage !== "plafond") {
