@@ -75,7 +75,7 @@ import {
 } from "./longueurs-circuits";
 import { Prestation, Gamme, DevisLigne, PrestationFournisseur } from "@/types";
 import { nomAvecConditionnement } from "@/lib/utils";
-import { libelleOffre, offrePrincipale, offrePourFournisseur, prixVenteOffre } from "@/lib/fournisseurs";
+import { designationProduit, libelleOffre, offrePrincipale, offrePourFournisseur, prixVenteOffre } from "@/lib/fournisseurs";
 
 // ─── TYPES DE BESOIN ────────────────────────────────────────────────────────
 
@@ -508,7 +508,8 @@ function champsFournisseurOption(o?: PrestationFournisseur | null): Pick<OptionA
 // produit). Tout le reste de l'option (quantités, bobines, gamme…) est conservé.
 export function optionAvecOffre(opt: OptionArticle, p: Prestation, offre: PrestationFournisseur | null): OptionArticle {
   const o = offre ?? offrePrincipale(p.fournisseurs) ?? null;
-  return { ...opt, prix_unitaire: prixVenteOffre(p, o), ...champsFournisseurOption(o) };
+  // La désignation suit la marque de l'offre quand le produit existe en plusieurs marques.
+  return { ...opt, nom: designationProduit(p, o), prix_unitaire: prixVenteOffre(p, o), ...champsFournisseurOption(o) };
 }
 
 // Article « au mètre » qui complète un reliquat de bobine : on cherche d'abord SON offre chez le
@@ -537,7 +538,7 @@ function optionsPour(sousCategorie: string, prestations: Prestation[]): OptionAr
     // Par défaut : l'offre principale du produit (celle recopiée dans prestations.prix_unitaire).
     const o = offrePrincipale(p.fournisseurs);
     return {
-      prestation_id: p.id, nom: p.nom, prix_unitaire: prixVenteOffre(p, o), unite: p.unite,
+      prestation_id: p.id, nom: designationProduit(p, o), prix_unitaire: prixVenteOffre(p, o), unite: p.unite,
       type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire && p.longueur_unitaire > 0 ? p.longueur_unitaire : null,
       quantiteMultiplicateur: 1, sousCategorieArticle: sousCategorie,
       image_url: p.image_url ?? null,
@@ -635,7 +636,7 @@ function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArt
     if (auMetre) {
       const offreAuMetre = offreCompagnon(auMetre, option.fournisseur_nom);
       lignes.push({
-        nom: auMetre.nom, description: besoin.piece, quantite: Math.ceil(reliquat),
+        nom: designationProduit(auMetre, offreAuMetre), description: besoin.piece, quantite: Math.ceil(reliquat),
         prix_unitaire: prixVenteOffre(auMetre, offreAuMetre), unite: auMetre.unite, type_branche: auMetre.type_branche,
         prestation_id: auMetre.id, ...champsLigneDepuisOption({ ...champsFournisseurOption(offreAuMetre), image_url: auMetre.image_url ?? null }),
       });

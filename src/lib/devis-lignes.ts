@@ -5,7 +5,7 @@
 import { supabase } from "@/lib/supabase";
 import { nomAvecConditionnement } from "@/lib/utils";
 import { posteDe } from "@/lib/postes";
-import { libelleOffre, offrePrincipale, prixVenteOffre } from "@/lib/fournisseurs";
+import { designationProduit, libelleOffre, offrePrincipale, prixVenteOffre } from "@/lib/fournisseurs";
 import type { DevisLigne, Prestation, PrestationFournisseur } from "@/types";
 
 export type LigneEdition = DevisLigne & { kit_description?: string | null; kit_ratio_service?: number | null };
@@ -20,12 +20,18 @@ function offreEffective(p: Prestation, offre?: PrestationFournisseur | null): Pr
   return offre ?? offrePrincipale(p.fournisseurs) ?? null;
 }
 
+// Désignation de la ligne pour un produit et l'offre retenue : nom du produit (+ marque quand le
+// produit existe en plusieurs marques — voir designationProduit) + conditionnement.
+function nomLigneProduit(p: Prestation, o?: PrestationFournisseur | null): string {
+  return nomAvecConditionnement(designationProduit(p, o), p.longueur_unitaire, p.sous_categorie);
+}
+
 // Ligne pour un article (non-kit). Le nom précise le conditionnement (bobine/rouleau) et sert
 // de clé de regroupement : deux ajouts du même article s'additionnent (voir fusionnerLigne).
 export function ligneDepuisArticle(p: Prestation, offre: PrestationFournisseur | null | undefined, poste: string | null): LigneEdition {
   const o = offreEffective(p, offre);
   return {
-    nom: nomAvecConditionnement(p.nom, p.longueur_unitaire, p.sous_categorie),
+    nom: nomLigneProduit(p, o),
     kit_description: p.description ?? null,
     prix_unitaire: prixVenteOffre(p, o),
     quantite: 1,
@@ -82,10 +88,14 @@ export function fusionnerLigne<T extends LigneEdition>(prev: T[], nouvelle: T): 
   return [...prev, nouvelle];
 }
 
-// Change seulement le fournisseur d'une ligne : prix de vente + prix d'achat suivent l'offre ;
-// désignation, quantité et poste ne bougent pas. offre = null → « fournisseur non précisé ».
+// Change seulement l'offre d'une ligne : prix de vente + prix d'achat suivent l'offre ; quantité et
+// poste ne bougent pas. La désignation ne change que si l'offre change de MARQUE sur un produit
+// décliné en plusieurs marques (et seulement si elle n'a pas été retouchée à la main : on la compare
+// à celle que l'offre actuelle aurait donnée). offre = null → « fournisseur non précisé ».
 export function changerFournisseurLigne<T extends LigneEdition>(l: T, p: Prestation, offre: PrestationFournisseur | null): T {
-  return { ...l, prix_unitaire: prixVenteOffre(p, offre), ...champsFournisseur(offre) };
+  const actuelle = (p.fournisseurs ?? []).find(x => x.id === l.fournisseur_id) ?? null;
+  const nom = l.nom === nomLigneProduit(p, actuelle) ? nomLigneProduit(p, offre) : l.nom;
+  return { ...l, nom, prix_unitaire: prixVenteOffre(p, offre), ...champsFournisseur(offre) };
 }
 
 // Remplace le produit d'une ligne par un autre (même quantité, même poste, même description
@@ -94,7 +104,7 @@ export function remplacerProduitLigne<T extends LigneEdition>(l: T, p: Prestatio
   const o = offreEffective(p, offre);
   return {
     ...l,
-    nom: nomAvecConditionnement(p.nom, p.longueur_unitaire, p.sous_categorie),
+    nom: nomLigneProduit(p, o),
     kit_description: p.description ?? null,
     kit_ratio_service: null,
     prix_unitaire: prixVenteOffre(p, o),

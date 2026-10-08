@@ -6,6 +6,9 @@
 // prix_unitaire / liens_fournisseurs (voir miroirPrestation) — tout le code historique qui lit
 // ces colonnes (CRM, rentabilité, moteur pré-devis, catalogue) reste donc valide sans changement.
 //
+// Chaque offre porte aussi une MARQUE (colonne `marque`, migration 006_marques_offres.sql) : un même
+// produit se décline ainsi en plusieurs marques sans être recréé (voir « Marques » plus bas).
+//
 // Tolérance à la migration : si la table n'existe pas encore (003_fournisseurs_produits.sql non
 // exécuté), chargerOffres() renvoie ok=false et aucune offre — l'application fonctionne comme avant.
 
@@ -59,10 +62,73 @@ export function offresTriees(offres?: PrestationFournisseur[] | null): Prestatio
     Number(b.principal) - Number(a.principal) || (a.ordre ?? 0) - (b.ordre ?? 0));
 }
 
+// ─── Marques ────────────────────────────────────────────────────────────────
+//
+// Une offre = une MARQUE chez un FOURNISSEUR, avec ses prix. Un produit générique (« Prise 2P+T »)
+// porte donc autant d'offres que de marques / fournisseurs voulus, au lieu d'un produit par marque.
+// Une offre sans marque propre reprend celle du produit (prestations.marque) : les produits
+// d'avant la migration 006 se comportent exactement comme avant.
+
+// Texte comparable : minuscules, sans accents ni ponctuation, espaces simples.
+export function normTexte(s?: string | null): string {
+  return (s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+export function marqueOffre(p: Pick<Prestation, "marque">, o?: Pick<PrestationFournisseur, "marque"> | null): string {
+  return (o?.marque ?? "").trim() || (p.marque ?? "").trim();
+}
+
+// Marques distinctes d'un produit (une par offre, sans doublon ni valeur vide).
+export function marquesDe(p: Pick<Prestation, "marque" | "fournisseurs">): string[] {
+  const offres = p.fournisseurs ?? [];
+  const liste = offres.length > 0 ? offres.map(o => marqueOffre(p, o)) : [(p.marque ?? "").trim()];
+  const vues = new Set<string>();
+  const res: string[] = [];
+  liste.forEach(m => {
+    const k = normTexte(m);
+    if (m && !vues.has(k)) { vues.add(k); res.push(m); }
+  });
+  return res;
+}
+
+// La marque est une dimension du produit (au moins 2 marques) : elle doit alors figurer dans la
+// désignation des devis. Un produit à une seule marque garde sa désignation d'origine, inchangée.
+export function marqueVariable(p: Pick<Prestation, "marque" | "fournisseurs">): boolean {
+  return marquesDe(p).length >= 2;
+}
+
+// Ajoute la marque au nom sauf s'il la contient déjà.
+export function nomAvecMarque(nom: string, marque?: string | null): string {
+  const m = (marque ?? "").trim();
+  if (!m) return nom;
+  return (` ${normTexte(nom)} `).includes(` ${normTexte(m)} `) ? nom : `${nom} ${m}`;
+}
+
+// Désignation d'un produit pour une offre donnée (ligne de devis, option du pré-devis).
+export function designationProduit(p: Pick<Prestation, "nom" | "marque" | "fournisseurs">, o?: PrestationFournisseur | null): string {
+  return o && marqueVariable(p) ? nomAvecMarque(p.nom, marqueOffre(p, o)) : p.nom;
+}
+
+// Libellé d'offre pour les sélecteurs : « Legrand · Rexel » (marque + fournisseur).
+// libelleOffre() reste le nom du fournisseur seul : il sert au regroupement de la liste de courses.
+export function libelleOffreMarque(p: Pick<Prestation, "marque">, o: PrestationFournisseur): string {
+  const m = marqueOffre(p, o);
+  return m ? `${m} · ${libelleOffre(o)}` : libelleOffre(o);
+}
+
+// Offres d'un produit pour une marque donnée (comparaison insensible à la casse et aux accents).
+export function offresDeMarque(p: Pick<Prestation, "marque" | "fournisseurs">, marque: string): PrestationFournisseur[] {
+  const k = normTexte(marque);
+  return offresTriees(p.fournisseurs).filter(o => normTexte(marqueOffre(p, o)) === k);
+}
+
 // ─── Chargement ─────────────────────────────────────────────────────────────
 
 // Toutes les offres de l'utilisateur (RLS), paginées par 1000 (limite Supabase par requête).
-export async function chargerOffres(): Promise<{ offres: PrestationFournisseur[]; ok: boolean }> {
+// marqueOk : la colonne `marque` existe (migration 006 exécutée). Déduit des lignes lues : sans
+// aucune offre, on ne peut pas savoir, et rien n'en dépend.
+export async function chargerOffres(): Promise<{ offres: PrestationFournisseur[]; ok: boolean; marqueOk: boolean }> {
   const offres: PrestationFournisseur[] = [];
   const TAILLE = 1000;
   for (let page = 0; page < 20; page++) {
@@ -73,13 +139,13 @@ export async function chargerOffres(): Promise<{ offres: PrestationFournisseur[]
       .range(page * TAILLE, page * TAILLE + TAILLE - 1);
     if (error) {
       console.error("Fournisseurs indisponibles (migration 003 exécutée ?) :", error.message);
-      return { offres: [], ok: false };
+      return { offres: [], ok: false, marqueOk: false };
     }
     const lot = (data ?? []) as PrestationFournisseur[];
     offres.push(...lot);
     if (lot.length < TAILLE) break;
   }
-  return { offres, ok: true };
+  return { offres, ok: true, marqueOk: offres.length === 0 || "marque" in offres[0] };
 }
 
 export function attacherOffres<T extends Prestation>(prestations: T[], offres: PrestationFournisseur[]): T[] {
@@ -110,6 +176,7 @@ export async function offresDe(prestationId: string): Promise<PrestationFourniss
 export interface OffreDraft {
   cle: string;            // identifiant local stable (clé React)
   id?: string;            // id en base si l'offre existe déjà
+  marque: string;         // marque de cette offre (vide = produit sans marque)
   fournisseur: string;
   reference: string;
   url: string;
@@ -120,6 +187,8 @@ export interface OffreDraft {
   pieces: PieceDraft[];
   // L'offre avait des pièces en base : si on les retire toutes, il faut les effacer explicitement.
   piecesEnBase?: boolean;
+  // L'offre avait une marque en base : si on la vide, il faut l'effacer explicitement.
+  marqueEnBase?: boolean;
 }
 
 export interface PieceDraft {
@@ -137,7 +206,7 @@ function nouvelleCle(): string {
 }
 
 export function nouvelleOffreDraft(principal = false): OffreDraft {
-  return { cle: nouvelleCle(), fournisseur: "", reference: "", url: "", prixAchat: "", prixVente: "", principal, pieces: [] };
+  return { cle: nouvelleCle(), marque: "", fournisseur: "", reference: "", url: "", prixAchat: "", prixVente: "", principal, pieces: [] };
 }
 
 export function nouvellePieceDraft(): PieceDraft {
@@ -179,9 +248,13 @@ export function normaliserPieces(pieces: PieceDraft[]): PieceOffre[] {
     });
 }
 
-export function draftsDepuisOffres(offres: PrestationFournisseur[]): OffreDraft[] {
+// marqueProduit : marque du produit, reprise par les offres qui n'ont pas encore la leur (produits
+// d'avant la migration 006) — elle leur est écrite à la prochaine sauvegarde.
+export function draftsDepuisOffres(offres: PrestationFournisseur[], marqueProduit = ""): OffreDraft[] {
   return offresTriees(offres).map(o => ({
     cle: nouvelleCle(), id: o.id,
+    marque: (o.marque ?? "").trim() || marqueProduit.trim(),
+    marqueEnBase: !!(o.marque ?? "").trim(),
     fournisseur: o.fournisseur ?? "", reference: o.reference ?? "", url: o.url ?? "",
     prixAchat: o.prix_achat != null ? String(o.prix_achat) : "",
     prixVente: o.prix_vente != null ? String(o.prix_vente) : "",
@@ -202,12 +275,14 @@ export function draftsDepuisLegacy(p: Prestation): OffreDraft[] {
     if (p.prix_achat == null && !(p.prix_unitaire > 0)) return [nouvelleOffreDraft(true)];
     return [{
       ...nouvelleOffreDraft(true),
+      marque: (p.marque ?? "").trim(),
       prixAchat: p.prix_achat != null ? String(p.prix_achat) : "",
       prixVente: String(p.prix_unitaire),
     }];
   }
   return liens.map((url, i) => ({
     ...nouvelleOffreDraft(i === 0),
+    marque: (p.marque ?? "").trim(),
     fournisseur: nomDepuisUrl(url), url,
     prixAchat: i === 0 && p.prix_achat != null ? String(p.prix_achat) : "",
     prixVente: i === 0 ? String(p.prix_unitaire) : "",
@@ -215,12 +290,13 @@ export function draftsDepuisLegacy(p: Prestation): OffreDraft[] {
 }
 
 export function draftsPourProduit(p: Prestation): OffreDraft[] {
-  return p.fournisseurs && p.fournisseurs.length > 0 ? draftsDepuisOffres(p.fournisseurs) : draftsDepuisLegacy(p);
+  return p.fournisseurs && p.fournisseurs.length > 0 ? draftsDepuisOffres(p.fournisseurs, p.marque ?? "") : draftsDepuisLegacy(p);
 }
 
 // Offre prête à écrire en base.
 export interface OffreNormalisee {
   id?: string;
+  marque: string | null;
   fournisseur: string;
   reference: string | null;
   url: string | null;
@@ -233,6 +309,8 @@ export interface OffreNormalisee {
   // tant que la migration 004 n'est pas exécutée).
   pieces?: PieceOffre[];
   effacerPieces?: boolean;
+  // Idem pour la marque (colonne migration 006) : écrite seulement si renseignée, ou pour l'effacer.
+  effacerMarque?: boolean;
 }
 
 function nombreOuNull(s: string): number | null {
@@ -250,7 +328,7 @@ export function normaliserUrl(u: string): string | null {
 // Écarte les offres entièrement vides, donne un nom à chacune et garantit UNE offre principale.
 export function normaliserDrafts(drafts: OffreDraft[]): OffreNormalisee[] {
   const gardees = drafts.filter(d =>
-    d.fournisseur.trim() || d.reference.trim() || d.url.trim() || d.prixAchat.trim() || d.prixVente.trim()
+    d.marque.trim() || d.fournisseur.trim() || d.reference.trim() || d.url.trim() || d.prixAchat.trim() || d.prixVente.trim()
     || normaliserPieces(d.pieces).length > 0);
   if (gardees.length === 0) return [];
   let idxPrincipal = gardees.findIndex(d => d.principal);
@@ -263,19 +341,23 @@ export function normaliserDrafts(drafts: OffreDraft[]): OffreNormalisee[] {
     // (miroir du produit, rentabilité du devis, marges) continue de lire un simple prix_achat.
     const pieces = normaliserPieces(d.pieces);
     const total = totalPieces(pieces);
+    const marque = d.marque.trim() || null;
     return {
-      id: d.id, fournisseur: nom, reference: d.reference.trim() || null, url,
+      id: d.id, marque, fournisseur: nom, reference: d.reference.trim() || null, url,
       prix_achat: pieces.length > 0 ? total : nombreOuNull(d.prixAchat), prix_vente: nombreOuNull(d.prixVente),
       principal: estPrincipale, ordre: i,
       ...(pieces.length > 0 ? { pieces } : {}),
       ...(pieces.length === 0 && d.piecesEnBase ? { effacerPieces: true } : {}),
+      ...(!marque && d.marqueEnBase ? { effacerMarque: true } : {}),
     };
   }).sort((a, b) => Number(b.principal) - Number(a.principal)).map((o, i) => ({ ...o, ordre: i }));
 }
 
 // Valeurs à recopier dans la ligne `prestations` à partir de l'offre principale.
+// `marque` : celle de l'offre principale — le produit la porte aussi (regroupements, filtres).
+// Absente quand l'offre principale n'a pas de marque : le champ du produit n'est alors pas touché.
 export function miroirPrestation(offres: OffreNormalisee[], prixUnitaireParDefaut: number): {
-  prix_achat: number | null; prix_unitaire: number; liens_fournisseurs: string[];
+  prix_achat: number | null; prix_unitaire: number; liens_fournisseurs: string[]; marque?: string;
 } {
   const principale = offres.find(o => o.principal);
   const urls: string[] = [];
@@ -284,24 +366,47 @@ export function miroirPrestation(offres: OffreNormalisee[], prixUnitaireParDefau
     prix_achat: principale?.prix_achat ?? null,
     prix_unitaire: principale && principale.prix_vente != null ? principale.prix_vente : prixUnitaireParDefaut,
     liens_fournisseurs: urls,
+    ...(principale?.marque ? { marque: principale.marque } : {}),
   };
 }
 
-// Rattache les offres importées/saisies à celles déjà en base quand le nom de fournisseur est
-// le même : l'id est conservé (les lignes de devis qui y renvoient ne sont pas détachées).
-export function rattacherParNom(existantes: PrestationFournisseur[], offres: OffreNormalisee[]): OffreNormalisee[] {
+// Rattache les offres importées/saisies à celles déjà en base quand la marque ET le nom de
+// fournisseur sont les mêmes : l'id est conservé (les lignes de devis qui y renvoient ne sont pas
+// détachées). marqueProduit : marque reprise par les offres existantes qui n'ont pas la leur.
+function cleOffre(marque: string | null | undefined, fournisseur: string): string {
+  return `${normTexte(marque)}|${normTexte(fournisseur)}`;
+}
+export function rattacherParNom(existantes: PrestationFournisseur[], offres: OffreNormalisee[], marqueProduit = ""): OffreNormalisee[] {
   const libres = new Map<string, PrestationFournisseur>();
-  existantes.forEach(e => libres.set(libelleOffre(e).toLowerCase(), e));
+  existantes.forEach(e => libres.set(cleOffre((e.marque ?? "").trim() || marqueProduit, libelleOffre(e)), e));
   return offres.map(o => {
     if (o.id) return o;
-    const e = libres.get(o.fournisseur.toLowerCase());
+    const cle = cleOffre(o.marque, o.fournisseur);
+    const e = libres.get(cle);
     if (!e) return o;
-    libres.delete(o.fournisseur.toLowerCase());
+    libres.delete(cle);
     return { ...o, id: e.id };
   });
 }
 
+// Offres déjà en base, remises sous la forme « à écrire » (ids conservés) : sert à ajouter une offre
+// à un produit sans toucher aux autres. marqueProduit est écrite sur celles qui n'ont pas de marque.
+export function offresVersNormalisees(offres: PrestationFournisseur[], marqueProduit = ""): OffreNormalisee[] {
+  return offresTriees(offres).map((o, i) => ({
+    id: o.id,
+    marque: (o.marque ?? "").trim() || marqueProduit.trim() || null,
+    fournisseur: libelleOffre(o),
+    reference: o.reference ?? null, url: o.url ?? null,
+    prix_achat: o.prix_achat ?? null, prix_vente: o.prix_vente ?? null,
+    principal: o.principal, ordre: i,
+    ...((o.pieces ?? []).length > 0 ? { pieces: o.pieces ?? [] } : {}),
+  }));
+}
+
 export function messageErreurOffres(message: string): string {
+  if (/marque/i.test(message) && /(column|colonne|schema cache)/i.test(message)) {
+    return "La colonne des marques est introuvable : exécute d'abord la migration 006_marques_offres.sql dans Supabase.";
+  }
   if (/pieces/i.test(message) && /(column|colonne|schema cache)/i.test(message)) {
     return "La colonne des pièces est introuvable : exécute d'abord la migration 004_pieces_offres.sql dans Supabase.";
   }
@@ -335,6 +440,10 @@ export async function synchroniserOffres(userId: string, prestationId: string, v
       updated_at: new Date().toISOString(),
       ...(o.pieces && o.pieces.length > 0 ? { pieces: o.pieces } : {}),
       ...(o.effacerPieces ? { pieces: null } : {}),
+      // Colonne marque (migration 006) : écrite seulement quand elle sert, pour que l'enregistrement
+      // d'un produit sans marque reste possible tant que la migration n'a pas été exécutée.
+      ...(o.marque ? { marque: o.marque } : {}),
+      ...(!o.marque && o.effacerMarque ? { marque: null } : {}),
     };
     if (o.id && idsEnBase.has(o.id)) {
       const { error } = await supabase.from("prestation_fournisseurs").update(champs).eq("id", o.id);

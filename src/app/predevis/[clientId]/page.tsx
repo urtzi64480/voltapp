@@ -13,7 +13,7 @@ import {
   multiplicateurPourArticle, estPieceReelle, optionAvecOffre, prixCompagnonAuMetre,
   ResultatPreDevis, BesoinApparie, OptionArticle, ChoixLigne, POSTE_MAIN_OEUVRE, POSTE_CABLAGE,
 } from "@/lib/predevis-engine";
-import { attacherFournisseurs, libelleOffre, offrePrincipale, offresTriees, prixVenteOffre } from "@/lib/fournisseurs";
+import { attacherFournisseurs, libelleOffreMarque, offrePrincipale, offresTriees, prixVenteOffre } from "@/lib/fournisseurs";
 import { colonnesFournisseur, colonnesImage } from "@/lib/devis-lignes";
 import ProduitPicker from "@/components/devis/ProduitPicker";
 import Shell from "@/components/layout/Shell";
@@ -149,11 +149,11 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
     const courant = offres.some(o => o.id === etat.fournisseurId) ? etat.fournisseurId : (offrePrincipale(offres)?.id ?? "");
     return (
       <label className="ml-6 flex items-center gap-1.5 text-xs text-ink-500">
-        <span className="shrink-0">Fournisseur</span>
+        <span className="shrink-0">Marque · fournisseur</span>
         <select value={courant} onChange={e => onChange({ ...etat, fournisseurId: e.target.value })}
           className="min-w-0 max-w-full text-xs border border-ink-200 rounded-lg py-1 px-1.5 bg-white">
           {offres.map(o => (
-            <option key={o.id} value={o.id}>{libelleOffre(o)} — {fmt(prixVenteOffre(p, o))}{o.principal ? " (principal)" : ""}</option>
+            <option key={o.id} value={o.id}>{libelleOffreMarque(p, o)} — {fmt(prixVenteOffre(p, o))}{o.principal ? " (principal)" : ""}</option>
           ))}
         </select>
       </label>

@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Search, X, Plus, Package, Wrench, Layers, ChevronDown, ChevronUp, Check, SlidersHorizontal, RotateCcw, ExternalLink } from "lucide-react";
 import { fmt, cn } from "@/lib/utils";
-import { libelleOffre, offresTriees, offrePourFournisseur, offrePrincipale, prixVenteOffre, fourchettePrix, margePct } from "@/lib/fournisseurs";
+import { libelleOffre, libelleOffreMarque, marqueOffre, marquesDe, offresTriees, offrePourFournisseur, offrePrincipale, prixVenteOffre, fourchettePrix, margePct } from "@/lib/fournisseurs";
 import type { Prestation, PrestationFournisseur } from "@/types";
 
 export type PrestationPicker = Prestation & { kit_description?: string | null };
@@ -36,7 +36,7 @@ function typeDe(p: PrestationPicker): Exclude<TypeFiltre, ""> {
 function passe(p: PrestationPicker, f: FiltresPicker, texte: string, ignorer?: keyof FiltresPicker): boolean {
   if (ignorer !== "type" && f.type && typeDe(p) !== f.type) return false;
   if (ignorer !== "cat" && f.cat && p.categorie !== f.cat) return false;
-  if (ignorer !== "marque" && f.marque && (p.marque ?? "") !== f.marque) return false;
+  if (ignorer !== "marque" && f.marque && !marquesDe(p).includes(f.marque)) return false;
   if (ignorer !== "fournisseur" && f.fournisseur && !(p.fournisseurs ?? []).some(o => libelleOffre(o) === f.fournisseur)) return false;
   if (ignorer !== "gamme" && f.gamme && p.gamme !== f.gamme) return false;
   if (ignorer !== "sousCat" && f.sousCat && p.sous_categorie !== f.sousCat) return false;
@@ -114,17 +114,23 @@ function BoutonChoix({ remplacement, ajoutes, onClick, petit }: { remplacement: 
   );
 }
 
-function ProduitLigne({ p, remplacement, filtreFournisseur, preference, actuel, ajoutes, onChoisir }: {
-  p: PrestationPicker; remplacement: boolean; filtreFournisseur: string; preference: string | null; actuel: boolean;
+function ProduitLigne({ p, remplacement, filtreFournisseur, filtreMarque, preference, actuel, ajoutes, onChoisir }: {
+  p: PrestationPicker; remplacement: boolean; filtreFournisseur: string; filtreMarque: string; preference: string | null; actuel: boolean;
   ajoutes: number; onChoisir: (offre: PrestationFournisseur | null) => void;
 }) {
   const [ouvert, setOuvert] = useState(false);
   const offres = offresTriees(p.fournisseurs);
   const type = typeDe(p);
-  // Offre mise en avant : celle du fournisseur filtré, sinon celle du fournisseur « préféré »
-  // (celui de la ligne qu'on remplace), sinon l'offre principale.
+  const marques = marquesDe(p);
+  // La marque est déjà sous le nom : on ne la répète dans les offres que si le produit en compte plusieurs.
+  const libelle = (o: PrestationFournisseur) => (marques.length >= 2 ? libelleOffreMarque(p, o) : libelleOffre(o));
+  // Offre mise en avant : celle de la marque / du fournisseur filtrés, sinon celle du fournisseur
+  // « préféré » (celui de la ligne qu'on remplace), sinon l'offre principale.
+  const offreFiltree = filtreFournisseur || filtreMarque
+    ? offres.find(o => (!filtreFournisseur || libelleOffre(o) === filtreFournisseur) && (!filtreMarque || marqueOffre(p, o) === filtreMarque))
+    : undefined;
   const offreDefaut: PrestationFournisseur | null =
-    (filtreFournisseur ? offres.find(o => libelleOffre(o) === filtreFournisseur) : undefined)
+    offreFiltree
     ?? offrePourFournisseur(p, preference)
     ?? offrePrincipale(offres) ?? null;
   const prix = type === "kit" ? p.prix_unitaire : prixVenteOffre(p, offreDefaut);
@@ -142,18 +148,18 @@ function ProduitLigne({ p, remplacement, filtreFournisseur, preference, actuel, 
             {actuel && <span className="badge text-xs bg-volt-100 text-volt-700">Actuel</span>}
           </div>
           <p className="text-xs text-ink-400 truncate mt-0.5">
-            {[p.marque, p.categorie, p.sous_categorie, p.gamme ? LABEL_GAMME[p.gamme] : null].filter(Boolean).join(" · ")}
+            {[marques.join(" / "), p.categorie, p.sous_categorie, p.gamme ? LABEL_GAMME[p.gamme] : null].filter(Boolean).join(" · ")}
           </p>
           {type === "kit" && p.kit_description && <p className="text-xs text-ink-400 italic truncate">{p.kit_description}</p>}
           {offres.length >= 2 ? (
             <button type="button" onClick={() => setOuvert(o => !o)}
               className="mt-1 inline-flex items-center gap-1 text-xs text-volt-600 font-medium hover:underline">
-              {offres.length} fournisseurs · {min === max ? fmt(min) : `${fmt(min)} – ${fmt(max)}`}
+              {marques.length >= 2 ? `${marques.length} marques · ${offres.length} offres` : `${offres.length} fournisseurs`} · {min === max ? fmt(min) : `${fmt(min)} – ${fmt(max)}`}
               {ouvert ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
             </button>
           ) : offreDefaut ? (
             <p className="text-xs text-ink-400 mt-0.5">
-              {libelleOffre(offreDefaut)}{offreDefaut.reference ? ` · réf. ${offreDefaut.reference}` : ""}
+              {libelle(offreDefaut)}{offreDefaut.reference ? ` · réf. ${offreDefaut.reference}` : ""}
             </p>
           ) : null}
         </div>
@@ -178,7 +184,7 @@ function ProduitLigne({ p, remplacement, filtreFournisseur, preference, actuel, 
               <div key={o.id} className="flex items-center gap-3 px-3 py-2">
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium text-ink-800 truncate">
-                    {libelleOffre(o)}
+                    {libelle(o)}
                     {o.principal && <span className="ml-1.5 badge text-[10px] bg-volt-100 text-volt-700">Principal</span>}
                   </p>
                   <p className="text-[11px] text-ink-400 truncate">
@@ -247,6 +253,7 @@ export default function ProduitPicker({
     const m = new Map<string, string>();
     base.forEach(p => m.set(p.id, norm([
       p.nom, p.description, p.kit_description, p.marque, p.categorie, p.sous_categorie,
+      ...marquesDe(p),
       ...(p.fournisseurs ?? []).flatMap(o => [libelleOffre(o), o.reference]),
     ].filter(Boolean).join(" "))));
     return m;
@@ -274,7 +281,7 @@ export default function ProduitPicker({
         kit: parType.filter(p => typeDe(p) === "kit").length,
       },
       cats: compter(pour("cat").map(p => p.categorie)),
-      marques: compter(pour("marque").map(p => p.marque)),
+      marques: compter(pour("marque").flatMap(p => marquesDe(p))),
       fournisseurs: compter(pour("fournisseur").flatMap(p => Array.from(new Set((p.fournisseurs ?? []).map(libelleOffre))))),
       gammes: compter(pour("gamme").map(p => p.gamme)),
       sousCats: compter(pour("sousCat").map(p => p.sous_categorie)),
@@ -399,7 +406,7 @@ export default function ProduitPicker({
               <>
                 {resultats.slice(0, limite).map(p => (
                   <ProduitLigne key={p.id} p={p} remplacement={remplacement}
-                    filtreFournisseur={f.fournisseur} preference={fournisseurPrefere}
+                    filtreFournisseur={f.fournisseur} filtreMarque={f.marque} preference={fournisseurPrefere}
                     actuel={!!produitActuelId && p.id === produitActuelId}
                     ajoutes={ajoutes[p.id] ?? 0}
                     onChoisir={offre => choisir(p, offre)} />

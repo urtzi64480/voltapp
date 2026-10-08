@@ -127,6 +127,9 @@ export interface PrestationFournisseur {
   user_id?: string;
   prestation_id: string;
   fournisseur: string;
+  // Marque de cette offre (colonne migration 006) : un même produit peut être proposé en plusieurs
+  // marques, chacune avec ses prix. Absent/vide = marque du produit (prestations.marque).
+  marque?: string | null;
   reference?: string | null;
   url?: string | null;
   prix_achat?: number | null;

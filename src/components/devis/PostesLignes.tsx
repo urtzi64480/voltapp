@@ -12,7 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Plus, X, Trash2, Layers, RefreshCw, Package } from "lucide-react";
 import { fmt, cn, UNITES } from "@/lib/utils";
 import { grouperParPoste, memeNomPoste, nettoyerNomPoste, posteDe, totalItems } from "@/lib/postes";
-import { libelleOffre, margePct, offresTriees, prixVenteOffre } from "@/lib/fournisseurs";
+import { libelleOffreMarque, margePct, offresTriees, prixVenteOffre } from "@/lib/fournisseurs";
 import {
   changerFournisseurLigne, fusionnerLigne, ligneDepuisArticle, ligneDepuisKit, remplacerProduitLigne,
 } from "@/lib/devis-lignes";
@@ -123,13 +123,13 @@ function LigneRow({ l, i, setLignes, showUnite, postes, produit, onChanger }: {
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
             {offres.length >= 2 && produit ? (
               <label className="flex items-center gap-1.5 text-xs text-ink-500">
-                <span className="shrink-0">Fournisseur</span>
+                <span className="shrink-0">Marque · fournisseur</span>
                 <select value={l.fournisseur_id ?? ""} onChange={e => choisirFournisseur(e.target.value)}
                   className={cn("max-w-[15rem] text-xs border rounded-lg py-1 px-1.5 bg-white",
                     l.fournisseur_id ? "border-ink-200" : "border-amber-300 bg-amber-50")}>
                   {!l.fournisseur_id && <option value="">Non précisé</option>}
                   {fournisseurInconnu && <option value={l.fournisseur_id ?? ""}>{l.fournisseur_nom ?? "Fournisseur"} (retiré du catalogue)</option>}
-                  {offres.map(o => <option key={o.id} value={o.id}>{libelleOffre(o)} — {fmt(prixVenteOffre(produit, o))}</option>)}
+                  {offres.map(o => <option key={o.id} value={o.id}>{libelleOffreMarque(produit, o)} — {fmt(prixVenteOffre(produit, o))}</option>)}
                 </select>
               </label>
             ) : l.fournisseur_nom ? (
