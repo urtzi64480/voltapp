@@ -16,6 +16,7 @@ import {
 import { attacherFournisseurs, libelleOffreMarque, offrePrincipale, offresTriees, prixVenteOffre } from "@/lib/fournisseurs";
 import { colonnesFournisseur, colonnesImage } from "@/lib/devis-lignes";
 import ProduitPicker from "@/components/devis/ProduitPicker";
+import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { ArrowLeft, AlertTriangle, Search, Sparkles, Save, Cable, RefreshCw } from "lucide-react";
@@ -198,6 +199,7 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
               <span className="text-ink-700 flex-1 min-w-0 truncate">
                 {opt.gamme ? `${LABEL_GAMME[opt.gamme]} — ` : ""}{opt.nom}
               </span>
+              <BadgeConditionnement longueur={opt.longueur_unitaire} sousCategorie={opt.sousCategorieArticle} />
               <span className="text-ink-500 shrink-0">{fmt(prix)} / {opt.unite}</span>
             </label>
           );
@@ -214,6 +216,7 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
             {autrePrestation ? (
               <div className="flex items-center gap-2 text-xs bg-ink-50 rounded-lg px-2 py-1.5">
                 <span className="flex-1 truncate">{autrePrestation.nom}</span>
+                <BadgeConditionnement longueur={autrePrestation.longueur_unitaire} sousCategorie={autrePrestation.sous_categorie} />
                 <span className="text-ink-400 shrink-0">{fmt(effective?.prix_unitaire ?? autrePrestation.prix_unitaire)} / {autrePrestation.unite}</span>
                 <button onClick={() => setPickerOuvert(true)} className="inline-flex items-center gap-1 text-volt-600 font-medium shrink-0"><RefreshCw size={11} /> Changer</button>
               </div>

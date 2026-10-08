@@ -10,6 +10,7 @@ import {
 import { fmt, UNITES, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import FusionDoublons from "@/components/catalogue/FusionDoublons";
+import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
 import { NOMENCLATURE_APPAREILLAGE } from "@/lib/predevis-engine";
 import {
   Plus, Trash2, Save, Pencil, X, ChevronDown, ChevronUp,
@@ -1189,7 +1190,10 @@ function CategorieBlock({
                               <div className="flex items-center gap-2 md:block">
                                 <div className="md:hidden shrink-0"><ProduitThumb imageUrl={imageOffre(p, offrePrincipale(p.fournisseurs))} /></div>
                                 <div className="min-w-0">
-                                  <p className="font-medium text-ink-900 text-sm truncate">{p.nom}</p>
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <p className="font-medium text-ink-900 text-sm truncate">{p.nom}</p>
+                                    <BadgeConditionnement longueur={(p as any).longueur_unitaire} sousCategorie={p.sous_categorie} />
+                                  </div>
                                   <p className="text-xs text-ink-400 truncate">{[marquesProduit.join(" / "), sousCat, p.description].filter(Boolean).join(" · ")}</p>
                                   {offres.length > 0 && (
                                     <button type="button" onClick={() => setOffresOuvertes(o => ({ ...o, [p.id]: !o[p.id] }))}

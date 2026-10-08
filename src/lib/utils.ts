@@ -34,6 +34,13 @@ export function nomAvecConditionnement(nom: string, longueurUnitaire: number | n
   const mot = sousCategorie && (sousCategorie.startsWith("gaine_") || sousCategorie === "moulure") ? "rouleau" : "bobine";
   return `${nom} (${mot} ${longueurUnitaire}m)`;
 }
+// Libellé court du conditionnement pour l'affichage dans les listes de choix : « bobine 100 m »,
+// « rouleau 50 m ». null pour un article vendu au mètre ou à l'unité (pas de longueur fixe).
+export function conditionnementLabel(longueurUnitaire: number | null | undefined, sousCategorie: string | null | undefined): string | null {
+  if (!longueurUnitaire || longueurUnitaire <= 0) return null;
+  const mot = sousCategorie && (sousCategorie.startsWith("gaine_") || sousCategorie === "moulure") ? "rouleau" : "bobine";
+  return `${mot} ${longueurUnitaire} m`;
+}
 export const UNITES = ["forfait", "heure", "u", "ml", "m2"] as const;export const BRANCHES = ["service", "materiau"] as const;
 export const STATUTS_DEVIS = ["brouillon", "envoye", "signe", "refuse", "expire"] as const;
 export const STATUTS_FACTURE = ["a_envoyer", "envoyee", "payee", "relance", "impayee"] as const;

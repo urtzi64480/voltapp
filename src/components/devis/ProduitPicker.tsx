@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Search, X, Plus, Package, Wrench, Layers, ChevronDown, ChevronUp, Check, SlidersHorizontal, RotateCcw, ExternalLink } from "lucide-react";
 import { fmt, cn } from "@/lib/utils";
+import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
 import { imageOffre, libelleOffre, libelleOffreMarque, marqueOffre, marquesDe, offresTriees, offrePourFournisseur, offrePrincipale, prixVenteOffre, fourchettePrix, margePct } from "@/lib/fournisseurs";
 import type { Prestation, PrestationFournisseur } from "@/types";
 
@@ -145,6 +146,7 @@ function ProduitLigne({ p, remplacement, filtreFournisseur, filtreMarque, prefer
           <div className="flex items-center gap-1.5 flex-wrap">
             <BadgeType type={type} />
             <p className="text-sm font-medium text-ink-900 break-words min-w-0">{p.nom}</p>
+            {type !== "kit" && <BadgeConditionnement longueur={p.longueur_unitaire} sousCategorie={p.sous_categorie} />}
             {actuel && <span className="badge text-xs bg-volt-100 text-volt-700">Actuel</span>}
           </div>
           <p className="text-xs text-ink-400 truncate mt-0.5">
@@ -166,6 +168,9 @@ function ProduitLigne({ p, remplacement, filtreFournisseur, filtreMarque, prefer
         <div className="text-right shrink-0">
           <p className="text-sm font-semibold text-ink-900">{fmt(prix)}</p>
           <p className="text-xs text-ink-400">/ {p.unite}</p>
+          {type !== "kit" && p.longueur_unitaire && p.longueur_unitaire > 0 && (
+            <p className="text-[10px] text-ink-400">≈ {fmt(prix / p.longueur_unitaire)} / m</p>
+          )}
           {margeDefaut !== null && (
             <p className={cn("text-[10px] font-medium", margeDefaut < 0 ? "text-red-500" : "text-emerald-600")}>
               marge {margeDefaut > 0 ? "+" : ""}{margeDefaut}%
