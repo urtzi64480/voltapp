@@ -14,7 +14,7 @@ import { NOMENCLATURE_APPAREILLAGE } from "@/lib/predevis-engine";
 import {
   Plus, Trash2, Save, Pencil, X, ChevronDown, ChevronUp,
   Link, Wrench, Package, Search, Download, Upload, AlertCircle,
-  CheckCircle2, TrendingUp, Gift, Layers, RefreshCw, ExternalLink, GitMerge
+  CheckCircle2, TrendingUp, Gift, Layers, RefreshCw, ExternalLink, GitMerge, Link2
 } from "lucide-react";
 
 type PrestationExt = Prestation & { prix_achat?: number | null; est_kit?: boolean; kit_description?: string | null };
@@ -115,10 +115,9 @@ function liensVerification(p: PrestationExt, offres: PrestationFournisseur[]): L
   }));
 }
 
-// Bandeau compact des liens de vérification d'un produit : une seule ligne de hauteur fixe qui défile
-// (molette / glissement) quel que soit le nombre de marques, et un menu qui détaille, pour chaque lien,
-// le produit, la marque et le fournisseur visés. Le menu est en position fixe : la carte de la catégorie
-// masque ce qui dépasse.
+// Liens de vérification d'un produit : toujours la même icône (Link2) avec le nombre de liens, quel que soit
+// le nombre de marques — la liste reste uniforme. Le menu qui s'ouvre détaille, pour chaque lien, le logo du
+// fournisseur, la marque et le produit visés. Il est en position fixe : la carte de la catégorie masque ce qui dépasse.
 function LiensVerification({ produit, liens }: { produit: string; liens: LienVerif[] }) {
   const [menu, setMenu] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
   useEffect(() => {
@@ -128,8 +127,11 @@ function LiensVerification({ produit, liens }: { produit: string; liens: LienVer
     window.addEventListener("resize", fermer);
     return () => { window.removeEventListener("scroll", fermer, true); window.removeEventListener("resize", fermer); };
   }, [menu]);
-  if (liens.length === 0) return <span className="text-ink-200"><Link size={14} /></span>;
-  const titre = (l: LienVerif) => `${produit} — ${[l.marque, l.fournisseur].filter(Boolean).join(" · ")} : vérifier le prix`;
+  if (liens.length === 0) return (
+    <span className="flex items-center justify-center w-8 h-8 rounded-lg border border-dashed border-ink-100 text-ink-200" title="Aucun lien de vérification">
+      <Link2 size={14} />
+    </span>
+  );
   function ouvrir(e: React.MouseEvent<HTMLButtonElement>) {
     e.stopPropagation();
     if (menu) { setMenu(null); return; }
@@ -138,13 +140,13 @@ function LiensVerification({ produit, liens }: { produit: string; liens: LienVer
     setMenu(r.bottom > window.innerHeight * 0.6 ? { left, bottom: window.innerHeight - r.top + 4 } : { left, top: r.bottom + 4 });
   }
   return (
-    <div className="flex items-center gap-1 min-w-0">
-      <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto max-w-[220px] md:max-w-[96px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {liens.map((l, i) => <FournisseurLogo key={i} url={l.url} titre={titre(l)} />)}
-      </div>
-      <button type="button" onClick={ouvrir} title="Détail des liens de vérification"
-        className="shrink-0 inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 text-[11px] font-medium text-ink-500 hover:bg-ink-100">
-        {liens.length}{menu ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+    <div className="relative shrink-0">
+      <button type="button" onClick={ouvrir}
+        title={`${liens.length} lien${liens.length > 1 ? "s" : ""} de vérification des prix`} aria-label="Liens de vérification des prix"
+        className={cn("relative flex items-center justify-center w-8 h-8 rounded-lg border bg-white text-volt-600 transition-all hover:border-volt-400 hover:shadow-sm",
+          menu ? "border-volt-400 shadow-sm" : "border-ink-100")}>
+        <Link2 size={15} />
+        <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-ink-900 text-volt-400 text-[10px] font-semibold leading-4 text-center">{liens.length}</span>
       </button>
       {menu && (
         <>
@@ -1055,7 +1057,7 @@ function CategorieBlock({
             </div>
           )}
           {branche === "materiau" && (
-            <div className="hidden md:grid grid-cols-[40px_2fr_90px_90px_120px_140px_80px] gap-4 px-5 py-2 text-xs font-semibold text-ink-400 uppercase tracking-wide bg-ink-50">
+            <div className="hidden md:grid grid-cols-[40px_2fr_90px_90px_120px_70px_80px] gap-4 px-5 py-2 text-xs font-semibold text-ink-400 uppercase tracking-wide bg-ink-50">
               <span></span><span>Nom</span><span>Unité</span><span className="text-right">Prix vente</span>
               <span className="text-right">Marge</span><span>Liens</span><span></span>
             </div>
@@ -1181,7 +1183,7 @@ function CategorieBlock({
                           </div>
                         ) : (
                           <div className={cn("flex items-center gap-3",
-                            "md:grid md:grid-cols-[40px_2fr_90px_90px_120px_140px_80px]")}>
+                            "md:grid md:grid-cols-[40px_2fr_90px_90px_120px_70px_80px]")}>
                             <div className="hidden md:block"><ProduitThumb imageUrl={imageOffre(p, offrePrincipale(p.fournisseurs))} /></div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 md:block">
