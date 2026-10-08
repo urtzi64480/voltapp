@@ -8,7 +8,7 @@ import PostesLignes from "@/components/devis/PostesLignes";
 import LigneImage from "@/components/devis/LigneImage";
 import { extrairePostes, grouperParPoste, ordonnerLignes, posteDe, totalItems, trierParOrdre } from "@/lib/postes";
 import { attacherFournisseurs } from "@/lib/fournisseurs";
-import { colonnesFournisseur, colonnesImage } from "@/lib/devis-lignes";
+import { colonnesFournisseur, colonnesImage, estLigneACompleter, nbLignesACompleter } from "@/lib/devis-lignes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, X, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro } from "lucide-react";
@@ -163,7 +163,7 @@ function ApercuDocument({
                   {b.items.map(({ l, i }) => (
                     <tr key={i} className={cn("border-t border-ink-100", arr.some(x => x.poste !== null) ? (bi % 2 === 1 ? "bg-ink-100" : "bg-white") : (i % 2 === 1 ? "bg-ink-50/50" : "bg-white"))}>
                       <td className="px-4 py-2.5 text-ink-900">
-                        <LigneImage url={(l as any).image_url} taille={32} className="inline-block align-middle mr-2" /><span className="font-medium">{l.nom}</span>
+                        <LigneImage url={(l as any).image_url} taille={32} className="inline-block align-middle mr-2" /><span className={cn("font-medium", estLigneACompleter(l) && "text-red-600")}>{l.nom}</span>
                         {(l as any).kit_description && (
                           <p className="text-xs text-ink-400 italic mt-0.5">{(l as any).kit_description}</p>
                         )}
@@ -420,8 +420,16 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     reader.onload = ev => { setViewSigData(ev.target?.result as string); setViewSigDate(new Date().toLocaleString("fr-FR")); };
     reader.readAsDataURL(file);
   }
+  // Lignes « À compléter » (besoins du pré-devis sans produit ni prix) : le devis ne part pas tant qu'il en reste.
+  function bloqueSiACompleter(): boolean {
+    const n = nbLignesACompleter(lignes);
+    if (n === 0) return false;
+    alert(`${n} ligne${n > 1 ? "s" : ""} « À compléter » reste${n > 1 ? "nt" : ""} dans ce devis : remplace-les par un produit (bouton de remplacement de la ligne) ou supprime-les avant de l'envoyer ou de le faire signer.`);
+    return true;
+  }
   async function validerSignatureDirecte() {
     if (!viewSigData || !devis) return;
+    if (bloqueSiACompleter()) return;
     await supabase.from("devis").update({
       signature_data: viewSigData,
       signe_le: new Date().toISOString(),
@@ -450,6 +458,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
 
   async function envoyerParSMS() {
     if (!devis) return;
+    if (bloqueSiACompleter()) return;
     setGeneratingLink(true);
     try {
       const res = await fetch("/api/devis/token", {
@@ -578,6 +587,8 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
 
   async function dl() {
     if (!devis) return;
+    const nbManques = nbLignesACompleter(lignes);
+    if (nbManques > 0 && !confirm(`${nbManques} ligne(s) « À compléter » à 0 € figureront dans le PDF. Télécharger quand même ?`)) return;
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     const { data: p } = await supabase.from("profil").select("*").eq("id", user.id).single();
@@ -904,6 +915,11 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
               </div>
             )}
 
+            {nbLignesACompleter(lignes) > 0 && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 mb-3">
+                {nbLignesACompleter(lignes)} ligne{nbLignesACompleter(lignes) > 1 ? "s" : ""} « À compléter » (besoin du pré-devis sans produit ni prix) : remplace-les par un produit ou supprime-les. Envoi et signature sont bloqués tant qu'il en reste.
+              </div>
+            )}
             <div className="flex flex-wrap gap-3">
               <button onClick={dl} className="btn-ghost flex-1 justify-center"><Download size={15} /> Télécharger PDF</button>
               <button onClick={planifierIntervention} className="btn-ghost flex-1 justify-center"><CalendarDays size={15} /> Planifier</button>

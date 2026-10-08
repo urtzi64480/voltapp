@@ -75,6 +75,7 @@ import {
 } from "./longueurs-circuits";
 import { Prestation, Gamme, DevisLigne, PrestationFournisseur } from "@/types";
 import { nomAvecConditionnement } from "@/lib/utils";
+import { PREFIXE_A_COMPLETER } from "@/lib/devis-lignes";
 import { designationProduit, imageOffre, libelleOffre, offrePrincipale, offrePourFournisseur, prixVenteOffre } from "@/lib/fournisseurs";
 
 // ─── TYPES DE BESOIN ────────────────────────────────────────────────────────
@@ -592,6 +593,8 @@ export interface ChoixLigne {
   // Une seule des deux options ci-dessous, selon le choix de l'utilisateur pour ce besoin :
   optionCatalogue?: OptionArticle;         // une des besoin.options, ou un article cherché ailleurs au catalogue
   libre?: { nom: string; prixUnitaire: number; unite: string; typeBranche: "service" | "materiau" };
+  // Besoin ni exclu ni résolu (aucun produit, aucun prix) : une ligne « à compléter » à 0 € est générée.
+  aCompleter?: boolean;
 }
 
 // Fournisseur de l'option → colonnes de la ligne de devis (photo du fournisseur retenu).
@@ -671,10 +674,10 @@ export function posteDuBesoin(besoin: Pick<BesoinApparie, "cle" | "piece">): str
 
 export function genererLignesDevis(choix: ChoixLigne[], prestations: Prestation[]): Omit<DevisLigne, "devis_id" | "ordre">[] {
   const lignes: Omit<DevisLigne, "devis_id" | "ordre">[] = [];
-  choix.forEach(({ besoin, optionCatalogue, libre }) => {
+  choix.forEach(({ besoin, optionCatalogue, libre, aCompleter }) => {
     const debut = lignes.length;
     try {
-      ajouterLignesBesoin(lignes, { besoin, optionCatalogue, libre }, prestations);
+      ajouterLignesBesoin(lignes, { besoin, optionCatalogue, libre, aCompleter }, prestations);
     } finally {
       const poste = posteDuBesoin(besoin);
       for (let k = debut; k < lignes.length; k++) lignes[k].poste = poste;
@@ -684,9 +687,17 @@ export function genererLignesDevis(choix: ChoixLigne[], prestations: Prestation[
 }
 
 function ajouterLignesBesoin(
-  lignes: Omit<DevisLigne, "devis_id" | "ordre">[], { besoin, optionCatalogue, libre }: ChoixLigne, prestations: Prestation[],
+  lignes: Omit<DevisLigne, "devis_id" | "ordre">[], { besoin, optionCatalogue, libre, aCompleter }: ChoixLigne, prestations: Prestation[],
 ): void {
   {
+    if (aCompleter && !libre && !optionCatalogue) {
+      lignes.push({
+        nom: `${PREFIXE_A_COMPLETER}${besoin.label}`, description: besoin.piece,
+        quantite: besoin.unite === "m" ? Math.ceil(besoin.quantite) : besoin.quantite,
+        prix_unitaire: 0, unite: besoin.unite === "m" ? "ml" : besoin.unite === "heure" ? "heure" : "u", type_branche: "materiau",
+      });
+      return;
+    }
     if (libre) {
       lignes.push({
         nom: libre.nom, description: besoin.piece,

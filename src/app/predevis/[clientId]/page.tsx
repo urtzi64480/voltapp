@@ -486,10 +486,10 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
         if (etat.mode === "option" || etat.mode === "autre") {
           // Option avec le fournisseur choisi (prix de vente + prix d'achat de CE fournisseur).
           const opt = optionEffective(besoin, etat, prestations);
-          return opt ? { besoin, optionCatalogue: opt } : { besoin };
+          return opt ? { besoin, optionCatalogue: opt } : { besoin, aCompleter: true };
         }
         const prix = parseFloat(etat.librePrix) || 0;
-        if (!etat.libreNom.trim() || prix <= 0) return { besoin };
+        if (!etat.libreNom.trim() || prix <= 0) return { besoin, aCompleter: true };
         return { besoin, libre: { nom: etat.libreNom, prixUnitaire: prix, unite: etat.libreUnite, typeBranche: etat.libreBranche } };
       };
       const choixLignes: ChoixLigne[] = [
@@ -499,6 +499,14 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
         ...besoinsAgreges.map(besoin => construireChoixLigne(besoin, choixAgrege[besoin.cle] ?? etatParDefaut(besoin))),
       ];
 
+      // Besoins ni exclus ni résolus : on prévient, puis ils deviennent des lignes « À compléter » à 0 €.
+      const manquants = choixLignes.filter(c => c.aCompleter);
+      if (manquants.length > 0) {
+        const liste = manquants.slice(0, 8).map(c => `• ${c.besoin.label} (${c.besoin.piece})`).join("\n");
+        const suite = manquants.length > 8 ? `\n… et ${manquants.length - 8} autre(s)` : "";
+        const ok = confirm(`${manquants.length} besoin(s) sans produit ni prix :\n${liste}${suite}\n\nIls seront ajoutés au devis en lignes « À compléter » à 0 € (le devis ne pourra pas être envoyé tant qu'elles restent). Générer quand même ?`);
+        if (!ok) { setGenerating(false); return; }
+      }
       const lignesConsommables = genererLignesDevis(choixLignes, prestations);
 
       const lignesFinales: Omit<DevisLigne, "devis_id" | "ordre">[] = [...lignesConsommables];

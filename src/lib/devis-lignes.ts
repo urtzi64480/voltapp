@@ -22,6 +22,16 @@ function offreEffective(p: Prestation, offre?: PrestationFournisseur | null): Pr
 
 // Désignation de la ligne pour un produit et l'offre retenue : nom du produit (+ marque quand le
 // produit existe en plusieurs marques — voir designationProduit) + conditionnement.
+// Lignes « à compléter » : un besoin du pré-devis sans produit ni prix devient une ligne à 0 € portant ce
+// préfixe, pour que le manque reste visible dans le devis (et empêche de l'envoyer par erreur).
+export const PREFIXE_A_COMPLETER = "À compléter — ";
+export function estLigneACompleter(l: { nom?: string | null }): boolean {
+  return (l.nom ?? "").startsWith(PREFIXE_A_COMPLETER);
+}
+export function nbLignesACompleter(lignes: { nom?: string | null }[]): number {
+  return lignes.filter(estLigneACompleter).length;
+}
+
 function nomLigneProduit(p: Prestation, o?: PrestationFournisseur | null): string {
   return nomAvecConditionnement(designationProduit(p, o), p.longueur_unitaire, p.sous_categorie);
 }

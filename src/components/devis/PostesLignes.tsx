@@ -18,6 +18,7 @@ import {
 } from "@/lib/devis-lignes";
 import ProduitPicker, { PrestationPicker } from "@/components/devis/ProduitPicker";
 import LigneImage from "@/components/devis/LigneImage";
+import { estLigneACompleter } from "@/lib/devis-lignes";
 import type { DevisLigne, PrestationFournisseur } from "@/types";
 
 type SetLignes = (fn: (prev: any[]) => any[]) => void;
@@ -111,7 +112,7 @@ function LigneRow({ l, i, setLignes, showUnite, postes, produit, onChanger }: {
         )}
         <LigneImage url={l.image_url} taille={44} />
         <div className="min-w-0 flex-1 space-y-1">
-          <p className="text-sm text-ink-900 break-words">{l.nom}</p>
+          <p className={cn("text-sm break-words", estLigneACompleter(l) ? "text-red-600 font-semibold" : "text-ink-900")}>{l.nom}</p>
           {l.description && <p className="text-xs text-ink-400 line-clamp-2">{l.description}</p>}
           {l.kit_description && <p className="text-xs text-ink-400 italic line-clamp-2">{l.kit_description}</p>}
           {estKit && (
