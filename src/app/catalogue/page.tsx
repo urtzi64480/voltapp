@@ -4,7 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { Prestation, PrestationFournisseur } from "@/types";
 import {
   attacherOffres, chargerOffres, draftsDepuisLegacy, draftsPourProduit, libelleOffre, libelleOffreMarque, marqueOffre, marquesDe,
-  miroirPrestation, normaliserDrafts, normTexte, nouvelleOffreDraft, nouvellePieceDraft, totalPiecesDrafts, offrePrincipale, offresDe, imageOffre, normaliserUrl,
+  miroirPrestation, normaliserDrafts, normTexte, nouvelleOffreDraft, nouvellePieceDraft, totalPiecesDrafts, offrePrincipale, offresDe, imageOffre, nomDepuisUrl, normaliserUrl,
   offresTriees, offresVersNormalisees, prixVenteOffre, synchroniserOffres, rattacherParNom, OffreDraft, OffreNormalisee, PieceDraft,
 } from "@/lib/fournisseurs";
 import { fmt, UNITES, cn } from "@/lib/utils";
@@ -88,16 +88,87 @@ function genKitDescription(composants: KitComposant[]): string {
 
 // ─── Sous-composants ────────────────────────────────────────────────────────
 
-function FournisseurLogo({ url }: { url: string }) {
+function FournisseurLogo({ url, titre }: { url: string; titre?: string }) {
   const favicon = getFavicon(url);
   const label = getLinkLabel(url);
   if (!favicon) return null;
   return (
     <a href={url} target="_blank" rel="noopener noreferrer"
-      onClick={e => e.stopPropagation()} title={`Vérifier le prix sur ${label}`}
+      onClick={e => e.stopPropagation()} title={titre ?? `Vérifier le prix sur ${label}`}
       className="flex items-center justify-center w-8 h-8 rounded-lg border border-ink-100 bg-white hover:border-volt-400 hover:shadow-sm transition-all overflow-hidden shrink-0">
       <img src={favicon} alt={label} className="w-5 h-5 object-contain" />
     </a>
+  );
+}
+
+// Lien de vérification de prix : quelle marque, chez quel fournisseur, pour quel produit.
+interface LienVerif { url: string; marque: string; fournisseur: string; reference?: string | null }
+
+function liensVerification(p: PrestationExt, offres: PrestationFournisseur[]): LienVerif[] {
+  if (offres.length > 0) {
+    return offres.filter(o => !!o.url).map(o => ({
+      url: o.url as string, marque: marqueOffre(p, o), fournisseur: libelleOffre(o), reference: o.reference,
+    }));
+  }
+  return (p.liens_fournisseurs ?? []).filter(Boolean).map(url => ({
+    url, marque: (p.marque ?? "").trim(), fournisseur: nomDepuisUrl(url) || getLinkLabel(url),
+  }));
+}
+
+// Bandeau compact des liens de vérification d'un produit : une seule ligne de hauteur fixe qui défile
+// (molette / glissement) quel que soit le nombre de marques, et un menu qui détaille, pour chaque lien,
+// le produit, la marque et le fournisseur visés. Le menu est en position fixe : la carte de la catégorie
+// masque ce qui dépasse.
+function LiensVerification({ produit, liens }: { produit: string; liens: LienVerif[] }) {
+  const [menu, setMenu] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const fermer = () => setMenu(null);
+    window.addEventListener("scroll", fermer, true);
+    window.addEventListener("resize", fermer);
+    return () => { window.removeEventListener("scroll", fermer, true); window.removeEventListener("resize", fermer); };
+  }, [menu]);
+  if (liens.length === 0) return <span className="text-ink-200"><Link size={14} /></span>;
+  const titre = (l: LienVerif) => `${produit} — ${[l.marque, l.fournisseur].filter(Boolean).join(" · ")} : vérifier le prix`;
+  function ouvrir(e: React.MouseEvent<HTMLButtonElement>) {
+    e.stopPropagation();
+    if (menu) { setMenu(null); return; }
+    const r = e.currentTarget.getBoundingClientRect();
+    const left = Math.max(8, Math.min(r.right - 320, window.innerWidth - 328));
+    setMenu(r.bottom > window.innerHeight * 0.6 ? { left, bottom: window.innerHeight - r.top + 4 } : { left, top: r.bottom + 4 });
+  }
+  return (
+    <div className="flex items-center gap-1 min-w-0">
+      <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto max-w-[220px] md:max-w-[96px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {liens.map((l, i) => <FournisseurLogo key={i} url={l.url} titre={titre(l)} />)}
+      </div>
+      <button type="button" onClick={ouvrir} title="Détail des liens de vérification"
+        className="shrink-0 inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 text-[11px] font-medium text-ink-500 hover:bg-ink-100">
+        {liens.length}{menu ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+      </button>
+      {menu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={e => { e.stopPropagation(); setMenu(null); }} />
+          <div className="fixed z-50 w-80 max-h-[60vh] overflow-y-auto rounded-xl border border-ink-200 bg-white shadow-lg"
+            style={{ left: menu.left, top: menu.top, bottom: menu.bottom }} onClick={e => e.stopPropagation()}>
+            <p className="px-3 py-2 text-xs font-semibold text-ink-700 border-b border-ink-100 truncate" title={produit}>Vérifier les prix · {produit}</p>
+            <div className="divide-y divide-ink-100">
+              {liens.map((l, i) => (
+                <a key={i} href={l.url} target="_blank" rel="noopener noreferrer" onClick={() => setMenu(null)}
+                  className="flex items-center gap-2.5 px-3 py-2 hover:bg-ink-50">
+                  <FournisseurLogo url={l.url} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-medium text-ink-900 truncate">{[l.marque, l.fournisseur].filter(Boolean).join(" · ") || getLinkLabel(l.url)}</span>
+                    <span className="block text-[11px] text-ink-400 truncate">{l.reference ? `réf. ${l.reference} · ` : ""}{getLinkLabel(l.url)}</span>
+                  </span>
+                  <ExternalLink size={13} className="text-ink-300 shrink-0" />
+                </a>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -984,7 +1055,7 @@ function CategorieBlock({
             </div>
           )}
           {branche === "materiau" && (
-            <div className="hidden md:grid grid-cols-[40px_2fr_90px_90px_120px_minmax(80px,auto)_80px] gap-4 px-5 py-2 text-xs font-semibold text-ink-400 uppercase tracking-wide bg-ink-50">
+            <div className="hidden md:grid grid-cols-[40px_2fr_90px_90px_120px_140px_80px] gap-4 px-5 py-2 text-xs font-semibold text-ink-400 uppercase tracking-wide bg-ink-50">
               <span></span><span>Nom</span><span>Unité</span><span className="text-right">Prix vente</span>
               <span className="text-right">Marge</span><span>Liens</span><span></span>
             </div>
@@ -1034,9 +1105,7 @@ function CategorieBlock({
                 <div key="materiaux">
                   {itemsMq.map((p: PrestationExt) => {
                     const offres: PrestationFournisseur[] = offresTriees(p.fournisseurs);
-                    const liens: string[] = offres.length > 0
-                      ? offres.map(o => o.url).filter((u): u is string => !!u)
-                      : (p.liens_fournisseurs ?? []);
+                    const liens: LienVerif[] = liensVerification(p, offres);
                     const prixOffres = offres.map(o => prixVenteOffre(p, o));
                     const marquesProduit: string[] = marquesDe(p);
                     const sousCat: string = p.sous_categorie ?? "";
@@ -1112,7 +1181,7 @@ function CategorieBlock({
                           </div>
                         ) : (
                           <div className={cn("flex items-center gap-3",
-                            "md:grid md:grid-cols-[40px_2fr_90px_90px_120px_minmax(80px,auto)_80px]")}>
+                            "md:grid md:grid-cols-[40px_2fr_90px_90px_120px_140px_80px]")}>
                             <div className="hidden md:block"><ProduitThumb imageUrl={imageOffre(p, offrePrincipale(p.fournisseurs))} /></div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 md:block">
@@ -1135,8 +1204,8 @@ function CategorieBlock({
                                 </div>
                               </div>
                               {liens.length > 0 && (
-                                <div className="flex items-center gap-1.5 flex-wrap mt-1.5 md:hidden">
-                                  {liens.map((url: string, i: number) => <FournisseurLogo key={i} url={url} />)}
+                                <div className="mt-1.5 md:hidden">
+                                  <LiensVerification produit={p.nom} liens={liens} />
                                 </div>
                               )}
                             </div>
@@ -1170,10 +1239,8 @@ function CategorieBlock({
                                 </div>
                               ) : <span className="text-ink-200 text-xs">—</span>}
                             </div>
-                            <div className="hidden md:flex items-center gap-1.5 flex-wrap">
-                              {liens.length > 0
-                                ? liens.map((url: string, i: number) => <FournisseurLogo key={i} url={url} />)
-                                : <span className="text-ink-200"><Link size={14} /></span>}
+                            <div className="hidden md:flex items-center">
+                              <LiensVerification produit={p.nom} liens={liens} />
                             </div>
                             <div className="flex gap-1 shrink-0 justify-end">
                               <button onClick={() => startEdit(p)} className="p-1.5 rounded-lg text-ink-400 hover:bg-ink-100 hover:text-ink-700"><Pencil size={13} /></button>
@@ -1204,7 +1271,7 @@ function CategorieBlock({
                                   <MargeTag prixAchat={o.prix_achat} prixVente={pv} />
                                   <span className="font-semibold text-ink-900 shrink-0 w-20 text-right">{fmt(pv)}</span>
                                   {o.url ? (
-                                    <a href={o.url} target="_blank" rel="noopener noreferrer" title="Vérifier le prix chez ce fournisseur"
+                                    <a href={o.url} target="_blank" rel="noopener noreferrer" title={`${p.nom} — ${libelleOffreMarque(p, o)} : vérifier le prix`}
                                       className="text-ink-300 hover:text-volt-600 shrink-0"><ExternalLink size={13} /></a>
                                   ) : <span className="w-[13px] shrink-0" />}
                                 </div>
