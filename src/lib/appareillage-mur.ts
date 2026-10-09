@@ -283,3 +283,34 @@ export function normaliserPlaques(piece: Piece, seulementGroupeId?: number): Pie
   });
   return { ...piece, appareillages: piece.appareillages.map(a => maj.get(a.id) ?? a) };
 }
+
+// ─── POSE EN FAÇADE (appareillage à l'EXTÉRIEUR d'une pièce) ────────────────────────────────────────────────
+// Un appareillage extérieur est rattaché à la pièce dont le mur est le plus proche, mais posé HORS de son tracé :
+// à DECALAGE_FACADE_M devant la face extérieure du mur (le tracé hors-tout). Le décalage sert à le distinguer
+// d'un appareillage intérieur (sans lui, les deux seraient sur la même ligne).
+export const DECALAGE_FACADE_M = 0.01;
+
+// true = l'appareillage en `pt` est posé sur la façade extérieure du mur `anc` (il est hors du tracé de sa pièce).
+export function estEnFacade(pt: Point, contour: Point[], anc: AncrageMur): boolean {
+  return anc.distance > DECALAGE_FACADE_M * 0.7 && !pointDansPolygone(pt, contour);
+}
+
+// Aimantation d'un appareillage HORS de sa pièce : colle sur la façade du mur le plus proche si l'écart est < seuilM,
+// sinon laisse le point libre. Les luminaires de plafond restent là où on les pose.
+export function aimanterEnFacade(pt: Point, contour: Point[], type: AppareillageType, seuilM: number): Point {
+  if (!estMural(type)) return pt;
+  const anc = ancrageMurLePlusProche(pt, contour);
+  if (!anc || anc.distance > seuilM) return pt;
+  return { x: anc.pied.x - anc.normale.x * DECALAGE_FACADE_M, y: anc.pied.y - anc.normale.y * DECALAGE_FACADE_M };
+}
+
+// Pièce dont le tracé est le plus proche de `pt` (pour rattacher un appareillage posé hors de toute pièce).
+export function pieceLaPlusProche(pt: Point, pieces: Piece[]): Piece | null {
+  let best: Piece | null = null, bd = Infinity;
+  for (const p of pieces) {
+    if (p.contour.length < 3) continue;
+    const a = ancrageMurLePlusProche(pt, p.contour);
+    if (a && a.distance < bd) { bd = a.distance; best = p; }
+  }
+  return best;
+}

@@ -42,13 +42,13 @@ import { posesTroncons, hauteursTroncons } from "@/lib/pose-circuits";
 import { creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurCircuit } from "@/lib/longueurs-circuits";
 import { fusionnerPieces, voisinesFusionnables } from "@/lib/fusion-pieces";
 import { decalerNiveau } from "@/lib/deplacer-niveau";
-import { migrerModeleMurs, aimanterSurFaceMur, preparerMurs, definirMitoyens, mitoyensDe, longueursUtilesCm, geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
+import { migrerModeleMurs, aimanterSurFaceMur, aimanterTableauSurMur, preparerMurs, definirMitoyens, mitoyensDe, longueursUtilesCm, geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
 import { accrocherSurContour, apercuCloison, appliquerCloison, OptionsCloison, PointAccroche } from "@/lib/cloisons";
 import type { CloisonZone } from "@/lib/zones";
 import { cotesParDefaut, nouvelleZone, validerTraceZone, surfaceZone, centreEtiquetteZone, cloisonsDeZone, quadCloison, decoupeOuvertureZone, longueurCote, nbCotes, segmentsZone, definirTypeCote, trouverCloisonZone, positionOuvertureValide } from "@/lib/zones";
 import { enCm, estRectangle, redimensionnerMur, redimensionnerMurUtile, reporterAppareillages } from "@/lib/dimensions-piece";
 import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece";
-import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
+import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, aimanterEnFacade, estEnFacade, pieceLaPlusProche, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import Vue3DMaison from "@/components/plan/Vue3DMaison";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
@@ -533,13 +533,15 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       // Même logique qu'à l'écran : carré tangent au mur, symbole tourné vers l'intérieur.
       const TAILLE_SYM = 10;
       let cxP = pos.x, cyP = pos.y, rotP = 0;
-      const ancP = estMural(a.type) ? ancrageMurLePlusProche(ptAncreP, p.contour) : null;
+      const ancBrutP = estMural(a.type) ? ancrageMurLePlusProche(ptAncreP, p.contour) : null;
+      const facadeP = !!ancBrutP && estEnFacade(ptAncreP, p.contour, ancBrutP);
+      const ancP = ancBrutP && facadeP ? { ...ancBrutP, normale: { x: -ancBrutP.normale.x, y: -ancBrutP.normale.y } } : ancBrutP;
       if (ancP && ancP.distance <= TOLERANCE_MUR_M) {
         const pf = toPx(ancP.pied);
         const pn = toPx({ x: ancP.pied.x + ancP.normale.x * 0.1, y: ancP.pied.y + ancP.normale.y * 0.1 });
         const ln = Math.hypot(pn.x - pf.x, pn.y - pf.y) || 1;
         const nxp = (pn.x - pf.x) / ln, nyp = (pn.y - pf.y) / ln;
-        const demiP = TAILLE_SYM * 0.75 + Math.max(0.8, faceInterieureM(p, ancP.segIndex) * scale);
+        const demiP = TAILLE_SYM * 0.75 + (facadeP ? 0.8 : Math.max(0.8, faceInterieureM(p, ancP.segIndex) * scale));
         cxP = pf.x + nxp * demiP; cyP = pf.y + nyp * demiP;
         rotP = Math.atan2(nxp, -nyp) * 180 / Math.PI;
       }
@@ -2226,8 +2228,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         // Aimantation murale : l'appareillage "colle" au mur le plus proche de sa pièce (Alt = désactivée).
         const pieceDrag = niveauCourant?.pieces.find(p => p.id === dragMode.pieceId);
         const appDrag = pieceDrag?.appareillages.find(a => a.id === dragMode.appareillageId);
+        const seuilSnapM = SNAP_MUR_PX / (PX_PER_M * zoom);
         const mAimante = pieceDrag && appDrag && !e.altKey
-          ? aimanterSurFaceMur(mAligne, pieceDrag, appDrag.type, SNAP_MUR_PX / (PX_PER_M * zoom))
+          ? (pointDansPolygone(mAligne, pieceDrag.contour)
+              ? aimanterSurFaceMur(mAligne, pieceDrag, appDrag.type, seuilSnapM)
+              : aimanterEnFacade(mAligne, pieceDrag.contour, appDrag.type, seuilSnapM * 2))   // dehors : façade extérieure du mur le plus proche
           : mAligne;
         // Volet roulant : une fois près d'une fenêtre, il se centre dessus (Alt = position libre).
         const m = pieceDrag && appDrag?.type === "volet_roulant" && !e.altKey && niveauCourant
@@ -2336,8 +2341,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const candidats = pointsReferenceNiveau(niveauCourant);
         const seuilM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
         const { point: m, guideX, guideY } = snapAvecAlignement(raw, candidats, seuilM);
-        setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
-        updateNiveauActif(n => ({ ...n, tableauPos: m }));
+        // Aimantation au mur le plus proche (+ orientation) ; Alt = déplacement libre.
+        const aim = !e.altKey && niveauCourant ? aimanterTableauSurMur(raw, niveauCourant.pieces, 1.2) : null;
+        setSnapGuide(!aim && (guideX !== undefined || guideY !== undefined) ? { x: guideX, y: guideY } : null);
+        updateNiveauActif(n => ({ ...n, tableauPos: aim ? aim.pos : m, ...(aim ? { tableauRotation: aim.rotationDeg } : {}) }));
       } else if (dragMode.kind === "pointArrivee") {
         const rect = svgRef.current?.getBoundingClientRect();
         if (!rect) return;
@@ -3895,8 +3902,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
     if (placingTableau) {
       const actifEstMaison = !!niveauActif && !estAnnexe(niveauActif);
+      // Aimanté automatiquement au mur le plus proche, orienté face à la pièce (Alt = position libre).
+      const aim = !e.altKey && niveauActif ? aimanterTableauSurMur(m, niveauActif.pieces, 1.2) : null;
+      const posT = aim ? aim.pos : m;
       setNiveaux(nvs => nvs.map(n => {
-        if (n.id === niveauActifId) return { ...n, tableauPos: m };
+        if (n.id === niveauActifId) return { ...n, tableauPos: posT, ...(aim ? { tableauRotation: aim.rotationDeg } : {}) };
         // Un seul tableau pour la maison : on le retire des autres niveaux de la maison.
         if (actifEstMaison && !estAnnexe(n) && n.tableauPos) return { ...n, tableauPos: undefined, tableauHauteur: undefined, tableauRotation: undefined };
         return n;
@@ -3913,13 +3923,22 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
 
     if (placementType) {
-      const piece = niveauActif ? trouverPiece(m, niveauActif.pieces) : null;
+      // Hors de toute pièce (appareillage extérieur) : rattaché à la pièce la plus proche, collé sur la façade de son mur.
+      const dansPiece = niveauActif ? trouverPiece(m, niveauActif.pieces) : null;
+      const piece = dansPiece ?? (niveauActif ? pieceLaPlusProche(m, niveauActif.pieces) : null);
+      const horsPiece = !dansPiece;
       if (!piece) {
-        setPlacementError("Clique à l'intérieur d'une pièce dessinée.");
-        setTimeout(() => setPlacementError(null), 2000);
+        setPlacementError("Dessine d'abord une pièce : l'appareillage est rattaché à la pièce la plus proche.");
+        setTimeout(() => setPlacementError(null), 2400);
         return;
       }
-      const mAimantee = e.altKey ? m : aimanterSurFaceMur(m, piece, placementType, SNAP_MUR_PX / (PX_PER_M * zoom));
+      if (horsPiece && placementType === "volet_roulant") {
+        setPlacementError("Un volet roulant se pose sur une fenêtre, dans la pièce.");
+        setTimeout(() => setPlacementError(null), 2400);
+        return;
+      }
+      const seuilSnapM = SNAP_MUR_PX / (PX_PER_M * zoom);
+      const mAimantee = e.altKey ? m : horsPiece ? aimanterEnFacade(m, piece.contour, placementType, seuilSnapM * 2) : aimanterSurFaceMur(m, piece, placementType, seuilSnapM);
       const mPose = placementType === "volet_roulant" && !e.altKey && niveauActif
         ? recentrerVolet(mAimantee, piece, niveauActif.pieces)
         : mAimantee;
@@ -5777,12 +5796,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 // Poste d'une plaque multiple : ancrage au mur sur le CENTRE de la plaque, puis décalage le long du mur.
                 const infoPl = a.groupeId != null ? infosPlaquesParPiece.get(piece.id)?.get(a.groupeId) : undefined;
                 const ptAncre = infoPl ? { x: infoPl.gx, y: infoPl.gy } : { x: a.x, y: a.y };
-                const anc = estMural(a.type) ? ancrageMurLePlusProche(ptAncre, piece.contour) : null;
+                const ancBrut = estMural(a.type) ? ancrageMurLePlusProche(ptAncre, piece.contour) : null;
+                // Posé à l'extérieur : sur la façade, la normale regarde vers l'extérieur et il n'y a pas de doublage à franchir.
+                const facade = !!ancBrut && estEnFacade(ptAncre, piece.contour, ancBrut);
+                const anc = ancBrut && facade ? { ...ancBrut, normale: { x: -ancBrut.normale.x, y: -ancBrut.normale.y } } : ancBrut;
                 let cx = p.x, cy = p.y, rot = 0, nxs = 0, nys = 0, facePx = 2;
                 if (infoPl) { const pc0 = toScreen(ptAncre); cx = pc0.x; cy = pc0.y; }
                 if (anc && anc.distance <= TOLERANCE_MUR_M) {
                   // Le point stocké est sur l'AXE du mur ; l'appareillage se pose sur sa face intérieure finie.
-                  facePx = Math.max(2, faceInterieureM(piece, anc.segIndex) * PX_PER_M * zoom);
+                  facePx = facade ? 2 : Math.max(2, faceInterieureM(piece, anc.segIndex) * PX_PER_M * zoom);
                   const pPied = toScreen(anc.pied);
                   const pN = toScreen({ x: anc.pied.x + anc.normale.x * 0.1, y: anc.pied.y + anc.normale.y * 0.1 });
                   const lenN = Math.hypot(pN.x - pPied.x, pN.y - pPied.y) || 1;
@@ -7386,12 +7408,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
             {placementType && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-lg">
-                Clique dans une pièce pour placer : {plaquePostes ? `plaque ${plaquePostes.length} postes (${plaquePostes.map(po => labelAppareillagePlace(po)).join(" + ")})` : labelAppareillage(placementType)}
+                Clique dans une pièce — ou dehors, contre un mur, pour un appareillage extérieur — pour placer : {plaquePostes ? `plaque ${plaquePostes.length} postes (${plaquePostes.map(po => labelAppareillagePlace(po)).join(" + ")})` : labelAppareillage(placementType)}
               </div>
             )}
             {placingTableau && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-lg">
-                Clique pour positionner le tableau électrique
+                Clique près d'un mur : le tableau s'y aimante et s'oriente tout seul (Alt = position libre)
               </div>
             )}
             {placingMeuble && (

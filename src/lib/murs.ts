@@ -12,8 +12,8 @@
 //    du mur voisin sans trou ni retour visible (voir geometrieMurs, utilisé par le plan 2D, l'impression et la 3D).
 // Tout est en mètres sur des Point du plan ; les épaisseurs des MurSpec sont en cm.
 
-import { AppareillagePlace, AppareillageType, MurSpec, MurType, MUR_DEFAUT, Niveau, Piece, Point, aireDuPolygone, centroide } from "@/lib/maison-types";
-import { ancrageMurLePlusProche, estMural, TOLERANCE_MUR_M } from "@/lib/appareillage-mur";
+import { AppareillagePlace, AppareillageType, MurSpec, MurType, MUR_DEFAUT, Niveau, Piece, Point, aireDuPolygone, centroide, pointDansPolygone } from "@/lib/maison-types";
+import { ancrageMurLePlusProche, estMural, TOLERANCE_MUR_M, DECALAGE_FACADE_M } from "@/lib/appareillage-mur";
 
 export function murDe(piece: Piece, i: number): MurSpec {
   const m = piece.murs?.[i];
@@ -327,6 +327,28 @@ export function aimanterSurFaceMur(pt: Point, piece: Piece, type: AppareillageTy
   if (!anc || anc.distance > seuilM) return pt;
   const d = surUtile ? faceInterieureM(piece, anc.segIndex) : 0;
   return { x: anc.pied.x - anc.normale.x * d, y: anc.pied.y - anc.normale.y * d };
+}
+
+// Tableau électrique : s'aimante tout seul au mur le plus proche (toutes pièces) et s'oriente face à la pièce.
+// Dans une pièce → sur sa face intérieure finie ; hors de toute pièce → sur la façade extérieure (coffret extérieur).
+// null = aucun mur à portée (le tableau reste là où on le pose). rotationDeg suit la convention de tableauRotation
+// (la face avant du tableau regarde vers la normale gauche de la direction).
+export function aimanterTableauSurMur(pt: Point, pieces: Piece[], seuilExterieurM: number): { pos: Point; rotationDeg: number } | null {
+  let meilleur: { piece: Piece; anc: NonNullable<ReturnType<typeof ancrageMurLePlusProche>>; dedans: boolean } | null = null;
+  for (const p of pieces) {
+    if (p.contour.length < 3) continue;
+    const anc = ancrageMurLePlusProche(pt, p.contour);
+    if (!anc) continue;
+    const dedans = pointDansPolygone(pt, p.contour);
+    if (!dedans && anc.distance > seuilExterieurM) continue;
+    if (!meilleur || (dedans && !meilleur.dedans) || (dedans === meilleur.dedans && anc.distance < meilleur.anc.distance)) meilleur = { piece: p, anc, dedans };
+  }
+  if (!meilleur) return null;
+  const { piece, anc, dedans } = meilleur;
+  const n = dedans ? anc.normale : { x: -anc.normale.x, y: -anc.normale.y };   // normale vers le côté où se tient le tableau
+  const recul = (dedans ? faceInterieureM(piece, anc.segIndex) : DECALAGE_FACADE_M) + 0.05;   // demi-profondeur du coffret (10 cm)
+  const pos = { x: anc.pied.x + n.x * recul, y: anc.pied.y + n.y * recul };
+  return { pos, rotationDeg: ((Math.atan2(-n.x, n.y) * 180) / Math.PI + 360) % 360 };
 }
 
 // ─── MIGRATION des plans enregistrés avant le modèle « tracé hors-tout » ────────────────────────────────────────

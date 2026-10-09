@@ -16,7 +16,7 @@ import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageT
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
 import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante, creerBaieVitree, idVantailBaie, creerPorteGarage, creerFenetreBattante } from "@/components/plan/PortesOuvrables";
-import { ancrageMurLePlusProche, baieDuVolet } from "@/lib/appareillage-mur";
+import { ancrageMurLePlusProche, baieDuVolet, estEnFacade } from "@/lib/appareillage-mur";
 import { calculerEscalier, hauteurTotaleEscalierCm, EscalierEntrant } from "@/lib/escaliers";
 import { creerEscalier3D, trianglesDePolygone, geometrieSolPercee, aretesGardeCorpsTremie, creerGardeCorpsTremie } from "@/components/plan/Escalier3D";
 import { cloisonsDeZone, ouverturesEffectivesZone } from "@/lib/zones";
@@ -847,12 +847,15 @@ const Vue3D = forwardRef<Vue3DHandle, {
         } else {
           const anc = ancrageMurLePlusProche({ x: app.x, y: app.y }, piece.contour);
           if (anc) {
-            const recul = faceInterieureM(piece, anc.segIndex) + 0.002; // face intérieure FINIE du mur (après doublage)
-            px = anc.pied.x + anc.normale.x * recul;
-            pz = anc.pied.y + anc.normale.y * recul;
-            nx = anc.normale.x; nz = anc.normale.y;
-            rotY = Math.atan2(anc.normale.x, anc.normale.y); // +z local → normale intérieure
-            murPose = parametresMur3D(piece, anc.segIndex);
+            // Appareillage extérieur : posé sur la façade (face extérieure du mur), tourné vers l'extérieur.
+            const facade = estEnFacade({ x: app.x, y: app.y }, piece.contour, anc);
+            const sens = facade ? -1 : 1;
+            const recul = facade ? 0.002 : faceInterieureM(piece, anc.segIndex) + 0.002; // face intérieure FINIE du mur (après doublage)
+            nx = sens * anc.normale.x; nz = sens * anc.normale.y;
+            px = anc.pied.x + nx * recul;
+            pz = anc.pied.y + nz * recul;
+            rotY = Math.atan2(nx, nz); // +z local → côté où l'appareillage regarde (intérieur, ou extérieur en façade)
+            murPose = facade ? null : parametresMur3D(piece, anc.segIndex);
           }
           py = modele.montage === "sol_mur" ? 0 : Math.max(hCable, modele.demiHauteur);
         }
