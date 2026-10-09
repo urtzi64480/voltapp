@@ -197,6 +197,61 @@ function modeleApplique(): { g: THREE.Group; verre: THREE.MeshStandardMaterial }
   return { g, verre };
 }
 
+const ANTHRACITE = 0x3d434a;
+
+// Applique extérieure (étanche IP44) : corps en aluminium anthracite en saillie, capot supérieur et diffuseur opale
+// cerclé d'un joint. Le « verre » est le matériau piloté par la simulation d'éclairage (allumé / éteint).
+function modeleAppliqueExterieure(): { g: THREE.Group; verre: THREE.MeshStandardMaterial } {
+  const g = new THREE.Group();
+  const alu = m(ANTHRACITE, { metalness: 0.5, roughness: 0.4 });
+  g.add(boite(0.1, 0.2, 0.03, alu, 0, 0, 0.015));                        // platine de fixation
+  g.add(boite(0.11, 0.016, 0.1, alu, 0, 0.09, 0.075));                   // capot supérieur (abat l'eau de pluie)
+  const verre = m(0xfff3d6, { emissive: 0xffe0ab, emissiveIntensity: 0.15, transparent: true, opacity: 0.95, side: THREE.DoubleSide });
+  g.add(cylZ(0.04, 0.07, verre, 0, -0.005, 0.065));                      // diffuseur opale
+  g.add(tore(0.042, 0.004, m(NOIR), 0, -0.005, 0.1));                    // joint d'étanchéité
+  return { g, verre };
+}
+
+// Point lumineux extérieur (étanche IP44) : hublot rond en sous-face — embase anthracite, joint noir et dôme opale.
+function modelePointLumineuxExterieur(): { g: THREE.Group; verre: THREE.MeshStandardMaterial } {
+  const g = new THREE.Group();
+  g.add(cylY(0.1, 0.03, m(ANTHRACITE, { metalness: 0.5, roughness: 0.4 }), 0, -0.015, 0));   // embase
+  g.add(tore(0.088, 0.006, m(NOIR), 0, -0.03, 0, false));                                     // joint d'étanchéité
+  const verre = m(0xfff3d6, { emissive: 0xffe0ab, emissiveIntensity: 0.15, transparent: true, opacity: 0.95, side: THREE.DoubleSide });
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(0.085, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), verre);
+  dome.rotation.x = Math.PI;                                                                  // dôme bombé vers le bas
+  dome.position.set(0, -0.03, 0);
+  g.add(dome);
+  return { g, verre };
+}
+
+// Interrupteur extérieur (étanche IP55) : boîtier gris en saillie, bascule protégée et repère bleu d'étanchéité.
+function modeleInterrupteurExterieur(): THREE.Group {
+  const g = new THREE.Group();
+  g.add(boite(0.085, 0.085, 0.035, m(0x6b7280), 0, 0, 0.0175));         // boîtier en saillie
+  const bascule = boite(0.036, 0.054, 0.012, m(0xd1d5db), 0, 0, 0.041);
+  bascule.rotation.x = -0.12;
+  g.add(bascule);
+  g.add(boite(0.07, 0.012, 0.008, m(0x2563eb), 0, 0.034, 0.039));       // repère IP55
+  return g;
+}
+
+// Détecteur de mouvement mural : boîtier blanc, lentille de Fresnel bombée (dôme) et voyant rouge. En version extérieure
+// (IP55) : boîtier gris plus large coiffé d'un auvent.
+function modeleDetecteurMouvement(exterieur: boolean): THREE.Group {
+  const g = new THREE.Group();
+  const w = exterieur ? 0.11 : 0.08, h = exterieur ? 0.13 : 0.1;
+  g.add(boite(w, h, 0.035, exterieur ? m(0x6b7280) : m(BLANC), 0, 0, 0.0175));                 // boîtier
+  const lentille = new THREE.Mesh(new THREE.SphereGeometry(exterieur ? 0.042 : 0.032, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+    m(0xf5f5f4, { roughness: 0.3, transparent: true, opacity: 0.92 }));
+  lentille.rotation.x = Math.PI / 2;                                                           // pôle vers l'intérieur de la pièce
+  lentille.position.set(0, exterieur ? -0.012 : -0.008, 0.035);
+  g.add(lentille);
+  g.add(cylZ(0.003, 0.002, m(0xef4444, { emissive: 0xef4444, emissiveIntensity: 0.6 }), 0, h / 2 - 0.012, 0.036)); // voyant
+  if (exterieur) g.add(boite(w + 0.01, 0.01, 0.07, m(ANTHRACITE, { metalness: 0.4 }), 0, h / 2 + 0.005, 0.04));    // auvent
+  return g;
+}
+
 function modelePlafonnier(): { g: THREE.Group; verre: THREE.MeshStandardMaterial } {
   const g = new THREE.Group();
   g.add(cylY(0.07, 0.02, m(BLANC), 0, -0.01, 0));                      // rosace
@@ -435,6 +490,8 @@ const MONTAGE: Record<AppareillageType, Montage> = {
   interrupteur_double: "mur", va_et_vient_double: "mur", telerupteur_double: "mur",
   rj45: "mur", prise_dediee: "mur", prise_exterieure: "mur",
   applique: "mur", point_lumineux: "plafond", spot: "plafond", spot_etanche: "plafond",
+  applique_exterieure: "mur", point_lumineux_exterieur: "plafond", interrupteur_exterieur: "mur",
+  detecteur_mouvement: "mur", detecteur_mouvement_exterieur: "mur",
   four: "sol_mur", plaque: "sol_mur", lave_linge: "sol_mur", lave_vaisselle: "sol_mur", seche_linge: "sol_mur",
   congelateur: "sol_mur", piscine: "sol_mur",
   chauffe_eau: "mur", chauffage: "mur", clim: "mur", seche_serviette: "mur", irve: "mur", vmc: "mur", alarme: "mur",
@@ -442,10 +499,12 @@ const MONTAGE: Record<AppareillageType, Montage> = {
 };
 const DEMI_HAUTEUR: Partial<Record<AppareillageType, number>> = {
   prise: 0.04, prise_commandee: 0.04, interrupteur: 0.04, va_et_vient: 0.04, telerupteur: 0.04, interrupteur_double: 0.04, va_et_vient_double: 0.04, telerupteur_double: 0.04, rj45: 0.04, prise_dediee: 0.04, prise_exterieure: 0.05,
+  applique_exterieure: 0.1, interrupteur_exterieur: 0.045, detecteur_mouvement: 0.05, detecteur_mouvement_exterieur: 0.07,
   applique: 0.075, chauffe_eau: 0.5, chauffage: 0.225, clim: 0.14, seche_serviette: 0.6, irve: 0.18, vmc: 0.08, alarme: 0.14, volet_roulant: 0.12,
 };
 const SOMMET: Partial<Record<AppareillageType, number>> = {
   prise: 0.045, prise_commandee: 0.045, interrupteur: 0.045, va_et_vient: 0.045, telerupteur: 0.045, interrupteur_double: 0.045, va_et_vient_double: 0.045, telerupteur_double: 0.045, rj45: 0.045, prise_dediee: 0.045, prise_exterieure: 0.055,
+  applique_exterieure: 0.1, point_lumineux_exterieur: 0, interrupteur_exterieur: 0.045, detecteur_mouvement: 0.05, detecteur_mouvement_exterieur: 0.07,
   applique: 0.08, point_lumineux: 0, spot: 0, spot_etanche: 0, four: 1.2, plaque: 0.9, lave_linge: 0.85, lave_vaisselle: 0.82, seche_linge: 0.85,
   congelateur: 0.85, piscine: 0.7, chauffe_eau: 0.45, chauffage: 0.23, clim: 0.14, seche_serviette: 0.6,
   irve: 0.18, vmc: 0.08, alarme: 0.2, volet_roulant: 0.1,
@@ -469,6 +528,11 @@ export function creerModeleAppareillage(type: AppareillageType, couleurCircuit?:
     case "va_et_vient_double": groupe = modeleInterrupteurDouble("va_et_vient", couleur); break;
     case "telerupteur_double": groupe = modeleInterrupteurDouble("telerupteur", couleur); break;
     case "applique": { const r = modeleApplique(); groupe = r.g; ampoule = r.verre; break; }
+    case "applique_exterieure": { const r = modeleAppliqueExterieure(); groupe = r.g; ampoule = r.verre; break; }
+    case "point_lumineux_exterieur": { const r = modelePointLumineuxExterieur(); groupe = r.g; ampoule = r.verre; break; }
+    case "interrupteur_exterieur": groupe = modeleInterrupteurExterieur(); break;
+    case "detecteur_mouvement": groupe = modeleDetecteurMouvement(false); break;
+    case "detecteur_mouvement_exterieur": groupe = modeleDetecteurMouvement(true); break;
     case "point_lumineux": { const r = modelePlafonnier(); groupe = r.g; ampoule = r.verre; break; }
     case "spot": { const r = modeleSpot(); groupe = r.g; ampoule = r.verre; break; }
     case "spot_etanche": { const r = modeleSpotEtanche(); groupe = r.g; ampoule = r.verre; break; }

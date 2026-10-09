@@ -16,7 +16,11 @@ export type AppareillageType =
   | "chauffe_eau" | "chauffage" | "clim" | "seche_serviette" | "congelateur"
   | "irve" | "piscine" | "vmc" | "alarme"
   | "volet_roulant"
-  | "rj45" | "prise_dediee" | "prise_exterieure";
+  | "rj45" | "prise_dediee" | "prise_exterieure"
+  // Extérieur (étanche) : applique murale, point lumineux (sous avancée de toit / plafond de terrasse), interrupteur.
+  | "applique_exterieure" | "point_lumineux_exterieur" | "interrupteur_exterieur"
+  // Détecteurs de mouvement : commandent l'allumage de points lumineux (comme un interrupteur), à l'intérieur ou à l'extérieur (IP55).
+  | "detecteur_mouvement" | "detecteur_mouvement_exterieur";
 
 export interface Point { x: number; y: number; }
 
@@ -25,7 +29,9 @@ export interface Point { x: number; y: number; }
 //  - point_lumineux : sortie de plafond (boîte DCL) ; applique : sortie murale (boîte DCL) ;
 //  - spot : spot encastré au plafond (intérieur) ; spot_etanche : spot encastré étanche (IP65), pour salle de bains
 //    (volumes 1 et 2), extérieur, sous abri. Un spot compte comme UN point lumineux (8 maxi par circuit).
-export const TYPES_LUMIERE: AppareillageType[] = ["point_lumineux", "applique", "spot", "spot_etanche"];
+//  - applique_exterieure : applique murale étanche ; point_lumineux_exterieur : point lumineux étanche posé en sous-face
+//    (avancée de toit, plafond de terrasse) — comme tout luminaire, il compte pour UN point lumineux du circuit éclairage.
+export const TYPES_LUMIERE: AppareillageType[] = ["point_lumineux", "applique", "spot", "spot_etanche", "applique_exterieure", "point_lumineux_exterieur"];
 export function estLumiere(type?: AppareillageType): boolean {
   return !!type && TYPES_LUMIERE.includes(type);
 }
@@ -34,7 +40,7 @@ export function estSpot(type?: AppareillageType): boolean {
 }
 // Luminaires de PLAFOND (jamais posés sur un mur, hauteur par défaut = plafond de la pièce).
 export function estLumierePlafond(type?: AppareillageType): boolean {
-  return type === "point_lumineux" || estSpot(type);
+  return type === "point_lumineux" || type === "point_lumineux_exterieur" || estSpot(type);
 }
 
 export interface AppareillagePlace {
@@ -105,8 +111,11 @@ export interface AppareillagePlace {
 // ─── COMMANDES (simples ET doubles) ─────────────────────────────────────────────────────────
 // Source unique : toute logique « est-ce une commande ? de quel genre ? » passe par ici.
 export type CommandeBase = "interrupteur" | "va_et_vient" | "telerupteur";
+// Interrupteur extérieur (étanche) et détecteurs de mouvement (intérieur / extérieur) sont des commandes d'éclairage à part
+// entière : ils pilotent des points lumineux (commandePourIds) et se câblent comme un interrupteur simple.
 export const TYPES_COMMANDE: AppareillageType[] = [
   "interrupteur", "va_et_vient", "telerupteur", "interrupteur_double", "va_et_vient_double", "telerupteur_double",
+  "interrupteur_exterieur", "detecteur_mouvement", "detecteur_mouvement_exterieur",
 ];
 export function estCommande(type?: AppareillageType): boolean {
   return !!type && TYPES_COMMANDE.includes(type);
@@ -117,7 +126,8 @@ export function estCommandeDouble(type?: AppareillageType): boolean {
 // Genre de câblage d'une commande : un double va-et-vient se câble comme deux va-et-vient, etc.
 export function baseCommande(type: AppareillageType): CommandeBase | null {
   switch (type) {
-    case "interrupteur": case "interrupteur_double": return "interrupteur";
+    case "interrupteur": case "interrupteur_double": case "interrupteur_exterieur":
+    case "detecteur_mouvement": case "detecteur_mouvement_exterieur": return "interrupteur";
     case "va_et_vient": case "va_et_vient_double": return "va_et_vient";
     case "telerupteur": case "telerupteur_double": return "telerupteur";
     default: return null;

@@ -265,6 +265,9 @@ export const HAUTEUR_DEFAUT: Partial<Record<AppareillageType, number>> = {
   prise: 0.3, prise_commandee: 0.3, rj45: 0.3, prise_dediee: 0.3, prise_exterieure: 0.5,
   interrupteur: 1.1, va_et_vient: 1.1, telerupteur: 1.1, interrupteur_double: 1.1, va_et_vient_double: 1.1, telerupteur_double: 1.1,
   applique: 1.8,
+  // Extérieur : applique à 2,20 m, interrupteur étanche à 1,10 m. Détecteurs de mouvement muraux : 2,20 m (intérieur),
+  // 2,40 m (extérieur, hors de portée) — réglables comme tout appareillage (champ « hauteur »).
+  applique_exterieure: 2.2, interrupteur_exterieur: 1.1, detecteur_mouvement: 2.2, detecteur_mouvement_exterieur: 2.4,
   four: 0.6, plaque: 0.9, lave_linge: 0.85, lave_vaisselle: 0.85, seche_linge: 0.85,
   chauffe_eau: 1.8, chauffage: 0.3, clim: 2.0, seche_serviette: 1.2, congelateur: 0.85,
   irve: 1.0, piscine: 0.3, vmc: 2.2, alarme: 2.0,

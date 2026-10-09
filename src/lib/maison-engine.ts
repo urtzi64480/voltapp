@@ -58,6 +58,9 @@ const LABEL_NON_RACCORDE: Record<string, string> = {
   prise: "Prise", prise_commandee: "Prise commandée", volet_roulant: "Volet roulant",
   prise_dediee: "Prise dédiée", prise_exterieure: "Prise extérieure",
   point_lumineux: "Point lumineux", applique: "Applique", spot: "Spot", spot_etanche: "Spot étanche",
+  applique_exterieure: "Applique extérieure", point_lumineux_exterieur: "Point lumineux extérieur",
+  interrupteur_exterieur: "Interrupteur extérieur",
+  detecteur_mouvement: "Détecteur de mouvement", detecteur_mouvement_exterieur: "Détecteur de mouvement extérieur",
 };
 
 export interface ResultatGeneration {

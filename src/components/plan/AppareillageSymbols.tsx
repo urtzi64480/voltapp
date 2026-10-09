@@ -5,8 +5,7 @@ export const PALETTE: { type: AppareillageType; label: string; categorie: string
   { type: "prise",           label: "Prise de courant",              categorie: "Prises" },
   { type: "prise_commandee", label: "Prise commandée",               categorie: "Prises" },
   { type: "prise_dediee",    label: "Prise dédiée (20 A / 32 A)",    categorie: "Prises" },
-  { type: "prise_exterieure", label: "Prise extérieure (étanche)",   categorie: "Prises" },
-  { type: "rj45",            label: "Prise RJ45 (communication)",    categorie: "Prises" },
+  { type: "rj45",           label: "Prise RJ45 (communication)",    categorie: "Prises" },
   { type: "point_lumineux",  label: "Point lumineux (plafond)",      categorie: "Éclairage" },
   { type: "applique",        label: "Applique murale",                categorie: "Éclairage" },
   { type: "spot",            label: "Spot encastré (plafond)",        categorie: "Éclairage" },
@@ -17,6 +16,13 @@ export const PALETTE: { type: AppareillageType; label: string; categorie: string
   { type: "interrupteur_double", label: "Double interrupteur",         categorie: "Commandes" },
   { type: "va_et_vient_double",  label: "Double va-et-vient",          categorie: "Commandes" },
   { type: "telerupteur_double",  label: "Double bouton poussoir",      categorie: "Commandes" },
+  { type: "detecteur_mouvement", label: "Détecteur de mouvement (allumage auto)", categorie: "Commandes" },
+  // Extérieur : tout l'appareillage étanche au même endroit (prise, éclairage, commandes).
+  { type: "prise_exterieure",         label: "Prise extérieure (étanche)",          categorie: "Extérieur" },
+  { type: "applique_exterieure",      label: "Applique extérieure (étanche)",       categorie: "Extérieur" },
+  { type: "point_lumineux_exterieur", label: "Point lumineux extérieur (étanche)",  categorie: "Extérieur" },
+  { type: "interrupteur_exterieur",   label: "Interrupteur extérieur (étanche)",    categorie: "Extérieur" },
+  { type: "detecteur_mouvement_exterieur", label: "Détecteur de mouvement extérieur (IP55)", categorie: "Extérieur" },
   { type: "four",            label: "Four",                           categorie: "Appareils dédiés" },
   { type: "plaque",          label: "Plaque de cuisson",              categorie: "Appareils dédiés" },
   { type: "lave_linge",      label: "Lave-linge",                     categorie: "Appareils dédiés" },
@@ -57,6 +63,8 @@ const INITIALES_BASE: Record<string, string> = {
   prise: "P", prise_commandee: "PC", point_lumineux: "PL", applique: "AP", spot: "SP", spot_etanche: "SE",
   interrupteur: "I", va_et_vient: "VV", telerupteur: "BP", rj45: "RJ", prise_dediee: "PD", prise_exterieure: "PE",
   interrupteur_double: "I2", va_et_vient_double: "VV2", telerupteur_double: "BP2",
+  applique_exterieure: "AE", point_lumineux_exterieur: "PLE", interrupteur_exterieur: "IE",
+  detecteur_mouvement: "DM", detecteur_mouvement_exterieur: "DME",
 };
 // usageDedie : pour une prise dédiée, l'étiquette est celle de l'appareil alimenté (F, LL, LV…).
 export function initialesAppareillage(type: AppareillageType, usageDedie?: AppareillageType): string {
@@ -137,6 +145,29 @@ const SYMBOLES: Record<AppareillageType, DefSymbole> = {
   // carré plein (prise de communication — voltage faible, jamais sur un circuit de puissance).
   rj45: { oriente: true, prims: [
     { k: "p", d: "M 4.5 19 L 19.5 19 L 12 6 Z" }, { k: "r", x: 10, y: 13, w: 4, h: 4, f: true },
+  ] },
+  // Applique extérieure (étanche) : applique (cercle croisé tangent au mur) entourée d'un second cercle — même
+  // convention « double contour = étanche » que le spot étanche et la prise extérieure.
+  applique_exterieure: { oriente: true, prims: [
+    { k: "c", cx: 12, cy: 12.5, r: 7.5 }, { k: "c", cx: 12, cy: 12.5, r: 4.6 },
+    L(8.75, 9.25, 15.25, 15.75), L(15.25, 9.25, 8.75, 15.75), L(5, 21.2, 19, 21.2, 2.6),
+  ] },
+  // Point lumineux extérieur (étanche) : point lumineux de plafond (cercle barré d'une croix) sous un cercle de joint.
+  point_lumineux_exterieur: { oriente: false, prims: [
+    { k: "c", cx: 12, cy: 12, r: 9.5 }, { k: "c", cx: 12, cy: 12, r: 6.5 }, L(7.4, 7.4, 16.6, 16.6), L(16.6, 7.4, 7.4, 16.6),
+  ] },
+  // Interrupteur extérieur (étanche) : l'interrupteur simple dont le cercle est doublé d'un cercle de joint.
+  interrupteur_exterieur: { oriente: true, prims: [
+    { k: "c", cx: 10.5, cy: 15.5, r: 5.8 }, ...TIGE, L(19, 7, 21.5, 9.5),
+  ] },
+  // Détecteur de mouvement : lentille (petit disque plein, posé contre le mur) d'où part un secteur de détection
+  // dirigé vers la pièce. Le secteur est ouvert (traits seuls) pour rester lisible à 7-10 px.
+  detecteur_mouvement: { oriente: true, prims: [
+    { k: "p", d: "M 12 17 L 4.5 6 Q 12 2 19.5 6 Z" }, { k: "c", cx: 12, cy: 18.5, r: 2.4, f: true },
+  ] },
+  // Détecteur de mouvement extérieur (IP55) : même détecteur, lentille cerclée d'un double contour étanche.
+  detecteur_mouvement_exterieur: { oriente: true, prims: [
+    { k: "p", d: "M 12 15 L 4.5 4.5 Q 12 1 19.5 4.5 Z" }, { k: "c", cx: 12, cy: 18.3, r: 4.4 }, { k: "c", cx: 12, cy: 18.3, r: 2, f: true },
   ] },
   interrupteur: { oriente: true, prims: [...TIGE, L(19, 7, 21.5, 9.5)] },
   // Double allumage : une barbe au bout de CHAQUE tige.

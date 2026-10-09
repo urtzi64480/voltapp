@@ -43,6 +43,12 @@ const LABEL_TYPE_INTERRUPTEUR: Record<"interrupteur" | "va_et_vient" | "telerupt
 // Un mécanisme DOUBLE (2 voies) donne deux lignes de simulation indépendantes. Les ids de simulation
 // sont des nombres : la voie 2 utilise l'opposé de l'id de l'appareillage (jamais en collision, les id sont > 0).
 const ID_VOIE_2 = (id: number): number => -id;
+// Commandes qui ne sont pas un simple interrupteur : leur libellé propre (au lieu de « Interrupteur ») dans le panneau de simulation.
+const LABEL_COMMANDE_SPECIALE: Partial<Record<AppareillageType, string>> = {
+  interrupteur_exterieur: "Interrupteur extérieur",
+  detecteur_mouvement: "Détecteur de mouvement",
+  detecteur_mouvement_exterieur: "Détecteur de mouvement extérieur",
+};
 
 interface InterrupteurUI {
   id: number;
@@ -613,7 +619,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
           const prefixe = double ? "Double " : "";
           liste.push({
             id: v.id,
-            label: (app.nom ? app.nom : `${prefixe}${double ? LABEL_TYPE_INTERRUPTEUR[base].toLowerCase() : LABEL_TYPE_INTERRUPTEUR[base]}${v.ids.length > 1 ? ` (${v.ids.length} pts)` : ""}`) + v.suffixe,
+            label: (app.nom ? app.nom : `${prefixe}${LABEL_COMMANDE_SPECIALE[app.type] ?? (double ? LABEL_TYPE_INTERRUPTEUR[base].toLowerCase() : LABEL_TYPE_INTERRUPTEUR[base])}${v.ids.length > 1 ? ` (${v.ids.length} pts)` : ""}`) + v.suffixe,
             pieceNom: piece.nom,
             lumiereIds: v.ids,
           });
@@ -888,8 +894,18 @@ const Vue3D = forwardRef<Vue3DHandle, {
           light.castShadow = false;
           scene.add(light);
           lumiereLightsRef.current.set(app.id, { light, mat: modele.ampoule });
-        } else if (app.type === "applique" && modele.ampoule) {
-          const light = new THREE.PointLight(0xffe0ab, 0, 3, 2);
+        } else if (app.type === "point_lumineux_exterieur" && modele.ampoule) {
+          // Point lumineux extérieur (sous avancée de toit) : faisceau large vers le sol, plus portant qu'un spot, sans ombre
+          // portée (comme les spots : une terrasse peut en compter plusieurs, et chaque ombre ajoute une texture au shader).
+          const light = new THREE.SpotLight(0xffe0ab, 0, 7, Math.PI / 2.4, 0.6, 1.5);
+          light.position.set(app.x, hCable - 0.05, app.y);
+          light.target.position.set(app.x, 0, app.y);
+          scene.add(light.target);
+          light.castShadow = false;
+          scene.add(light);
+          lumiereLightsRef.current.set(app.id, { light, mat: modele.ampoule });
+        } else if ((app.type === "applique" || app.type === "applique_exterieure") && modele.ampoule) {
+          const light = new THREE.PointLight(0xffe0ab, 0, app.type === "applique_exterieure" ? 4 : 3, 2);
           light.position.set(px + nx * 0.12, py, pz + nz * 0.12);
           light.castShadow = true;
           light.shadow.mapSize.set(512, 512);

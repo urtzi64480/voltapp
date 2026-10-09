@@ -151,6 +151,11 @@ const LABEL_APPAREILLAGE: Record<string, string> = {
   spot: "Spot encastré", spot_etanche: "Spot encastré étanche (IP65)",
   rj45: "Prise RJ45 (communication)",
   prise_exterieure: "Prise extérieure (étanche IP44)",
+  applique_exterieure: "Applique extérieure (étanche IP44)",
+  point_lumineux_exterieur: "Point lumineux extérieur (étanche IP44)",
+  interrupteur_exterieur: "Interrupteur extérieur (étanche IP55)",
+  detecteur_mouvement: "Détecteur de mouvement",
+  detecteur_mouvement_exterieur: "Détecteur de mouvement extérieur (IP55)",
 };
 // Une commande (interrupteur/va-et-vient/télérupteur) posée en domotique (AppareillagePlace.
 // domotique) est un produit différent d'un mécanisme filaire classique — module radio/wifi
@@ -190,7 +195,9 @@ function estCommandeType(t?: AppareillageType): boolean {
   return estCommande(t); // simples ET doubles
 }
 
-const TYPES_ENCASTRABLES: AppareillageType[] = ["prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur", "interrupteur_double", "va_et_vient_double", "telerupteur_double", "rj45", "prise_dediee"];
+// Le détecteur de mouvement intérieur (type interrupteur à détection) s'encastre comme un mécanisme : boîte + plaque.
+// L'appareillage extérieur (prise, interrupteur, détecteur, applique) est étanche et posé EN SAILLIE : ni boîte ni plaque.
+const TYPES_ENCASTRABLES: AppareillageType[] = ["prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur", "interrupteur_double", "va_et_vient_double", "telerupteur_double", "detecteur_mouvement", "rj45", "prise_dediee"];
 
 const LABEL_POSTES = (n: number) => n === 1 ? "simple" : n === 2 ? "double" : n === 3 ? "triple" : "quadruple";
 
