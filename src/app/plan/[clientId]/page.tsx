@@ -45,7 +45,7 @@ import { decalerNiveau } from "@/lib/deplacer-niveau";
 import { migrerModeleMurs, aimanterSurFaceMur, aimanterTableauSurMur, preparerMurs, definirMitoyens, mitoyensDe, longueursUtilesCm, geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
 import { accrocherSurContour, apercuCloison, appliquerCloison, OptionsCloison, PointAccroche } from "@/lib/cloisons";
 import type { CloisonZone } from "@/lib/zones";
-import { cotesParDefaut, aimanterMural, ancrageMural, ancrageCloisonLePlusProche, nouvelleZone, validerTraceZone, surfaceZone, centreEtiquetteZone, cloisonsDeZone, quadCloison, decoupeOuvertureZone, longueurCote, nbCotes, segmentsZone, definirTypeCote, trouverCloisonZone, positionOuvertureValide } from "@/lib/zones";
+import { cotesParDefaut, aimanterMural, aimanterMeuble, ancrageMural, ancrageCloisonLePlusProche, nouvelleZone, validerTraceZone, surfaceZone, centreEtiquetteZone, cloisonsDeZone, quadCloison, decoupeOuvertureZone, longueurCote, nbCotes, segmentsZone, definirTypeCote, trouverCloisonZone, positionOuvertureValide } from "@/lib/zones";
 import { enCm, estRectangle, redimensionnerMur, redimensionnerMurUtile, reporterAppareillages } from "@/lib/dimensions-piece";
 import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece";
 import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, aimanterEnFacade, estEnFacade, pieceLaPlusProche, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
@@ -2282,10 +2282,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         if (!rect) return;
         const raw = toMeters(e.clientX - rect.left, e.clientY - rect.top);
         const snapped = { x: arrondiGrille(raw.x), y: arrondiGrille(raw.y) };
+        // Dos contre le mur / la cloison la plus proche, orienté face à la pièce (Alt = libre, sur la grille).
+        const niveauM = niveaux.find(n => n.id === niveauActifId) ?? null;
+        const pieceM = niveauM?.pieces.find(p => p.id === dragMode.pieceId);
+        const mbM = pieceM?.meubles?.find(mb => mb.id === dragMode.meubleId);
+        const aimM = !e.altKey && pieceM && mbM ? aimanterMeuble(raw, pieceM, niveauM?.zones ?? [], mbM.profondeur) : null;
         updateNiveauActif(n => ({
           ...n,
           pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : {
-            ...p, meubles: (p.meubles ?? []).map(mb => mb.id === dragMode.meubleId ? { ...mb, x: snapped.x, y: snapped.y } : mb),
+            ...p, meubles: (p.meubles ?? []).map(mb => mb.id === dragMode.meubleId
+              ? (aimM ? { ...mb, x: aimM.x, y: aimM.y, rotation: aimM.rotation } : { ...mb, x: snapped.x, y: snapped.y }) : mb),
           }),
         }));
       } else if (dragMode.kind === "personne") {
@@ -3970,13 +3976,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
 
     if (placingMeuble) {
-      const piece = niveauActif ? trouverPiece(m, niveauActif.pieces) : null;
+      // Dehors aussi (mobilier de jardin…) : rattaché à la pièce la plus proche. Dos contre le mur / la cloison la plus proche (Alt = libre).
+      const piece = niveauActif ? (trouverPiece(m, niveauActif.pieces) ?? pieceLaPlusProche(m, niveauActif.pieces)) : null;
       if (!piece) {
-        setPlacementError("Clique à l'intérieur d'une pièce dessinée.");
-        setTimeout(() => setPlacementError(null), 2000);
+        setPlacementError("Dessine d'abord une pièce : le meuble est rattaché à la pièce la plus proche.");
+        setTimeout(() => setPlacementError(null), 2400);
         return;
       }
       const nouveau = nouveauMeuble(arrondiGrille(m.x), arrondiGrille(m.y));
+      const aimM = e.altKey ? null : aimanterMeuble(m, piece, niveauActif?.zones ?? [], nouveau.profondeur);
+      if (aimM) { nouveau.x = aimM.x; nouveau.y = aimM.y; nouveau.rotation = aimM.rotation; }
       updateNiveauActif(n => ({
         ...n,
         pieces: n.pieces.map(p => p.id === piece.id ? { ...p, meubles: [...(p.meubles ?? []), nouveau] } : p),
@@ -7416,7 +7425,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             )}
             {placingMeuble && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-lg">
-                Clique dans une pièce pour placer un meuble — reste armé pour en poser plusieurs
+                Clique pour poser un meuble (dedans ou dehors) : il se plaque contre le mur ou la cloison la plus proche, face à la pièce (Alt = libre) — reste armé
               </div>
             )}
             {placingPointArrivee && (

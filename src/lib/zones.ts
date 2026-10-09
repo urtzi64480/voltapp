@@ -253,3 +253,34 @@ export function ancrageMural(pt: Point, piece: Piece, zones: Zone[]): AncrageMur
     faceM: facade ? 0 : faceInterieureM(piece, anc.segIndex),
   };
 }
+
+// ─── MEUBLE : AIMANTATION AU MUR / À LA CLOISON LA PLUS PROCHE ──────────────────────────────────────────────
+// Le dos du meuble (côté -y local) vient contre la face du mur (intérieure finie, ou façade extérieure si le point est
+// hors de la pièce) ou de la cloison de zone, la face avant (+y local) regarde la pièce. Le centre garde sa position le
+// long du mur. Rotation en degrés, sens horaire vu de dessus (rotate SVG) : rotate(θ) envoie (0,1) sur la normale.
+// null = aucun mur / cloison à portée (le meuble reste là où on le pose, orientation inchangée).
+export function aimanterMeuble(pt: Point, piece: Piece, zones: Zone[], profondeurM: number): { x: number; y: number; rotation: number } | null {
+  const portee = profondeurM / 2 + 0.3;
+  let cand: { pied: Point; n: Point; faceM: number; dFace: number } | null = null;
+  if (piece.contour.length >= 3) {
+    const anc = ancrageMurLePlusProche(pt, piece.contour);
+    if (anc) {
+      const dedans = pointDansPolygone(pt, piece.contour);
+      const faceM = dedans ? faceInterieureM(piece, anc.segIndex) : 0;
+      const dFace = dedans ? Math.max(0, anc.distance - faceM) : anc.distance;
+      const n = dedans ? anc.normale : { x: -anc.normale.x, y: -anc.normale.y };
+      if (dFace <= portee) cand = { pied: anc.pied, n, faceM, dFace };
+    }
+  }
+  const cl = ancrageCloisonLePlusProche(pt, zones, portee);
+  if (cl) {
+    const dFace = Math.max(0, cl.distanceAxe - cl.demiEpaisseur);
+    if (!cand || dFace < cand.dFace) cand = { pied: cl.pied, n: cl.normale, faceM: cl.demiEpaisseur, dFace };
+  }
+  if (!cand) return null;
+  const recul = cand.faceM + profondeurM / 2 + 0.005;
+  return {
+    x: cand.pied.x + cand.n.x * recul, y: cand.pied.y + cand.n.y * recul,
+    rotation: ((Math.atan2(-cand.n.x, cand.n.y) * 180) / Math.PI + 360) % 360,
+  };
+}
