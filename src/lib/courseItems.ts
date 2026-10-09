@@ -106,3 +106,93 @@ export function buildCourseItemsParFournisseur(lignes: any[], piecesParOffre?: R
     return a.fournisseur.localeCompare(b.fournisseur, "fr");
   });
 }
+
+// ─── COMPARATIF « courses faites par le client » vs « avec ma marge » (page artisan uniquement) ───────────
+// Pour chaque matériau du devis : ce que le client paierait EN ACHETANT LUI-MÊME chez le fournisseur retenu
+// (prix d'achat TTC unitaire de la ligne, sans marge) contre ce qu'il paie sur le devis (prix de vente, avec ma marge).
+// Franchise en base de TVA (art. 293 B) : le prix du devis est un prix TTC, les deux colonnes sont donc comparables.
+// Même périmètre que le coût d'achat des groupes ci-dessus : lignes matériau hors kits (un kit n'a pas de prix d'achat
+// par composant). Une ligne sans prix d'achat est listée mais exclue des totaux, et comptée à part.
+//
+// CONFIDENTIALITÉ : ces chiffres révèlent la marge. Ils ne sont JAMAIS lus par la liste publique /liste/[token] ;
+// seuls les exports déclenchés à la main par l'artisan (copier / PDF) peuvent sortir de la page.
+
+export interface LigneComparatif {
+  cle: string;
+  nom: string;
+  qty: number;
+  unite?: string;
+  achatUnitaire: number | null; // TTC fournisseur, sans marge — null = non renseigné
+  achatTotal: number | null;
+  venteUnitaire: number;        // prix du devis (avec ma marge)
+  venteTotal: number;
+}
+
+export interface GroupeComparatif {
+  fournisseur: string | null;
+  lignes: LigneComparatif[];
+  achat: number;  // total fournisseur TTC des lignes qui ont un prix d'achat
+  vente: number;  // total devis de ces mêmes lignes (comparaison à périmètre égal)
+  sansPrix: number; // lignes sans prix d'achat, exclues des deux totaux ci-dessus
+}
+
+export interface ComparatifAchat {
+  groupes: GroupeComparatif[];
+  totalAchat: number;
+  totalVente: number;
+  ecart: number;            // totalVente − totalAchat : ce que la prestation (marge) ajoute
+  economiePct: number | null; // part du prix devis économisée en achetant soi-même
+  nbSansPrix: number;
+  nbKitsIgnores: number;    // lignes kit : pas de prix d'achat par composant, non comparables
+}
+
+const arrondi2 = (n: number) => Math.round(n * 100) / 100;
+
+export function buildComparatifAchat(lignes: any[]): ComparatifAchat {
+  const parFournisseur = new Map<string, Map<string, LigneComparatif>>();
+  let nbKitsIgnores = 0;
+  for (const l of lignes ?? []) {
+    if (l.type_branche !== "materiau") continue;
+    if (l.kit_ratio_service != null) { nbKitsIgnores++; continue; }
+    const fournisseur = String(l.fournisseur_nom ?? "").trim();
+    const qty = l.quantite || 1;
+    const achatUnitaire: number | null = l.prix_achat != null ? Number(l.prix_achat) : null;
+    const venteUnitaire = Number(l.prix_unitaire) || 0;
+    const cle = `${String(l.nom).toLowerCase()}|${achatUnitaire ?? "?"}|${venteUnitaire}`;
+    const groupe = parFournisseur.get(fournisseur) ?? new Map<string, LigneComparatif>();
+    const existante = groupe.get(cle);
+    if (existante) {
+      existante.qty += qty;
+    } else {
+      groupe.set(cle, { cle, nom: l.nom, qty, unite: l.unite, achatUnitaire, achatTotal: null, venteUnitaire, venteTotal: 0 });
+    }
+    parFournisseur.set(fournisseur, groupe);
+  }
+
+  const groupes: GroupeComparatif[] = [];
+  let totalAchat = 0, totalVente = 0, nbSansPrix = 0;
+  parFournisseur.forEach((map, nom) => {
+    const lignesGroupe = Array.from(map.values()).sort((a, b) => a.nom.localeCompare(b.nom, "fr"));
+    let achat = 0, vente = 0, sansPrix = 0;
+    lignesGroupe.forEach(l => {
+      l.venteTotal = arrondi2(l.venteUnitaire * l.qty);
+      if (l.achatUnitaire == null) { sansPrix++; return; }
+      l.achatTotal = arrondi2(l.achatUnitaire * l.qty);
+      achat += l.achatTotal;
+      vente += l.venteTotal;
+    });
+    totalAchat += achat; totalVente += vente; nbSansPrix += sansPrix;
+    groupes.push({ fournisseur: nom || null, lignes: lignesGroupe, achat: arrondi2(achat), vente: arrondi2(vente), sansPrix });
+  });
+  groupes.sort((a, b) => {
+    if (a.fournisseur === null) return 1;
+    if (b.fournisseur === null) return -1;
+    return a.fournisseur.localeCompare(b.fournisseur, "fr");
+  });
+  totalAchat = arrondi2(totalAchat); totalVente = arrondi2(totalVente);
+  return {
+    groupes, totalAchat, totalVente, ecart: arrondi2(totalVente - totalAchat),
+    economiePct: totalVente > 0 ? Math.round(((totalVente - totalAchat) / totalVente) * 1000) / 10 : null,
+    nbSansPrix, nbKitsIgnores,
+  };
+}

@@ -4,10 +4,10 @@ import { supabase } from "@/lib/supabase";
 import Shell from "@/components/layout/Shell";
 import LigneImage from "@/components/devis/LigneImage";
 import Link from "next/link";
-import { ArrowLeft, Check, ShoppingCart, RotateCcw, Share2, Link2, MessageSquare, Mail, Copy, FileDown, Store } from "lucide-react";
+import { ArrowLeft, Check, ShoppingCart, RotateCcw, Share2, Link2, MessageSquare, Mail, Copy, FileDown, Store, Euro, Scale } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { buildCourseItems, buildCourseItemsParFournisseur, CourseItem } from "@/lib/courseItems";
-import { buildCourseText, genPDFListeCourses, courseFileName } from "@/lib/courseExport";
+import { buildCourseItems, buildCourseItemsParFournisseur, buildComparatifAchat, CourseItem } from "@/lib/courseItems";
+import { buildCourseText, genPDFListeCourses, courseFileName, buildPrixFournisseursText, genPDFPrixFournisseurs, comparatifFileName } from "@/lib/courseExport";
 
 export default function ListeCoursesPage({ params }: { params: { id: string } }) {
   const { id } = params;
@@ -25,6 +25,11 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   const [textCopied, setTextCopied] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [canShare, setCanShare] = useState(false);
+  // Prix fournisseurs TTC sans marge (courses faites par le client) : null = masqué ; "achat" = prix fournisseurs seuls ;
+  // "comparatif" = prix fournisseurs contre prix du devis (avec ma marge). Vue privée : rien de tout ça n'est dans le lien public.
+  const [vuePrix, setVuePrix] = useState<null | "achat" | "comparatif">(null);
+  const [prixCopie, setPrixCopie] = useState(false);
+  const [prixPdfBusy, setPrixPdfBusy] = useState(false);
 
   useEffect(() => {
     setCanShare(typeof navigator !== "undefined" && typeof (navigator as any).share === "function");
@@ -206,6 +211,44 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
     }
   }
 
+  const comparatif = buildComparatifAchat(lignesBrutes);
+  const eur = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
+
+  async function handleCopyPrix() {
+    if (!vuePrix) return;
+    const text = buildPrixFournisseursText(comparatif, exportMeta(), vuePrix === "comparatif");
+    try {
+      await navigator.clipboard.writeText(text);
+      setPrixCopie(true);
+      setTimeout(() => setPrixCopie(false), 2000);
+    } catch {
+      window.prompt("Copie le texte :", text);
+    }
+  }
+
+  async function handlePdfPrix() {
+    if (!vuePrix || prixPdfBusy) return;
+    setPrixPdfBusy(true);
+    try {
+      const meta = exportMeta();
+      const avecComparatif = vuePrix === "comparatif";
+      const blob = await genPDFPrixFournisseurs(comparatif, meta, avecComparatif);
+      const filename = comparatifFileName(meta.numero, avecComparatif);
+      const nav = navigator as any;
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+      if (isMobile && typeof nav.share === "function" && typeof nav.canShare === "function") {
+        const file = new File([blob], filename, { type: "application/pdf" });
+        if (nav.canShare({ files: [file] })) {
+          try { await nav.share({ files: [file], title: avecComparatif ? `Comparatif courses — Devis ${meta.numero}` : `Courses (prix TTC) — Devis ${meta.numero}` }); return; }
+          catch (e: any) { if (e?.name === "AbortError") return; }
+        }
+      }
+      downloadBlob(blob, filename);
+    } finally {
+      setPrixPdfBusy(false);
+    }
+  }
+
   const totalChecked = items.filter(it => checked[it.key]).length;
   const aDesFournisseurs = lignesBrutes.some(l => String(l.fournisseur_nom ?? "").trim() !== "");
   const groupes = parFournisseur && aDesFournisseurs ? buildCourseItemsParFournisseur(lignesBrutes, piecesParOffre) : null;
@@ -339,6 +382,91 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
                   <Store size={13} /> Par fournisseur
                 </button>
                 {parFournisseur && <span className="text-[11px] text-ink-400">Vue perso — le lien et les exports envoyés au client restent sans fournisseur.</span>}
+              </div>
+            )}
+
+            {comparatif.groupes.length > 0 && (
+              <div className="mb-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-ink-400 mr-1">Courses par le client :</span>
+                  <button onClick={() => setVuePrix(v => v === "achat" ? null : "achat")}
+                    className={cn("inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all",
+                      vuePrix === "achat" ? "bg-ink-900 text-volt-400 border-ink-900" : "bg-white border-ink-200 text-ink-600 hover:bg-ink-50")}>
+                    <Euro size={13} /> Prix fournisseurs TTC
+                  </button>
+                  <button onClick={() => setVuePrix(v => v === "comparatif" ? null : "comparatif")}
+                    className={cn("inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all",
+                      vuePrix === "comparatif" ? "bg-ink-900 text-volt-400 border-ink-900" : "bg-white border-ink-200 text-ink-600 hover:bg-ink-50")}>
+                    <Scale size={13} /> Comparatif vs mon devis
+                  </button>
+                </div>
+
+                {vuePrix && (
+                  <div className="card card-inner mt-3 border-sky-200">
+                    <p className="text-[11px] text-ink-400 mb-3">
+                      {vuePrix === "comparatif"
+                        ? "Vue perso : prix TTC chez le fournisseur (sans marge) contre le prix du devis. Le lien public de la liste n'en reprend rien — seuls les exports ci-dessous, que tu envoies toi-même, le montrent."
+                        : "Prix TTC chez le fournisseur retenu, sans marge — ce que le client paie s'il fait ses courses lui-même. Le lien public de la liste n'en reprend rien."}
+                    </p>
+                    <div className="space-y-4">
+                      {comparatif.groupes.map(g => (
+                        <div key={g.fournisseur ?? "__sans"}>
+                          <div className="flex items-baseline justify-between gap-3 mb-1">
+                            <h3 className="font-semibold text-ink-900 text-sm">{g.fournisseur ?? "Fournisseur non précisé"}</h3>
+                            <span className="text-xs font-semibold text-ink-700 shrink-0">{eur(g.achat)}</span>
+                          </div>
+                          <div className="space-y-1">
+                            {g.lignes.map(l => (
+                              <div key={l.cle} className="flex items-baseline gap-2 text-sm border-b border-ink-50 pb-1">
+                                <span className="flex-1 min-w-0 text-ink-800">
+                                  <span className="font-semibold">{l.unite && l.unite !== "u" && l.unite !== "forfait" ? `${l.qty} ${l.unite}` : `${l.qty}×`}</span> {l.nom}
+                                </span>
+                                {l.achatUnitaire != null ? (
+                                  <span className="shrink-0 text-right">
+                                    <span className="block text-ink-900 font-medium">{eur(l.achatTotal ?? 0)}</span>
+                                    <span className="block text-[11px] text-ink-400">{eur(l.achatUnitaire)} / u.</span>
+                                    {vuePrix === "comparatif" && <span className="block text-[11px] text-sky-700">devis : {eur(l.venteTotal)}</span>}
+                                  </span>
+                                ) : (
+                                  <span className="shrink-0 text-xs text-amber-700">prix d'achat non renseigné</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-ink-200 flex flex-col gap-1 text-sm">
+                      <div className="flex justify-between"><span className="text-ink-600">En achetant soi-même (TTC)</span><span className="font-semibold text-ink-900">{eur(comparatif.totalAchat)}</span></div>
+                      {vuePrix === "comparatif" && (
+                        <>
+                          <div className="flex justify-between"><span className="text-ink-600">Même matériel sur le devis (avec ma marge)</span><span className="font-semibold text-ink-900">{eur(comparatif.totalVente)}</span></div>
+                          <div className="flex justify-between text-volt-600 font-bold">
+                            <span>Écart</span>
+                            <span>{eur(comparatif.ecart)}{comparatif.economiePct != null ? ` · ${comparatif.economiePct.toLocaleString("fr-FR")} % du prix devis` : ""}</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    {(comparatif.nbSansPrix > 0 || comparatif.nbKitsIgnores > 0) && (
+                      <p className="text-[11px] text-amber-700 mt-2">
+                        {comparatif.nbSansPrix > 0 && `${comparatif.nbSansPrix} ligne${comparatif.nbSansPrix > 1 ? "s" : ""} sans prix d'achat renseigné : exclue${comparatif.nbSansPrix > 1 ? "s" : ""} des totaux (à compléter dans le catalogue). `}
+                        {comparatif.nbKitsIgnores > 0 && `${comparatif.nbKitsIgnores} kit${comparatif.nbKitsIgnores > 1 ? "s" : ""} non comparable${comparatif.nbKitsIgnores > 1 ? "s" : ""} (pas de prix d'achat par composant).`}
+                      </p>
+                    )}
+
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      <button onClick={handleCopyPrix} className="btn-ghost !px-3 !py-2 inline-flex items-center gap-1.5 text-xs">
+                        {prixCopie ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                        {prixCopie ? "Copié" : "Copier le texte"}
+                      </button>
+                      <button onClick={handlePdfPrix} disabled={prixPdfBusy} className="btn-ghost !px-3 !py-2 inline-flex items-center gap-1.5 text-xs disabled:opacity-50">
+                        <FileDown size={14} /> {prixPdfBusy ? "Création…" : "PDF"}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
