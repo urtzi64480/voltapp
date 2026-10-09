@@ -1949,6 +1949,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [placingMeuble, setPlacingMeuble] = useState(false);
   const [pendingCommande, setPendingCommande] = useState<{ item: AppareillagePlace; estNouveau: boolean } | null>(null);
   const [selectedAppareillageId, setSelectedAppareillageId] = useState<number | null>(null);
+  // Sélection multiple d'appareillages (Maj / Ctrl + clic) pour les regrouper en plaque double / triple / quadruple.
+  const [selectionMulti, setSelectionMulti] = useState<number[]>([]);
   const [selectedMeubleId, setSelectedMeubleId] = useState<number | null>(null);
   // Incrémenté à chaque fin de geste de déplacement — sert uniquement de "key" pour forcer
   // les champs de position/distance à se resynchroniser avec la géométrie après un drag,
@@ -2952,6 +2954,56 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // ─── APPAREILLAGES MULTIPLES : ajout / changement / retrait de poste ──────────────────────
   // Ajoute un poste (prise par défaut) à côté de l'appareillage : un appareillage simple devient
   // une plaque double, une plaque double devient triple… (4 postes maximum).
+  // Regroupe les appareillages sélectionnés (Maj / Ctrl + clic) en UNE plaque double / triple / quadruple : mêmes mur, même
+  // côté, alignés dans l'ordre où ils se lisent de gauche à droite face au mur. Une plaque déjà sélectionnée en partie est
+  // reprise en entier. Seuls prises, commandes, RJ45 et prises dédiées (TYPES_POSTE_PLAQUE) se regroupent.
+  useEffect(() => { if (selectedAppareillageId == null) setSelectionMulti([]); }, [selectedAppareillageId]);
+  useEffect(() => { setSelectionMulti([]); }, [niveauActifId, mode]);
+  const regrouperSelection = () => {
+    const erreur = (msg: string) => { setPlacementError(msg); setTimeout(() => setPlacementError(null), 3200); };
+    if (!niveauActif) return;
+    const ids = new Set(selectionMulti);
+    const piece = niveauActif.pieces.find(p => p.appareillages.some(a => ids.has(a.id)));
+    if (!piece) return;
+    if (niveauActif.pieces.some(p => p.id !== piece.id && p.appareillages.some(a => ids.has(a.id)))) { erreur("Les appareillages à regrouper doivent être dans la même pièce."); return; }
+    if (piece.verrouillee) { erreur("Cette pièce est verrouillée."); return; }
+    const groupesTouches = new Set(piece.appareillages.filter(a => ids.has(a.id) && a.groupeId != null).map(a => a.groupeId));
+    const membres = piece.appareillages.filter(a => ids.has(a.id) || (a.groupeId != null && groupesTouches.has(a.groupeId)));
+    if (membres.some(a => !TYPES_POSTE_PLAQUE.includes(a.type))) { erreur("Seuls les prises, interrupteurs, RJ45 et prises dédiées se regroupent en plaque."); return; }
+    if (membres.length < MIN_POSTES_PLAQUE) { erreur("Sélectionne au moins 2 appareillages (Maj + clic)."); return; }
+    if (membres.length > MAX_POSTES_PLAQUE) { erreur(`Une plaque compte ${MAX_POSTES_PLAQUE} postes au maximum (${membres.length} sélectionnés).`); return; }
+    const n = membres.length;
+    const ref = membres[0];
+    const centre = { x: membres.reduce((s, a) => s + a.x, 0) / n, y: membres.reduce((s, a) => s + a.y, 0) / n };
+    // Côté et sens de lecture : donnés par le mur / la cloison où se trouve le premier appareillage ; hors mur : alignement horizontal.
+    const am = ancrageMural({ x: ref.x, y: ref.y }, piece, niveauActif.zones ?? []);
+    const droite = am ? droiteFaceAuMur(am.normale) : { x: 1, y: 0 };
+    const base = { x: ref.x + droite.x * ((centre.x - ref.x) * droite.x + (centre.y - ref.y) * droite.y), y: ref.y + droite.y * ((centre.x - ref.x) * droite.x + (centre.y - ref.y) * droite.y) };
+    const tries = [...membres].sort((a, b) => ((a.x - centre.x) * droite.x + (a.y - centre.y) * droite.y) - ((b.x - centre.x) * droite.x + (b.y - centre.y) * droite.y));
+    const hauteurs = new Set(tries.map(a => a.hauteur));
+    const hauteur = hauteurs.size === 1 && tries[0].hauteur != null ? tries[0].hauteur : hauteurCommunePlaqueCm(tries.map(a => a.type));
+    const groupeId = uidMaison();
+    const maj = new Map(tries.map((a, k) => {
+      const d = (k - (n - 1) / 2) * ENTRAXE_POSTE_M;
+      return [a.id, { ...a, groupeId, rangPlaque: k, hauteur, couleur: tries[0].couleur, x: base.x + droite.x * d, y: base.y + droite.y * d }] as const;
+    }));
+    updateNiveauActif(nv => ({ ...nv, pieces: nv.pieces.map(p => p.id !== piece.id ? p : { ...p, appareillages: p.appareillages.map(a => maj.get(a.id) ?? a) }) }));
+    setSelectionMulti([]);
+    setSelectedAppareillageId(tries[0].id);
+    invalidateResultat();
+  };
+  // Défait la plaque d'un poste : chaque poste redevient un appareillage simple, resté à sa place.
+  const dissocierPlaque = (groupeId: number) => {
+    updateNiveauActif(nv => ({
+      ...nv,
+      pieces: nv.pieces.map(p => ({
+        ...p,
+        appareillages: p.appareillages.map(a => { if (a.groupeId !== groupeId) return a; const { groupeId: _g, rangPlaque: _r, ...reste } = a; void _g; void _r; return reste; }),
+      })),
+    }));
+    invalidateResultat();
+  };
+
   const ajouterPoste = (appareillageId: number) => {
     updateNiveauActif(n => ({
       ...n,
@@ -4130,6 +4182,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
     if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
+    // Maj / Ctrl (Cmd) + clic : ajoute / retire l'appareillage de la sélection multiple (pour les regrouper en plaque).
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      const base = selectionMulti.length > 0 ? selectionMulti : selectedAppareillageId != null ? [selectedAppareillageId] : [];
+      const suite = base.includes(a.id) ? base.filter(id => id !== a.id) : [...base, a.id];
+      setSelectionMulti(suite);
+      setSelectedAppareillageId(suite.length > 0 ? suite[suite.length - 1] : null);
+      setSelectedTableau(false); setSelectedPieceId(null); setSelectedOuvertureId(null); setSelectedBoite(null);
+      setSelectedWaypoint(null); setSelectedPointArrivee(false); setSelectedMeubleId(null);
+      return;
+    }
+    setSelectionMulti([]);
     // Sélectionne ET arme le déplacement dès le premier appui (comme un vrai
     // glisser-déposer) : un simple clic sans bouger équivaut juste à une sélection,
     // puisque le déplacement ne prend effet qu'au premier pointermove.
@@ -5890,7 +5953,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 // (cx, cy) = centre du carré dessiné : décalé vers l'intérieur de la pièce d'une
                 // demi-taille pour que le carré soit TANGENT au mur au lieu de le chevaucher.
                 const p = toScreen({ x: a.x, y: a.y });
-                const isSel = a.id === selectedAppareillageId;
+                const isSel = a.id === selectedAppareillageId || selectionMulti.includes(a.id);
                 const color = showCircuits && a.circuitId != null && circuitsVisibles.has(a.circuitId) ? (colorMap.get(a.circuitId) ?? "#1c1917") : (isSel ? "#F59E0B" : "#1c1917");
                 // Poste d'une plaque multiple : ancrage au mur sur le CENTRE de la plaque, puis décalage le long du mur.
                 const infoPl = a.groupeId != null ? infosPlaquesParPiece.get(piece.id)?.get(a.groupeId) : undefined;
@@ -6765,6 +6828,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                           className="btn-ghost !text-xs !py-1 flex-1 justify-center disabled:opacity-40">+ Ajouter un poste</button>
                       )}
                       {postesPlaqueSel.length >= 2 && (
+                        <button onClick={() => dissocierPlaque(selectedAppareillage.groupeId!)} disabled={!!pieceDeSelectedAppareillage?.verrouillee}
+                          className="btn-ghost !text-xs !py-1 flex-1 justify-center disabled:opacity-40" title="Chaque poste redevient un appareillage simple, resté à sa place">Dissocier</button>
+                      )}
+                      {postesPlaqueSel.length >= 2 && (
                         <button onClick={() => removerPlaque(selectedAppareillage.groupeId!)} disabled={!!pieceDeSelectedAppareillage?.verrouillee}
                           className="btn-danger !text-xs !py-1 flex-1 justify-center disabled:opacity-40">Supprimer la plaque</button>
                       )}
@@ -7503,6 +7570,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               </div>
             )}
 
+            {selectionMulti.length >= 2 && mode === "select" && !placementType && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 bg-ink-900 text-volt-400 text-xs font-semibold pl-3 pr-2 py-1.5 rounded-lg shadow-lg flex items-center gap-2">
+                <span>{selectionMulti.length} appareillages sélectionnés</span>
+                <button onClick={regrouperSelection} className="btn-volt !text-xs !py-1">
+                  ▣ Regrouper en plaque {selectionMulti.length === 2 ? "double" : selectionMulti.length === 3 ? "triple" : selectionMulti.length === 4 ? "quadruple" : `(${selectionMulti.length} > ${MAX_POSTES_PLAQUE})`}
+                </button>
+                <button onClick={() => setSelectionMulti([])} className="btn-ghost !text-xs !py-1 !text-volt-400">Désélectionner</button>
+              </div>
+            )}
             {placementType && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-lg">
                 Clique dans une pièce — ou dehors, contre un mur, pour un appareillage extérieur — pour placer : {plaquePostes ? `plaque ${plaquePostes.length} postes (${plaquePostes.map(po => labelAppareillagePlace(po)).join(" + ")})` : labelAppareillage(placementType)}

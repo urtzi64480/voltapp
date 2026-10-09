@@ -226,8 +226,12 @@ export function disposerPlaque(centre: Point, contour: Point[], n: number, norma
   const anc = normaleImposee ? null : ancrageMurLePlusProche(centre, contour);
   // Posée contre le mur (à TOLERANCE_MUR_M près) → collée dessus ; au-delà (placement libre, Alt) → là où elle est,
   // mais toujours alignée parallèlement au mur le plus proche. normaleImposee = posée sur une cloison de zone : alignée sur elle.
-  const base = anc && anc.distance <= TOLERANCE_MUR_M ? anc.pied : centre;
-  const droite = normaleImposee ? droiteFaceAuMur(normaleImposee) : anc ? droiteFaceAuMur(anc.normale) : { x: 1, y: 0 };
+  // Plaque en façade (hors du tracé de la pièce) : on garde le léger décalage qui la distingue d'une plaque intérieure.
+  const facade = !!anc && !normaleImposee && estEnFacade(centre, contour, anc);
+  const base = anc && anc.distance <= TOLERANCE_MUR_M
+    ? (facade ? { x: anc.pied.x - anc.normale.x * DECALAGE_FACADE_M, y: anc.pied.y - anc.normale.y * DECALAGE_FACADE_M } : anc.pied)
+    : centre;
+  const droite = normaleImposee ? droiteFaceAuMur(normaleImposee) : anc ? droiteFaceAuMur(facade ? { x: -anc.normale.x, y: -anc.normale.y } : anc.normale) : { x: 1, y: 0 };
   return Array.from({ length: n }, (_, k) => {
     const d = (k - (n - 1) / 2) * ENTRAXE_POSTE_M;
     return { x: base.x + droite.x * d, y: base.y + droite.y * d };
