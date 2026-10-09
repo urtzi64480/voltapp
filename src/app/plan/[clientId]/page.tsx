@@ -45,7 +45,7 @@ import { decalerNiveau } from "@/lib/deplacer-niveau";
 import { migrerModeleMurs, aimanterSurFaceMur, aimanterTableauSurMur, preparerMurs, definirMitoyens, mitoyensDe, longueursUtilesCm, geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
 import { accrocherSurContour, apercuCloison, appliquerCloison, OptionsCloison, PointAccroche } from "@/lib/cloisons";
 import type { CloisonZone } from "@/lib/zones";
-import { cotesParDefaut, aimanterMural, aimanterMeuble, ancrageMural, ancrageCloisonLePlusProche, nouvelleZone, validerTraceZone, surfaceZone, centreEtiquetteZone, cloisonsDeZone, quadCloison, decoupeOuvertureZone, longueurCote, nbCotes, segmentsZone, definirTypeCote, trouverCloisonZone, positionOuvertureValide } from "@/lib/zones";
+import { cotesParDefaut, resoudreMural, aimanterMeuble, ancrageMural, ancrageCloisonLePlusProche, nouvelleZone, validerTraceZone, surfaceZone, centreEtiquetteZone, cloisonsDeZone, quadCloison, decoupeOuvertureZone, longueurCote, nbCotes, segmentsZone, definirTypeCote, trouverCloisonZone, positionOuvertureValide } from "@/lib/zones";
 import { enCm, estRectangle, redimensionnerMur, redimensionnerMurUtile, reporterAppareillages } from "@/lib/dimensions-piece";
 import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece";
 import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, aimanterEnFacade, estEnFacade, pieceLaPlusProche, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
@@ -2223,36 +2223,50 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const candidats = pointsReferenceNiveau(niveauCourant);
         const seuilM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
         const { point: mAligne, guideX, guideY } = snapAvecAlignement(raw, candidats, seuilM);
-        // Aimantation murale : l'appareillage "colle" au mur le plus proche de sa pièce (Alt = désactivée).
+        // Aimantation murale : l'appareillage "colle" au mur / à la cloison le plus proche, de n'importe quelle pièce (Alt = désactivée).
+        // Il change de pièce quand il s'aimante à un mur d'une autre pièce : c'est elle qui donne le sens de pose.
         const pieceDrag = niveauCourant?.pieces.find(p => p.id === dragMode.pieceId);
         const appDrag = pieceDrag?.appareillages.find(a => a.id === dragMode.appareillageId);
         const seuilSnapM = SNAP_MUR_PX / (PX_PER_M * zoom);
-        const mAimante = pieceDrag && appDrag && !e.altKey
-          ? (pointDansPolygone(mAligne, pieceDrag.contour)
-              ? aimanterMural(mAligne, pieceDrag, niveauCourant?.zones ?? [], appDrag.type, seuilSnapM)
-              : aimanterEnFacade(mAligne, pieceDrag.contour, appDrag.type, seuilSnapM * 2))   // dehors : façade extérieure du mur le plus proche
-          : mAligne;
+        const volet = appDrag?.type === "volet_roulant";
+        const rz = pieceDrag && appDrag && niveauCourant && !e.altKey && !volet
+          ? resoudreMural(mAligne, niveauCourant.pieces, niveauCourant.zones ?? [], appDrag.type, seuilSnapM) : null;
+        const mAimante = rz ? rz.point : pieceDrag && appDrag && !e.altKey ? aimanterSurFaceMur(mAligne, pieceDrag, appDrag.type, seuilSnapM) : mAligne;
+        const cibleId = rz && rz.aimante && rz.piece ? rz.piece.id : dragMode.pieceId;
         // Volet roulant : une fois près d'une fenêtre, il se centre dessus (Alt = position libre).
-        const m = pieceDrag && appDrag?.type === "volet_roulant" && !e.altKey && niveauCourant
+        const m = pieceDrag && volet && !e.altKey && niveauCourant
           ? recentrerVolet(mAimante, pieceDrag, niveauCourant.pieces)
           : mAimante;
         setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
-        updateNiveauActif(n => ({
-          ...n,
-          pieces: n.pieces.map(p => {
-            if (p.id !== dragMode.pieceId) return p;
-            const gid = appDrag?.groupeId;
-            if (gid != null) {
-              // Plaque multiple : tous les postes suivent, re-disposés autour de la nouvelle position.
-              const membres = p.appareillages.filter(a => a.groupeId === gid).sort((a, b) => (a.rangPlaque ?? 0) - (b.rangPlaque ?? 0));
-              const clPl = ancrageCloisonLePlusProche(m, niveauCourant?.zones ?? [], 0.02);
-              const pts = disposerPlaque(m, p.contour, membres.length, clPl?.normale);
-              const nouvelle = new Map(membres.map((a, k) => [a.id, pts[k]] as const));
-              return { ...p, appareillages: p.appareillages.map(a => nouvelle.has(a.id) ? { ...a, x: nouvelle.get(a.id)!.x, y: nouvelle.get(a.id)!.y } : a) };
-            }
-            return { ...p, appareillages: p.appareillages.map(a => a.id === dragMode.appareillageId ? { ...a, x: m.x, y: m.y } : a) };
-          }),
-        }));
+        const srcId = dragMode.pieceId;
+        updateNiveauActif(n => {
+          const src = n.pieces.find(p => p.id === srcId);
+          const cible = n.pieces.find(p => p.id === cibleId) ?? src;
+          if (!src || !cible) return n;
+          const gid = appDrag?.groupeId;
+          // Postes déplacés (toute la plaque, ou l'appareillage seul) avec leur nouvelle position.
+          let deplaces: AppareillagePlace[];
+          if (gid != null) {
+            const membres = src.appareillages.filter(a => a.groupeId === gid).sort((a, b) => (a.rangPlaque ?? 0) - (b.rangPlaque ?? 0));
+            const clPl = ancrageCloisonLePlusProche(m, n.zones ?? [], 0.02);
+            const pts = disposerPlaque(m, cible.contour, membres.length, clPl?.normale);
+            deplaces = membres.map((a, k) => ({ ...a, x: pts[k].x, y: pts[k].y }));
+          } else {
+            deplaces = src.appareillages.filter(a => a.id === dragMode.appareillageId).map(a => ({ ...a, x: m.x, y: m.y }));
+          }
+          const ids = new Set(deplaces.map(a => a.id));
+          const maj = new Map(deplaces.map(a => [a.id, a] as const));
+          return {
+            ...n,
+            pieces: n.pieces.map(p => {
+              if (p.id === src.id && cible.id === src.id) return { ...p, appareillages: p.appareillages.map(a => maj.get(a.id) ?? a) };
+              if (p.id === src.id) return { ...p, appareillages: p.appareillages.filter(a => !ids.has(a.id)) };
+              if (p.id === cible.id) return { ...p, appareillages: [...p.appareillages, ...deplaces] };
+              return p;
+            }),
+          };
+        });
+        if (cibleId !== srcId) setDragMode(d => d.kind === "appareillage" ? { ...d, pieceId: cibleId } : d);
       } else if (dragMode.kind === "nomPiece") {
         // Étiquette (nom + surface) déplacée librement — pas d'accroche à la grille : on la pose
         // où l'on veut. Stockée en décalage par rapport au centre de la pièce.
@@ -2286,7 +2300,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const niveauM = niveaux.find(n => n.id === niveauActifId) ?? null;
         const pieceM = niveauM?.pieces.find(p => p.id === dragMode.pieceId);
         const mbM = pieceM?.meubles?.find(mb => mb.id === dragMode.meubleId);
-        const aimM = !e.altKey && pieceM && mbM ? aimanterMeuble(raw, pieceM, niveauM?.zones ?? [], mbM.profondeur) : null;
+        const aimM = !e.altKey && pieceM && mbM ? aimanterMeuble(raw, niveauM?.pieces ?? [], niveauM?.zones ?? [], mbM.profondeur) : null;
         updateNiveauActif(n => ({
           ...n,
           pieces: n.pieces.map(p => p.id !== dragMode.pieceId ? p : {
@@ -3928,10 +3942,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
 
     if (placementType) {
-      // Hors de toute pièce (appareillage extérieur) : rattaché à la pièce la plus proche, collé sur la façade de son mur.
-      const dansPiece = niveauActif ? trouverPiece(m, niveauActif.pieces) : null;
-      const piece = dansPiece ?? (niveauActif ? pieceLaPlusProche(m, niveauActif.pieces) : null);
-      const horsPiece = !dansPiece;
+      // Pièce + mur visés : le mur / la cloison le plus proche parmi TOUTES les pièces qui contiennent le clic (pièces
+      // chevauchantes comprises) et les cloisons de zone. Hors de toute pièce (appareillage extérieur) : pièce la plus
+      // proche, collé sur la façade de son mur.
+      const seuilSnapM = SNAP_MUR_PX / (PX_PER_M * zoom);
+      const rz = niveauActif ? resoudreMural(m, niveauActif.pieces, niveauActif.zones ?? [], placementType, seuilSnapM) : null;
+      const horsPiece = !!rz?.horsPiece;
+      const piece = rz ? (e.altKey ? rz.pieceDefaut : rz.piece) : null;
       if (!piece) {
         setPlacementError("Dessine d'abord une pièce : l'appareillage est rattaché à la pièce la plus proche.");
         setTimeout(() => setPlacementError(null), 2400);
@@ -3942,8 +3959,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         setTimeout(() => setPlacementError(null), 2400);
         return;
       }
-      const seuilSnapM = SNAP_MUR_PX / (PX_PER_M * zoom);
-      const mAimantee = e.altKey ? m : horsPiece ? aimanterEnFacade(m, piece.contour, placementType, seuilSnapM * 2) : aimanterMural(m, piece, niveauActif?.zones ?? [], placementType, seuilSnapM);
+      const mAimantee = e.altKey || !rz ? m : rz.point;
       const mPose = placementType === "volet_roulant" && !e.altKey && niveauActif
         ? recentrerVolet(mAimantee, piece, niveauActif.pieces)
         : mAimantee;
@@ -3984,7 +4000,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         return;
       }
       const nouveau = nouveauMeuble(arrondiGrille(m.x), arrondiGrille(m.y));
-      const aimM = e.altKey ? null : aimanterMeuble(m, piece, niveauActif?.zones ?? [], nouveau.profondeur);
+      const aimM = e.altKey ? null : aimanterMeuble(m, niveauActif?.pieces ?? [], niveauActif?.zones ?? [], nouveau.profondeur);
       if (aimM) { nouveau.x = aimM.x; nouveau.y = aimM.y; nouveau.rotation = aimM.rotation; }
       updateNiveauActif(n => ({
         ...n,
