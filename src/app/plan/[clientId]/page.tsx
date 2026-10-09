@@ -4481,9 +4481,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const colorMap = resultat ? construireColorMap(resultat, niveaux) : new Map<number, string>();
 
   // Symbole + carré d'appui : le carré (boxSize) est ce qui vient toucher le mur — le symbole,
-  // lui, reste lisible à tous les zooms (plus grand qu'avant : 16→30 px au lieu de 11→28).
-  const symSize = Math.min(30, Math.max(16, 20 * zoom));
-  const boxSize = symSize + 8;
+  // lui, reste lisible à tous les zooms : 20 px à zoom 1 (inchangé), jusqu'à 30 px en zoom avant, et
+  // il RÉTRÉCIT en zoom arrière (jusqu'à 7 px) pour que le plan d'une maison entière ne soit pas surchargé.
+  const symSize = Math.min(30, Math.max(7, 20 * zoom));
+  // Marge du carré d'appui : 8 px à partir de zoom 1 (inchangé), réduite proportionnellement en dessous.
+  const boxSize = symSize + Math.min(8, Math.max(3, symSize * 0.4));
+  // Échelle des annotations (pastille « ! », initiales des prises dédiées) : 1 jusqu'à zoom 1, réduite en dessous.
+  const echelleAnnot = Math.min(1, Math.max(0.55, symSize / 20));
   // Plaques multiples : centre + nombre de postes de chaque groupe, par pièce (voir infosPlaques).
   const infosPlaquesParPiece = new Map<number, Map<number, InfoPlaque>>(
     (niveauActif?.pieces ?? []).map(pc => [pc.id, infosPlaques(pc.appareillages)] as const));
@@ -5738,13 +5742,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       </g>
                     )}
                     {a.type === "prise_dediee" && (
-                      <g style={{ pointerEvents: "none" }} textAnchor="middle" fontFamily="monospace" fontWeight={800} fontSize={8}>
+                      <g style={{ pointerEvents: "none" }} textAnchor="middle" fontFamily="monospace" fontWeight={800} fontSize={8 * echelleAnnot}>
                         <text x={cx + nxs * (demiBoite + 7)} y={cy + nys * (demiBoite + 7) + 3} fill="none" stroke="#fff" strokeWidth={3} strokeLinejoin="round">{initialesAppareillage(a.type, a.usageDedie)}</text>
                         <text x={cx + nxs * (demiBoite + 7)} y={cy + nys * (demiBoite + 7) + 3} fill={color}>{initialesAppareillage(a.type, a.usageDedie)}</text>
                       </g>
                     )}
                     {nonRaccorde && (
-                      <g transform={`translate(${cx + demiBoite - 1}, ${cy - demiBoite - 1})`} style={{ pointerEvents: "none" }}>
+                      <g transform={`translate(${cx + demiBoite - 1}, ${cy - demiBoite - 1}) scale(${echelleAnnot})`} style={{ pointerEvents: "none" }}>
                         <circle cx={0} cy={0} r={6.5} fill="#EF4444" stroke="#fff" strokeWidth={1.5} />
                         <text x={0} y={2.8} textAnchor="middle" fontSize={9} fontWeight={800} fill="#fff">!</text>
                       </g>
