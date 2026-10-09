@@ -14,7 +14,7 @@ import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
   GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt, Box,
-  Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, SplitSquareHorizontal, BoxSelect, Undo2, Redo2,
+  Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -1901,7 +1901,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [confirmSuppNiveau, setConfirmSuppNiveau] = useState(false);
   const [suppNiveauEnCours, setSuppNiveauEnCours] = useState(false);
 
-  const [mode, setMode] = useState<"select" | "dessiner" | "cloison" | "zone">("select");
+  const [mode, setMode] = useState<"select" | "dessiner" | "cloison" | "zone" | "mesure">("select");
+  // Outil mesure : repères posés sur le plan (aimantés aux jonctions). Purement visuels : non enregistrés dans le plan.
+  // `chaine` regroupe les repères consécutifs mesurés l'un à la suite de l'autre ; ils restent visibles après la sortie de l'outil.
+  const [reperes, setReperes] = useState<{ id: number; niveauId: number; point: Point; chaine: number }[]>([]);
+  const repereSeqRef = useRef({ id: 1, chaine: 1 });
   // Outil cloison : points déjà posés (le 1er est sur un mur) ; tracé validé en attente du formulaire.
   const [cloisonPoints, setCloisonPoints] = useState<Point[]>([]);
   const [cloisonEnAttente, setCloisonEnAttente] = useState<{ pieceId: number; chemin: Point[] } | null>(null);
@@ -2586,6 +2590,80 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [mode, cloisonEnAttente, cloisonPoints.length]);
+
+  // ── Outil mesure ──
+  // Jonctions du niveau actif (angles de pièces finis et hors-tout, bords de portes / fenêtres, sommets de zones et cloisons).
+  const jonctionsMesure = useMemo(() => {
+    const pts: Point[] = [];
+    const niv = niveaux.find(n => n.id === niveauActifId);
+    if (!niv) return pts;
+    for (const p of niv.pieces) {
+      pts.push(...p.contour);
+      if (p.contour.length >= 3) {
+        try {
+          const g = geometrieMurs(p);
+          pts.push(...g.utile, ...g.utileFin, ...g.exterieur);
+        } catch { /* géométrie dégénérée : on garde au moins le contour */ }
+      }
+      for (const o of p.ouvertures ?? []) {
+        if (o.segIndex < 0 || o.segIndex >= p.contour.length) continue;
+        try { pts.push(...decoupeOuverture(p, o.segIndex, o.position, o.largeur)); } catch { /* ignore */ }
+      }
+    }
+    for (const z of niv.zones ?? []) pts.push(...z.contour);
+    return pts;
+  }, [niveaux, niveauActifId]);
+  // Accroche : jonction la plus proche (≈18 px), sinon appareillage / tableau (≈12 px), sinon point libre.
+  const accrocheMesure = (m: Point): { point: Point; type: "jonction" | "objet" | "libre" } => {
+    const px = PX_PER_M * zoom;
+    let best: Point | null = null, bd = 18 / px;
+    for (const q of jonctionsMesure) { const d = distance(q, m); if (d < bd) { bd = d; best = q; } }
+    if (best) return { point: best, type: "jonction" };
+    const niv = niveaux.find(n => n.id === niveauActifId);
+    if (niv) {
+      let bo: Point | null = null, bod = 12 / px;
+      const objets: Point[] = [...niv.pieces.flatMap(p => p.appareillages.map(a => ({ x: a.x, y: a.y }))), ...(niv.tableauPos ? [niv.tableauPos] : [])];
+      for (const q of objets) { const d = distance(q, m); if (d < bod) { bod = d; bo = q; } }
+      if (bo) return { point: bo, type: "objet" };
+    }
+    return { point: m, type: "libre" };
+  };
+  const reperesNiveau = reperes.filter(r => r.niveauId === niveauActifId);
+  const nouvelleChaineMesure = () => { repereSeqRef.current.chaine += 1; };
+  const entrerModeMesure = () => {
+    if (mode === "mesure") { setMode("select"); return; }
+    setMode("mesure"); setDrawingPoints([]); setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
+    setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
+    setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
+    setSelectedZoneId(null); setSelectedZoneOuv(null);
+  };
+  const effacerDernierRepere = () => {
+    setReperes(rs => {
+      for (let i = rs.length - 1; i >= 0; i--) if (rs[i].niveauId === niveauActifId) return [...rs.slice(0, i), ...rs.slice(i + 1)];
+      return rs;
+    });
+  };
+  const effacerTousReperes = () => { setReperes(rs => rs.filter(r => r.niveauId !== niveauActifId)); nouvelleChaineMesure(); };
+  useEffect(() => { if (vue3D && mode === "mesure") setMode("select"); }, [mode, vue3D]);
+  useEffect(() => { nouvelleChaineMesure(); }, [niveauActifId, mode]);
+  // Clavier : Retour arrière / Suppr / Ctrl+Z = efface le dernier repère · Entrée = termine la chaîne · Échap = termine la chaîne, puis quitte l'outil.
+  useEffect(() => {
+    if (mode !== "mesure") return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        const derniere = [...reperes].reverse().find(r => r.niveauId === niveauActifId);
+        if (derniere && derniere.chaine === repereSeqRef.current.chaine) nouvelleChaineMesure(); else setMode("select");
+      }
+      else if (e.key === "Enter") { e.preventDefault(); nouvelleChaineMesure(); }
+      else if (e.key === "Backspace" || e.key === "Delete" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z")) { e.preventDefault(); effacerDernierRepere(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, reperes, niveauActifId]);
 
   // Outil « Cloison » : trace un mur libre (jamais de découpe d'une pièce) — voir entrerModeZone (zones).
   const entrerModeCloison = () => {
@@ -3770,6 +3848,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       return;
     }
 
+    if (mode === "mesure") {
+      if (!niveauActif) return;
+      // Clic sur un repère existant = on l'efface.
+      const rayon = 10;
+      const touche = [...reperes].reverse().find(r => r.niveauId === niveauActif.id && Math.hypot(toScreen(r.point).x - px, toScreen(r.point).y - py) <= rayon);
+      if (touche) { setReperes(rs => rs.filter(r => r.id !== touche.id)); return; }
+      const { point } = accrocheMesure(m);
+      const id = repereSeqRef.current.id++;
+      setReperes(rs => [...rs, { id, niveauId: niveauActif.id, point, chaine: repereSeqRef.current.chaine }]);
+      return;
+    }
+
     if (mode === "cloison") {
       if (cloisonEnAttente) return;
       const erreurCloison = (msg: string) => { setPlacementError(msg); setTimeout(() => setPlacementError(null), 2600); };
@@ -3917,7 +4007,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
 
   const onCanvasPointerMove = (e: React.PointerEvent) => {
-    if (mode !== "dessiner" && mode !== "cloison" && mode !== "zone") return;
+    if (mode !== "dessiner" && mode !== "cloison" && mode !== "zone" && mode !== "mesure") return;
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
     setCursorPx({ x: e.clientX - rect.left, y: e.clientY - rect.top });
@@ -3936,7 +4026,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
 
   const onPieceDown = (piece: Piece, e: React.PointerEvent) => {
-    if (cheminementDessin || liaisonLumiereMode || mode === "dessiner" || mode === "cloison" || mode === "zone" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) return;
+    if (cheminementDessin || liaisonLumiereMode || mode === "dessiner" || mode === "cloison" || mode === "zone" || mode === "mesure" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingMeuble) return;
     e.stopPropagation();
     // Ctrl (ou Cmd) + clic : sélectionne la pièce SOUS celle du dessus, à l'endroit cliqué (clics répétés = on descend, puis on boucle).
     if ((e.ctrlKey || e.metaKey) && niveauActif) {
@@ -4427,6 +4517,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const alignAffiche: ResultatAlignMurs | null = dragMode.kind === "vertex" ? alignSeg : mode === "dessiner" ? (curseurSnap?.align ?? null) : null;
   const curseurCl = mode === "cloison" && cursorPx && !cloisonEnAttente ? curseurCloison(toMeters(cursorPx.x, cursorPx.y)) : null;
   const cloisonAffichee: Point[] = cloisonEnAttente ? cloisonEnAttente.chemin : cloisonPoints;
+  const curseurMesure = mode === "mesure" && cursorPx ? accrocheMesure(toMeters(cursorPx.x, cursorPx.y)) : null;
   const curseurZ = mode === "zone" && cursorPx && !zoneEnAttente ? curseurZone(toMeters(cursorPx.x, cursorPx.y)) : null;
   const zoneAffichee: Point[] = zoneEnAttente ? zoneEnAttente.contour : zonePoints;
   const selectedZone = niveauActif?.zones?.find(z => z.id === selectedZoneId) ?? null;
@@ -4800,6 +4891,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             className={`btn-ghost !text-xs disabled:opacity-40 ${mode === "zone" && !zoneCloisonSeule ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <BoxSelect size={13} /> Zone
           </button>
+          <button onClick={entrerModeMesure} disabled={!niveauActif}
+            title="Mesurer : clic pour poser un repère (aimanté à la jonction la plus proche : angles de murs, bords de portes et fenêtres, cloisons). La distance s'affiche entre repères consécutifs. Clic sur un repère = l'effacer · Retour arrière = effacer le dernier · Entrée = nouvelle mesure · Échap = quitter"
+            className={`btn-ghost !text-xs disabled:opacity-40 ${mode === "mesure" ? "!bg-ink-900 !text-volt-400" : ""}`}>
+            <Ruler size={13} /> Mesure
+          </button>
+          {reperesNiveau.length > 0 && (
+            <>
+              <button onClick={effacerDernierRepere} title="Efface le dernier repère posé (Retour arrière)" className="btn-ghost !px-2 !py-1 !text-xs">↶ Dernier repère</button>
+              <button onClick={effacerTousReperes} title="Efface tous les repères de ce niveau" className="btn-ghost !px-2 !py-1 !text-xs">🗑 Effacer les {reperesNiveau.length} repère{reperesNiveau.length > 1 ? "s" : ""}</button>
+            </>
+          )}
           <button onClick={armerPlacementTableau} className={`btn-ghost !text-xs ${placingTableau ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <Zap size={13} /> Position tableau
           </button>
@@ -5022,13 +5124,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <svg
               ref={svgRef}
               className="w-full h-full block"
-              style={{ touchAction: "none", cursor: deplacementNiveau ? "move" : mode === "dessiner" || mode === "cloison" || mode === "zone" || placementType || placingTableau || placingPointArrivee || placingMeuble ? "crosshair" : "grab" }}
+              style={{ touchAction: "none", cursor: deplacementNiveau ? "move" : mode === "dessiner" || mode === "cloison" || mode === "zone" || mode === "mesure" || placementType || placingTableau || placingPointArrivee || placingMeuble ? "crosshair" : "grab" }}
               onPointerDown={onBackgroundPointerDown}
               // Outil cloison : le clic gauche est traité ICI, avant les pièces / appareillages / portes (un
               // appareillage posé sur le mur ne doit pas avaler le départ de la cloison).
               onPointerDownCapture={e => {
                 if (deplacementNiveau && e.button === 0 && !e.shiftKey) { e.stopPropagation(); onDeplacementNiveauDown(e); return; }   // Maj + glisser = déplacer la vue
-                if ((mode === "cloison" || mode === "zone") && e.button === 0) { e.stopPropagation(); onBackgroundPointerDown(e); }
+                if ((mode === "cloison" || mode === "zone" || mode === "mesure") && e.button === 0) { e.stopPropagation(); onBackgroundPointerDown(e); }
               }}
               onPointerMove={onCanvasPointerMove}
               onWheel={handleWheel}
@@ -6054,6 +6156,65 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     {curseurZ && (() => {
                       const q = toScreen(curseurZ.point);
                       return <circle cx={q.x} cy={q.y} r={8} fill="none" stroke={curseurZ.ferme || curseurZ.surMur ? "#16A34A" : COUL} strokeWidth={2.5} />;
+                    })()}
+                  </g>
+                );
+              })()}
+
+              {(reperesNiveau.length > 0 || curseurMesure) && (() => {
+                const COUL = "#0E7490";
+                const chaines = new Map<number, typeof reperesNiveau>();
+                for (const r of reperesNiveau) { const l = chaines.get(r.chaine) ?? []; l.push(r); chaines.set(r.chaine, l); }
+                const fmt = (d: number) => d >= 1 ? `${d.toFixed(2).replace(".", ",")} m` : `${Math.round(d * 100)} cm`;
+                const derniere = reperesNiveau[reperesNiveau.length - 1];
+                const enCours = mode === "mesure" && derniere && derniere.chaine === repereSeqRef.current.chaine ? derniere : null;
+                const survol = mode === "mesure" && cursorPx
+                  ? [...reperesNiveau].reverse().find(r => Math.hypot(toScreen(r.point).x - cursorPx.x, toScreen(r.point).y - cursorPx.y) <= 10) ?? null : null;
+                let num = 0;
+                return (
+                  <g pointerEvents="none">
+                    {[...chaines.values()].map((pts, ci) => {
+                      const tot = pts.slice(1).reduce((s, r, i) => s + distance(pts[i].point, r.point), 0);
+                      return (
+                        <g key={`ch${ci}`}>
+                          {pts.length >= 2 && <polyline points={pts.map(r => { const q = toScreen(r.point); return `${q.x},${q.y}`; }).join(" ")} fill="none" stroke={COUL} strokeWidth={2} strokeDasharray="7,4" strokeLinecap="round" strokeLinejoin="round" />}
+                          {pts.slice(1).map((r, i) => <EtiquetteLongueur key={`ms${r.id}`} aPx={toScreen(pts[i].point)} bPx={toScreen(r.point)} texte={fmt(distance(pts[i].point, r.point))} />)}
+                          {pts.length >= 3 && (() => { const q = toScreen(pts[pts.length - 1].point); return (
+                            <g transform={`translate(${q.x + 12}, ${q.y - 14})`}>
+                              <rect x={-4} y={-8} width={Math.max(36, fmt(tot).length * 6 + 18)} height={16} rx={3} fill={COUL} />
+                              <text x={2} y={4} fontSize={9} fontFamily="monospace" fontWeight={700} fill="#fff">Σ {fmt(tot)}</text>
+                            </g>); })()}
+                          {pts.map(r => {
+                            num += 1;
+                            const q = toScreen(r.point), sur = survol?.id === r.id;
+                            return (
+                              <g key={`mr${r.id}`}>
+                                <circle cx={q.x} cy={q.y} r={sur ? 8 : 6} fill={sur ? "#DC2626" : "#fff"} stroke={sur ? "#DC2626" : COUL} strokeWidth={2} />
+                                {sur
+                                  ? <text x={q.x} y={q.y + 3.5} textAnchor="middle" fontSize={11} fontWeight={700} fill="#fff">×</text>
+                                  : <text x={q.x} y={q.y + 3} textAnchor="middle" fontSize={8} fontWeight={700} fill={COUL}>{num}</text>}
+                              </g>
+                            );
+                          })}
+                        </g>
+                      );
+                    })}
+                    {curseurMesure && !survol && (() => {
+                      const q = toScreen(curseurMesure.point);
+                      const coul = curseurMesure.type === "jonction" ? "#16A34A" : curseurMesure.type === "objet" ? "#F59E0B" : COUL;
+                      return (
+                        <g>
+                          {enCours && (
+                            <>
+                              <line x1={toScreen(enCours.point).x} y1={toScreen(enCours.point).y} x2={q.x} y2={q.y} stroke={COUL} strokeWidth={2} strokeDasharray="3,4" opacity={0.8} />
+                              <EtiquetteLongueur aPx={toScreen(enCours.point)} bPx={q} texte={`${fmt(distance(enCours.point, curseurMesure.point))}  (Δx ${fmt(Math.abs(curseurMesure.point.x - enCours.point.x))} · Δy ${fmt(Math.abs(curseurMesure.point.y - enCours.point.y))})`} actif />
+                            </>
+                          )}
+                          <circle cx={q.x} cy={q.y} r={curseurMesure.type === "libre" ? 4 : 9} fill="none" stroke={coul} strokeWidth={2.5} />
+                          <line x1={q.x - 5} y1={q.y} x2={q.x + 5} y2={q.y} stroke={coul} strokeWidth={1.5} />
+                          <line x1={q.x} y1={q.y - 5} x2={q.x} y2={q.y + 5} stroke={coul} strokeWidth={1.5} />
+                        </g>
+                      );
                     })()}
                   </g>
                 );
