@@ -558,7 +558,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
   const dirLightRef = useRef<THREE.DirectionalLight | null>(null);
   // id d'appareillage (point_lumineux/applique) -> sa lumière 3D + le matériau de son
   // marqueur (pour faire "briller" l'ampoule elle-même, pas seulement éclairer la pièce).
-  const lumiereLightsRef = useRef<Map<number, { light: THREE.PointLight | THREE.SpotLight; mat: THREE.MeshStandardMaterial }>>(new Map());
+  const lumiereLightsRef = useRef<Map<number, { light: THREE.PointLight | THREE.SpotLight; mat: THREE.MeshStandardMaterial; ombre?: boolean }>>(new Map());
 
   const [nightMode, setNightMode] = useState(false);
   // Soleil de midi (ombres portées réelles selon l'orientation du bâtiment) — simple état de VUE.
@@ -880,12 +880,12 @@ const Vue3D = forwardRef<Vue3DHandle, {
           light.position.set(app.x, hCable - 0.12, app.y);
           light.target.position.set(app.x, 0, app.y);
           scene.add(light.target);
-          light.castShadow = true;
+          light.castShadow = false;   // l'ombre est accordée à l'allumage, dans la limite du budget (voir l'effet d'éclairage)
           light.shadow.mapSize.set(512, 512);
           light.shadow.camera.near = 0.1;
           light.shadow.camera.far = light.distance;
           scene.add(light);
-          lumiereLightsRef.current.set(app.id, { light, mat: modele.ampoule });
+          lumiereLightsRef.current.set(app.id, { light, mat: modele.ampoule, ombre: true });
         } else if (estSpot(app.type) && modele.ampoule) {
           // Spot encastré : faisceau plus étroit qu'un plafonnier, qui éclaire droit vers le sol. SANS ombre portée :
           // une pièce compte facilement 6 à 12 spots, et chaque ombre ajoute une texture au shader (limite WebGL).
@@ -909,12 +909,12 @@ const Vue3D = forwardRef<Vue3DHandle, {
         } else if ((app.type === "applique" || app.type === "applique_exterieure") && modele.ampoule) {
           const light = new THREE.PointLight(0xffe0ab, 0, app.type === "applique_exterieure" ? 4 : 3, 2);
           light.position.set(px + nx * 0.12, py, pz + nz * 0.12);
-          light.castShadow = true;
+          light.castShadow = false;   // l'ombre est accordée à l'allumage, dans la limite du budget (voir l'effet d'éclairage)
           light.shadow.mapSize.set(512, 512);
           light.shadow.camera.near = 0.1;
           light.shadow.camera.far = light.distance;
           scene.add(light);
-          lumiereLightsRef.current.set(app.id, { light, mat: modele.ampoule });
+          lumiereLightsRef.current.set(app.id, { light, mat: modele.ampoule, ombre: true });
         }
       });
 
@@ -1295,8 +1295,16 @@ const Vue3D = forwardRef<Vue3DHandle, {
       if (dirLightRef.current) { dirLightRef.current.intensity = soleilActif ? 1.15 : 0.8; dirLightRef.current.castShadow = soleilActif; }
     }
 
+    // Budget d'ombres : chaque lumière qui projette une ombre ajoute une texture au shader de TOUS les matériaux, même éteinte.
+    // Au-delà de la limite WebGL (16 unités sur la plupart des cartes) les matériaux éclairés ne compilent plus et la scène
+    // disparaît. Seules les lumières ALLUMÉES projettent une ombre, dans la limite du budget ; les autres éclairent sans ombre.
+    const maxTex = rendererRef.current?.capabilities.maxTextures ?? 16;
+    let ombresRestantes = Math.max(1, Math.min(8, maxTex - 9));
     lumiereLightsRef.current.forEach((entry, id) => {
       const allumee = lumieresAllumeesIds.has(id);
+      const veutOmbre = allumee && !!entry.ombre && ombresRestantes > 0;
+      if (veutOmbre) ombresRestantes--;
+      entry.light.castShadow = veutOmbre;
       entry.light.intensity = allumee ? (nightMode ? 2.4 : 1.4) : 0;
       entry.mat.emissiveIntensity = allumee ? (nightMode ? 1.4 : 0.9) : 0.15;
     });
