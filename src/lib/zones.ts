@@ -10,7 +10,9 @@ import {
   Zone, TypeCoteZone, Point, Piece, Ouverture, OuvertureEffective, EPAISSEUR_CLOISON_ZONE_CM,
   aireDuPolygone, pointDansPolygone, distance, distanceAuSegment, positionSurSegment, uidMaison,
 } from "@/lib/maison-types";
-import { decalerContour } from "@/lib/murs";
+import { decalerContour, aimanterSurFaceMur, faceInterieureM } from "@/lib/murs";
+import { AncrageMur, ancrageMurLePlusProche, estEnFacade, estMural, TOLERANCE_MUR_M } from "@/lib/appareillage-mur";
+import { AppareillageType } from "@/lib/maison-types";
 
 // ─── Côtés ───────────────────────────────────────────────────────────────────────────────────
 export function nbCotes(contour: Point[], ferme: boolean): number {
@@ -191,4 +193,63 @@ export function definirTypeCote(z: Zone, i: number, type: TypeCoteZone): Zone {
   const cotes = z.cotes.map((c, k) => (k === i ? type : c));
   const ouvertures = type === "ouvert" ? (z.ouvertures ?? []).filter(o => o.segIndex !== i) : z.ouvertures;
   return { ...z, cotes, ouvertures };
+}
+
+// ─── APPAREILLAGE MURAL SUR UNE CLOISON DE ZONE ────────────────────────────────────────────────────────────
+// Une applique, une prise… se pose sur la FACE d'une cloison (le côté où l'on clique), comme sur un mur de pièce.
+// Position stockée = sur la face (axe de la cloison + demi-épaisseur + 2 mm) ; c'est ce décalage qui indique le côté.
+const JEU_FACE_M = 0.002;
+
+export interface AncrageCloison { pied: Point; normale: Point; distanceAxe: number; demiEpaisseur: number }
+// Cloison la plus proche de pt (distance mesurée à la FACE, pas à l'axe) ; null si au-delà de seuilM.
+export function ancrageCloisonLePlusProche(pt: Point, zones: Zone[], seuilM: number): AncrageCloison | null {
+  let best: (AncrageCloison & { dFace: number }) | null = null;
+  for (const z of zones) {
+    for (const c of cloisonsDeZone(z)) {
+      const L = distance(c.a, c.b);
+      if (L < 1e-6) continue;
+      const ux = (c.b.x - c.a.x) / L, uy = (c.b.y - c.a.y) / L;
+      const t = Math.max(0, Math.min(L, (pt.x - c.a.x) * ux + (pt.y - c.a.y) * uy));
+      const pied = { x: c.a.x + ux * t, y: c.a.y + uy * t };
+      const dAxe = distance(pt, pied);
+      const demi = c.epaisseurM / 2;
+      const dFace = Math.max(0, dAxe - demi);
+      if (dFace > seuilM || (best && dFace >= best.dFace)) continue;
+      const side = ((pt.x - pied.x) * -uy + (pt.y - pied.y) * ux) >= 0 ? 1 : -1;
+      best = { pied, normale: { x: -uy * side, y: ux * side }, distanceAxe: dAxe, demiEpaisseur: demi, dFace };
+    }
+  }
+  return best;
+}
+
+// Aimantation d'un appareillage mural posé DANS une pièce : mur de la pièce ou cloison de zone, le plus proche des deux.
+export function aimanterMural(pt: Point, piece: Piece, zones: Zone[], type: AppareillageType, seuilM: number): Point {
+  if (!estMural(type)) return pt;
+  const mur = aimanterSurFaceMur(pt, piece, type, seuilM);
+  const dMur = distance(mur, pt);
+  const murSnappe = dMur > 1e-9;
+  const cl = ancrageCloisonLePlusProche(pt, zones, seuilM);
+  if (!cl) return mur;
+  const surCloison = { x: cl.pied.x + cl.normale.x * (cl.demiEpaisseur + JEU_FACE_M), y: cl.pied.y + cl.normale.y * (cl.demiEpaisseur + JEU_FACE_M) };
+  return !murSnappe || distance(surCloison, pt) < dMur ? surCloison : mur;
+}
+
+// Ancrage mural complet d'un appareillage déjà posé (affichage 2D, impression, 3D) : cloison de zone d'abord (si le
+// point est sur sa face), sinon mur de la pièce (face intérieure finie, ou façade extérieure). null = pas contre un mur.
+//  normale : du mur vers le côté où l'appareillage est posé · faceM : épaisseur à franchir entre l'axe/tracé et la face
+//  · segIndex : mur de la pièce (-1 pour une cloison de zone).
+export interface AncrageMural { pied: Point; normale: Point; faceM: number; segIndex: number; facade: boolean; cloison: boolean }
+export function ancrageMural(pt: Point, piece: Piece, zones: Zone[]): AncrageMural | null {
+  const cl = ancrageCloisonLePlusProche(pt, zones, 0.02);
+  if (cl && Math.abs(cl.distanceAxe - cl.demiEpaisseur) <= 0.02) {
+    return { pied: cl.pied, normale: cl.normale, faceM: cl.demiEpaisseur, segIndex: -1, facade: false, cloison: true };
+  }
+  const anc: AncrageMur | null = ancrageMurLePlusProche(pt, piece.contour);
+  if (!anc || anc.distance > TOLERANCE_MUR_M) return null;
+  const facade = estEnFacade(pt, piece.contour, anc);
+  return {
+    pied: anc.pied, segIndex: anc.segIndex, facade, cloison: false,
+    normale: facade ? { x: -anc.normale.x, y: -anc.normale.y } : anc.normale,
+    faceM: facade ? 0 : faceInterieureM(piece, anc.segIndex),
+  };
 }

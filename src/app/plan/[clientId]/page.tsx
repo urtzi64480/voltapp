@@ -45,7 +45,7 @@ import { decalerNiveau } from "@/lib/deplacer-niveau";
 import { migrerModeleMurs, aimanterSurFaceMur, aimanterTableauSurMur, preparerMurs, definirMitoyens, mitoyensDe, longueursUtilesCm, geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
 import { accrocherSurContour, apercuCloison, appliquerCloison, OptionsCloison, PointAccroche } from "@/lib/cloisons";
 import type { CloisonZone } from "@/lib/zones";
-import { cotesParDefaut, nouvelleZone, validerTraceZone, surfaceZone, centreEtiquetteZone, cloisonsDeZone, quadCloison, decoupeOuvertureZone, longueurCote, nbCotes, segmentsZone, definirTypeCote, trouverCloisonZone, positionOuvertureValide } from "@/lib/zones";
+import { cotesParDefaut, aimanterMural, ancrageMural, ancrageCloisonLePlusProche, nouvelleZone, validerTraceZone, surfaceZone, centreEtiquetteZone, cloisonsDeZone, quadCloison, decoupeOuvertureZone, longueurCote, nbCotes, segmentsZone, definirTypeCote, trouverCloisonZone, positionOuvertureValide } from "@/lib/zones";
 import { enCm, estRectangle, redimensionnerMur, redimensionnerMurUtile, reporterAppareillages } from "@/lib/dimensions-piece";
 import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece";
 import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, aimanterEnFacade, estEnFacade, pieceLaPlusProche, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
@@ -533,15 +533,13 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       // Même logique qu'à l'écran : carré tangent au mur, symbole tourné vers l'intérieur.
       const TAILLE_SYM = 10;
       let cxP = pos.x, cyP = pos.y, rotP = 0;
-      const ancBrutP = estMural(a.type) ? ancrageMurLePlusProche(ptAncreP, p.contour) : null;
-      const facadeP = !!ancBrutP && estEnFacade(ptAncreP, p.contour, ancBrutP);
-      const ancP = ancBrutP && facadeP ? { ...ancBrutP, normale: { x: -ancBrutP.normale.x, y: -ancBrutP.normale.y } } : ancBrutP;
-      if (ancP && ancP.distance <= TOLERANCE_MUR_M) {
+      const ancP = estMural(a.type) ? ancrageMural(ptAncreP, p, niveauResultat.zones ?? []) : null;
+      if (ancP) {
         const pf = toPx(ancP.pied);
         const pn = toPx({ x: ancP.pied.x + ancP.normale.x * 0.1, y: ancP.pied.y + ancP.normale.y * 0.1 });
         const ln = Math.hypot(pn.x - pf.x, pn.y - pf.y) || 1;
         const nxp = (pn.x - pf.x) / ln, nyp = (pn.y - pf.y) / ln;
-        const demiP = TAILLE_SYM * 0.75 + (facadeP ? 0.8 : Math.max(0.8, faceInterieureM(p, ancP.segIndex) * scale));
+        const demiP = TAILLE_SYM * 0.75 + Math.max(0.8, ancP.faceM * scale);
         cxP = pf.x + nxp * demiP; cyP = pf.y + nyp * demiP;
         rotP = Math.atan2(nxp, -nyp) * 180 / Math.PI;
       }
@@ -2231,7 +2229,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const seuilSnapM = SNAP_MUR_PX / (PX_PER_M * zoom);
         const mAimante = pieceDrag && appDrag && !e.altKey
           ? (pointDansPolygone(mAligne, pieceDrag.contour)
-              ? aimanterSurFaceMur(mAligne, pieceDrag, appDrag.type, seuilSnapM)
+              ? aimanterMural(mAligne, pieceDrag, niveauCourant?.zones ?? [], appDrag.type, seuilSnapM)
               : aimanterEnFacade(mAligne, pieceDrag.contour, appDrag.type, seuilSnapM * 2))   // dehors : façade extérieure du mur le plus proche
           : mAligne;
         // Volet roulant : une fois près d'une fenêtre, il se centre dessus (Alt = position libre).
@@ -2247,7 +2245,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             if (gid != null) {
               // Plaque multiple : tous les postes suivent, re-disposés autour de la nouvelle position.
               const membres = p.appareillages.filter(a => a.groupeId === gid).sort((a, b) => (a.rangPlaque ?? 0) - (b.rangPlaque ?? 0));
-              const pts = disposerPlaque(m, p.contour, membres.length);
+              const clPl = ancrageCloisonLePlusProche(m, niveauCourant?.zones ?? [], 0.02);
+              const pts = disposerPlaque(m, p.contour, membres.length, clPl?.normale);
               const nouvelle = new Map(membres.map((a, k) => [a.id, pts[k]] as const));
               return { ...p, appareillages: p.appareillages.map(a => nouvelle.has(a.id) ? { ...a, x: nouvelle.get(a.id)!.x, y: nouvelle.get(a.id)!.y } : a) };
             }
@@ -3938,14 +3937,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         return;
       }
       const seuilSnapM = SNAP_MUR_PX / (PX_PER_M * zoom);
-      const mAimantee = e.altKey ? m : horsPiece ? aimanterEnFacade(m, piece.contour, placementType, seuilSnapM * 2) : aimanterSurFaceMur(m, piece, placementType, seuilSnapM);
+      const mAimantee = e.altKey ? m : horsPiece ? aimanterEnFacade(m, piece.contour, placementType, seuilSnapM * 2) : aimanterMural(m, piece, niveauActif?.zones ?? [], placementType, seuilSnapM);
       const mPose = placementType === "volet_roulant" && !e.altKey && niveauActif
         ? recentrerVolet(mAimantee, piece, niveauActif.pieces)
         : mAimantee;
       if (plaquePostes && plaquePostes.length >= MIN_POSTES_PLAQUE) {
         // Appareillage multiple : tous les postes d'un coup, alignés le long du mur, centrés sur le clic.
         const postes = nouvellePlaque(plaquePostes, mPose.x, mPose.y);
-        const pts = disposerPlaque(mPose, piece.contour, postes.length);
+        const clPl = ancrageCloisonLePlusProche(mPose, niveauActif?.zones ?? [], 0.02);
+        const pts = disposerPlaque(mPose, piece.contour, postes.length, clPl?.normale);
         postes.forEach((a, i) => { a.x = pts[i].x; a.y = pts[i].y; });
         updateNiveauActif(n => ({
           ...n,
@@ -5796,15 +5796,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 // Poste d'une plaque multiple : ancrage au mur sur le CENTRE de la plaque, puis décalage le long du mur.
                 const infoPl = a.groupeId != null ? infosPlaquesParPiece.get(piece.id)?.get(a.groupeId) : undefined;
                 const ptAncre = infoPl ? { x: infoPl.gx, y: infoPl.gy } : { x: a.x, y: a.y };
-                const ancBrut = estMural(a.type) ? ancrageMurLePlusProche(ptAncre, piece.contour) : null;
-                // Posé à l'extérieur : sur la façade, la normale regarde vers l'extérieur et il n'y a pas de doublage à franchir.
-                const facade = !!ancBrut && estEnFacade(ptAncre, piece.contour, ancBrut);
-                const anc = ancBrut && facade ? { ...ancBrut, normale: { x: -ancBrut.normale.x, y: -ancBrut.normale.y } } : ancBrut;
+                // Mur de la pièce (face intérieure finie ou façade extérieure) ou cloison de zone : la normale regarde vers le côté posé.
+                const anc = estMural(a.type) ? ancrageMural(ptAncre, piece, niveauActif?.zones ?? []) : null;
                 let cx = p.x, cy = p.y, rot = 0, nxs = 0, nys = 0, facePx = 2;
                 if (infoPl) { const pc0 = toScreen(ptAncre); cx = pc0.x; cy = pc0.y; }
-                if (anc && anc.distance <= TOLERANCE_MUR_M) {
+                if (anc) {
                   // Le point stocké est sur l'AXE du mur ; l'appareillage se pose sur sa face intérieure finie.
-                  facePx = facade ? 2 : Math.max(2, faceInterieureM(piece, anc.segIndex) * PX_PER_M * zoom);
+                  facePx = Math.max(2, anc.faceM * PX_PER_M * zoom);
                   const pPied = toScreen(anc.pied);
                   const pN = toScreen({ x: anc.pied.x + anc.normale.x * 0.1, y: anc.pied.y + anc.normale.y * 0.1 });
                   const lenN = Math.hypot(pN.x - pPied.x, pN.y - pPied.y) || 1;
@@ -5826,7 +5824,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 // Volet roulant : trait pointillé sur TOUTE la largeur de la fenêtre qu'il équipe
                 // (convention des plans : le volet se lit le long de la baie), à 4 px dans la pièce.
                 let traitVolet: { x1: number; y1: number; x2: number; y2: number } | null = null;
-                if (a.type === "volet_roulant" && anc && anc.distance <= TOLERANCE_MUR_M) {
+                if (a.type === "volet_roulant" && anc && anc.segIndex >= 0) {
                   const baie = baieDuVolet({ x: a.x, y: a.y }, piece, niveauActif.pieces);
                   if (baie.detectee) {
                     const sg = piece.contour[(anc.segIndex + 1) % piece.contour.length], sa = piece.contour[anc.segIndex];

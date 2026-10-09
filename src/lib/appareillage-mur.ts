@@ -222,12 +222,12 @@ export function droiteFaceAuMur(normale: Point): Point {
 
 // Positions (sur l'axe du mur) des n postes d'une plaque centrée sur `centre` : alignés le long
 // du mur le plus proche, entraxe ENTRAXE_POSTE_M, rang 0 à gauche (vu de la pièce).
-export function disposerPlaque(centre: Point, contour: Point[], n: number): Point[] {
-  const anc = ancrageMurLePlusProche(centre, contour);
+export function disposerPlaque(centre: Point, contour: Point[], n: number, normaleImposee?: Point): Point[] {
+  const anc = normaleImposee ? null : ancrageMurLePlusProche(centre, contour);
   // Posée contre le mur (à TOLERANCE_MUR_M près) → collée dessus ; au-delà (placement libre, Alt) → là où elle est,
-  // mais toujours alignée parallèlement au mur le plus proche.
+  // mais toujours alignée parallèlement au mur le plus proche. normaleImposee = posée sur une cloison de zone : alignée sur elle.
   const base = anc && anc.distance <= TOLERANCE_MUR_M ? anc.pied : centre;
-  const droite = anc ? droiteFaceAuMur(anc.normale) : { x: 1, y: 0 };
+  const droite = normaleImposee ? droiteFaceAuMur(normaleImposee) : anc ? droiteFaceAuMur(anc.normale) : { x: 1, y: 0 };
   return Array.from({ length: n }, (_, k) => {
     const d = (k - (n - 1) / 2) * ENTRAXE_POSTE_M;
     return { x: base.x + droite.x * d, y: base.y + droite.y * d };
