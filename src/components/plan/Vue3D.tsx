@@ -573,7 +573,10 @@ const Vue3D = forwardRef<Vue3DHandle, {
   // état de VUE, jamais écrit dans le plan ; sans entrée, c'est la valeur enregistrée
   // (AppareillagePlace.voletOuvertPct, réglée depuis le plan 2D) qui s'applique.
   const [voletsOverride, setVoletsOverride] = useState<Record<number, number>>({});
-  const voletsRef = useRef<Map<number, { modele: ModeleVolet; defaut: number }>>(new Map());
+  const voletsOverrideRef = useRef<Record<number, number>>({});
+  voletsOverrideRef.current = voletsOverride;
+  // Comme les portes : « courant » glisse vers « cible » à chaque image (animation douce du tablier).
+  const voletsRef = useRef<Map<number, { modele: ModeleVolet; defaut: number; courant: number; cible: number }>>(new Map());
   // Portes ouvrables : ouverture 0 (fermée) … 100 (ouverte) forcée depuis le panneau 3D ou par un clic sur la
   // porte — simple état de VUE (jamais écrit dans le plan). L'animation glisse « courant » vers « cible » à
   // chaque image, sans reconstruire la scène.
@@ -813,16 +816,19 @@ const Vue3D = forwardRef<Vue3DHandle, {
           const nxv = baie.ancrage?.normale.x ?? 0, nzv = baie.ancrage?.normale.y ?? 1;
           const segV = baie.ancrage?.segIndex ?? 0;
           const recul = faceInterieureM(pieceLive, segV) + 0.002;   // face intérieure FINIE (après doublage)
+          // Ouverture initiale = celle déjà forcée par la vue (clic, curseur), sinon la valeur enregistrée dans le plan.
+          const ouvertureVolet = voletsOverrideRef.current[app.id] ?? live.voletOuvertPct ?? 0;
           const vol = creerVoletRoulant({
             largeur: baie.largeur, hauteur: baie.hauteur, allege: baie.allege,
             caisson: live.caisson ?? "interieur", epaisseurMur: epaisseurTotaleM(pieceLive, segV) + 0.004, plafond: hauteurMurs,
-            ouvertPct: live.voletOuvertPct ?? 0, couleur: live.voletCouleur, couleurCircuit: couleurCircuitApp,
+            ouvertPct: ouvertureVolet, couleur: live.voletCouleur, couleurCircuit: couleurCircuitApp,
           });
+          vol.groupe.traverse(obj => { obj.userData.voletId = app.id; });   // clic sur le volet = l'ouvrir / le fermer
           const pxv = baie.centre.x + nxv * recul, pzv = baie.centre.y + nzv * recul;
           vol.groupe.position.set(pxv, 0, pzv);
           vol.groupe.rotation.y = Math.atan2(nxv, nzv);
           scene.add(vol.groupe);
-          voletsRef.current.set(app.id, { modele: vol, defaut: live.voletOuvertPct ?? 0 });
+          voletsRef.current.set(app.id, { modele: vol, defaut: live.voletOuvertPct ?? 0, courant: ouvertureVolet, cible: ouvertureVolet });
           posApp.set(String(app.id), new THREE.Vector3(pxv, vol.hautMoteur, pzv)); // câble → moteur
           return;
         }
@@ -1136,12 +1142,21 @@ const Vue3D = forwardRef<Vue3DHandle, {
     const raycaster = new THREE.Raycaster();
     const pointeur = new THREE.Vector2();
     const onClick = (e: MouseEvent) => {
-      if (e.button !== 0 || e.shiftKey || portesRef.current.size === 0) return;
+      if (e.button !== 0 || e.shiftKey || (portesRef.current.size === 0 && voletsRef.current.size === 0)) return;
       if (Math.hypot(e.clientX - departX, e.clientY - departY) > 4) return;
       const rect = renderer.domElement.getBoundingClientRect();
       pointeur.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
       raycaster.setFromCamera(pointeur, camera);
-      const premiere = raycaster.intersectObjects(scene.children, true).find(h => h.object instanceof THREE.Mesh);
+      // Les éléments masqués (lames d'un volet enroulé) ne comptent pas : on clique à travers.
+      const premiere = raycaster.intersectObjects(scene.children, true).find(h => h.object instanceof THREE.Mesh && h.object.visible);
+      const idVolet = premiere?.object.userData.voletId;
+      if (typeof idVolet === "number") {
+        // Volet roulant : ouvert (> 50 %) → on le ferme complètement ; sinon on l'ouvre complètement.
+        const v = voletsRef.current.get(idVolet);
+        if (!v) return;
+        setVoletsOverride(s => ({ ...s, [idVolet]: (s[idVolet] ?? v.defaut) > 50 ? 0 : 100 }));
+        return;
+      }
       const id = premiere?.object.userData.porteId;
       if (typeof id !== "number") return;
       const entree = portesRef.current.get(id);
@@ -1191,6 +1206,14 @@ const Vue3D = forwardRef<Vue3DHandle, {
         const ecart = e.cible - e.courant;
         e.courant = Math.abs(ecart) < 0.5 ? e.cible : e.courant + ecart * 0.16;
         appliquerOuverturePorte(e.reg, e.courant);
+      });
+      // Volets roulants : le tablier se déroule / s'enroule en douceur ; les lames masquées ne projettent plus
+      // d'ombre, donc le soleil entre par la fenêtre à proportion de l'ouverture (carte d'ombre recalculée à chaque image).
+      voletsRef.current.forEach(e => {
+        if (e.courant === e.cible) return;
+        const ecart = e.cible - e.courant;
+        e.courant = Math.abs(ecart) < 0.5 ? e.cible : e.courant + ecart * 0.16;
+        e.modele.setOuverture(e.courant);
       });
       renderer.render(scene, camera);
     };
@@ -1362,10 +1385,11 @@ const Vue3D = forwardRef<Vue3DHandle, {
     portesRef.current.forEach((e, id) => { e.cible = portesOverride[id] ?? e.reg.defaut; });
   }, [portesOverride, niveau, resultat, showCircuits, niveauResultat]);
 
-  // Applique l'ouverture courante à chaque volet déjà construit (sans reconstruire la scène) ;
-  // mêmes dépendances que l'effet de construction pour se réappliquer après chaque reconstruction.
+  // Fixe la cible d'ouverture de chaque volet déjà construit (sans reconstruire la scène) ; l'animation (boucle de
+  // rendu) fait glisser le tablier jusque-là. Mêmes dépendances que l'effet de construction pour se réappliquer
+  // après chaque reconstruction.
   useEffect(() => {
-    voletsRef.current.forEach((entry, id) => entry.modele.setOuverture(voletsOverride[id] ?? entry.defaut));
+    voletsRef.current.forEach((entry, id) => { entry.cible = voletsOverride[id] ?? entry.defaut; });
   }, [voletsOverride, niveau, resultat, showCircuits, niveauResultat]);
 
   return (

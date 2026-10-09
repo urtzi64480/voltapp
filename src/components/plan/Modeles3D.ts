@@ -407,6 +407,11 @@ export function creerVoletRoulant(o: OptsVolet): ModeleVolet {
   const finale = boite(W + 0.04, 0.04, 0.02, accessoire, 0, 0, z0 + s * 0.03);                  // lame finale
   g.add(finale);
 
+  // Le volet BLOQUE le soleil : coffre, coulisses et lames projettent une ombre. Une lame masquée (volet
+  // partiellement ou totalement ouvert, voir setOuverture : visible = false) ne projette plus d'ombre, donc la
+  // lumière du soleil entre par la fenêtre à proportion exacte de l'ouverture du volet.
+  g.traverse(x => { if (x instanceof THREE.Mesh) x.castShadow = true; });
+
   if (o.couleurCircuit) {
     const pastille = new THREE.Mesh(new THREE.SphereGeometry(0.02, 12, 12),
       m(o.couleurCircuit, { emissive: o.couleurCircuit, emissiveIntensity: 0.35 }));
