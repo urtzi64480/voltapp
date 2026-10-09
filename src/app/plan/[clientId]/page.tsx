@@ -4680,7 +4680,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const prioritaires = selectedAppareillage && pieceDeSelectedAppareillage && mode === "select"
       ? cotesAppareillage({ x: selectedAppareillage.x, y: selectedAppareillage.y }, pieceDeSelectedAppareillage.contour, selectedAppareillage.type, true, repereCotes(pieceDeSelectedAppareillage))
       : [];
-    const cotesPieces: Cote[] = showCotesPieces && !masquerEtiquettes
+    const cotesPieces: Cote[] = showCotesPieces
       ? niveauActif.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => {
           const { utile, utileFin } = geometrieMurs(pc);
           return pc.contour.map((_, i): Cote => {
@@ -4695,8 +4695,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           .flatMap(a => cotesAppareillage({ x: a.x, y: a.y }, pc.contour, a.type, false, repereCotes(pc))))
       : [];
     const cotesArchi: Cote[] = [
-      ...(showCotesOuv && !masquerEtiquettes ? niveauActif.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => cotesOuvertures(pc, niveauActif.pieces)) : []),
-      ...(showCotesExt && !masquerEtiquettes ? [...cotesExterieures(niveauActif.pieces), ...coteHorsTout(niveauActif.pieces)] : []),
+      ...(showCotesOuv ? niveauActif.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => cotesOuvertures(pc, niveauActif.pieces)) : []),
+      ...(showCotesExt ? [...cotesExterieures(niveauActif.pieces), ...coteHorsTout(niveauActif.pieces)] : []),
     ];
     return filtrerCotesLisibles([...cotesPieces, ...cotesArchi, ...autres], toScreen, prioritaires)
       .map(c => geometrieCote(c, toScreen, 14))
@@ -4723,7 +4723,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // Épaisseur de chaque mur (cm) — structure, + doublage — posée sur le mur, uniquement si le trait
   // est assez épais à l'écran pour la porter (sinon elle ne servirait qu'à encombrer).
-  const epaisseursMurs = showCotesPieces && !masquerEtiquettes && niveauActif ? niveauActif.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => {
+  const epaisseursMurs = showCotesPieces && niveauActif ? niveauActif.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => {
     const g = geometrieMurs(pc);
     return g.quads.flatMap(q => {
       const sp = murDe(pc, q.i);
@@ -4862,7 +4862,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             )}
             {!vue3D && (
               <button onClick={() => setMasquerEtiquettes(v => !v)} className={`btn-ghost !px-2 !py-1 !text-xs ${masquerEtiquettes ? "!bg-ink-900 !text-volt-400" : ""}`}
-                title={masquerEtiquettes ? "Noms et dimensions des pièces masqués — cliquer pour les réafficher" : "Plan épuré : masquer d'un coup tous les noms et toutes les dimensions des pièces"}>Épuré</button>
+                title={masquerEtiquettes ? "Noms et dimensions des pièces masqués (les cotes cochées restent affichées) — cliquer pour les réafficher" : "Plan épuré : masquer d'un coup les noms, surfaces et dimensions des pièces (les cotes cochées dans « Cotes » restent affichées)"}>Épuré</button>
             )}
             <button onClick={() => setModeFocus(f => !f)} className={`btn-ghost !px-2 !py-1 ${modeFocus ? "!bg-ink-900 !text-volt-400" : ""}`}
               title={modeFocus ? "Quitter le plein écran (Échap)" : "Plein écran"}>
@@ -5201,8 +5201,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             );
           })()}
           <button onClick={() => setMasquerEtiquettes(v => !v)} className={`${masquerEtiquettes ? "btn-volt" : "btn-ghost"} !text-xs`}
-            title={masquerEtiquettes ? "Noms et dimensions des pièces masqués — cliquer pour les réafficher" : "Plan épuré : masquer d'un coup tous les noms et toutes les dimensions des pièces (surfaces, longueurs de murs, cotes, épaisseurs) pour placer appareillages et circuits sur un écran dégagé"}>
-            {masquerEtiquettes ? "👁 Réafficher noms et cotes" : "🧹 Plan épuré"}
+            title={masquerEtiquettes ? "Noms et dimensions des pièces masqués (les cotes cochées restent affichées) — cliquer pour les réafficher" : "Plan épuré : masquer d'un coup les noms, surfaces et longueurs de murs des pièces, pour placer appareillages et circuits sur un écran dégagé (les cotes cochées dans « Cotes » restent affichées)"}>
+            {masquerEtiquettes ? "👁 Réafficher noms des pièces" : "🧹 Plan épuré"}
           </button>
           <div className="relative">
             {(() => {
