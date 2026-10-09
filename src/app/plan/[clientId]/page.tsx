@@ -2013,6 +2013,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [showCotesExt, setShowCotesExt] = useState(false);   // cotes extérieures des murs + hors-tout
   const [showCotesOuv, setShowCotesOuv] = useState(false);   // chaîne de cotes des ouvertures
   const [menuCotesOuvert, setMenuCotesOuvert] = useState(false);
+  const [menuEffacerOuvert, setMenuEffacerOuvert] = useState(false);
   const [showLongueurs, setShowLongueurs] = useState(false);
   // Ids de breakers actuellement affichés sur le plan (sous-ensemble de resultat.breakers) —
   // permet d'isoler un ou plusieurs circuits à l'écran pour vérifier leur tracé avant de les
@@ -4430,6 +4431,34 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setCircuitsVisibles(new Set(res.breakers.map(b => b.id)));
   };
 
+  // Efface des circuits DÉJÀ GÉNÉRÉS : les appareillages concernés redeviennent « non raccordés » et les circuits quittent la
+  // liste, SANS exclure personne (une nouvelle génération les recrée). Les circuits manuels gardent leur définition (ils
+  // repassent « à générer »). reinitialiser = remet aussi à zéro les circuits manuels et les exclusions de tout le plan.
+  // Ctrl+Z annule.
+  const effacerCircuitsGeneres = (filtre: (b: Breaker) => boolean, reinitialiser = false) => {
+    if (!resultat) return;
+    const ids = new Set(resultat.breakers.filter(filtre).map(b => b.id));
+    if (ids.size === 0 && !reinitialiser) return;
+    const reste = resultat.breakers.filter(b => !ids.has(b.id));
+    const strip = (n: Niveau): Niveau => ({
+      ...n,
+      ...(reinitialiser ? { circuitsManuels: [], appareillagesExclus: [] } : {}),
+      pieces: n.pieces.map(p => ({
+        ...p,
+        appareillages: p.appareillages.map(a => {
+          const efface = a.circuitId != null && ids.has(a.circuitId);
+          if (!efface && !(reinitialiser && a.circuitManuelId != null)) return a;
+          return { ...a, ...(efface ? { circuitId: undefined } : {}), ...(reinitialiser ? { circuitManuelId: undefined } : {}) };
+        }),
+      })),
+    });
+    setNiveaux(nvs => nvs.map(strip));
+    if (reste.length === 0) { setResultat(null); setShowCircuits(false); }
+    else setResultat({ ...resultat, breakers: reste, maison: { niveaux: resultat.maison.niveaux.map(strip) } });
+    setCircuitsVisibles(prev => new Set([...prev].filter(id => !ids.has(id))));
+    setMenuEffacerOuvert(false);
+  };
+
   const toggleCircuitVisible = (breakerId: number) => {
     setCircuitsVisibles(prev => {
       const next = new Set(prev);
@@ -5048,6 +5077,51 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           <div className="w-px h-5 bg-ink-200 mx-0.5 hidden sm:block" />
 
           <button onClick={handleGenerer} className="btn-volt !text-xs"><Sparkles size={13} /> Générer les circuits</button>
+          <div className="relative">
+            <button onClick={() => setMenuEffacerOuvert(o => !o)} disabled={!resultat} className="btn-ghost !text-xs disabled:opacity-40"
+              title="Effacer des circuits déjà générés : tous, ceux d'un niveau, ou un seul">
+              <Trash2 size={13} /> Effacer <ChevronDown size={12} />
+            </button>
+            {menuEffacerOuvert && resultat && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setMenuEffacerOuvert(false)} />
+                <div className="absolute left-0 top-full mt-1 z-40 w-80 card p-2 flex flex-col gap-0.5 shadow-lg">
+                  <button className="btn-ghost !text-xs !justify-start" onClick={() => effacerCircuitsGeneres(() => true)}>
+                    🗑 Tous les circuits générés ({resultat.breakers.length})
+                  </button>
+                  {niveauActif && (() => {
+                    const nb = resultat.breakers.filter(b => b.niveauId === niveauActif.id).length;
+                    return (
+                      <button className="btn-ghost !text-xs !justify-start disabled:opacity-40" disabled={nb === 0}
+                        onClick={() => effacerCircuitsGeneres(b => b.niveauId === niveauActif.id)}>
+                        🗑 Ceux de « {niveauActif.nom || NIVEAU_TYPES[niveauActif.type]} » ({nb})
+                      </button>
+                    );
+                  })()}
+                  <div className="border-t border-ink-100 my-1" />
+                  <p className="text-[10px] uppercase tracking-wide text-ink-400 px-2">Un seul circuit</p>
+                  <div className="max-h-56 overflow-y-auto flex flex-col gap-0.5">
+                    {resultat.breakers.map(b => {
+                      const niv = niveaux.find(n => n.id === b.niveauId);
+                      return (
+                        <button key={b.id} className="btn-ghost !text-xs !justify-between gap-2" onClick={() => effacerCircuitsGeneres(x => x.id === b.id)}
+                          title="Effacer ce circuit (il sera recréé à la prochaine génération)">
+                          <span className="truncate text-left">{b.label}</span>
+                          <span className="text-[10px] text-ink-400 shrink-0">{niv ? (niv.nom || NIVEAU_TYPES[niv.type]) : ""}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="border-t border-ink-100 my-1" />
+                  <button className="btn-ghost !text-xs !justify-start !text-red-500"
+                    onClick={() => { if (window.confirm("Tout réinitialiser : circuits générés, circuits manuels et appareillages exclus de toute la maison ?")) effacerCircuitsGeneres(() => true, true); }}>
+                    ⚠ Tout réinitialiser (y compris circuits manuels)
+                  </button>
+                  <p className="text-[10px] text-ink-400 px-2 pt-1">Les appareillages redeviennent non raccordés ; « Générer » recrée les circuits. Ctrl+Z annule.</p>
+                </div>
+              </>
+            )}
+          </div>
           <button onClick={() => setShowCircuits(s => !s)} disabled={!resultat} className="btn-ghost !text-xs disabled:opacity-40">
             {showCircuits ? <Eye size={13} /> : <EyeOff size={13} />} Afficher les circuits
           </button>
