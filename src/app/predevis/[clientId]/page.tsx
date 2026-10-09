@@ -20,6 +20,7 @@ import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { ArrowLeft, AlertTriangle, Search, Sparkles, Save, Cable, RefreshCw } from "lucide-react";
+import { sousCategoriesDe, aSousCategorie, sousCategoriePrincipale, libelleSousCategories } from "@/lib/sous-categories";
 
 const LABEL_GAMME: Record<string, string> = { entree: "Entrée de gamme", moyenne: "Moyenne gamme", haut: "Haut de gamme" };
 
@@ -75,7 +76,7 @@ function optionEffective(besoin: BesoinApparie, etat: EtatChoix, prestations: Pr
       prestation_id: p.id, nom: p.nom, prix_unitaire: p.prix_unitaire, unite: p.unite,
       type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire && p.longueur_unitaire > 0 ? p.longueur_unitaire : null,
       quantiteMultiplicateur: multiplicateurPourArticle(besoin.sousCategorie, p.sous_categorie),
-      sousCategorieArticle: p.sous_categorie ?? besoin.sousCategorie,
+      sousCategorieArticle: aSousCategorie(p, besoin.sousCategorie) ? besoin.sousCategorie : (sousCategoriePrincipale(p) ?? besoin.sousCategorie),
       image_url: p.image_url ?? null,
     };
     return optionAvecOffre(base, p, offre);
@@ -101,7 +102,7 @@ function totalBobinable(besoin: BesoinApparie, option: { longueur_unitaire?: num
   const reliquat = Math.round((quantiteReelle - nbBobines * L) * 100) / 100;
   let total = nbBobines * option.prix_unitaire;
   if (reliquat > 0.01) {
-    const auMetre = prestations.find(p => p.sous_categorie === (option.sousCategorieArticle ?? besoin.sousCategorie)
+    const auMetre = prestations.find(p => aSousCategorie(p, option.sousCategorieArticle ?? besoin.sousCategorie)
       && (p.gamme ?? null) === (option.gamme ?? null) && !p.longueur_unitaire);
     total += auMetre ? Math.ceil(reliquat) * prixCompagnonAuMetre(auMetre, option.fournisseur_nom) : option.prix_unitaire; // bobine de plus si pas d'article au mètre
   }
@@ -122,7 +123,7 @@ function decompositionLabel(besoin: BesoinApparie, option: { longueur_unitaire?:
   // avec nb=0 (besoin plus petit qu'une bobine), l'ancien texte "Xm restants... sinon 1
   // bobine de plus" donnait l'impression qu'aucune bobine n'était prévue, alors que le
   // résultat final en achète bien une.
-  const auMetre = prestations.find(p => p.sous_categorie === (option.sousCategorieArticle ?? besoin.sousCategorie)
+  const auMetre = prestations.find(p => aSousCategorie(p, option.sousCategorieArticle ?? besoin.sousCategorie)
     && (p.gamme ?? null) === (option.gamme ?? null) && !p.longueur_unitaire);
   const baseBobines = nb > 0 ? `${nb} bobine${nb > 1 ? "s" : ""} de ${L}m` : "";
   if (auMetre) {
@@ -257,7 +258,7 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
           inclureKits={false}
           produitActuelId={etat.mode === "autre" ? etat.autrePrestationId : (besoin.options[etat.optionIndex]?.prestation_id ?? null)}
           fournisseurPrefere={effective?.fournisseur_nom ?? null}
-          filtreInitial={prestations.some(p => p.sous_categorie === besoin.sousCategorie) ? { sousCat: besoin.sousCategorie } : {}}
+          filtreInitial={prestations.some(p => aSousCategorie(p, besoin.sousCategorie)) ? { sousCat: besoin.sousCategorie } : {}}
           onChoisir={(p, offre) => onChange({ ...etat, mode: "autre", autrePrestationId: p.id, fournisseurId: offre?.id ?? "" })}
           onFermer={() => setPickerOuvert(false)}
         />

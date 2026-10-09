@@ -15,6 +15,7 @@ import { fmt, cn } from "@/lib/utils";
 import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
 import { imageOffre, libelleOffre, libelleOffreMarque, marqueOffre, marquesDe, offresTriees, offrePourFournisseur, offrePrincipale, prixVenteOffre, fourchettePrix, margePct } from "@/lib/fournisseurs";
 import type { Prestation, PrestationFournisseur } from "@/types";
+import { sousCategoriesDe, aSousCategorie, sousCategoriePrincipale, libelleSousCategories } from "@/lib/sous-categories";
 
 export type PrestationPicker = Prestation & { kit_description?: string | null };
 
@@ -40,7 +41,7 @@ function passe(p: PrestationPicker, f: FiltresPicker, texte: string, ignorer?: k
   if (ignorer !== "marque" && f.marque && !marquesDe(p).includes(f.marque)) return false;
   if (ignorer !== "fournisseur" && f.fournisseur && !(p.fournisseurs ?? []).some(o => libelleOffre(o) === f.fournisseur)) return false;
   if (ignorer !== "gamme" && f.gamme && p.gamme !== f.gamme) return false;
-  if (ignorer !== "sousCat" && f.sousCat && p.sous_categorie !== f.sousCat) return false;
+  if (ignorer !== "sousCat" && f.sousCat && !aSousCategorie(p, f.sousCat)) return false;
   if (ignorer !== "q" && f.q.trim()) {
     const tokens = norm(f.q).split(/\s+/).filter(Boolean);
     if (!tokens.every(t => texte.includes(t))) return false;
@@ -150,7 +151,7 @@ function ProduitLigne({ p, remplacement, filtreFournisseur, filtreMarque, prefer
             {actuel && <span className="badge text-xs bg-volt-100 text-volt-700">Actuel</span>}
           </div>
           <p className="text-xs text-ink-400 truncate mt-0.5">
-            {[marques.join(" / "), p.categorie, p.sous_categorie, p.gamme ? LABEL_GAMME[p.gamme] : null].filter(Boolean).join(" · ")}
+            {[marques.join(" / "), p.categorie, libelleSousCategories(p), p.gamme ? LABEL_GAMME[p.gamme] : null].filter(Boolean).join(" · ")}
           </p>
           {type === "kit" && p.kit_description && <p className="text-xs text-ink-400 italic truncate">{p.kit_description}</p>}
           {offres.length >= 2 ? (
@@ -290,7 +291,7 @@ export default function ProduitPicker({
       marques: compter(pour("marque").flatMap(p => marquesDe(p))),
       fournisseurs: compter(pour("fournisseur").flatMap(p => Array.from(new Set((p.fournisseurs ?? []).map(libelleOffre))))),
       gammes: compter(pour("gamme").map(p => p.gamme)),
-      sousCats: compter(pour("sousCat").map(p => p.sous_categorie)),
+      sousCats: compter(pour("sousCat").flatMap(p => sousCategoriesDe(p))),
     };
   }, [base, f, textes]);
 

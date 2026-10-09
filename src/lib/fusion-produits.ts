@@ -19,6 +19,7 @@ import {
   offresTriees, type OffreNormalisee,
 } from "@/lib/fournisseurs";
 import type { Prestation } from "@/types";
+import { sousCategoriesDe } from "@/lib/sous-categories";
 
 type Produit = Prestation & { est_kit?: boolean };
 
@@ -62,7 +63,7 @@ export function detecterDoublons(prestations: Produit[]): GroupeDoublons[] {
     const nom = nomSansMarques(p.nom, marques);
     if (!nom) return;
     const cle = [
-      nom, normTexte(p.categorie), (p.sous_categorie ?? "").trim(), normTexte(p.unite),
+      nom, normTexte(p.categorie), [...sousCategoriesDe(p)].sort().join("|"), normTexte(p.unite),
       p.gamme ?? "", p.longueur_unitaire && p.longueur_unitaire > 0 ? String(p.longueur_unitaire) : "0",
     ].join("|");
     groupes.set(cle, [...(groupes.get(cle) ?? []), p]);

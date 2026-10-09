@@ -17,6 +17,7 @@ import {
   detecterDoublons, fusionnerProduits, nomGenerique, produitDeReference, type GroupeDoublons,
 } from "@/lib/fusion-produits";
 import type { Prestation } from "@/types";
+import { sousCategoriesDe, aSousCategorie, sousCategoriePrincipale, libelleSousCategories } from "@/lib/sous-categories";
 
 type Produit = Prestation & { est_kit?: boolean };
 interface EtatGroupe { reference: string; nom: string; exclus: string[] }
@@ -55,7 +56,7 @@ function CarteGroupe({ groupe, etat, setEtat, desactive }: {
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-ink-800 break-words">{p.nom}</p>
                 <p className="text-ink-400">
-                  {[marques.join(" / ") || "sans marque", p.sous_categorie, offres.length > 0 ? `${offres.length} offre${offres.length > 1 ? "s" : ""}` : null].filter(Boolean).join(" · ")}
+                  {[marques.join(" / ") || "sans marque", libelleSousCategories(p), offres.length > 0 ? `${offres.length} offre${offres.length > 1 ? "s" : ""}` : null].filter(Boolean).join(" · ")}
                 </p>
                 {offres.length > 0 && (
                   <p className="text-ink-400 truncate">{offres.map(libelleOffre).join(", ")}</p>

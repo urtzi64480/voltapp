@@ -17,6 +17,7 @@ import {
   Link, Wrench, Package, Search, Download, Upload, AlertCircle,
   CheckCircle2, TrendingUp, Gift, Layers, RefreshCw, ExternalLink, GitMerge, Link2
 } from "lucide-react";
+import { sousCategoriesDe, joindreSousCategories, normaliserSousCategories, libelleSousCategories } from "@/lib/sous-categories";
 
 type PrestationExt = Prestation & { prix_achat?: number | null; est_kit?: boolean; kit_description?: string | null };
 
@@ -514,25 +515,55 @@ const SOUS_CATEGORIES_CONNUES: { code: string; label: string }[] = [
   { code: "main_oeuvre", label: "Main d'œuvre" },
 ];
 
+// Sous-catégories (« nomenclatures ») d'un article : une ou PLUSIEURS — un même interrupteur peut être un simple ET un
+// va-et-vient. Chaque code est une pastille ; on en ajoute en tapant (autocomplétion sur la nomenclature du pré-devis) puis
+// Entrée / virgule / clic sur une suggestion, on en retire avec ✕ ou Retour arrière. Valeur stockée : codes séparés par « | ».
 function SousCategorieInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false);
-  const q = value.trim().toLowerCase();
-  const suggestions = q.length > 0
-    ? SOUS_CATEGORIES_CONNUES.filter(c => c.code.toLowerCase().includes(q) || c.label.toLowerCase().includes(q))
-    : SOUS_CATEGORIES_CONNUES;
+  const [saisie, setSaisie] = useState("");
+  const codes = sousCategoriesDe(value);
+  const q = saisie.trim().toLowerCase();
+  const suggestions = SOUS_CATEGORIES_CONNUES
+    .filter(c => !codes.includes(c.code))
+    .filter(c => q.length === 0 || c.code.toLowerCase().includes(q) || c.label.toLowerCase().includes(q));
+  const ajouter = (code: string) => {
+    const c = code.trim();
+    if (c) onChange(joindreSousCategories([...codes, c]));
+    setSaisie("");
+  };
+  const retirer = (code: string) => onChange(joindreSousCategories(codes.filter(c => c !== code)));
   return (
     <div className="relative">
-      <input className="input text-sm" placeholder="Ex : fil_2.5, prise, disjoncteur_16A…"
-        value={value}
-        onChange={e => { onChange(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)} />
+      <div className="input flex flex-wrap items-center gap-1 !h-auto min-h-[2.25rem] !py-1">
+        {codes.map(c => (
+          <span key={c} className="inline-flex items-center gap-1 rounded-md bg-volt-50 border border-volt-200 px-1.5 py-0.5 text-xs font-mono font-semibold text-volt-700">
+            {c}
+            <button type="button" onClick={() => retirer(c)} className="text-volt-500 hover:text-red-500 leading-none" title="Retirer cette nomenclature">✕</button>
+          </span>
+        ))}
+        <input className="flex-1 min-w-[8rem] bg-transparent outline-none text-sm"
+          placeholder={codes.length === 0 ? "Ex : fil_2.5, prise, disjoncteur_16A…" : "Ajouter une autre nomenclature…"}
+          value={saisie}
+          onChange={e => {
+            const v = e.target.value;
+            if (/[,;|]/.test(v)) { v.split(/[,;|]/).forEach((part, i, arr) => { if (i < arr.length - 1) ajouter(part); else setSaisie(part); }); }
+            else setSaisie(v);
+            setOpen(true);
+          }}
+          onKeyDown={e => {
+            if (e.key === "Enter") { e.preventDefault(); if (saisie.trim()) ajouter(saisie); }
+            else if (e.key === "Backspace" && saisie === "" && codes.length > 0) retirer(codes[codes.length - 1]);
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => { if (saisie.trim()) ajouter(saisie); setOpen(false); }, 150)} />
+      </div>
+      {codes.length > 1 && <p className="text-[10px] text-ink-400 mt-0.5">Cet article sera proposé pour chacune de ces nomenclatures du pré-devis.</p>}
       {open && suggestions.length > 0 && (
         <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-ink-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
           {suggestions.map(s => (
             <button key={s.code} type="button"
               onMouseDown={e => e.preventDefault()}
-              onClick={() => { onChange(s.code); setOpen(false); }}
+              onClick={() => { ajouter(s.code); }}
               className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs text-left hover:bg-volt-50">
               <span className="font-mono font-semibold text-volt-600 shrink-0">{s.code}</span>
               <span className="text-ink-400 truncate">{s.label}</span>
@@ -904,7 +935,7 @@ function parseCSV(text: string): ImportRow[] {
     return {
       nom: row.nom ?? "", description: row.description ?? "",
       type_branche: row.type_branche ?? "service",
-      categorie: row.categorie || "Divers", sous_categorie: row.sous_categorie ?? "",
+      categorie: row.categorie || "Divers", sous_categorie: normaliserSousCategories(row.sous_categorie),
       marque: row.marque ?? "", unite: row.unite || "forfait",
       prix_achat: row.prix_achat ?? "", prix_unitaire: row.prix_unitaire ?? "",
       gamme: row.gamme ?? "", longueur_unitaire: row.longueur_unitaire ?? "",
@@ -1195,7 +1226,7 @@ function CategorieBlock({
                                     <p className="font-medium text-ink-900 text-sm truncate">{p.nom}</p>
                                     <BadgeConditionnement longueur={(p as any).longueur_unitaire} sousCategorie={p.sous_categorie} />
                                   </div>
-                                  <p className="text-xs text-ink-400 truncate">{[marquesProduit.join(" / "), sousCat, p.description].filter(Boolean).join(" · ")}</p>
+                                  <p className="text-xs text-ink-400 truncate">{[marquesProduit.join(" / "), libelleSousCategories(sousCat), p.description].filter(Boolean).join(" · ")}</p>
                                   {offres.length > 0 && (
                                     <button type="button" onClick={() => setOffresOuvertes(o => ({ ...o, [p.id]: !o[p.id] }))}
                                       className="inline-flex items-center gap-1 text-[11px] text-volt-600 font-medium hover:underline mt-0.5">
@@ -1360,7 +1391,7 @@ function CategorieBlock({
                   <div className="flex items-center gap-3 md:grid md:grid-cols-[2fr_90px_90px_80px]">
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-ink-900 text-sm truncate">{p.nom}</p>
-                      <p className="text-xs text-ink-400 truncate">{[sousCat, p.description].filter(Boolean).join(" · ")}</p>
+                      <p className="text-xs text-ink-400 truncate">{[libelleSousCategories(sousCat), p.description].filter(Boolean).join(" · ")}</p>
                     </div>
                     <span className="text-xs text-ink-500 hidden md:block">{p.unite}</span>
                     <span className="font-semibold text-ink-900 text-sm ml-auto md:ml-0 md:text-right">{fmt(p.prix_unitaire)}</span>
@@ -1510,7 +1541,7 @@ export default function CataloguePage() {
       user_id: session.user.id, nom: form.nom,
       description: form.description || null, prix_unitaire: prixVente,
       prix_achat: prixAchatNum, unite: form.unite, type_branche: form.type_branche,
-      categorie: cat, actif: true, sous_categorie: form.sous_categorie || null,
+      categorie: cat, actif: true, sous_categorie: normaliserSousCategories(form.sous_categorie) || null,
       marque: marquePrincipale, liens_fournisseurs: liens,
       image_url: form.image_url || null, gamme: form.gamme || null,
       longueur_unitaire: longueurCreation,
@@ -1653,7 +1684,7 @@ export default function CataloguePage() {
       let payload: any = {
         nom: r.nom, description: r.description || null,
         type_branche: r.type_branche as "service" | "materiau",
-        categorie: r.categorie || "Divers", sous_categorie: r.sous_categorie || null,
+        categorie: r.categorie || "Divers", sous_categorie: normaliserSousCategories(r.sous_categorie) || null,
         marque: r.marque || null, unite: r.unite || "forfait",
         prix_achat: r.prix_achat !== "" ? parseFloat(r.prix_achat) : null,
         prix_unitaire: parseFloat(r.prix_unitaire), image_url: r.image_url || null,

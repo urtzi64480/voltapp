@@ -81,6 +81,7 @@ import { Prestation, Gamme, DevisLigne, PrestationFournisseur } from "@/types";
 import { nomAvecConditionnement } from "@/lib/utils";
 import { PREFIXE_A_COMPLETER } from "@/lib/devis-lignes";
 import { designationProduit, imageOffre, libelleOffre, offrePrincipale, offrePourFournisseur, prixVenteOffre } from "@/lib/fournisseurs";
+import { sousCategoriesDe, aSousCategorie, sousCategoriePrincipale, libelleSousCategories } from "@/lib/sous-categories";
 
 // ─── TYPES DE BESOIN ────────────────────────────────────────────────────────
 
@@ -558,7 +559,7 @@ export function optionsPourSousCategorie(sousCategorie: string, prestations: Pre
 }
 
 function optionsPour(sousCategorie: string, prestations: Prestation[]): OptionArticle[] {
-  const items = prestations.filter(p => p.actif !== false && p.sous_categorie === sousCategorie);
+  const items = prestations.filter(p => p.actif !== false && aSousCategorie(p, sousCategorie));
   const gammes: Gamme[] = ["entree", "moyenne", "haut"];
   const versOption = (p: Prestation): OptionArticle => {
     // Par défaut : l'offre principale du produit (celle recopiée dans prestations.prix_unitaire).
@@ -659,7 +660,7 @@ function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArt
     });
   }
   if (reliquat > 0.01) {
-    const auMetre = prestations.find(p => p.sous_categorie === sousCatArticle
+    const auMetre = prestations.find(p => aSousCategorie(p, sousCatArticle)
       && (p.gamme ?? null) === (option.gamme ?? null) && !p.longueur_unitaire);
     if (auMetre) {
       const offreAuMetre = offreCompagnon(auMetre, option.fournisseur_nom);
@@ -750,7 +751,7 @@ function ajouterLignesBesoin(
 // réelle de l'article choisi : ×3 si Ben cherche et sélectionne un article "fil_X" pour un
 // besoin "cablage_X", ×1 dans tous les autres cas.
 export function multiplicateurPourArticle(besoinSousCategorie: string, articleSousCategorie: string | null | undefined): number {
-  if (besoinSousCategorie.startsWith("cablage_") && articleSousCategorie?.startsWith("fil_")) return 3;
+  if (besoinSousCategorie.startsWith("cablage_") && sousCategoriesDe(articleSousCategorie).some(c => c.startsWith("fil_"))) return 3;
   return 1;
 }
 

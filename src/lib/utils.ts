@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { sousCategoriesDe } from "@/lib/sous-categories";
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -29,16 +30,20 @@ export const initiales = (nom: string, prenom?: string | null) => {
 // (devis/[id]/page.tsx, devis/nouveau/page.tsx) — pas seulement le module pré-devis.
 // Gaine/moulure → "rouleau" (usage courant du métier) ; câble/fil → "bobine". Article vendu
 // au mètre linéaire (longueur_unitaire absent/null) : nom inchangé.
+// Gaine / moulure → « rouleau » ; un article à plusieurs sous-catégories l'est dès que l'une d'elles l'est.
+function estRouleau(sousCategorie: string | null | undefined): boolean {
+  return sousCategoriesDe(sousCategorie).some(c => c.startsWith("gaine_") || c === "moulure");
+}
 export function nomAvecConditionnement(nom: string, longueurUnitaire: number | null | undefined, sousCategorie: string | null | undefined): string {
   if (!longueurUnitaire || longueurUnitaire <= 0) return nom;
-  const mot = sousCategorie && (sousCategorie.startsWith("gaine_") || sousCategorie === "moulure") ? "rouleau" : "bobine";
+  const mot = estRouleau(sousCategorie) ? "rouleau" : "bobine";
   return `${nom} (${mot} ${longueurUnitaire}m)`;
 }
 // Libellé court du conditionnement pour l'affichage dans les listes de choix : « bobine 100 m »,
 // « rouleau 50 m ». null pour un article vendu au mètre ou à l'unité (pas de longueur fixe).
 export function conditionnementLabel(longueurUnitaire: number | null | undefined, sousCategorie: string | null | undefined): string | null {
   if (!longueurUnitaire || longueurUnitaire <= 0) return null;
-  const mot = sousCategorie && (sousCategorie.startsWith("gaine_") || sousCategorie === "moulure") ? "rouleau" : "bobine";
+  const mot = estRouleau(sousCategorie) ? "rouleau" : "bobine";
   return `${mot} ${longueurUnitaire} m`;
 }
 export const UNITES = ["forfait", "heure", "u", "ml", "m2"] as const;export const BRANCHES = ["service", "materiau"] as const;
