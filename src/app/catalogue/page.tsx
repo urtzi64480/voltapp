@@ -507,6 +507,7 @@ const SOUS_CATEGORIES_CONNUES: { code: string; label: string }[] = [
   { code: "disjoncteur_63A", label: "Disjoncteur 63A" },
   ...[25, 40, 63, 80, 100, 125].flatMap(cal =>
     (["AC", "A", "F"] as const).map(t => ({ code: `differentiel_${cal}A_${t}`, label: `Différentiel ${cal}A Type ${t}` }))),
+  { code: "goulotte_tableau", label: "Goulotte de montage du tableau (1 par rangée)" },
   // Appareillages (prise, interrupteurs simples/doubles, RJ45, points lumineux, variantes domotiques, sortie
   // spécialisée…) : dérivés du moteur pré-devis — voir NOMENCLATURE_APPAREILLAGE.
   ...NOMENCLATURE_APPAREILLAGE,

@@ -54,6 +54,10 @@
 //    communication (sous_categorie "cable_rj45", cat. 6 STP) est compté EN ÉTOILE depuis le tableau/
 //    coffret de communication du niveau jusqu'à chaque prise : distance « Manhattan » sur le plan
 //    (le câble suit les murs et les gaines, pas la ligne droite) PLUS les montées / descentes (coffret → gaine → prise).
+//  - TABLEAU (poste « Tableau électrique ») : TOUS les appareils des rangées (principal + annexes) sont chiffrés — chaque
+//    disjoncteur par calibre (disjoncteur_XA), chaque différentiel par calibre et type (differentiel_XA_T), classés
+//    d'après leur TYPE et non leur position — plus UNE goulotte de montage (sous_categorie "goulotte_tableau") par
+//    rangée équipée. La page du pré-devis demande si ce poste doit entrer dans le devis (voir estPieceTableau).
 //  - Les appareils "dédiés" (four, plaque, lave-linge…, y compris chauffage) ne sont
 //    jamais chiffrés en tant qu'appareil — uniquement leur prise/sortie de câble
 //    spécialisée (sous_categorie "prise_specialisee").
@@ -167,7 +171,10 @@ export const NOMENCLATURE_APPAREILLAGE: { code: string; label: string }[] = [
   { code: "prise_specialisee", label: "Prise / sortie de câble spécialisée" },
 ];
 
-const PSEUDO_TABLEAU = "Tableau électrique";
+export const PSEUDO_TABLEAU = "Tableau électrique";
+// Besoin appartenant au poste « Tableau électrique » (disjoncteurs, différentiels, goulottes de montage) — la page du
+// pré-devis le retire ou le garde selon la réponse à l'alerte « intégrer le tableau au devis ? ».
+export const estPieceTableau = (piece: string): boolean => piece === PSEUDO_TABLEAU;
 const pseudoCommun = (niveauNom: string) => `Commun — ${niveauNom}`;
 // Pseudo-pièce séparée pour la distance verticale configurée (point d'arrivée des gaines
 // -> tableau) — jamais mélangée avec pseudoCommun (boîtes de dérivation, tronçons de
@@ -213,23 +220,31 @@ function resoudreLabelCircuit(b: { label: string; manuelId?: number }, niveau: N
 
 interface IndexTableau {
   parLabel: Map<string, TableauBreaker>;
-  disjoncteurs: TableauBreaker[]; // hors différentiels (slot 0 de chaque rangée)
-  differentiels: TableauBreaker[]; // slot 0 de chaque rangée
+  disjoncteurs: TableauBreaker[]; // tout appareil qui n'est PAS un différentiel, où qu'il soit dans la rangée
+  differentiels: TableauBreaker[]; // tout interrupteur différentiel (BREAKER_TYPES[type].isDiff), où qu'il soit
+  nbRangees: number;               // rangées portant au moins un appareil (une goulotte de montage chacune)
 }
 
+// Le tableau est lu SANS rien perdre : un appareil est un différentiel d'après son TYPE (diff-AC / diff-A / diff-F),
+// jamais d'après sa position — un différentiel posé hors du slot 0 ou un disjoncteur glissé dans le slot 0 ne doivent
+// ni disparaître du devis ni être chiffrés sous le mauvais article.
 function indexerTableau(rows: BreakerRow[]): IndexTableau {
   const parLabel = new Map<string, TableauBreaker>();
   const disjoncteurs: TableauBreaker[] = [];
   const differentiels: TableauBreaker[] = [];
+  let nbRangees = 0;
   rows.forEach(row => {
-    row.slots.forEach((b, i) => {
+    let rangeeUtilisee = false;
+    row.slots.forEach(b => {
       if (!b || typeof b.type !== "string") return;
-      if (i === 0) { differentiels.push(b); return; }
+      rangeeUtilisee = true;
+      if (BREAKER_TYPES[b.type]?.isDiff) { differentiels.push(b); return; }
       disjoncteurs.push(b);
       if (b.label) parLabel.set(b.label, b);
     });
+    if (rangeeUtilisee) nbRangees++;
   });
-  return { parLabel, disjoncteurs, differentiels };
+  return { parLabel, disjoncteurs, differentiels, nbRangees };
 }
 
 // ─── PASSE 1 — BESOINS BRUTS (géométrie + tableau, sans catalogue) ─────────
@@ -478,7 +493,6 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
   // ─── Disjoncteurs et différentiels (tableau — une seule fois, pas par niveau) ─────
   const parCalibreDisjoncteur = new Map<number, number>();
   indexTableau.disjoncteurs.forEach(b => {
-    if (BREAKER_TYPES[b.type]?.isDiff) return; // garde-fou (ne devrait pas arriver hors slot 0)
     parCalibreDisjoncteur.set(b.amperes, (parCalibreDisjoncteur.get(b.amperes) ?? 0) + 1);
   });
   parCalibreDisjoncteur.forEach((nb, amperes) => {
@@ -494,6 +508,9 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
   parDifferentiel.forEach((nb, cle) => {
     ajouter(`differentiel_${cle}`, `differentiel_${cle}`, `Différentiel ${cle.replace("_", " ")}`, PSEUDO_TABLEAU, nb, "u");
   });
+
+  // Goulottes de montage du tableau : une par rangée équipée (principal + annexes), chiffrées avec les appareils.
+  ajouter("goulotte_tableau", "goulotte_tableau", "Goulotte de montage du tableau (1 par rangée)", PSEUDO_TABLEAU, indexTableau.nbRangees, "u");
 
   return { besoins: Array.from(cumul.values()), alertes };
 }

@@ -10,7 +10,7 @@ import { Niveau } from "@/lib/maison-types";
 import { BreakerRow } from "@/lib/electrical-constants";
 import {
   calculerBesoinsBruts, apparierCatalogue, optionsPourSousCategorie, genererLignesDevis, estBobinable,
-  multiplicateurPourArticle, estPieceReelle, optionAvecOffre, prixCompagnonAuMetre,
+  multiplicateurPourArticle, estPieceReelle, estPieceTableau, optionAvecOffre, prixCompagnonAuMetre,
   ResultatPreDevis, BesoinApparie, OptionArticle, ChoixLigne, POSTE_MAIN_OEUVRE, POSTE_CABLAGE,
 } from "@/lib/predevis-engine";
 import { attacherFournisseurs, libelleOffreMarque, offrePrincipale, offresTriees, prixVenteOffre } from "@/lib/fournisseurs";
@@ -308,6 +308,9 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // incluses quelle que soit la sélection, pour ne jamais fausser les longueurs de câbles et
   // gaines nécessaires (voir estPieceReelle, predevis-engine.ts).
   const [piecesSelectionnees, setPiecesSelectionnees] = useState<Set<string> | null>(null);
+  // Le tableau électrique (disjoncteurs, différentiels, goulottes de montage) entre-t-il dans le devis ?
+  // null = pas encore répondu → l'alerte s'affiche à l'ouverture du pré-devis (sauf si un brouillon porte déjà la réponse).
+  const [inclureTableau, setInclureTableau] = useState<boolean | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -355,7 +358,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       // Brouillon sauvegardé précédemment (voir sauvegarderBrouillon) — ne réapplique que
       // les choix dont la clé de besoin existe encore (le plan/tableau peut avoir changé
       // depuis la dernière sauvegarde) ; le reste repart sur les valeurs par défaut.
-      let brouillon: { choix?: Record<string, EtatChoix>; choixAgrege?: Record<string, EtatChoix>; mainOeuvreHeures?: string; mainOeuvreIndex?: number; fraisGenerauxPct?: string; deplacementEur?: string } | null = null;
+      let brouillon: { choix?: Record<string, EtatChoix>; choixAgrege?: Record<string, EtatChoix>; mainOeuvreHeures?: string; mainOeuvreIndex?: number; fraisGenerauxPct?: string; deplacementEur?: string; inclureTableau?: boolean } | null = null;
       if (projet.predevis_config) {
         try { brouillon = JSON.parse(projet.predevis_config); } catch {}
       }
@@ -374,6 +377,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
         if (brouillon.mainOeuvreIndex != null) setMainOeuvreIndex(brouillon.mainOeuvreIndex);
         if (brouillon.fraisGenerauxPct != null) setFraisGenerauxPct(brouillon.fraisGenerauxPct);
         if (brouillon.deplacementEur != null) setDeplacementEur(brouillon.deplacementEur);
+        if (typeof brouillon.inclureTableau === "boolean") setInclureTableau(brouillon.inclureTableau);
       }
       setLoading(false);
     }
@@ -399,11 +403,19 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // de bout en bout.
   const parPieceFiltre: Record<string, BesoinApparie[]> = useMemo(() => {
     if (!resultat) return {};
-    if (piecesSelectionnees === null) return resultat.parPiece;
+    // Poste « Tableau électrique » : retiré tant que l'alerte n'a pas reçu un « oui » (inclureTableau !== true).
+    const sansTableauSiRefuse = Object.entries(resultat.parPiece).filter(([piece]) => !estPieceTableau(piece) || inclureTableau === true);
+    if (piecesSelectionnees === null) return Object.fromEntries(sansTableauSiRefuse);
     return Object.fromEntries(
-      Object.entries(resultat.parPiece).filter(([piece]) => !estPieceReelle(piece) || piecesSelectionnees.has(piece)),
+      sansTableauSiRefuse.filter(([piece]) => !estPieceReelle(piece) || piecesSelectionnees.has(piece)),
     );
-  }, [resultat, piecesSelectionnees]);
+  }, [resultat, piecesSelectionnees, inclureTableau]);
+
+  // Besoins du tableau (disjoncteurs, différentiels, goulottes) tels que calculés, indépendamment de la réponse.
+  const besoinsTableau: BesoinApparie[] = useMemo(
+    () => (resultat ? Object.entries(resultat.parPiece).filter(([piece]) => estPieceTableau(piece)).flatMap(([, b]) => b) : []),
+    [resultat],
+  );
 
   const besoinsAgreges: BesoinApparie[] = useMemo(() => {
     if (!resultat) return [];
@@ -435,7 +447,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
-    const contenu = JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, mainOeuvreIndex, fraisGenerauxPct, deplacementEur });
+    const contenu = JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, ...(inclureTableau !== null ? { inclureTableau } : {}) });
     await modifierProjet(projet.id, { predevis_config: contenu });
     setSavingDraft(false);
     setDraftSaved(true);
@@ -611,6 +623,41 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
             avantChangement={sauvegarderBrouillon} onSelect={onSelect} onChanged={onChanged} compact />
         </div>
 
+        {/* Alerte : le tableau électrique entre-t-il dans le devis ? (posée à chaque ouverture tant qu'aucune réponse n'est enregistrée) */}
+        {resultat && besoinsTableau.length > 0 && inclureTableau === null && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="card card-inner bg-white max-w-md w-full max-h-[90vh] overflow-y-auto">
+              <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                <AlertTriangle size={13} /> Tableau électrique
+              </p>
+              <h2 className="font-semibold text-ink-900 mb-2">Intégrer aussi le tableau électrique au devis ?</h2>
+              <p className="text-xs text-ink-500 mb-3">
+                Le devis reprendrait absolument tous les disjoncteurs et différentiels du tableau (chacun chiffré avec son article du catalogue), plus les goulottes de montage :
+              </p>
+              <ul className="text-sm text-ink-700 mb-4 flex flex-col gap-0.5">
+                {besoinsTableau.map(b => (
+                  <li key={b.cle} className="flex justify-between gap-3">
+                    <span className="min-w-0 truncate">{b.label}</span>
+                    <span className="shrink-0 text-ink-500">× {b.quantite}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex gap-3">
+                <button onClick={() => setInclureTableau(false)} className="btn-ghost flex-1 justify-center">Non, sans le tableau</button>
+                <button onClick={() => setInclureTableau(true)} className="btn-volt flex-1 justify-center">Oui, intégrer le tableau</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {resultat && besoinsTableau.length > 0 && inclureTableau !== null && (
+          <label className="card card-inner mb-4 flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={inclureTableau} onChange={e => setInclureTableau(e.target.checked)} />
+            <span className="text-ink-800 font-medium">Intégrer le tableau électrique au devis</span>
+            <span className="text-xs text-ink-400">(disjoncteurs, différentiels et goulottes de montage)</span>
+          </label>
+        )}
+
         {toutesLesPiecesReelles.length > 1 && (
           <div className="card card-inner mb-4">
             <div className="flex items-center justify-between mb-2">
@@ -638,7 +685,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 );
               })}
             </div>
-            <p className="text-xs text-ink-400 mt-2">Le tableau électrique, la distance au point d'arrivée des gaines et les boîtes de dérivation communes au niveau restent toujours pris en compte, même si tu ne sélectionnes que certaines pièces — sinon le calcul des longueurs de câbles et gaines serait faussé.</p>
+            <p className="text-xs text-ink-400 mt-2">La distance au point d'arrivée des gaines et les boîtes de dérivation communes au niveau restent toujours prises en compte, même si tu ne sélectionnes que certaines pièces — sinon le calcul des longueurs de câbles et gaines serait faussé. Le tableau électrique, lui, dépend de ta réponse à l'alerte « Intégrer le tableau au devis ».</p>
           </div>
         )}
 
