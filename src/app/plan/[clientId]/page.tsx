@@ -3477,30 +3477,6 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }));
   };
 
-  // Rattache un appareillage à la pièce de son choix, indépendamment de sa position réelle
-  // sur le plan (x/y inchangés — seule l'appartenance "pièce" change) : corrige un placement
-  // automatique erroné (détection de pièce imprécise près d'un mur/coin) sans avoir à
-  // redessiner ou redéplacer l'appareillage. Affecte le comptage des prises minimum par
-  // pièce et le regroupement des circuits (le nom de pièce affiché vient de cette
-  // appartenance, pas de la position), d'où l'invalidation du résultat déjà généré.
-  const deplacerAppareillageVersPiece = (appareillageId: number, cibleId: number) => {
-    updateNiveauActif(n => {
-      let trouve: AppareillagePlace | null = null;
-      const sansAppareil = n.pieces.map(p => {
-        const idx = p.appareillages.findIndex(a => a.id === appareillageId);
-        if (idx === -1) return p;
-        trouve = p.appareillages[idx];
-        return { ...p, appareillages: p.appareillages.filter(a => a.id !== appareillageId) };
-      });
-      if (!trouve) return n;
-      return {
-        ...n,
-        pieces: sansAppareil.map(p => p.id === cibleId ? { ...p, appareillages: [...p.appareillages, trouve!] } : p),
-      };
-    });
-    invalidateResultat();
-  };
-
   // Réglages propres au volet roulant (caisson intérieur/extérieur, ouvert/fermé) — purement
   // visuels (plan + vue 3D) : aucun effet sur les circuits, donc pas d'invalidation du résultat.
   const modifierVolet = (appareillageId: number, patch: Partial<Pick<AppareillagePlace, "caisson" | "voletOuvertPct" | "voletCouleur">>) => {
@@ -7123,17 +7099,6 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     onChange={e => renommerAppareillage(selectedAppareillage.id, e.target.value)} />
                   <button onClick={() => removerAppareillage(selectedAppareillage.id)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
                 </div>
-                {niveauActif && niveauActif.pieces.length > 1 && (
-                  <div className="flex items-center gap-2 text-xs text-ink-500">
-                    <span className="shrink-0">Pièce</span>
-                    <select className="input !py-1 !text-xs flex-1"
-                      value={pieceDeSelectedAppareillage?.id ?? ""}
-                      disabled={!!pieceDeSelectedAppareillage?.verrouillee}
-                      onChange={e => deplacerAppareillageVersPiece(selectedAppareillage.id, Number(e.target.value))}>
-                      {niveauActif.pieces.map(p => <option key={p.id} value={p.id}>{p.nom || PIECE_TYPES[p.type].label}</option>)}
-                    </select>
-                  </div>
-                )}
                 {selectedAppareillage.type !== "volet_roulant" && (
                 <div className="flex items-center gap-2 text-xs text-ink-500">
                   <span className="shrink-0">Hauteur (cm)</span>
