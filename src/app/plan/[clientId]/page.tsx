@@ -2032,6 +2032,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Contrôle « rien oublié » : panneau ouvert = les appareillages en cause sont cerclés de rouge sur le plan.
   const [controleOuvert, setControleOuvert] = useState(false);
   const [filtreAffichage, setFiltreAffichage] = useState<FiltreAffichage>("tout");
+  const [afficherSansCircuit, setAfficherSansCircuit] = useState(true);
 
   const [resultat, setResultat] = useState<ResultatGeneration | null>(null);
   const [showCircuits, setShowCircuits] = useState(false);
@@ -5004,10 +5005,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // Contrôle sur le plan VIVANT (appareillages ajoutés ou supprimés depuis la dernière génération compris).
   const bilanControle = resultat ? controlerCircuits({ ...resultat, maison: { niveaux } }) : null;
-  // Quand on n'affiche qu'une partie des circuits (œil des circuits), seuls les appareillages de CES circuits restent visibles.
-  const circuitsDuNiveau = niveauActif && resultat ? breakersDuNiveau(resultat.breakers, niveauActif) : [];
-  const nbCircuitsVisibles = circuitsDuNiveau.filter(b => circuitsVisibles.has(b.id)).length;
-  const filtreParCircuit = showCircuits && nbCircuitsVisibles > 0 && nbCircuitsVisibles < circuitsDuNiveau.length;
+  // Masquer un circuit (case de la palette « Circuits ») masque AUSSI les appareillages qui lui sont raccordés : il ne reste à
+  // l'écran que ce qui n'est pas encore câblé — pratique pour suivre l'avancée. (Les appareillages sans circuit restent visibles,
+  // sauf si on décoche « Sans circuit » dans la palette ; le sélectionné reste toujours visible.)
+  const masquerAppareilParCircuit = (a: AppareillagePlace): boolean =>
+    showCircuits && !!resultat && (a.circuitId != null ? !circuitsVisibles.has(a.circuitId) : !afficherSansCircuit);
   const idsProblemes = new Set<number>(controleOuvert && bilanControle ? bilanControle.problemes.flatMap(pb => pb.appareilIds) : []);
   const allerAuProbleme = (pb: ProblemeCircuit) => {
     if (pb.niveauId !== niveauActifId) changerNiveau(pb.niveauId);
@@ -6319,7 +6321,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 // demi-taille pour que le carré soit TANGENT au mur au lieu de le chevaucher.
                 const p = toScreen({ x: a.x, y: a.y });
                 const isSel = a.id === selectedAppareillageId || selectionMulti.includes(a.id);
-                if (!isSel && (!estDansFiltre(a, filtreAffichage) || (filtreParCircuit && !(a.circuitId != null && circuitsVisibles.has(a.circuitId))))) return null;
+                if (!isSel && (!estDansFiltre(a, filtreAffichage) || masquerAppareilParCircuit(a))) return null;
                 const color = showCircuits && a.circuitId != null && circuitsVisibles.has(a.circuitId) ? (colorMap.get(a.circuitId) ?? "#1c1917") : (isSel ? "#F59E0B" : "#1c1917");
                 // Poste d'une plaque multiple : ancrage au mur sur le CENTRE de la plaque, puis décalage le long du mur.
                 const infoPl = a.groupeId != null ? infosPlaquesParPiece.get(piece.id)?.get(a.groupeId) : undefined;
@@ -8101,6 +8103,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     </button>
                   )}
                 </div>
+                <label className="flex items-center gap-1.5 text-[10px] text-ink-500 mb-1.5 cursor-pointer" title="Les appareillages d'un circuit masqué disparaissent aussi du plan : il ne reste que ce qui n'est pas encore câblé">
+                  <input type="checkbox" checked={afficherSansCircuit} onChange={e => setAfficherSansCircuit(e.target.checked)} />
+                  Afficher les appareillages sans circuit
+                </label>
                 <div className="flex flex-col gap-1">
                   {circuitsAffiches.map(item => {
                     const b = item.breaker;
