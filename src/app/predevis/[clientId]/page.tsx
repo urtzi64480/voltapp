@@ -9,7 +9,7 @@ import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import { Niveau } from "@/lib/maison-types";
 import { BreakerRow } from "@/lib/electrical-constants";
 import {
-  calculerBesoinsBruts, apparierCatalogue, optionsPourSousCategorie, genererLignesDevis, estBobinable,
+  calculerBesoinsBruts, ModePreDevis, apparierCatalogue, optionsPourSousCategorie, genererLignesDevis, estBobinable,
   multiplicateurPourArticle, estSousCategorieAppareillage, estPieceReelle, estPieceTableau, optionAvecOffre, prixCompagnonAuMetre,
   ResultatPreDevis, BesoinApparie, OptionArticle, ChoixLigne, POSTE_MAIN_OEUVRE, POSTE_CABLAGE,
 } from "@/lib/predevis-engine";
@@ -293,6 +293,10 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Toutes les pièces du plan (nom + niveau), même celles sans aucun besoin — sert au contrôle « rien oublié ».
   const [piecesDuPlan, setPiecesDuPlan] = useState<{ nom: string; niveau: string }[]>([]);
   const [alertesGeometrie, setAlertesGeometrie] = useState<string[]>([]);
+  // Mode de chiffrage : null = pas encore choisi (la page le demande d'abord) ; « piece » = postes par pièce ;
+  // « circuit » = postes par circuit (un circuit de prises peut traverser plusieurs pièces).
+  const [mode, setMode] = useState<ModePreDevis | null>(null);
+  const [donnees, setDonnees] = useState<{ niveaux: Niveau[]; rows: BreakerRow[]; prest: Prestation[]; brouillon: any } | null>(null);
   const [loading, setLoading] = useState(true);
   const [choix, setChoix] = useState<Record<string, EtatChoix>>({});
   const [mainOeuvreHeures, setMainOeuvreHeures] = useState("0");
@@ -355,40 +359,45 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       }
 
       setPiecesDuPlan(niveaux.flatMap(n => n.pieces.map(pc => ({ nom: pc.nom, niveau: n.nom }))).filter(x => x.nom));
-      const { besoins, alertes } = calculerBesoinsBruts(niveaux, rows);
-      const res = apparierCatalogue(besoins, prestAvecFournisseurs);
-      setResultat(res);
-      setAlertesGeometrie(alertes);
-
-      // Brouillon sauvegardé précédemment (voir sauvegarderBrouillon) — ne réapplique que
-      // les choix dont la clé de besoin existe encore (le plan/tableau peut avoir changé
-      // depuis la dernière sauvegarde) ; le reste repart sur les valeurs par défaut.
-      let brouillon: { choix?: Record<string, EtatChoix>; choixAgrege?: Record<string, EtatChoix>; mainOeuvreHeures?: string; mainOeuvreIndex?: number; fraisGenerauxPct?: string; deplacementEur?: string; inclureTableau?: boolean } | null = null;
+      // Brouillon sauvegardé précédemment (voir sauvegarderBrouillon). S'il porte un mode, on le reprend sans reposer la question.
+      let brouillon: any = null;
       if (projet.predevis_config) {
         try { brouillon = JSON.parse(projet.predevis_config); } catch {}
       }
-
-      const initChoix: Record<string, EtatChoix> = {};
-      Object.values(res.parPiece).flat().forEach(b => {
-        // Les champs absents d'un ancien brouillon (ex. fournisseurId) retombent sur le défaut.
-        initChoix[b.cle] = { ...etatParDefaut(b), ...(brouillon?.choix?.[b.cle] ?? {}) };
-      });
-      setChoix(initChoix);
-      // Choix des câbles/gaines/moulures (toutes pièces) : restaurés aussi — les compléter par
-      // défaut ensuite se fait dans l'effet qui suit besoinsAgreges, clé par clé.
-      if (brouillon?.choixAgrege) setChoixAgrege(brouillon.choixAgrege);
-      if (brouillon) {
-        if (brouillon.mainOeuvreHeures != null) setMainOeuvreHeures(brouillon.mainOeuvreHeures);
-        if (brouillon.mainOeuvreIndex != null) setMainOeuvreIndex(brouillon.mainOeuvreIndex);
-        if (brouillon.fraisGenerauxPct != null) setFraisGenerauxPct(brouillon.fraisGenerauxPct);
-        if (brouillon.deplacementEur != null) setDeplacementEur(brouillon.deplacementEur);
-        if (typeof brouillon.inclureTableau === "boolean") setInclureTableau(brouillon.inclureTableau);
-      }
+      setDonnees({ niveaux, rows, prest: prestAvecFournisseurs, brouillon });
+      if (brouillon?.mode === "piece" || brouillon?.mode === "circuit") setMode(brouillon.mode);
       setLoading(false);
     }
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId, projet.id]);
+
+  // Calcul des besoins une fois le mode choisi (et à chaque changement de mode).
+  useEffect(() => {
+    if (!donnees || !mode) return;
+    const { niveaux, rows, prest, brouillon } = donnees;
+    const { besoins, alertes } = calculerBesoinsBruts(niveaux, rows, mode);
+    const res = apparierCatalogue(besoins, prest);
+    setResultat(res);
+    setAlertesGeometrie(alertes);
+    setPiecesSelectionnees(null);
+    // Les choix du brouillon ne se réappliquent que si le brouillon a été fait dans le même mode (les clés de besoin diffèrent).
+    const memeMode = !!brouillon && (brouillon.mode ?? "piece") === mode;
+    const initChoix: Record<string, EtatChoix> = {};
+    Object.values(res.parPiece).flat().forEach(b => {
+      initChoix[b.cle] = { ...etatParDefaut(b), ...(memeMode ? (brouillon?.choix?.[b.cle] ?? {}) : {}) };
+    });
+    setChoix(initChoix);
+    setChoixAgrege(memeMode && brouillon?.choixAgrege ? brouillon.choixAgrege : {});
+    if (brouillon) {
+      if (brouillon.mainOeuvreHeures != null) setMainOeuvreHeures(brouillon.mainOeuvreHeures);
+      if (brouillon.mainOeuvreIndex != null) setMainOeuvreIndex(brouillon.mainOeuvreIndex);
+      if (brouillon.fraisGenerauxPct != null) setFraisGenerauxPct(brouillon.fraisGenerauxPct);
+      if (brouillon.deplacementEur != null) setDeplacementEur(brouillon.deplacementEur);
+      if (typeof brouillon.inclureTableau === "boolean") setInclureTableau(brouillon.inclureTableau);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [donnees, mode]);
 
   // Regroupe câbles/gaines/moulures par sous-catégorie, TOUTES PIÈCES CONFONDUES, pour
   // choisir une seule fois la meilleure combinaison bobine + mètre linéaire sur le métrage
@@ -452,7 +461,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
-    const contenu = JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, ...(inclureTableau !== null ? { inclureTableau } : {}) });
+    const contenu = JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
     await modifierProjet(projet.id, { predevis_config: contenu });
     setSavingDraft(false);
     setDraftSaved(true);
@@ -665,6 +674,37 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   if (loading) return <Shell><div className="p-8 text-center text-ink-400">Chargement…</div></Shell>;
 
+  // Avant tout calcul : comment organiser le pré-devis ?
+  if (donnees && !mode) {
+    return (
+      <Shell>
+        <div className="p-4 md:p-8 max-w-2xl mx-auto">
+          <div className="flex items-center gap-3 mb-6">
+            <Link href={`/plan/${clientId}${qsProjet(projet.id)}`} className="btn-ghost !px-2.5 !py-2"><ArrowLeft size={16} /></Link>
+            <div className="flex-1">
+              <h1 className="font-display text-2xl">Pré-devis électrique</h1>
+              {client && <p className="text-xs text-ink-400">{client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</p>}
+            </div>
+          </div>
+          <div className="card card-inner">
+            <h2 className="font-semibold text-ink-800 mb-1">Comment veux-tu chiffrer ce projet ?</h2>
+            <p className="text-xs text-ink-500 mb-4">Les quantités totales (câbles, appareillage…) sont identiques dans les deux cas : seul le découpage en postes du devis change.</p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <button onClick={() => setMode("piece")} className="text-left p-4 rounded-xl border border-ink-200 hover:border-volt-500 hover:bg-volt-50 transition">
+                <div className="font-semibold text-ink-800 mb-1">À la pièce</div>
+                <p className="text-xs text-ink-500">Un poste par pièce (salon, chambre…). Le câblage est réparti selon les pièces traversées. Idéal pour une rénovation pièce par pièce ou un petit projet.</p>
+              </button>
+              <button onClick={() => setMode("circuit")} className="text-left p-4 rounded-xl border border-ink-200 hover:border-volt-500 hover:bg-volt-50 transition">
+                <div className="font-semibold text-ink-800 mb-1">Par circuit</div>
+                <p className="text-xs text-ink-500">Un poste par circuit (prises, lumière, four…) : appareillage, boîtes et câbles d'un circuit regroupés, même s'il traverse plusieurs pièces. Idéal pour une maison entière.</p>
+              </button>
+            </div>
+          </div>
+        </div>
+      </Shell>
+    );
+  }
+
   return (
     <Shell>
       <div className="p-4 md:p-8 max-w-3xl mx-auto">
@@ -673,6 +713,14 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
           <div className="flex-1">
             <h1 className="font-display text-2xl">Pré-devis électrique</h1>
             {client && <p className="text-xs text-ink-400">{client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</p>}
+            {mode && (
+              <p className="text-xs text-ink-500 mt-0.5">
+                Mode : <strong>{mode === "circuit" ? "par circuit" : "à la pièce"}</strong>{" · "}
+                <button className="text-volt-600 font-medium" onClick={() => {
+                  if (window.confirm("Changer de mode recalcule le pré-devis : les choix d'articles faits dans ce mode seront perdus. Continuer ?")) { setResultat(null); setMode(mode === "circuit" ? "piece" : "circuit"); }
+                }}>passer {mode === "circuit" ? "à la pièce" : "par circuit"}</button>
+              </p>
+            )}
           </div>
           <ProjetSwitcher clientId={clientId} projets={projets} projetId={projet.id}
             avantChangement={sauvegarderBrouillon} onSelect={onSelect} onChanged={onChanged} compact />
@@ -716,7 +764,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
         {toutesLesPiecesReelles.length > 1 && (
           <div className="card card-inner mb-4">
             <div className="flex items-center justify-between mb-2">
-              <h2 className="font-semibold text-ink-800 text-sm">Pièces à inclure</h2>
+              <h2 className="font-semibold text-ink-800 text-sm">{mode === "circuit" ? "Circuits à inclure" : "Pièces à inclure"}</h2>
               <button
                 onClick={() => setPiecesSelectionnees(prev => prev === null ? new Set() : null)}
                 className="text-xs text-volt-600 font-medium">
@@ -870,7 +918,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
           </div>
         </div>
 
-        {resultat && piecesDuPlan.length > 0 && (() => {
+        {resultat && mode === "piece" && piecesDuPlan.length > 0 && (() => {
           // Contrôle « rien oublié » : chaque pièce du plan doit devenir un poste du devis. Une pièce sans aucune ligne
           // (aucun appareillage, besoins tous exclus, ou décochée plus haut) n'aura PAS de poste — on la signale ici.
           const lignesParPiece = new Map<string, number>();

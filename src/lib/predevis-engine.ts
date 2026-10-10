@@ -265,7 +265,14 @@ function indexerTableau(rows: BreakerRow[]): IndexTableau {
 
 // ─── PASSE 1 — BESOINS BRUTS (géométrie + tableau, sans catalogue) ─────────
 
-export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[]): { besoins: LigneBesoin[]; alertes: string[] } {
+export type ModePreDevis = "piece" | "circuit";
+export const PREFIXE_CIRCUIT = "Circuit · ";
+export const PREFIXE_HORS_CIRCUIT = "Hors circuit · ";
+
+// mode "piece" : les besoins sont regroupés par pièce (câbles = répartis selon les pièces traversées).
+// mode "circuit" : regroupés par CIRCUIT (un circuit de prises peut courir sur plusieurs pièces) — appareillage, boîtes et
+// câbles d'un circuit forment un seul poste. Les longueurs de câble sont strictement les mêmes dans les deux modes.
+export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[], mode: ModePreDevis = "piece"): { besoins: LigneBesoin[]; alertes: string[] } {
   const alertes: string[] = [];
   const cumul = new Map<string, LigneBesoin>(); // clé -> besoin (cumule les quantités)
   const ajouter = (cle: string, sousCategorie: string, label: string, piece: string, quantite: number, unite: UniteBesoin) => {
@@ -285,27 +292,44 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
     // ─── Appareillages (mécanismes) et sorties dédiées, par pièce ──────────
     // Par pièce RÉELLE (voir piece-reelle.ts) : une prise posée dehors contre le mur des WC se compte à l'extérieur, pas aux WC.
     const reelles = appareillagesParPieceReelle(niveau);
+    const breakersDuNiveau = (() => {
+      const noms = new Set(niveau.pieces.map(p => p.nom));
+      return resultat.breakers.filter(b => b.pieces.some(pc => noms.has(pc.nom)));
+    })();
+    const nomCircuit = (b: { label: string; manuelId?: number }) => `${PREFIXE_CIRCUIT}${resoudreLabelCircuit(b, niveau)} (${niveau.nom || niveau.type})`;
+    const nomHorsCircuit = `${PREFIXE_HORS_CIRCUIT}${niveau.nom || niveau.type}`;
+    const destDe = (a: AppareillagePlace, piece: Piece): { id: string; nom: string } => {
+      if (mode === "circuit") {
+        const b = a.circuitId != null ? breakersDuNiveau.find(x => x.id === a.circuitId) : undefined;
+        const nom = b ? nomCircuit(b) : nomHorsCircuit;
+        return { id: `c${niveau.id}:${b ? b.id : "hors"}`, nom };
+      }
+      return { id: String(piece.id), nom: piece.nom || "Pièce" };
+    };
     reelles.pieces.forEach(({ piece, apps }) => {
       if (apps.length === 0) return;
       const clustersEncastrement: { id: number; x: number; y: number; groupeId?: number }[] = [];
+      const destParId = new Map<number, { id: string; nom: string }>();
+      apps.forEach(a => destParId.set(a.id, destDe(a, piece)));
       apps.forEach(a => {
+        const dest = destParId.get(a.id)!;
         if (a.dejaExistant) return; // déjà installé chez le client — jamais facturé, ni lui ni sa boîte
         const estCmd = estCommande(a.type);
         if (estCmd && a.domotique && LABEL_APPAREILLAGE_DOMOTIQUE[a.type]) {
           const sousCat = `${a.type}_domotique`;
-          ajouter(`${sousCat}@${piece.id}`, sousCat, LABEL_APPAREILLAGE_DOMOTIQUE[a.type], piece.nom || "Pièce", 1, "u");
+          ajouter(`${sousCat}@${dest.id}`, sousCat, LABEL_APPAREILLAGE_DOMOTIQUE[a.type], dest.nom, 1, "u");
         } else if (LABEL_APPAREILLAGE[a.type]) {
-          ajouter(`${a.type}@${piece.id}`, a.type, LABEL_APPAREILLAGE[a.type], piece.nom || "Pièce", 1, "u");
+          ajouter(`${a.type}@${dest.id}`, a.type, LABEL_APPAREILLAGE[a.type], dest.nom, 1, "u");
         } else if (cleCircuitDedie(a) || a.type === "chauffage" || a.type === "volet_roulant") {
-          ajouter(`prise_specialisee@${piece.id}`, "prise_specialisee", "Prise / sortie de câble spécialisée",
-            piece.nom || "Pièce", 1, "u");
+          ajouter(`prise_specialisee@${dest.id}`, "prise_specialisee", "Prise / sortie de câble spécialisée",
+            dest.nom, 1, "u");
         }
         // Tout point lumineux (plafonnier, applique…) a sa propre boîte d'encastrement
         // DCL — jamais groupée avec les boîtes murales (prise/interrupteur), toujours 1
         // par point lumineux quel que soit le type.
         if (a.type === "point_lumineux" || a.type === "applique") {
-          ajouter(`boite_encastrement_dcl@${piece.id}`, "boite_encastrement_dcl", "Boîte d'encastrement DCL",
-            piece.nom || "Pièce", 1, "u");
+          ajouter(`boite_encastrement_dcl@${dest.id}`, "boite_encastrement_dcl", "Boîte d'encastrement DCL",
+            dest.nom, 1, "u");
         }
         // Un spot s'encastre directement dans le plafond : aucune boîte DCL (contrairement au plafonnier / à l'applique).
         if (TYPES_ENCASTRABLES.includes(a.type)) clustersEncastrement.push({ id: a.id, x: a.x, y: a.y, groupeId: a.groupeId });
@@ -320,32 +344,33 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       }
       if (clustersEncastrement.length > 0) {
         // Postes d'une même plaque multiple : une boîte + une plaque pour tout le groupe, sinon
-        // regroupement par proximité (≤ 20 cm, 4 postes max) comme avant.
-        const parPlaque = new Map<number, number>(); // groupeId -> nombre de postes à facturer
+        // regroupement par proximité (≤ 20 cm, 4 postes max) comme avant. Le regroupement se fait toujours
+        // par pièce réelle (une plaque est physique) ; en mode circuit, la boîte + plaque est rattachée au
+        // circuit de son premier poste.
+        const parPlaque = new Map<number, { nb: number; dest: { id: string; nom: string } }>();
         const libres: { id: number; x: number; y: number }[] = [];
         clustersEncastrement.forEach(c => {
-          if (c.groupeId != null) parPlaque.set(c.groupeId, (parPlaque.get(c.groupeId) ?? 0) + 1);
-          else libres.push(c);
+          if (c.groupeId != null) {
+            const e = parPlaque.get(c.groupeId);
+            if (e) e.nb++; else parPlaque.set(c.groupeId, { nb: 1, dest: destParId.get(c.id)! });
+          } else libres.push(c);
         });
         // Chaque boîte d'encastrement reçoit sa plaque de finition de même taille : un poste isolé
         // = 1 mécanisme + 1 boîte simple + 1 plaque simple ; double/triple/quadruple = idem à N postes.
-        const parTaille = new Map<number, number>();
-        const plaquesParTaille = new Map<number, number>();
-        const compter = (t: number) => {
-          parTaille.set(t, (parTaille.get(t) ?? 0) + 1);
-          plaquesParTaille.set(t, (plaquesParTaille.get(t) ?? 0) + 1);
+        const parDestTaille = new Map<string, { dest: { id: string; nom: string }; taille: number; nb: number }>();
+        const compter = (t: number, dest: { id: string; nom: string }) => {
+          const k = `${dest.id}|${t}`;
+          const e = parDestTaille.get(k);
+          if (e) e.nb++; else parDestTaille.set(k, { dest, taille: t, nb: 1 });
         };
-        parPlaque.forEach(nb => compter(Math.min(nb, MAX_POSTES_PLAQUE)));
-        grouperParProximite(libres, 0.20, 4).forEach(g => compter(g.length));
-        parTaille.forEach((nb, taille) => {
-          ajouter(`boite_encastrement_${taille}${taille === 1 ? "poste" : "postes"}@${piece.id}`,
-            `boite_encastrement_${taille}${taille === 1 ? "poste" : "postes"}`,
-            `Boîte d'encastrement ${LABEL_POSTES(taille)}`, piece.nom || "Pièce", nb, "u");
-        });
-        plaquesParTaille.forEach((nb, taille) => {
-          const codePlaque = `plaque_${taille}${taille === 1 ? "poste" : "postes"}`;
-          ajouter(`${codePlaque}@${piece.id}`, codePlaque,
-            `Plaque de finition ${LABEL_POSTES(taille)}`, piece.nom || "Pièce", nb, "u");
+        parPlaque.forEach(({ nb, dest }) => compter(Math.min(nb, MAX_POSTES_PLAQUE), dest));
+        grouperParProximite(libres, 0.20, 4).forEach(g => compter(g.length, destParId.get(g[0])!));
+        parDestTaille.forEach(({ dest, taille, nb }) => {
+          const suffixe = taille === 1 ? "poste" : "postes";
+          ajouter(`boite_encastrement_${taille}${suffixe}@${dest.id}`, `boite_encastrement_${taille}${suffixe}`,
+            `Boîte d'encastrement ${LABEL_POSTES(taille)}`, dest.nom, nb, "u");
+          const codePlaque = `plaque_${taille}${suffixe}`;
+          ajouter(`${codePlaque}@${dest.id}`, codePlaque, `Plaque de finition ${LABEL_POSTES(taille)}`, dest.nom, nb, "u");
         });
       }
     });
@@ -372,14 +397,15 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
     const hauteurPriseVDI = hauteurAncreFn(ctxVDI);
     reelles.pieces.forEach(({ piece, apps }) => {
       apps.forEach(a => {
+        const dest = destDe(a, piece);
         if ((a.type !== "rj45" && a.type !== "prise_tv") || a.dejaExistant) return;
         const tv = a.type === "prise_tv";
         const horizontale = Math.abs(a.x - origineVDI.x) + Math.abs(a.y - origineVDI.y);
         const verticale = Math.abs(ctxVDI.hauteurGaine - ctxVDI.hauteurTableau) + Math.abs(ctxVDI.hauteurGaine - hauteurPriseVDI(String(a.id)));
-        if (tv) ajouter(`cable_coax@${piece.id}`, "cable_coax", "Câble coaxial TV / antenne (étoile vers le coffret de communication)",
-          piece.nom || "Pièce", horizontale + verticale, "m");
-        else ajouter(`cable_rj45@${piece.id}`, "cable_rj45", "Câble RJ45 cat. 6 STP (étoile vers le coffret de communication)",
-          piece.nom || "Pièce", horizontale + verticale, "m");
+        if (tv) ajouter(`cable_coax@${dest.id}`, "cable_coax", "Câble coaxial TV / antenne (étoile vers le coffret de communication)",
+          dest.nom, horizontale + verticale, "m");
+        else ajouter(`cable_rj45@${dest.id}`, "cable_rj45", "Câble RJ45 cat. 6 STP (étoile vers le coffret de communication)",
+          dest.nom, horizontale + verticale, "m");
       });
     });
 
@@ -400,8 +426,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
     const pieceDeAppareil = indexPiecesAppareils(niveau);
 
     // ─── Boîtes de dérivation (une par circuit lumière qui en utilise) ─────
-    const nomsPiecesNiveau = new Set(niveau.pieces.map(p => p.nom));
-    const breakersNiveau = resultat.breakers.filter(b => b.pieces.some(pc => nomsPiecesNiveau.has(pc.nom)));
+    const breakersNiveau = breakersDuNiveau;
 
     breakersNiveau.forEach(b => {
       // Circuit de communication (RJ45) : son câble est déjà chiffré plus haut (étoile vers le coffret) — le
@@ -412,8 +437,11 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         const lumieres = points.filter(a => estLumiere(a.type));
         const boitesExistantes = niveau.boitesDerivation?.[b.label] ?? [];
         const nbBoites = boitesExistantes.length > 0 ? boitesExistantes.length : (lumieres.length > 1 ? 1 : 0);
-        if (nbBoites > 0) ajouter(`boite_derivation@${niveau.id}`, "boite_derivation", "Boîte de dérivation",
-          pseudoCommun(niveau.nom || niveau.type), nbBoites, "u");
+        if (nbBoites > 0) {
+          if (mode === "circuit") ajouter(`boite_derivation@c${niveau.id}:${b.id}`, "boite_derivation", "Boîte de dérivation", nomCircuit(b), nbBoites, "u");
+          else ajouter(`boite_derivation@${niveau.id}`, "boite_derivation", "Boîte de dérivation",
+            pseudoCommun(niveau.nom || niveau.type), nbBoites, "u");
+        }
       }
 
       // ─── Câbles / gaines / moulures pour ce circuit ──────────────────────
@@ -454,7 +482,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           // Attribution à la pièce : point médian d'une course horizontale, pièce de l'appareillage pour une montée
           // à son extrémité — la longueur d'un même circuit se répartit ainsi entre les pièces qu'il traverse.
           const pieceTraversee = pieceDeJambe(jambe, seg, pieceDeAppareil, niveau.pieces);
-          const nomPiece = pieceTraversee?.nom || pseudoCommun(niveau.nom || niveau.type);
+          const nomPiece = mode === "circuit" ? nomCircuit(b) : (pieceTraversee?.nom || pseudoCommun(niveau.nom || niveau.type));
 
           if (estLiaisonCommande) {
             // Retour lampe (dernier interrupteur/va-et-vient/télérupteur -> lampe) et navette
@@ -501,7 +529,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       // Une annexe a son propre tableau sur son niveau : pas de liaison verticale à ajouter.
       if (!nonRelie && niveau.type !== "annexe" && niveau.distanceArriveeGainesTableau != null && niveau.distanceArriveeGainesTableau > 0) {
         const d = niveau.distanceArriveeGainesTableau;
-        const nomPiece = pseudoLiaisonVerticale(niveau.nom || niveau.type);
+        const nomPiece = mode === "circuit" ? nomCircuit(b) : pseudoLiaisonVerticale(niveau.nom || niveau.type);
         ajouter(`cablage_${sectionCircuit}@${nomPiece}`, `cablage_${sectionCircuit}`,
           LABEL_CABLAGE[sectionCircuit] ?? `Câblage ${sectionCircuit}mm²`, nomPiece, d, "m");
         const gaineInfo = gaineRecommandee([sectionCircuit, sectionCircuit, sectionCircuit]);
