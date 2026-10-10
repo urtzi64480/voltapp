@@ -879,3 +879,19 @@ export function controlerCircuits(resultat: ResultatGeneration): BilanControle {
 
   return { problemes, total, raccordes };
 }
+
+// Dépassement NF C 15-100 pour un jeu d'appareillages destiné à UN circuit de la famille donnée (clé CIRCUITS) : message ou null.
+export function messageDepassement(famille: string, appareils: Pick<AppareillagePlace, "type">[], nomCircuit?: string): string | null {
+  const nom = nomCircuit ? `« ${nomCircuit} » : ` : "";
+  const spec = CIRCUITS[famille];
+  if (!spec) return null;
+  if (spec.category === "lumiere") {
+    const n = appareils.filter(a => estLumiere(a.type)).length, max = MAX_PAR_CIRCUIT.lumiere ?? 8;
+    return n > max ? `${nom}${n} points lumineux — maximum ${max} par circuit d'éclairage (NF C 15-100). Crée un second circuit.` : null;
+  }
+  const membres = appareils.filter(a => !estCommande(a.type));
+  if (spec.dedié && membres.length > 1) return `${nom}${membres.length} appareils sur un circuit spécialisé « ${spec.label} » — un seul appareil par circuit (NF C 15-100).`;
+  const max = MAX_PAR_CIRCUIT[famille];
+  if (max != null && membres.length > max) return `${nom}${membres.length} socles — maximum ${max} par circuit (NF C 15-100). Crée un second circuit.`;
+  return null;
+}

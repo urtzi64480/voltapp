@@ -52,7 +52,7 @@ import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece
 import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, aimanterEnFacade, estEnFacade, pieceLaPlusProche, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import Vue3DMaison from "@/components/plan/Vue3DMaison";
-import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
+import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
 
 const PX_PER_M = 60;
@@ -1476,6 +1476,22 @@ function CommandeLinkForm({ niveau, niveaux, item, onValidate, onCancel }: {
   );
 }
 
+// Filtre d'affichage du plan : ne montrer que certaines familles d'appareillages (et leurs circuits).
+type FiltreAffichage = "tout" | "prises" | "lumieres" | "specialises" | "faibles";
+const FILTRES_AFFICHAGE: { id: FiltreAffichage; label: string }[] = [
+  { id: "tout", label: "Tout" }, { id: "prises", label: "Prises" }, { id: "lumieres", label: "Lumières + interrupteurs" },
+  { id: "specialises", label: "Circuits spécialisés" }, { id: "faibles", label: "Courants faibles" },
+];
+function estDansFiltre(a: Pick<AppareillagePlace, "type" | "usageDedie">, f: FiltreAffichage): boolean {
+  switch (f) {
+    case "tout": return true;
+    case "prises": return a.type === "prise" || a.type === "prise_commandee" || a.type === "prise_exterieure";
+    case "lumieres": return estLumiere(a.type) || estCommande(a.type);
+    case "faibles": return estCourantFaible(a.type);
+    case "specialises": return !!cleCircuitDedie(a) || a.type === "chauffage" || a.type === "volet_roulant";
+  }
+}
+
 function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }: {
   niveau: Niveau;
   existing: CircuitManuel | null; // null = création, sinon édition de ce circuit
@@ -1538,6 +1554,10 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
           {nonRelieTableau && (
             <p className="text-xs text-ink-400 -mt-1.5">Aucun disjoncteur n'est ajouté au tableau pour ce circuit, et le câblage n'est tracé qu'entre ses appareillages — jamais jusqu'au tableau.</p>
           )}
+          {(() => {
+            const msg = messageDepassement(famille, tousAppareils.filter(({ a }) => membres.has(a.id)).map(({ a }) => a), nom.trim() || undefined);
+            return msg ? <p className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-2">⚠ {msg}</p> : null;
+          })()}
           <div>
             <label className="label">Appareillages sur ce circuit ({membres.size})</label>
             <div className="flex flex-col gap-0.5 max-h-56 overflow-y-auto border border-ink-100 rounded-lg p-1.5">
@@ -2006,6 +2026,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [alertesOuvertes, setAlertesOuvertes] = useState(false);
   // Contrôle « rien oublié » : panneau ouvert = les appareillages en cause sont cerclés de rouge sur le plan.
   const [controleOuvert, setControleOuvert] = useState(false);
+  const [filtreAffichage, setFiltreAffichage] = useState<FiltreAffichage>("tout");
 
   const [resultat, setResultat] = useState<ResultatGeneration | null>(null);
   const [showCircuits, setShowCircuits] = useState(false);
@@ -3604,6 +3625,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }));
     setCircuitManuelForm(null);
     invalidateResultat();
+    const msgDep = niveauActif ? messageDepassement(famille, niveauActif.pieces.flatMap(p => p.appareillages).filter(a => membreIds.includes(a.id)), nom) : null;
+    if (msgDep) { setPlacementError(`⚠ ${msgDep}`); setTimeout(() => setPlacementError(null), 7000); }
   };
   const supprimerCircuitManuelEtFermer = (manuelId: number) => {
     supprimerCircuitManuel(manuelId);
@@ -3686,6 +3709,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       })),
     }));
     invalidateResultat();
+    // Alerte NF C 15-100 immédiate si ce rattachement fait déborder le circuit manuel.
+    const manuel = manuelId != null ? (niveauActif?.circuitsManuels ?? []).find(m => m.id === manuelId) : undefined;
+    if (manuel && niveauActif) {
+      const membres = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.id === appareillageId || a.circuitManuelId === manuelId);
+      const msg = messageDepassement(manuel.famille, membres, manuel.nom);
+      if (msg) { setPlacementError(`⚠ ${msg}`); setTimeout(() => setPlacementError(null), 7000); }
+    }
   };
   // Retire un appareillage de la liste d'exclusion (Niveau.appareillagesExclus) pour qu'il
   // rejoigne à nouveau la génération automatique à la prochaine régénération.
@@ -4894,6 +4924,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // Contrôle sur le plan VIVANT (appareillages ajoutés ou supprimés depuis la dernière génération compris).
   const bilanControle = resultat ? controlerCircuits({ ...resultat, maison: { niveaux } }) : null;
+  // Quand on n'affiche qu'une partie des circuits (œil des circuits), seuls les appareillages de CES circuits restent visibles.
+  const circuitsDuNiveau = niveauActif && resultat ? breakersDuNiveau(resultat.breakers, niveauActif) : [];
+  const nbCircuitsVisibles = circuitsDuNiveau.filter(b => circuitsVisibles.has(b.id)).length;
+  const filtreParCircuit = showCircuits && nbCircuitsVisibles > 0 && nbCircuitsVisibles < circuitsDuNiveau.length;
   const idsProblemes = new Set<number>(controleOuvert && bilanControle ? bilanControle.problemes.flatMap(pb => pb.appareilIds) : []);
   const allerAuProbleme = (pb: ProblemeCircuit) => {
     if (pb.niveauId !== niveauActifId) changerNiveau(pb.niveauId);
@@ -4999,6 +5033,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     return Array.from(parCircuit.entries()).flatMap(([circuitId, points]) => {
       const breaker = resultat.breakers.find(b => b.id === circuitId);
       if (!breaker) return [];
+      if (!points.some(a => estDansFiltre(a, filtreAffichage))) return [];
       const color = colorMap.get(circuitId) ?? "#666";
       const segments = segmentsPourCircuit(breaker, points, niveauActif, tableauPos);
       const elements: ReactNode[] = [];
@@ -5614,6 +5649,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               )}
             </div>
           )}
+          <div className="flex items-center gap-0.5 rounded-lg border border-ink-200 p-0.5" title="N'afficher que certains appareillages (et leurs circuits)">
+            {FILTRES_AFFICHAGE.map(f => (
+              <button key={f.id} onClick={() => setFiltreAffichage(f.id)}
+                className={`px-2 py-1 rounded-md text-[11px] ${filtreAffichage === f.id ? "bg-ink-900 text-volt-400 font-semibold" : "text-ink-600 hover:bg-ink-50"}`}>{f.label}</button>
+            ))}
+          </div>
           {bilanControle && (
             <div className="relative">
               <button onClick={() => setControleOuvert(o => !o)}
@@ -6178,6 +6219,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 // demi-taille pour que le carré soit TANGENT au mur au lieu de le chevaucher.
                 const p = toScreen({ x: a.x, y: a.y });
                 const isSel = a.id === selectedAppareillageId || selectionMulti.includes(a.id);
+                if (!isSel && (!estDansFiltre(a, filtreAffichage) || (filtreParCircuit && !(a.circuitId != null && circuitsVisibles.has(a.circuitId))))) return null;
                 const color = showCircuits && a.circuitId != null && circuitsVisibles.has(a.circuitId) ? (colorMap.get(a.circuitId) ?? "#1c1917") : (isSel ? "#F59E0B" : "#1c1917");
                 // Poste d'une plaque multiple : ancrage au mur sur le CENTRE de la plaque, puis décalage le long du mur.
                 const infoPl = a.groupeId != null ? infosPlaquesParPiece.get(piece.id)?.get(a.groupeId) : undefined;
