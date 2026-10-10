@@ -349,6 +349,11 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     pieces: n.pieces.map(p => ({ ...p, appareillages: p.appareillages.map(a => ({ ...a, circuitId: undefined })) })),
   }));
 
+  // Tous les appareillages de la maison (tous niveaux) : une commande peut piloter un point lumineux d'un autre
+  // étage (va-et-vient entre rez-de-chaussée et étage) — la déduction du type de commande doit donc la voir.
+  const itemsMaison: Item[] = niveaux.flatMap(n => n.pieces.flatMap(piece =>
+    piece.appareillages.map(a => ({ base: a, pieceNom: piece.nom, piece, x: a.x, y: a.y }) as Item)));
+
   for (const niveau of niveaux) {
     const debutBreakersNiveau = breakers.length;
     const tousItems: Item[] = [];
@@ -392,7 +397,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
         reste.push(item);
       }
     });
-    genererBreakersManuels(itemsParManuel, manuels, niveau.nom, breakers, tousItems);
+    genererBreakersManuels(itemsParManuel, manuels, niveau.nom, breakers, itemsMaison);
 
     // ─── Exclusions explicites (Niveau.appareillagesExclus) ────────────────────────
     // Un appareillage exclu (voir terminerDessinCheminement, page.tsx — un membre non
@@ -421,8 +426,8 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     genererBreakersPrises(volets, "volets_roulants", niveau.nom, breakers);
 
     // Éclairage : déduction de la commande depuis les interrupteurs/va-et-vient/télérupteurs liés
-    const lumItems = pointsLumineux.map(pl => ({ ...pl, ...deduireCommandeLumiere(tousItems, pl.base.id) }));
-    genererBreakersLumiere(lumItems, niveau.nom, breakers, tousItems);
+    const lumItems = pointsLumineux.map(pl => ({ ...pl, ...deduireCommandeLumiere(itemsMaison, pl.base.id) }));
+    genererBreakersLumiere(lumItems, niveau.nom, breakers, itemsMaison);
 
     // Appareils dédiés : un circuit par instance
     dedies.forEach(item => {

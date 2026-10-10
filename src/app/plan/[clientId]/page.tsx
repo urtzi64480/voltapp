@@ -11,7 +11,7 @@ import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Link from "next/link";
 import {
-  ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, X,
+  ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, Hand, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
   GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt, Box,
   Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler,
@@ -1423,12 +1423,13 @@ function NiveauForm({ onValidate, onCancel }: { onValidate: (nom: string, type: 
   );
 }
 
-function CommandeLinkForm({ niveau, item, onValidate, onCancel }: {
-  niveau: Niveau; item: AppareillagePlace;
+function CommandeLinkForm({ niveau, niveaux, item, onValidate, onCancel }: {
+  niveau: Niveau; niveaux: Niveau[]; item: AppareillagePlace;
   onValidate: (pointLumineuxIds: number[], pointLumineuxIds2: number[]) => void; onCancel: () => void;
 }) {
-  const points = niveau.pieces.flatMap(p =>
-    p.appareillages.filter(a => estLumiere(a.type)).map(a => ({ a, pieceNom: p.nom })));
+  // Points lumineux de tous les niveaux (niveau courant d'abord) : une commande peut piloter une lampe d'un autre étage.
+  const points = [niveau, ...niveaux.filter(n => n.id !== niveau.id)].flatMap(n => n.pieces.flatMap(p =>
+    p.appareillages.filter(a => estLumiere(a.type)).map(a => ({ a, pieceNom: n.id === niveau.id ? p.nom : `${n.nom} · ${p.nom}` }))));
   const double = estCommandeDouble(item.type);
   // Double : chaque lampe va sur la voie 1, la voie 2 ou aucune (jamais les deux). Par défaut, voie 1 = 1re lampe, voie 2 = 2e.
   const [choix, setChoix] = useState<number[]>(item.commandePourIds ?? (points[0] ? [points[0].a.id] : []));
@@ -1450,7 +1451,7 @@ function CommandeLinkForm({ niveau, item, onValidate, onCancel }: {
         <div className="p-4 flex flex-col gap-1 max-h-64 overflow-y-auto">
           {double && points.length > 0 && <p className="text-[11px] text-ink-400 mb-1">Un double a deux voies : chaque lampe se règle sur la voie 1 ou la voie 2.</p>}
           {points.length === 0 ? (
-            <p className="text-sm text-ink-400">Aucun point lumineux placé sur ce niveau. Place d'abord un ou plusieurs points lumineux, puis leur commande.</p>
+            <p className="text-sm text-ink-400">Aucun point lumineux placé dans la maison. Place d'abord un ou plusieurs points lumineux, puis leur commande.</p>
           ) : points.map(({ a, pieceNom }) => double ? (
             <div key={a.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-ink-50">
               <span className="text-sm text-ink-700 flex-1 min-w-0 truncate">{pieceNom || "Pièce"} — {a.nom || `point lumineux #${a.id}`}</span>
@@ -2016,6 +2017,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [showCotesOuv, setShowCotesOuv] = useState(false);   // chaîne de cotes des ouvertures
   const [menuCotesOuvert, setMenuCotesOuvert] = useState(false);
   const [menuEffacerOuvert, setMenuEffacerOuvert] = useState(false);
+  // Déplacer la vue sans risque : outil « Main » (tout glisser déplace le plan, rien d'autre), ou Espace maintenu,
+  // ou bouton du milieu / droit de la souris — les pièces et appareillages ne bougent jamais dans ces cas.
+  const [outilMain, setOutilMain] = useState(false);
+  const [espaceEnfonce, setEspaceEnfonce] = useState(false);
   const [showLongueurs, setShowLongueurs] = useState(false);
   // Ids de breakers actuellement affichés sur le plan (sous-ensemble de resultat.breakers) —
   // permet d'isoler un ou plusieurs circuits à l'écran pour vérifier leur tracé avant de les
@@ -2232,8 +2237,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const appDrag = pieceDrag?.appareillages.find(a => a.id === dragMode.appareillageId);
         const seuilSnapM = SNAP_MUR_PX / (PX_PER_M * zoom);
         const volet = appDrag?.type === "volet_roulant";
+        // Les pièces verrouillées ne reçoivent jamais l'appareillage (il y resterait bloqué) : on l'aimante donc aux murs des pièces non verrouillées.
+        const piecesCibles = niveauCourant ? niveauCourant.pieces.filter(p => !p.verrouillee || p.id === dragMode.pieceId) : [];
         const rz = pieceDrag && appDrag && niveauCourant && !e.altKey && !volet
-          ? resoudreMural(mAligne, niveauCourant.pieces, niveauCourant.zones ?? [], appDrag.type, seuilSnapM) : null;
+          ? resoudreMural(mAligne, piecesCibles, niveauCourant.zones ?? [], appDrag.type, seuilSnapM) : null;
         const mAimante = rz ? rz.point : pieceDrag && appDrag && !e.altKey ? aimanterSurFaceMur(mAligne, pieceDrag, appDrag.type, seuilSnapM) : mAligne;
         const cibleId = rz && rz.aimante && rz.piece ? rz.piece.id : dragMode.pieceId;
         // Volet roulant : une fois près d'une fenêtre, il se centre dessus (Alt = position libre).
@@ -2243,7 +2250,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         setSnapGuide(guideX !== undefined || guideY !== undefined ? { x: guideX, y: guideY } : null);
         const srcId = dragMode.pieceId;
         updateNiveauActif(n => {
-          const src = n.pieces.find(p => p.id === srcId);
+          // Pièce qui porte réellement l'appareillage à cet instant (dragMode peut avoir un rendu de retard après un changement de pièce).
+          const src = n.pieces.find(p => p.appareillages.some(a => a.id === dragMode.appareillageId)) ?? n.pieces.find(p => p.id === srcId);
           const cible = n.pieces.find(p => p.id === cibleId) ?? src;
           if (!src || !cible) return n;
           const gid = appDrag?.groupeId;
@@ -2581,6 +2589,23 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setNiveauActifId(id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false);
     setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedPointArrivee(false); setSelectedMeubleId(null);
     setCheminementDessin(null); setLiaisonLumiereMode(null);
+  };
+
+  useEffect(() => {
+    const cible = (e: KeyboardEvent) => { const t = e.target as HTMLElement | null; return !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable); };
+    const down = (e: KeyboardEvent) => { if (e.code === "Space" && !cible(e)) { e.preventDefault(); setEspaceEnfonce(true); } };
+    const up = (e: KeyboardEvent) => { if (e.code === "Space") setEspaceEnfonce(false); };
+    const flou = () => setEspaceEnfonce(false);
+    window.addEventListener("keydown", down); window.addEventListener("keyup", up); window.addEventListener("blur", flou);
+    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", flou); };
+  }, []);
+  // Choisir un autre outil (dessin, placement…) quitte l'outil Main.
+  useEffect(() => {
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingMeuble || placingPointArrivee) setOutilMain(false);
+  }, [mode, placementType, placingTableau, placingOuverture, placingMeuble, placingPointArrivee]);
+  const choisirSelection = () => {
+    setOutilMain(false); setMode("select"); setDrawingPoints([]); setPlacementType(null); setPlacingTableau(false);
+    setPlacingOuverture(null); setPlacingPointArrivee(false); setPlacingMeuble(false);
   };
 
   // Quitter le plein écran avec Échap — sans toucher aux autres usages d'Échap (modes de
@@ -3064,21 +3089,22 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Supprime tous les postes d'une plaque.
   const removerPlaque = (groupeId: number) => {
     const ids = new Set(niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.groupeId === groupeId).map(a => a.id) ?? []);
-    updateNiveauActif(n => ({
+    // Toutes les commandes de la maison sont nettoyées (une commande d'un autre étage peut viser ces postes).
+    setNiveaux(nvs => nvs.map(n => ({
       ...n,
       pieces: n.pieces.map(p => ({
         ...p,
-        appareillages: p.appareillages.filter(a => !ids.has(a.id))
+        appareillages: (n.id === niveauActifId ? p.appareillages.filter(a => !ids.has(a.id)) : p.appareillages)
           .map(a => (a.commandePourIds?.some(id => ids.has(id)) || a.commandePourIds2?.some(id => ids.has(id)))
             ? { ...a, commandePourIds: a.commandePourIds?.filter(id => !ids.has(id)), commandePourIds2: a.commandePourIds2?.filter(id => !ids.has(id)) } : a),
       })),
-    }));
+    })));
     setSelectedAppareillageId(null);
     invalidateResultat();
   };
 
   const removerAppareillage = (appareillageId: number) => {
-    updateNiveauActif(n => ({
+    setNiveaux(nvs => nvs.map(n => ({
       ...n,
       pieces: n.pieces.map(p => {
         const gid = p.appareillages.find(a => a.id === appareillageId)?.groupeId;
@@ -3093,7 +3119,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         // Plaque multiple : les postes restants se re-serrent (et un poste seul redevient simple).
         return gid != null ? normaliserPlaques(sans, gid) : sans;
       }),
-    }));
+    })));
     setSelectedAppareillageId(null);
     invalidateResultat();
   };
@@ -4138,6 +4164,21 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         }
       }
     }
+    // Un appareillage visible sous le curseur prime sur la pièce : si quelque chose le recouvre (autre pièce, étiquette…)
+    // et que le clic arrive ici, c'est quand même lui qui est attrapé.
+    if (niveauActif && !e.ctrlKey && !e.metaKey) {
+      const rect = svgRef.current?.getBoundingClientRect();
+      if (rect) {
+        const px = e.clientX - rect.left, py = e.clientY - rect.top, seuil = boxSize / 2 + 3;
+        let meilleur: { pc: Piece; a: AppareillagePlace; d: number } | null = null;
+        for (const pc of niveauActif.pieces) for (const a of pc.appareillages) {
+          const c = positionAfficheeApp(pc, a);
+          const d = Math.hypot(c.x - px, c.y - py);
+          if (d <= seuil && (!meilleur || d < meilleur.d)) meilleur = { pc, a, d };
+        }
+        if (meilleur) { onAppareillagePointerDown(meilleur.pc, meilleur.a, e); return; }
+      }
+    }
     if (selectedPieceId === piece.id) {
       if (piece.verrouillee) return; // pièce verrouillée : sélectionnée mais jamais déplacée
       setDragMode({ kind: "piece", pieceId: piece.id, startX: e.clientX, startY: e.clientY, startContour: piece.contour });
@@ -4204,7 +4245,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setSelectedPointArrivee(false);
     setSelectedMeubleId(null);
     setPanelResetTick(t => t + 1);
-    if (piece.verrouillee) return; // sélectionné (panneau accessible) mais non déplaçable
+    if (piece.verrouillee) {   // sélectionné (panneau accessible) mais non déplaçable : on le dit au lieu de rester muet
+      setPlacementError(`Pièce « ${piece.nom || PIECE_TYPES[piece.type].label} » verrouillée : déverrouille-la pour déplacer cet appareillage.`);
+      setTimeout(() => setPlacementError(null), 2600);
+      return;
+    }
     setDragMode({ kind: "appareillage", pieceId: piece.id, appareillageId: a.id });
   };
 
@@ -4723,11 +4768,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // ─── Liens de l'appareillage sélectionné : ce qu'il commande, ce qui le commande, ses liaisons directes et son circuit.
   // Dessinés sur le plan (traits + anneaux) et listés dans son panneau, pour ne rien oublier quand il y en a beaucoup.
-  type AppAvecPiece = { piece: Piece; a: AppareillagePlace };
+  type AppAvecPiece = { piece: Piece; a: AppareillagePlace; niveau: Niveau };
   type Arete = { de: AppAvecPiece; vers: AppAvecPiece; kind: "v1" | "v2" | "direct" };
   const relationsSel = (() => {
     if (!niveauActif || !selectedAppareillage) return null;
-    const tous: AppAvecPiece[] = niveauActif.pieces.flatMap(piece => piece.appareillages.map(a => ({ piece, a })));
+    // Tous niveaux confondus : un va-et-vient peut commander un point lumineux d'un autre étage.
+    const tous: AppAvecPiece[] = niveaux.flatMap(niveau => niveau.pieces.flatMap(piece => piece.appareillages.map(a => ({ piece, a, niveau }))));
     const parId = new Map(tous.map(x => [x.a.id, x] as const));
     const sel = selectedAppareillage;
     // Toutes les liaisons du niveau : commande (voie 1 / voie 2) et liaisons directes entre points lumineux.
@@ -4736,7 +4782,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       for (const id of x.a.commandePourIds ?? []) { const v = parId.get(id); if (v && v.a.id !== x.a.id) aretes.push({ de: x, vers: v, kind: "v1" }); }
       for (const id of x.a.commandePourIds2 ?? []) { const v = parId.get(id); if (v && v.a.id !== x.a.id) aretes.push({ de: x, vers: v, kind: "v2" }); }
     }
-    for (const paires of Object.values(niveauActif.liaisonsDirectesLumiere ?? {})) {
+    for (const paires of niveaux.flatMap(nv => Object.values(nv.liaisonsDirectesLumiere ?? {}))) {
       for (const [i, j] of paires) { const u = parId.get(i), v = parId.get(j); if (u && v && u.a.id !== v.a.id) aretes.push({ de: u, vers: v, kind: "direct" }); }
     }
     // Composante connexe de la sélection : tout ce qui est relié, de proche en proche (ex. point lumineux → ses 2 va-et-vient → …).
@@ -5059,8 +5105,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
         {!vue3D && toolbarOuvert && (
         <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 shrink-0 flex-wrap bg-ink-50">
-          <button onClick={() => { setMode("select"); setDrawingPoints([]); setPlacementType(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingPointArrivee(false); setPlacingMeuble(false); }}
-            className={`btn-ghost !text-xs ${mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingPointArrivee && !placingMeuble ? "!bg-ink-900 !text-volt-400" : ""}`}>
+          <button onClick={choisirSelection}
+            className={`btn-ghost !text-xs ${!outilMain && mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingPointArrivee && !placingMeuble ? "!bg-ink-900 !text-volt-400" : ""}`}>
             <MousePointer2 size={13} /> Sélection
           </button>
           <button onClick={entrerModeDessiner} className={`btn-ghost !text-xs ${mode === "dessiner" ? "!bg-ink-900 !text-volt-400" : ""}`}>
@@ -5348,6 +5394,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             {!vue3D && blocCircuits && (
               <div className="absolute top-3 left-3 z-20 flex flex-col gap-1.5 max-w-xs">{blocCircuits}</div>
             )}
+            {!vue3D && (
+              <div className="absolute bottom-3 left-3 z-20 flex items-center gap-1 rounded-xl bg-white/95 border border-ink-200 shadow p-1">
+                <button onClick={choisirSelection}
+                  className={`btn-ghost !px-2 !py-1.5 !text-xs ${!outilMain && mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingPointArrivee && !placingMeuble ? "!bg-ink-900 !text-volt-400" : ""}`}
+                  title="Outil Sélection : cliquer / déplacer pièces et appareillages (Maj ou Ctrl + clic = sélection multiple)">
+                  <MousePointer2 size={14} /> Sélection
+                </button>
+                <button onClick={() => { choisirSelection(); setOutilMain(true); }}
+                  className={`btn-ghost !px-2 !py-1.5 !text-xs ${outilMain ? "!bg-ink-900 !text-volt-400" : ""}`}
+                  title="Outil Main : glisser déplace uniquement la vue, sans jamais bouger une pièce. Raccourcis : maintenir Espace, ou bouton du milieu / droit de la souris.">
+                  <Hand size={14} /> Main
+                </button>
+              </div>
+            )}
             {!vue3D && niveauActif && (
               <BoussoleOrientation angle={orientationNord} onChange={definirOrientationNord} />
             )}
@@ -5362,15 +5422,22 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <svg
               ref={svgRef}
               className="w-full h-full block"
-              style={{ touchAction: "none", cursor: deplacementNiveau ? "move" : mode === "dessiner" || mode === "cloison" || mode === "zone" || mode === "mesure" || placementType || placingTableau || placingPointArrivee || placingMeuble ? "crosshair" : "grab" }}
+              style={{ touchAction: "none", cursor: outilMain || espaceEnfonce ? "grab" : deplacementNiveau ? "move" : mode === "dessiner" || mode === "cloison" || mode === "zone" || mode === "mesure" || placementType || placingTableau || placingPointArrivee || placingMeuble ? "crosshair" : "grab" }}
               onPointerDown={onBackgroundPointerDown}
               // Outil cloison : le clic gauche est traité ICI, avant les pièces / appareillages / portes (un
               // appareillage posé sur le mur ne doit pas avaler le départ de la cloison).
               onPointerDownCapture={e => {
+                // Déplacer la vue : bouton du milieu / droit, Espace maintenu ou outil Main — avant pièces et appareillages.
+                if (e.button === 1 || e.button === 2 || ((outilMain || espaceEnfonce) && e.button === 0)) {
+                  e.preventDefault(); e.stopPropagation();
+                  setDragMode({ kind: "pan", startX: e.clientX, startY: e.clientY, startPan: pan });
+                  return;
+                }
                 if (deplacementNiveau && e.button === 0 && !e.shiftKey) { e.stopPropagation(); onDeplacementNiveauDown(e); return; }   // Maj + glisser = déplacer la vue
                 if ((mode === "cloison" || mode === "zone" || mode === "mesure") && e.button === 0) { e.stopPropagation(); onBackgroundPointerDown(e); }
               }}
               onPointerMove={onCanvasPointerMove}
+              onContextMenu={e => e.preventDefault()}
               onWheel={handleWheel}
             >
               <rect width="100%" height="100%" fill="#fafaf9" />
@@ -6132,13 +6199,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 return (
                   <g pointerEvents="none">
                     {/* Même circuit (sans lien) : anneau pointillé discret */}
-                    {relationsSel.memeCircuit.map(x => anneau(`rc${x.a.id}`, centreDe(x), CIRCUIT, 1.6, true))}
+                    {relationsSel.memeCircuit.filter(x => x.niveau.id === niveauActif.id).map(x => anneau(`rc${x.a.id}`, centreDe(x), CIRCUIT, 1.6, true))}
                     {/* Tous les éléments reliés, de proche en proche */}
-                    {relationsSel.aretes.map((e, i) => lien(`ar${i}`, centreDe(e.de), centreDe(e.vers), e.kind === "direct" ? CYAN : AMBRE, {
+                    {relationsSel.aretes.filter(e => e.de.niveau.id === niveauActif.id && e.vers.niveau.id === niveauActif.id).map((e, i) => lien(`ar${i}`, centreDe(e.de), centreDe(e.vers), e.kind === "direct" ? CYAN : AMBRE, {
                       fleche: e.kind !== "direct", pointille: e.kind !== "v1",
                       etiquette: e.kind === "v2" ? "2" : e.kind === "v1" && estCommandeDouble(e.de.a.type) ? "1" : undefined,
                     }))}
-                    {relationsSel.membres.map(x => anneau(`ra${x.a.id}`, centreDe(x), AMBRE))}
+                    {relationsSel.membres.filter(x => x.niveau.id === niveauActif.id).map(x => anneau(`ra${x.a.id}`, centreDe(x), AMBRE))}
                     <circle cx={cSel.x} cy={cSel.y} r={R + 1} fill="none" stroke="#F59E0B" strokeWidth={2.6} />
                   </g>
                 );
@@ -6944,9 +7011,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 )}
                 {relationsSel && (() => {
                   const sel = selectedAppareillage;
-                  const nomDe = (x: { piece: Piece; a: AppareillagePlace }) => `${x.a.nom ? x.a.nom + " · " : ""}${labelAppareillagePlace(x.a)} — ${x.piece.nom}`;
-                  const ligne = (x: { piece: Piece; a: AppareillagePlace }, couleur: string, prefixe = "") => (
-                    <button key={`${prefixe}${x.a.id}`} onClick={() => setSelectedAppareillageId(x.a.id)} title="Sélectionner cet appareillage"
+                  const nomDe = (x: AppAvecPiece) => `${x.a.nom ? x.a.nom + " · " : ""}${labelAppareillagePlace(x.a)} — ${x.niveau.id !== niveauActif?.id ? x.niveau.nom + " · " : ""}${x.piece.nom}`;
+                  const ligne = (x: AppAvecPiece, couleur: string, prefixe = "") => (
+                    <button key={`${prefixe}${x.a.id}`} onClick={() => { if (x.niveau.id !== niveauActifId) setNiveauActifId(x.niveau.id); setSelectedAppareillageId(x.a.id); }} title="Sélectionner cet appareillage"
                       className="flex items-center gap-1.5 text-left hover:bg-ink-50 rounded px-1 py-0.5">
                       <span className="w-2 h-2 rounded-full shrink-0" style={{ background: couleur }} />
                       <span className="truncate">{prefixe}{nomDe(x)}</span>
@@ -7988,7 +8055,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
       {pendingCommande && niveauActif && (
         <CommandeLinkForm
-          niveau={niveauActif} item={pendingCommande.item}
+          niveau={niveauActif} niveaux={niveaux} item={pendingCommande.item}
           onValidate={(ids, ids2) => lierCommande(pendingCommande.item.id, ids, ids2)}
           onCancel={() => {
             if (pendingCommande.estNouveau) removerAppareillage(pendingCommande.item.id);
