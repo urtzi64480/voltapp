@@ -14,7 +14,7 @@ import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, Hand, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
   GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt, Box,
-  Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler,
+  Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler, ShieldCheck,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -52,7 +52,7 @@ import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece
 import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, aimanterEnFacade, estEnFacade, pieceLaPlusProche, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import Vue3DMaison from "@/components/plan/Vue3DMaison";
-import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, breakersDuNiveau, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
+import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
 
 const PX_PER_M = 60;
@@ -2004,6 +2004,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [menuHautReduit, setMenuHautReduit] = useState(false);
   const [, setLayoutTick] = useState(0);
   const [alertesOuvertes, setAlertesOuvertes] = useState(false);
+  // Contrôle « rien oublié » : panneau ouvert = les appareillages en cause sont cerclés de rouge sur le plan.
+  const [controleOuvert, setControleOuvert] = useState(false);
 
   const [resultat, setResultat] = useState<ResultatGeneration | null>(null);
   const [showCircuits, setShowCircuits] = useState(false);
@@ -4890,6 +4892,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     return { piece, nom, surf, w, h, x: pos.x, y: pos.y, centrePx: cPx };
   });
 
+  // Contrôle sur le plan VIVANT (appareillages ajoutés ou supprimés depuis la dernière génération compris).
+  const bilanControle = resultat ? controlerCircuits({ ...resultat, maison: { niveaux } }) : null;
+  const idsProblemes = new Set<number>(controleOuvert && bilanControle ? bilanControle.problemes.flatMap(pb => pb.appareilIds) : []);
+  const allerAuProbleme = (pb: ProblemeCircuit) => {
+    if (pb.niveauId !== niveauActifId) changerNiveau(pb.niveauId);
+    const cible = niveaux.find(n => n.id === pb.niveauId)?.pieces.flatMap(pc => pc.appareillages).find(a => a.id === pb.appareilIds[0]);
+    if (!cible) return;
+    setSelectedAppareillageId(cible.id);
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (rect) { const z = Math.max(zoom, 1.6); setZoom(z); setPan({ x: rect.width / 2 - cible.x * PX_PER_M * z, y: rect.height / 2 - cible.y * PX_PER_M * z }); }
+  };
+
   const circuitsNiveauActif = niveauActif
     ? (resultat ? breakersDuNiveau(resultat.breakers, niveauActif) : [])
     : [];
@@ -5600,6 +5614,28 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               )}
             </div>
           )}
+          {bilanControle && (
+            <div className="relative">
+              <button onClick={() => setControleOuvert(o => !o)}
+                title="Vérifier qu'aucun appareillage n'est oublié, mal commandé ou en surcharge de circuit"
+                className={`btn-ghost !text-xs ${bilanControle.problemes.length > 0 ? "!text-red-700" : "!text-emerald-700"} ${controleOuvert ? "!bg-ink-100" : ""}`}>
+                <ShieldCheck size={13} /> Contrôle{bilanControle.problemes.length > 0 ? ` (${bilanControle.problemes.length})` : " ✓"}
+              </button>
+              {controleOuvert && (
+                <div className="absolute z-20 top-full left-0 mt-1 card card-inner !p-2 flex flex-col gap-1.5 shadow-lg w-96 max-h-72 overflow-y-auto">
+                  <p className="text-[11px] font-semibold text-ink-700">{bilanControle.raccordes} / {bilanControle.total} appareillages raccordés à un circuit</p>
+                  {bilanControle.problemes.length === 0 && <p className="text-[11px] text-emerald-700">Rien d&apos;oublié : tout est raccordé, chaque commande a sa lampe et aucun circuit n&apos;est en surcharge.</p>}
+                  {bilanControle.problemes.map((pb, i) => (
+                    <button key={i} onClick={() => allerAuProbleme(pb)}
+                      className={`text-left text-[11px] rounded px-1.5 py-1 hover:bg-ink-50 border ${pb.gravite === "erreur" ? "border-red-200 text-red-700" : "border-amber-200 text-amber-700"}`}>
+                      {pb.message}
+                    </button>
+                  ))}
+                  <p className="text-[10px] text-ink-400">Les appareillages en cause sont cerclés de rouge sur le plan ; clique une ligne pour y aller.</p>
+                </div>
+              )}
+            </div>
+          )}
           {pushMsg && (
             <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-2">
               {pushMsg} <Link href={`/tableau/${clientId}${qsProjet(projet.id)}`} className="underline">Voir le tableau →</Link>
@@ -6218,6 +6254,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         <text x={cx + nxs * (demiBoite + 7)} y={cy + nys * (demiBoite + 7) + 3} fill="none" stroke="#fff" strokeWidth={3} strokeLinejoin="round">{initialesAppareillage(a.type, a.usageDedie)}</text>
                         <text x={cx + nxs * (demiBoite + 7)} y={cy + nys * (demiBoite + 7) + 3} fill={color}>{initialesAppareillage(a.type, a.usageDedie)}</text>
                       </g>
+                    )}
+                    {idsProblemes.has(a.id) && (
+                      <rect x={cx - demiBoite - 6} y={cy - demiBoite - 6} width={boxSize + 12} height={boxSize + 12} rx={7} fill="none" stroke="#EF4444" strokeWidth={2.2} strokeDasharray="4,3" style={{ pointerEvents: "none" }} />
                     )}
                     {nonRaccorde && (
                       <g transform={`translate(${cx + demiBoite - 1}, ${cy - demiBoite - 1}) scale(${echelleAnnot})`} style={{ pointerEvents: "none" }}>

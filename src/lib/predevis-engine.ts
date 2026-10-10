@@ -501,31 +501,21 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           const nomPiece = mode === "circuit" ? nomCircuit(b) : (pieceTraversee?.nom || pseudoCommun(niveau.nom || niveau.type));
 
           // Métrage par circuit (information)
+          const estAller = !estLiaisonCommande && estCommandeType(typeB) && !estCommandeType(typeA);
           noterCircuit(niveau, b, nomCircuit(b),
-            estLiaisonCommande ? (seg.type === "navette" ? "navette" : "retour_lampe") : `cablage_${section}`,
-            estLiaisonCommande ? (seg.type === "navette" ? "Navette (1,5 mm²)" : "Retour lampe (1,5 mm²)") : `Câble ${section} mm²`, legLength, "m");
+            estLiaisonCommande ? (seg.type === "navette" ? "navette" : "retour_lampe") : estAller ? "aller_commande" : `cablage_${section}`,
+            estLiaisonCommande ? (seg.type === "navette" ? "Navettes (câble 3G1.5)" : "Retour lampe (câble 3G1.5)") : estAller ? `Aller vers commande (câble ${section} mm²)` : `Câble ${section} mm²`, legLength, "m");
           if (pose === "apparent") noterCircuit(niveau, b, nomCircuit(b), "moulure", "Moulure (pose apparente)", legLength, "m");
           else { const gi = gaineRecommandee([section, section, section]); noterCircuit(niveau, b, nomCircuit(b), `gaine_irl${gi.gaine.replace(/\D/g, "")}`, `Gaine ${gi.gaine}`, legLength, "m"); }
 
-          if (estLiaisonCommande) {
-            // Retour lampe (dernier interrupteur/va-et-vient/télérupteur -> lampe) et navette
-            // (entre deux va-et-vient) sont deux produits distincts au catalogue — même
-            // section (1.5mm²) mais souvent des couleurs de fil différentes en pratique,
-            // d'où deux sous-catégories séparées plutôt qu'une seule "fil_1.5" générique.
-            // Toujours 1 seul fil, jamais de câble tout-en-un possible ici.
-            const sousCatCommande = seg.type === "navette" ? "navette" : "retour_lampe";
-            const labelCommande = seg.type === "navette" ? "Navette (entre va-et-vient)" : "Retour lampe";
-            ajouter(`${sousCatCommande}@${nomPiece}`, sousCatCommande, labelCommande, nomPiece, legLength, "m");
-          } else {
-            // Tronçon d'alimentation principale : besoin générique "cablage_X" — le choix
-            // entre câble tout-en-un (cable_X, ×1) et fils séparés phase/neutre/terre
-            // (fil_X, ×3) se fait au niveau des OPTIONS catalogue, voir optionsPourBesoin.
-            // La quantité de base ici reste la longueur géométrique brute, sans
-            // multiplicateur — celui-ci est appliqué par option au moment du chiffrage
-            // (quantiteApprox / genererLignesDevis).
-            ajouter(`cablage_${section}@${nomPiece}`, `cablage_${section}`, LABEL_CABLAGE[section] ?? `Câblage ${section}mm²`,
-              nomPiece, legLength, "m");
-          }
+          // Câblage d'une liaison d'éclairage — TOUJOURS un câble à 3 conducteurs (3G1.5) :
+          //  · alimentation → commande : l'ALLER (phase), + neutre + terre qui poursuivent vers la lampe ;
+          //  · navette entre deux va-et-vient : les 2 fils navette + terre (+ neutre en transit) ;
+          //  · commande → lampe : le RETOUR (phase commutée) + neutre + terre qui alimentent la lampe.
+          // Compter le retour et la navette comme un simple fil sous-estimait le métrage (neutre/terre d'une lampe alimentée
+          // par sa commande, 2 navettes par liaison) : chaque tronçon est donc chiffré comme le câble d'alimentation.
+          ajouter(`cablage_${section}@${nomPiece}`, `cablage_${section}`, LABEL_CABLAGE[section] ?? `Câblage ${section}mm²`,
+            nomPiece, legLength, "m");
 
           if (pose === "apparent") {
             ajouter(`moulure@${nomPiece}`, "moulure", "Moulure", nomPiece, legLength, "m");

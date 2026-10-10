@@ -17,7 +17,7 @@ import {
 import {
   Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone,
   CircuitManuel, familleCircuitManuelAppareillage, couleurCircuit, USAGE_DEDIE_DEFAUT,
-  estCommande, baseCommande, commandeCetteLumiere, estLumiere,
+  estCommande, baseCommande, commandeCetteLumiere, estLumiere, lumieresCommandees,
   SegmentCircuit, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage,
 } from "./maison-types";
 import { appareillagesParPieceReelle } from "./piece-reelle";
@@ -261,13 +261,74 @@ function deduireCommandeLumiere(tousItems: Item[], pointLumineuxId: number): { t
   return { typeCommande: "simple", nbCommandes: 1 };
 }
 
+// ─── RÉPARTITION LOGIQUE DE L'ÉCLAIRAGE ────────────────────────────────────────────────────────────────────
+// NF C 15-100 : 8 points d'utilisation maximum par circuit d'éclairage (16 A / 1,5 mm²). La répartition suit la LOGIQUE du
+// logement, pas seulement la proximité :
+//  1. les lampes pilotées par une même commande (interrupteur à plusieurs lampes, va-et-vient en chaîne) restent dans le MÊME
+//     circuit — une commande ne peut pas basculer deux circuits ;
+//  2. une pièce n'est jamais coupée entre deux circuits tant qu'elle tient dans un circuit ;
+//  3. les pièces sont ensuite empilées de proche en proche (chaîne plus-proche-voisin) jusqu'à 8 points.
+function repartirLumieres<T extends Item>(lumItems: T[], tousItems: Item[], max: number): T[][] {
+  if (lumItems.length === 0) return [];
+  // 1. composantes « même commande »
+  const parent = new Map<number, number>();
+  const trouver = (i: number): number => { let r = i; while (parent.get(r) !== r) r = parent.get(r)!; parent.set(i, r); return r; };
+  lumItems.forEach(l => parent.set(l.base.id, l.base.id));
+  const idsLum = new Set(lumItems.map(l => l.base.id));
+  tousItems.forEach(c => {
+    const cibles = lumieresCommandees(c.base).filter(id => idsLum.has(id));
+    for (let k = 1; k < cibles.length; k++) parent.set(trouver(cibles[k]), trouver(cibles[0]));
+  });
+  const compParRacine = new Map<number, T[]>();
+  lumItems.forEach(l => { const r = trouver(l.base.id); (compParRacine.get(r) ?? compParRacine.set(r, []).get(r)!).push(l); });
+  // 2. regroupement par pièce (pièce majoritaire de la composante)
+  type Bloc = { items: T[]; x: number; y: number };
+  const parPiece = new Map<string, Bloc[]>();
+  compParRacine.forEach(items => {
+    const compte = new Map<string, number>();
+    items.forEach(i => compte.set(i.pieceNom, (compte.get(i.pieceNom) ?? 0) + 1));
+    const piece = [...compte.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const x = items.reduce((s, i) => s + i.x, 0) / items.length, y = items.reduce((s, i) => s + i.y, 0) / items.length;
+    (parPiece.get(piece) ?? parPiece.set(piece, []).get(piece)!).push({ items, x, y });
+  });
+  const pieces = [...parPiece.values()].map(blocs => ({
+    blocs, n: blocs.reduce((s, b) => s + b.items.length, 0),
+    x: blocs.reduce((s, b) => s + b.x, 0) / blocs.length, y: blocs.reduce((s, b) => s + b.y, 0) / blocs.length,
+  }));
+  // 3. chaîne de proche en proche, puis empilement
+  const restantes = [...pieces];
+  const ordre: typeof pieces = [];
+  let cur = restantes.shift()!; ordre.push(cur);
+  while (restantes.length > 0) {
+    let bi = 0, bd = Infinity;
+    restantes.forEach((r, i) => { const d = (r.x - cur.x) ** 2 + (r.y - cur.y) ** 2; if (d < bd) { bd = d; bi = i; } });
+    cur = restantes.splice(bi, 1)[0]; ordre.push(cur);
+  }
+  const circuits: T[][] = [];
+  let courant: T[] = [];
+  const fermer = () => { if (courant.length > 0) { circuits.push(courant); courant = []; } };
+  ordre.forEach(pc => {
+    if (courant.length + pc.n <= max) { pc.blocs.forEach(b => courant.push(...b.items)); return; }
+    if (pc.n <= max) { fermer(); pc.blocs.forEach(b => courant.push(...b.items)); return; }
+    // pièce de plus de `max` points : on coupe entre composantes (jamais au milieu d'une commande commune)
+    pc.blocs.sort((a, b) => b.items.length - a.items.length).forEach(b => {
+      if (courant.length + b.items.length > max) fermer();
+      if (b.items.length > max) {
+        for (let i = 0; i < b.items.length; i += max) { fermer(); courant.push(...b.items.slice(i, i + max)); fermer(); }
+      } else courant.push(...b.items);
+    });
+  });
+  fermer();
+  return circuits;
+}
+
 function genererBreakersLumiere(
   lumItems: (Item & { typeCommande: CommandeType; nbCommandes: number })[],
   niveauNom: string, breakers: Breaker[], tousItems: Item[],
 ): void {
   const max = MAX_PAR_CIRCUIT.lumiere ?? 8;
   let idx = 1;
-  for (const cluster of clusteriser(lumItems, max)) {
+  for (const cluster of repartirLumieres(lumItems, tousItems, max)) {
     const b = breakerFromClusterLumiere(cluster, niveauNom, idx++);
     breakers.push(b);
     cluster.forEach(item => { item.base.circuitId = b.id; });
@@ -743,4 +804,78 @@ export function genererGainesNiveaux(resultat: ResultatGeneration): TronconGaine
   }
 
   return troncons;
+}
+
+// ─── CONTRÔLE « RIEN OUBLIÉ » ────────────────────────────────────────────────────────────────────────────────
+// Passe en revue TOUS les appareillages et circuits (générés ou saisis à la main) et remonte ce qui cloche, avec les ids
+// à surligner sur le plan. Ne modifie rien.
+export type CodeProbleme = "non_raccorde" | "commande_sans_lampe" | "lampe_sans_commande" | "va_et_vient_seul" | "commande_multi_circuits" | "depassement";
+export interface ProblemeCircuit { code: CodeProbleme; gravite: "erreur" | "avertissement"; message: string; niveauId: number; appareilIds: number[] }
+export interface BilanControle { problemes: ProblemeCircuit[]; total: number; raccordes: number }
+
+export function controlerCircuits(resultat: ResultatGeneration): BilanControle {
+  const problemes: ProblemeCircuit[] = [];
+  const tous: { a: AppareillagePlace; piece: Piece; niveau: Niveau }[] = resultat.maison.niveaux.flatMap(niveau =>
+    niveau.pieces.flatMap(piece => piece.appareillages.map(a => ({ a, piece, niveau }))));
+  const parId = new Map(tous.map(t => [t.a.id, t]));
+  const nom = (t: { a: AppareillagePlace; piece: Piece }) => `${LABEL_NON_RACCORDE[t.a.type] ?? t.a.type} (${t.piece.nom || t.piece.type})`;
+  const commandes = tous.filter(t => estCommande(t.a.type));
+  let total = 0, raccordes = 0;
+
+  tous.forEach(t => {
+    const { a, niveau } = t;
+    if (a.dejaExistant && a.circuitId == null) return;
+    if (TYPES_SANS_CIRCUIT.includes(a.type)) return; // courants faibles : câble en étoile, pas de disjoncteur
+    total++;
+    if (a.circuitId != null) raccordes++;
+    else problemes.push({ code: "non_raccorde", gravite: "erreur", niveauId: niveau.id, appareilIds: [a.id],
+      message: `${nom(t)} — ${niveau.nom} : aucun circuit (oublié ou exclu).` });
+  });
+
+  commandes.forEach(t => {
+    const cibles = lumieresCommandees(t.a).filter(id => parId.has(id) && estLumiere(parId.get(id)!.a.type));
+    if (cibles.length === 0) {
+      problemes.push({ code: "commande_sans_lampe", gravite: "erreur", niveauId: t.niveau.id, appareilIds: [t.a.id],
+        message: `${nom(t)} — ${t.niveau.nom} : ne commande aucun point lumineux.` });
+      return;
+    }
+    const circuits = new Set(cibles.map(id => parId.get(id)!.a.circuitId).filter(c => c != null));
+    if (circuits.size > 1) {
+      problemes.push({ code: "commande_multi_circuits", gravite: "erreur", niveauId: t.niveau.id, appareilIds: [t.a.id, ...cibles],
+        message: `${nom(t)} — ${t.niveau.nom} : commande des lampes de ${circuits.size} circuits différents (impossible à câbler : mets-les dans le même circuit).` });
+    }
+  });
+
+  tous.filter(t => estLumiere(t.a.type) && !t.a.dejaExistant).forEach(t => {
+    const cmds = commandes.filter(c => commandeCetteLumiere(c.a, t.a.id));
+    if (cmds.length === 0) {
+      problemes.push({ code: "lampe_sans_commande", gravite: "avertissement", niveauId: t.niveau.id, appareilIds: [t.a.id],
+        message: `${nom(t)} — ${t.niveau.nom} : aucune commande (interrupteur, va-et-vient, télérupteur ou détecteur) ne l'allume.` });
+      return;
+    }
+    const nbVaV = cmds.filter(c => baseCommande(c.a.type) === "va_et_vient").length;
+    if (nbVaV === 1) {
+      problemes.push({ code: "va_et_vient_seul", gravite: "erreur", niveauId: t.niveau.id, appareilIds: [t.a.id, ...cmds.map(c => c.a.id)],
+        message: `${nom(t)} — ${t.niveau.nom} : un seul va-et-vient (il en faut au moins 2, sinon un interrupteur simple).` });
+    }
+  });
+
+  resultat.breakers.forEach(b => {
+    const membres = tous.filter(t => t.a.circuitId === b.id);
+    if (membres.length === 0) return;
+    const niveauId = b.niveauId ?? membres[0].niveau.id;
+    if (CIRCUITS[b.circuit]?.category === "lumiere") {
+      const lampes = membres.filter(t => estLumiere(t.a.type));
+      const max = MAX_PAR_CIRCUIT.lumiere ?? 8;
+      if (lampes.length > max) problemes.push({ code: "depassement", gravite: "erreur", niveauId, appareilIds: lampes.map(t => t.a.id),
+        message: `« ${b.label} » : ${lampes.length} points lumineux, maximum ${max} par circuit (NF C 15-100).` });
+    } else if (MAX_PAR_CIRCUIT[b.circuit] != null) {
+      const max = MAX_PAR_CIRCUIT[b.circuit];
+      const prises = membres.filter(t => !estCommande(t.a.type));
+      if (prises.length > max) problemes.push({ code: "depassement", gravite: "erreur", niveauId, appareilIds: prises.map(t => t.a.id),
+        message: `« ${b.label} » : ${prises.length} socles, maximum ${max} par circuit (NF C 15-100).` });
+    }
+  });
+
+  return { problemes, total, raccordes };
 }

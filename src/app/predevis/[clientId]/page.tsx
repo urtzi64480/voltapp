@@ -925,7 +925,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
           // En mode « par circuit », la sélection des circuits à inclure s'applique aussi au métrage.
           const visibles = recapCircuits.filter(r => mode !== "circuit" || piecesSelectionnees === null || piecesSelectionnees.has(r.groupe));
           if (visibles.length === 0) return null;
-          const estCable = (c: string) => c.startsWith("cablage_") || c === "retour_lampe" || c === "navette" || c === "cable_rj45" || c === "cable_coax";
+          const estCable = (c: string) => c.startsWith("cablage_") || c === "retour_lampe" || c === "navette" || c === "aller_commande" || c === "cable_rj45" || c === "cable_coax";
           const fmtM = (n: number) => `${n.toFixed(2)} m`;
           const totaux = new Map<string, { label: string; quantite: number; unite: string }>();
           let totalCable = 0;
