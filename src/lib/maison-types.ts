@@ -57,6 +57,10 @@ export interface AppareillagePlace {
   // entièrement fermé (défaut) … 100 = entièrement ouvert (tablier enroulé dans le coffre).
   caisson?: "interieur" | "exterieur";
   voletOuvertPct?: number;
+  // Pièce À LAQUELLE l'appareillage est attribué pour les comptes (pré-devis, minimum de prises, famille de circuit), choisie à la main :
+  // id d'une pièce du niveau, ou EXTERIEUR_PIECE_ID. Absent = automatique (la pièce dont il longe le mur ; « Extérieur » s'il est
+  // posé sur la façade d'un mur hors de toute pièce). Voir piece-reelle.ts.
+  pieceAttribueeId?: number;
   // Couleur du volet en vue 3D (coffre, coulisses, tablier) — hex, blanc par défaut. Voir COULEURS_VOLET.
   voletCouleur?: string;
   // Couleur de la plaque/du mécanisme en vue 3D — uniquement prises et commandes (voir
@@ -883,6 +887,8 @@ export function ajusterLongueurContour(contour: Point[], segIndex: number, nouve
   return contour.map((pt, i) => (i === (segIndex + 1) % n ? nouveauB : pt));
 }
 
+// Valeur de AppareillagePlace.pieceAttribueeId pour « Extérieur » (aucune pièce du plan).
+export const EXTERIEUR_PIECE_ID = -1;
 export function aireDuPolygone(points: Point[]): number {
   if (points.length < 3) return 0;
   let a = 0;

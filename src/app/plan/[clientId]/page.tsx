@@ -29,8 +29,9 @@ import {
   BoiteDerivation, migrerBoitesDerivation,
   Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, nouvelleVoiture, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
   estCommande, estCommandeDouble, estLumiere, estCourantFaible, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM,
-  Escalier, EscalierType, EscalierTournant,
+  Escalier, EscalierType, EscalierTournant, EXTERIEUR_PIECE_ID,
 } from "@/lib/maison-types";
+import { pieceAutoDe } from "@/lib/piece-reelle";
 import {
   calculerEscalier, hauteurTotaleEscalierCm, escaliersEntrants as lireEscaliersEntrants, nouvelEscalier,
   LABEL_ESCALIER_TYPE, LABEL_STRUCTURE, LABEL_RAMPE, LABEL_MATERIAU, COULEUR_MATERIAU, DIAMETRE_HELICE_DEFAUT_CM, DIAMETRE_POTEAU_DEFAUT_CM,
@@ -3665,6 +3666,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
   // Rattache (ou détache, avec undefined) un appareillage à un circuit manuel — prioritaire
   // sur le clustering automatique une fois "Générer les circuits" relancé.
+  // Pièce à laquelle l'appareillage est attribué pour les comptes (pré-devis, circuits) : undefined = automatique. Toute la plaque suit.
+  const attribuerPiece = (appareillageId: number, pieceId: number | undefined) => {
+    updateNiveauActif(n => {
+      const cible = n.pieces.flatMap(p => p.appareillages).find(a => a.id === appareillageId);
+      const ids = new Set(cible?.groupeId != null ? n.pieces.flatMap(p => p.appareillages).filter(a => a.groupeId === cible.groupeId).map(a => a.id) : [appareillageId]);
+      return { ...n, pieces: n.pieces.map(p => ({ ...p, appareillages: p.appareillages.map(a => ids.has(a.id) ? { ...a, pieceAttribueeId: pieceId } : a) })) };
+    });
+    invalidateResultat();
+  };
   const assignerCircuitManuel = (appareillageId: number, manuelId: number | undefined) => {
     updateNiveauActif(n => ({
       ...n,
@@ -7038,6 +7048,21 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       {relationsSel.tous.length > 0 && (
                         <span className="text-ink-400 pt-0.5">Circuit : {relationsSel.tous.length + 1} appareillages (cercles pointillés sur le plan)</span>
                       )}
+                    </div>
+                  );
+                })()}
+                {niveauActif && pieceDeSelectedAppareillage && (() => {
+                  const auto = pieceAutoDe(selectedAppareillage, pieceDeSelectedAppareillage, niveauActif);
+                  const nomPiece = (pc: Piece) => pc.nom || PIECE_TYPES[pc.type].label;
+                  return (
+                    <div className="flex items-center gap-2 text-xs text-ink-500" title="Pièce dans laquelle cet appareillage est compté (pré-devis, minimum de prises, circuits). Par défaut : la pièce dont il longe le mur.">
+                      <span className="shrink-0 w-16">Pièce</span>
+                      <select className="input !py-1 !text-xs flex-1" value={selectedAppareillage.pieceAttribueeId ?? ""}
+                        onChange={e => attribuerPiece(selectedAppareillage.id, e.target.value === "" ? undefined : Number(e.target.value))}>
+                        <option value="">Auto — {auto.id === pieceDeSelectedAppareillage.id || niveauActif.pieces.some(p => p.id === auto.id) ? nomPiece(auto) : "Extérieur"}</option>
+                        {niveauActif.pieces.map(pc => <option key={pc.id} value={pc.id}>{nomPiece(pc)}</option>)}
+                        <option value={EXTERIEUR_PIECE_ID}>Extérieur</option>
+                      </select>
                     </div>
                   );
                 })()}
