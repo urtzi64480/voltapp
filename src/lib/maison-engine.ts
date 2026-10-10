@@ -349,7 +349,8 @@ function breakerFromClusterManuel(cluster: Item[], manuel: CircuitManuel, niveau
   let pieces: PieceConfig[];
   if (spec.category === "lumiere") {
     const parPiece = new Map<string, GroupeLumineux[]>();
-    cluster.forEach(item => {
+    // Seules les LUMIÈRES comptent comme points d'utilisation : un interrupteur coché dans le circuit n'est pas un point lumineux.
+    cluster.filter(item => estLumiere(item.base.type)).forEach(item => {
       const { typeCommande, nbCommandes } = deduireCommandeLumiere(tousItems, item.base.id);
       const arr = parPiece.get(item.pieceNom) ?? [];
       arr.push({ nbPoints: 1, typeCommande, nbCommandes });
@@ -894,4 +895,24 @@ export function messageDepassement(famille: string, appareils: Pick<Appareillage
   const max = MAX_PAR_CIRCUIT[famille];
   if (max != null && membres.length > max) return `${nom}${membres.length} socles — maximum ${max} par circuit (NF C 15-100). Crée un second circuit.`;
   return null;
+}
+
+/**
+ * Génère UNIQUEMENT les circuits manuels (aucun circuit automatique) : sert à voir tout de suite un circuit qu'on vient de
+ * composer à la main, sans lancer la génération automatique du reste. Les autres appareillages restent sans circuit ; la
+ * génération complète (genererCircuits) reprendra ensuite les circuits manuels tels quels.
+ */
+export function genererCircuitsManuelsSeuls(maison: Maison): ResultatGeneration {
+  const exclusionsOrigine = new Map(maison.niveaux.map(n => [n.id, n.appareillagesExclus] as const));
+  const niveaux: Niveau[] = maison.niveaux.map(n => {
+    const manuelsValides = new Set((n.circuitsManuels ?? []).map(m => m.id));
+    const horsManuel = n.pieces.flatMap(p => p.appareillages).filter(a => a.circuitManuelId == null || !manuelsValides.has(a.circuitManuelId)).map(a => a.id);
+    return { ...n, appareillagesExclus: Array.from(new Set([...(n.appareillagesExclus ?? []), ...horsManuel])) };
+  });
+  const res = genererCircuits({ niveaux });
+  return {
+    ...res,
+    alertes: [], // pas de génération automatique : « sans circuit » n'a pas de sens ici
+    maison: { niveaux: res.maison.niveaux.map(n => ({ ...n, appareillagesExclus: exclusionsOrigine.get(n.id) })) },
+  };
 }

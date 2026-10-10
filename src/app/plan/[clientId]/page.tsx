@@ -52,7 +52,7 @@ import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece
 import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, aimanterEnFacade, estEnFacade, pieceLaPlusProche, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import Vue3DMaison from "@/components/plan/Vue3DMaison";
-import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
+import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, genererCircuitsManuelsSeuls, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
 
 const PX_PER_M = 60;
@@ -1495,7 +1495,7 @@ function estDansFiltre(a: Pick<AppareillagePlace, "type" | "usageDedie">, f: Fil
 function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }: {
   niveau: Niveau;
   existing: CircuitManuel | null; // null = création, sinon édition de ce circuit
-  onValidate: (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[], creerBoite: boolean, nonRelieTableau: boolean) => void;
+  onValidate: (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[], creerBoite: boolean, nonRelieTableau: boolean, relier: boolean) => void;
   onCancel: () => void;
   onDelete?: () => void;
 }) {
@@ -1503,6 +1503,7 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
   const [famille, setFamille] = useState<FamilleCircuitManuel>(existing?.famille ?? "prise_16");
   const [couleur, setCouleur] = useState(existing?.couleur ?? "");
   const [creerBoite, setCreerBoite] = useState(false);
+  const [relier, setRelier] = useState(!existing);
   const [nonRelieTableau, setNonRelieTableau] = useState(existing?.nonRelieTableau ?? false);
   const tousAppareils = niveau.pieces.flatMap(p => p.appareillages.filter(a => !estCourantFaible(a.type)).map(a => ({ a, pieceNom: p.nom }))); // RJ45 / TV : courant faible, pas de circuit de puissance
   const [membres, setMembres] = useState<Set<number>>(
@@ -1547,6 +1548,10 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
               <span className="text-sm text-ink-700">Créer une boîte de dérivation pour ce circuit</span>
             </label>
           )}
+          <label className="flex items-start gap-2 cursor-pointer border-t border-ink-100 pt-2">
+            <input type="checkbox" className="mt-0.5" checked={relier} onChange={e => setRelier(e.target.checked)} />
+            <span className="text-sm text-ink-700">Relier les points sur le plan maintenant<span className="block text-xs text-ink-400">Le circuit existe tout de suite (pas besoin de générer) : clique ensuite ses appareillages dans l&apos;ordre du câble — ceux qui ne sont pas encore dans la liste ci-dessous s&apos;ajoutent au circuit au clic.</span></span>
+          </label>
           <label className="flex items-center gap-2 cursor-pointer border-t border-ink-100 pt-2">
             <input type="checkbox" checked={nonRelieTableau} onChange={e => setNonRelieTableau(e.target.checked)} />
             <span className="text-sm text-ink-700">Circuit déjà existant — non relié au tableau (piquage sur une installation en place)</span>
@@ -1577,7 +1582,7 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
           </div>
         </div>
         <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
-          <button disabled={!nomValide} onClick={() => onValidate(nom.trim(), famille, couleur || undefined, Array.from(membres), creerBoite, nonRelieTableau)}
+          <button disabled={!nomValide} onClick={() => onValidate(nom.trim(), famille, couleur || undefined, Array.from(membres), creerBoite, nonRelieTableau, relier)}
             className="btn-volt flex-1 disabled:opacity-40"><Save size={14} /> {existing ? "Enregistrer" : "Créer"}</button>
           {onDelete && <button onClick={onDelete} className="btn-danger !px-3"><Trash2 size={14} /></button>}
         </div>
@@ -2162,6 +2167,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
 
   const invalidateResultat = () => { if (resultat) { setResultat(null); setShowCircuits(false); } };
+
+  // Recalcule les circuits TOUT DE SUITE après une édition de circuit manuel : génération complète si les circuits étaient déjà
+  // générés (les circuits manuels restent en place, les automatiques sont recalculés), sinon uniquement les circuits manuels
+  // (le reste attend la génération automatique, qui les reprendra tels quels).
+  const recalculerCircuits = (nv: Niveau[]): ResultatGeneration => {
+    const res = resultat ? genererCircuits({ niveaux: nv }) : genererCircuitsManuelsSeuls({ niveaux: nv });
+    setNiveaux(res.maison.niveaux);
+    setResultat(res);
+    setShowCircuits(true);
+    setCircuitsVisibles(new Set(res.breakers.map(b => b.id)));
+    return res;
+  };
 
   useEffect(() => {
     if (dragMode.kind === "none") return;
@@ -3603,10 +3620,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // liste sont détachés, ceux ajoutés sont rattachés, en une seule mise à jour. creerBoite
   // (uniquement à la création d'un circuit lumière) crée aussi une première boîte de
   // dérivation, positionnée au tableau (ou à l'origine) faute de membres à ce stade.
-  const validerCircuitManuel = (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[], creerBoite: boolean, nonRelieTableau: boolean) => {
+  const validerCircuitManuel = (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[], creerBoite: boolean, nonRelieTableau: boolean, relier: boolean) => {
     const existing = circuitManuelForm?.existing ?? null;
     const id = existing ? existing.id : uidMaison();
-    updateNiveauActif(n => ({
+    if (!niveauActif) return;
+    const transformer = (n: Niveau): Niveau => ({
       ...n,
       boitesDerivation: (!existing && famille === "lumiere" && creerBoite)
         ? { ...(n.boitesDerivation ?? {}), [nom]: [{ id: uidMaison(), nom: "Boîte 1", point: origineCircuits(n) ?? { x: 0, y: 0 } }] }
@@ -3614,6 +3632,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       circuitsManuels: existing
         ? (n.circuitsManuels ?? []).map(m => m.id === id ? { ...m, nom, famille, couleur, nonRelieTableau } : m)
         : [...(n.circuitsManuels ?? []), { id, nom, famille, couleur, nonRelieTableau }],
+      // Un appareillage choisi pour ce circuit lève son éventuelle exclusion précédente.
+      appareillagesExclus: (n.appareillagesExclus ?? []).filter(x => !membreIds.includes(x)),
       pieces: n.pieces.map(p => ({
         ...p,
         appareillages: p.appareillages.map(a => {
@@ -3622,11 +3642,19 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           return a.circuitManuelId === id ? { ...a, circuitManuelId: undefined } : a;
         }),
       })),
-    }));
+    });
+    // Le circuit existe TOUT DE SUITE (pas besoin de lancer la génération).
+    const res = recalculerCircuits(niveaux.map(n => n.id === niveauActifId ? transformer(n) : n));
     setCircuitManuelForm(null);
-    invalidateResultat();
-    const msgDep = niveauActif ? messageDepassement(famille, niveauActif.pieces.flatMap(p => p.appareillages).filter(a => membreIds.includes(a.id)), nom) : null;
+    const msgDep = messageDepassement(famille, niveauActif.pieces.flatMap(p => p.appareillages).filter(a => membreIds.includes(a.id)), nom);
     if (msgDep) { setPlacementError(`⚠ ${msgDep}`); setTimeout(() => setPlacementError(null), 7000); }
+    if (relier) {
+      const breaker = res.breakers.find(b => b.manuelId === id) ?? {
+        id: -1, label: nom, circuit: famille, amperes: CIRCUITS[famille]?.ampMax ?? 16, type: "1P" as const,
+        customSection: CIRCUITS[famille]?.section ?? "1.5", pieces: [], manuelId: id,
+      } as Breaker;
+      demarrerDessinCheminement(breaker);
+    }
   };
   const supprimerCircuitManuelEtFermer = (manuelId: number) => {
     supprimerCircuitManuel(manuelId);
@@ -3708,7 +3736,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         ...p, appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, circuitManuelId: manuelId } : a),
       })),
     }));
-    invalidateResultat();
+    if (resultat) {
+      const nv = niveaux.map(n => n.id !== niveauActifId ? n : {
+        ...n,
+        appareillagesExclus: manuelId != null ? (n.appareillagesExclus ?? []).filter(id => id !== appareillageId) : n.appareillagesExclus,
+        pieces: n.pieces.map(p => ({ ...p, appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, circuitManuelId: manuelId } : a) })),
+      });
+      recalculerCircuits(nv);
+    } else invalidateResultat();
     // Alerte NF C 15-100 immédiate si ce rattachement fait déborder le circuit manuel.
     const manuel = manuelId != null ? (niveauActif?.circuitsManuels ?? []).find(m => m.id === manuelId) : undefined;
     if (manuel && niveauActif) {
@@ -4253,8 +4288,25 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
     if (cheminementDessin) {
       e.stopPropagation();
-      if (a.circuitId === cheminementDessin.breaker.id) {
+      const manuelCd = cheminementDessin.breaker.manuelId;
+      if (a.circuitId === cheminementDessin.breaker.id || (manuelCd != null && a.circuitManuelId === manuelCd)) {
         toggleAppareillageCheminement(a.id);
+      } else if (manuelCd != null && niveauActif && !estCourantFaible(a.type)) {
+        // Circuit manuel en cours de composition : cliquer un appareillage de plus l'AJOUTE au circuit (et au cheminement).
+        const manuel = (niveauActif.circuitsManuels ?? []).find(m => m.id === manuelCd);
+        const nv = niveaux.map(n => n.id !== niveauActifId ? n : {
+          ...n,
+          appareillagesExclus: (n.appareillagesExclus ?? []).filter(id => id !== a.id),
+          pieces: n.pieces.map(p => ({ ...p, appareillages: p.appareillages.map(x => x.id === a.id ? { ...x, circuitManuelId: manuelCd } : x) })),
+        });
+        const res = recalculerCircuits(nv);
+        const b = res.breakers.find(x => x.manuelId === manuelCd) ?? cheminementDessin.breaker;
+        setCheminementDessin({ breaker: b, ordre: cheminementDessin.ordre.includes(a.id) ? cheminementDessin.ordre : [...cheminementDessin.ordre, a.id] });
+        if (manuel) {
+          const membres = nv.find(n => n.id === niveauActifId)!.pieces.flatMap(p => p.appareillages).filter(x => x.circuitManuelId === manuelCd);
+          const msg = messageDepassement(manuel.famille, membres, manuel.nom);
+          if (msg) { setPlacementError(`⚠ ${msg}`); setTimeout(() => setPlacementError(null), 7000); }
+        }
       } else {
         setPlacementError("Cet appareillage n'appartient pas à ce circuit.");
         setTimeout(() => setPlacementError(null), 2000);
