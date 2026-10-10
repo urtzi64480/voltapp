@@ -573,6 +573,10 @@ export interface Niveau {
   // MANUEL se renomme directement via CircuitManuel.nom (CircuitManuelForm, page.tsx) ; cette
   // liste ne concerne que les circuits que genererCircuits() compose lui-même.
   nomsCircuits?: Record<string, string>;
+  // Noms donnés aux circuits, retenus par COMPOSITION (ids des appareillages) et non par libellé : un circuit effacé puis
+  // régénéré, ou dont le numéro change, retrouve son nom s'il regroupe (à peu près) les mêmes appareillages.
+  // genererCircuits() les convertit en nomsCircuits à chaque génération.
+  nomsCircuitsMembres?: { ids: number[]; nom: string }[];
   // Ids d'appareillages explicitement exclus de la génération automatique de circuits.
   // Posé quand un cheminement dessiné à la main pour un circuit AUTOMATIQUE (voir
   // terminerDessinCheminement, page.tsx) ne clique pas tous ses membres d'origine : plutôt
