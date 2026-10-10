@@ -265,6 +265,13 @@ function indexerTableau(rows: BreakerRow[]): IndexTableau {
 
 // ─── PASSE 1 — BESOINS BRUTS (géométrie + tableau, sans catalogue) ─────────
 
+// Métrage d'UN circuit (information : ne s'ajoute à rien, les mêmes mètres sont déjà dans les besoins ci-dessus).
+export interface LigneRecapCircuit { sousCategorie: string; label: string; quantite: number; unite: UniteBesoin }
+export interface RecapCircuit {
+  cle: string; nom: string; niveau: string;
+  groupe: string;               // nom du poste en mode « par circuit » (sert à filtrer selon la sélection)
+  lignes: LigneRecapCircuit[];
+}
 export type ModePreDevis = "piece" | "circuit";
 export const PREFIXE_CIRCUIT = "Circuit · ";
 export const PREFIXE_HORS_CIRCUIT = "Hors circuit · ";
@@ -272,8 +279,17 @@ export const PREFIXE_HORS_CIRCUIT = "Hors circuit · ";
 // mode "piece" : les besoins sont regroupés par pièce (câbles = répartis selon les pièces traversées).
 // mode "circuit" : regroupés par CIRCUIT (un circuit de prises peut courir sur plusieurs pièces) — appareillage, boîtes et
 // câbles d'un circuit forment un seul poste. Les longueurs de câble sont strictement les mêmes dans les deux modes.
-export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[], mode: ModePreDevis = "piece"): { besoins: LigneBesoin[]; alertes: string[] } {
+export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[], mode: ModePreDevis = "piece"): { besoins: LigneBesoin[]; alertes: string[]; recap: RecapCircuit[] } {
   const alertes: string[] = [];
+  const recapParCircuit = new Map<string, RecapCircuit>();
+  const noterCircuit = (niveau: Niveau, b: { id: number; label: string; manuelId?: number }, groupe: string, sousCategorie: string, label: string, quantite: number, unite: UniteBesoin) => {
+    if (quantite <= 0) return;
+    const cle = `${niveau.id}:${b.id}`;
+    let r = recapParCircuit.get(cle);
+    if (!r) { r = { cle, nom: resoudreLabelCircuit(b, niveau), niveau: niveau.nom || niveau.type, groupe, lignes: [] }; recapParCircuit.set(cle, r); }
+    const l = r.lignes.find(x => x.sousCategorie === sousCategorie);
+    if (l) l.quantite += quantite; else r.lignes.push({ sousCategorie, label, quantite, unite });
+  };
   const cumul = new Map<string, LigneBesoin>(); // clé -> besoin (cumule les quantités)
   const ajouter = (cle: string, sousCategorie: string, label: string, piece: string, quantite: number, unite: UniteBesoin) => {
     if (quantite <= 0) return;
@@ -399,6 +415,8 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         const tv = a.type === "prise_tv";
         const horizontale = Math.abs(a.x - origineVDI.x) + Math.abs(a.y - origineVDI.y);
         const verticale = Math.abs(ctxVDI.hauteurGaine - ctxVDI.hauteurTableau) + Math.abs(ctxVDI.hauteurGaine - hauteurPriseVDI(String(a.id)));
+        const bCF = a.circuitId != null ? breakersDuNiveauPd.find(x => x.id === a.circuitId) : undefined;
+        if (bCF) noterCircuit(niveau, bCF, nomCircuit(bCF), tv ? "cable_coax" : "cable_rj45", tv ? "Câble coaxial TV" : "Câble RJ45 cat. 6", horizontale + verticale, "m");
         if (tv) ajouter(`cable_coax@${dest.id}`, "cable_coax", "Câble coaxial TV / antenne (étoile vers le coffret de communication)",
           dest.nom, horizontale + verticale, "m");
         else ajouter(`cable_rj45@${dest.id}`, "cable_rj45", "Câble RJ45 cat. 6 STP (étoile vers le coffret de communication)",
@@ -435,6 +453,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         const boitesExistantes = niveau.boitesDerivation?.[b.label] ?? [];
         const nbBoites = boitesExistantes.length > 0 ? boitesExistantes.length : (lumieres.length > 1 ? 1 : 0);
         if (nbBoites > 0) {
+          noterCircuit(niveau, b, nomCircuit(b), "boite_derivation", "Boîte de dérivation", nbBoites, "u");
           if (mode === "circuit") ajouter(`boite_derivation@c${niveau.id}:${b.id}`, "boite_derivation", "Boîte de dérivation", nomCircuit(b), nbBoites, "u");
           else ajouter(`boite_derivation@${niveau.id}`, "boite_derivation", "Boîte de dérivation",
             pseudoCommun(niveau.nom || niveau.type), nbBoites, "u");
@@ -480,6 +499,13 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           // à son extrémité — la longueur d'un même circuit se répartit ainsi entre les pièces qu'il traverse.
           const pieceTraversee = pieceDeJambe(jambe, seg, pieceDeAppareil, niveau.pieces);
           const nomPiece = mode === "circuit" ? nomCircuit(b) : (pieceTraversee?.nom || pseudoCommun(niveau.nom || niveau.type));
+
+          // Métrage par circuit (information)
+          noterCircuit(niveau, b, nomCircuit(b),
+            estLiaisonCommande ? (seg.type === "navette" ? "navette" : "retour_lampe") : `cablage_${section}`,
+            estLiaisonCommande ? (seg.type === "navette" ? "Navette (1,5 mm²)" : "Retour lampe (1,5 mm²)") : `Câble ${section} mm²`, legLength, "m");
+          if (pose === "apparent") noterCircuit(niveau, b, nomCircuit(b), "moulure", "Moulure (pose apparente)", legLength, "m");
+          else { const gi = gaineRecommandee([section, section, section]); noterCircuit(niveau, b, nomCircuit(b), `gaine_irl${gi.gaine.replace(/\D/g, "")}`, `Gaine ${gi.gaine}`, legLength, "m"); }
 
           if (estLiaisonCommande) {
             // Retour lampe (dernier interrupteur/va-et-vient/télérupteur -> lampe) et navette
@@ -533,6 +559,8 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         const chiffres = gaineInfo.gaine.replace(/\D/g, "");
         const sousCatGaine = `gaine_irl${chiffres}`;
         ajouter(`${sousCatGaine}@${nomPiece}`, sousCatGaine, `Gaine ${gaineInfo.gaine}`, nomPiece, d, "m");
+        noterCircuit(niveau, b, nomCircuit(b), `cablage_${sectionCircuit}`, `Câble ${sectionCircuit} mm²`, d, "m");
+        noterCircuit(niveau, b, nomCircuit(b), sousCatGaine, `Gaine ${gaineInfo.gaine}`, d, "m");
       }
     });
   });
@@ -559,7 +587,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
   // Goulottes de montage du tableau : une par rangée équipée (principal + annexes), chiffrées avec les appareils.
   ajouter("goulotte_tableau", "goulotte_tableau", "Goulotte de montage du tableau (1 par rangée)", PSEUDO_TABLEAU, indexTableau.nbRangees, "u");
 
-  return { besoins: Array.from(cumul.values()), alertes };
+  return { besoins: Array.from(cumul.values()), alertes, recap: Array.from(recapParCircuit.values()) };
 }
 
 // ─── FOURNISSEURS ───────────────────────────────────────────────────────────

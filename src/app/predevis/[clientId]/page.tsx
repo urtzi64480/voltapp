@@ -9,7 +9,7 @@ import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import { Niveau } from "@/lib/maison-types";
 import { BreakerRow } from "@/lib/electrical-constants";
 import {
-  calculerBesoinsBruts, ModePreDevis, apparierCatalogue, optionsPourSousCategorie, genererLignesDevis, estBobinable,
+  calculerBesoinsBruts, ModePreDevis, RecapCircuit, apparierCatalogue, optionsPourSousCategorie, genererLignesDevis, estBobinable,
   multiplicateurPourArticle, estSousCategorieAppareillage, estPieceReelle, estPieceTableau, optionAvecOffre, prixCompagnonAuMetre,
   ResultatPreDevis, BesoinApparie, OptionArticle, ChoixLigne, POSTE_MAIN_OEUVRE, POSTE_CABLAGE,
 } from "@/lib/predevis-engine";
@@ -296,6 +296,8 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Mode de chiffrage : null = pas encore choisi (la page le demande d'abord) ; « piece » = postes par pièce ;
   // « circuit » = postes par circuit (un circuit de prises peut traverser plusieurs pièces).
   const [mode, setMode] = useState<ModePreDevis | null>(null);
+  // Métrage par circuit (information seulement : jamais ajouté au devis, ces mètres sont déjà dans les besoins).
+  const [recapCircuits, setRecapCircuits] = useState<RecapCircuit[]>([]);
   const [donnees, setDonnees] = useState<{ niveaux: Niveau[]; rows: BreakerRow[]; prest: Prestation[]; brouillon: any } | null>(null);
   const [loading, setLoading] = useState(true);
   const [choix, setChoix] = useState<Record<string, EtatChoix>>({});
@@ -376,7 +378,8 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   useEffect(() => {
     if (!donnees || !mode) return;
     const { niveaux, rows, prest, brouillon } = donnees;
-    const { besoins, alertes } = calculerBesoinsBruts(niveaux, rows, mode);
+    const { besoins, alertes, recap } = calculerBesoinsBruts(niveaux, rows, mode);
+    setRecapCircuits(recap);
     const res = apparierCatalogue(besoins, prest);
     setResultat(res);
     setAlertesGeometrie(alertes);
@@ -917,6 +920,56 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
             </div>
           </div>
         </div>
+
+        {resultat && recapCircuits.length > 0 && (() => {
+          // En mode « par circuit », la sélection des circuits à inclure s'applique aussi au métrage.
+          const visibles = recapCircuits.filter(r => mode !== "circuit" || piecesSelectionnees === null || piecesSelectionnees.has(r.groupe));
+          if (visibles.length === 0) return null;
+          const estCable = (c: string) => c.startsWith("cablage_") || c === "retour_lampe" || c === "navette" || c === "cable_rj45" || c === "cable_coax";
+          const fmtM = (n: number) => `${n.toFixed(2)} m`;
+          const totaux = new Map<string, { label: string; quantite: number; unite: string }>();
+          let totalCable = 0;
+          visibles.forEach(r => r.lignes.forEach(l => {
+            const t = totaux.get(l.sousCategorie) ?? { label: l.label, quantite: 0, unite: l.unite };
+            t.quantite += l.quantite; totaux.set(l.sousCategorie, t);
+            if (estCable(l.sousCategorie)) totalCable += l.quantite;
+          }));
+          const ordre = (c: string) => estCable(c) ? 0 : c.startsWith("gaine") ? 1 : c === "moulure" ? 2 : 3;
+          return (
+            <div className="card card-inner mb-4">
+              <h2 className="font-semibold text-ink-800 text-sm mb-1">Métrage par circuit</h2>
+              <p className="text-xs text-ink-500 mb-3">Câbles, gaines, moulures… de chaque circuit — <strong>à titre d'information</strong> : ces mètres sont déjà dans les lignes du devis, ils ne sont pas recomptés.</p>
+              <div className="flex flex-col gap-2">
+                {visibles.map(r => {
+                  const cable = r.lignes.filter(l => estCable(l.sousCategorie)).reduce((a, l) => a + l.quantite, 0);
+                  return (
+                    <div key={r.cle} className="rounded-lg border border-ink-200 px-3 py-2">
+                      <div className="flex justify-between gap-2 text-sm">
+                        <span className="font-medium text-ink-800">{r.nom} <span className="text-xs text-ink-400">({r.niveau})</span></span>
+                        <span className="text-ink-600 whitespace-nowrap">câble {fmtM(cable)}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-ink-500 mt-1">
+                        {[...r.lignes].sort((a, b) => ordre(a.sousCategorie) - ordre(b.sousCategorie)).map(l => (
+                          <span key={l.sousCategorie}>{l.label} : <strong className="text-ink-700">{l.unite === "m" ? fmtM(l.quantite) : `${l.quantite} u`}</strong></span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-3 pt-3 border-t border-ink-200 bg-ink-50 rounded-lg px-3 py-2">
+                <div className="flex justify-between text-sm font-semibold text-ink-700">
+                  <span>Récapitulatif total (information — non recompté)</span><span>câble {fmtM(totalCable)}</span>
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-ink-500 mt-1">
+                  {[...totaux.entries()].sort((a, b) => ordre(a[0]) - ordre(b[0]) || a[0].localeCompare(b[0])).map(([c, t]) => (
+                    <span key={c}>{t.label} : <strong className="text-ink-700">{t.unite === "m" ? fmtM(t.quantite) : `${t.quantite} u`}</strong></span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {resultat && mode === "piece" && piecesDuPlan.length > 0 && (() => {
           // Contrôle « rien oublié » : chaque pièce du plan doit devenir un poste du devis. Une pièce sans aucune ligne

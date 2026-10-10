@@ -4944,7 +4944,29 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     );
   })();
 
-    const rendreCircuitsPlan = (couche: "visuel" | "interactif"): ReactNode => {
+    // Point (écran) où le câble touche l'appareillage : milieu du bord du carré côté mur — exactement le carré dessiné par le
+  // rendu des appareillages (même ancrage, même demi-taille, même décalage de plaque). Hors mur : le point enregistré.
+  const pointContactAppareil = (piece: Piece, a: AppareillagePlace, stocke: Point): Point => {
+    if (!niveauActif || !estMural(a.type)) return stocke;
+    const infoPl = a.groupeId != null ? infosPlaquesParPiece.get(piece.id)?.get(a.groupeId) : undefined;
+    const ptAncre = infoPl ? { x: infoPl.gx, y: infoPl.gy } : { x: a.x, y: a.y };
+    const anc = ancrageMural(ptAncre, piece, niveauActif.zones ?? []);
+    if (!anc) return stocke;
+    const facePx = Math.max(2, anc.faceM * PX_PER_M * zoom);
+    const pPied = toScreen(anc.pied);
+    const pN = toScreen({ x: anc.pied.x + anc.normale.x * 0.1, y: anc.pied.y + anc.normale.y * 0.1 });
+    const lenN = Math.hypot(pN.x - pPied.x, pN.y - pPied.y) || 1;
+    const nx = (pN.x - pPied.x) / lenN, ny = (pN.y - pPied.y) / lenN;
+    let bx = pPied.x + nx * facePx, by = pPied.y + ny * facePx; // bord du carré côté mur
+    if (infoPl) {
+      const dr = droiteFaceAuMur(anc.normale);
+      const off = ((a.rangPlaque ?? 0) - (infoPl.n - 1) / 2) * (boxSize + 1);
+      bx += dr.x * off; by += dr.y * off;
+    }
+    return { x: bx, y: by };
+  };
+
+  const rendreCircuitsPlan = (couche: "visuel" | "interactif"): ReactNode => {
     if (!(showCircuits && resultat && niveauActif && origineCircuits(niveauActif))) return null;
     const visuel = couche === "visuel";
     // Origine du tracé : le point d'arrivée des gaines quand il est configuré
@@ -5058,15 +5080,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             const piece = niveauActif.pieces.find(pc => pc.appareillages.some(x => String(x.id) === id));
             const ap = piece?.appareillages.find(x => String(x.id) === id);
             if (!piece || !ap) return;
-            let fin = pPx;
-            if (estMural(ap.type)) {
-              const anc = ancrageMural(pt, piece, niveauActif.zones ?? []);
-              if (anc) {
-                fin = toScreen(anc.pied);
-                if (Math.hypot(fin.x - pPx.x, fin.y - pPx.y) > 0.5) {
-                  elements.push(<line key={`${cle}-stub-${k}`} x1={pPx.x} y1={pPx.y} x2={fin.x} y2={fin.y} stroke={couleurSegment} strokeWidth={2.4} strokeLinecap="round" />);
-                }
-              }
+            // Le câble vient TOUCHER le carré de l'appareillage (bord côté mur, au droit du poste pour une plaque multiple).
+            const fin = pointContactAppareil(piece, ap, pPx);
+            if (Math.hypot(fin.x - pPx.x, fin.y - pPx.y) > 0.5) {
+              elements.push(<line key={`${cle}-stub-${k}`} x1={pPx.x} y1={pPx.y} x2={fin.x} y2={fin.y} stroke="#fff" strokeWidth={4.4} strokeLinecap="round" opacity={0.7} />);
+              elements.push(<line key={`${cle}-stub2-${k}`} x1={pPx.x} y1={pPx.y} x2={fin.x} y2={fin.y} stroke={couleurSegment} strokeWidth={2.4} strokeLinecap="round" />);
             }
             elements.push(<circle key={`${cle}-ext-${k}`} cx={fin.x} cy={fin.y} r={2.8} fill={couleurSegment} stroke="#fff" strokeWidth={1.2} />);
           });
