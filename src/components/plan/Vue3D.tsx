@@ -12,11 +12,11 @@
 
 import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
-import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, battantsFenetre, nbVantauxBaie, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, estLumiere, estLumierePlafond, estSpot, HAUTEUR_PERSONNE_M, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, battantsFenetre, nbVantauxBaie, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, estLumiere, estLumierePlafond, estSpot, HAUTEUR_PERSONNE_M, ENTRAXE_POSTE_M, hauteurCommunePlaqueCm, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
 import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante, creerBaieVitree, idVantailBaie, creerPorteGarage, creerFenetreBattante } from "@/components/plan/PortesOuvrables";
-import { baieDuVolet } from "@/lib/appareillage-mur";
+import { baieDuVolet, infosPlaques, droiteFaceAuMur } from "@/lib/appareillage-mur";
 import { ancrageMural } from "@/lib/zones";
 import { calculerEscalier, hauteurTotaleEscalierCm, EscalierEntrant } from "@/lib/escaliers";
 import { creerEscalier3D, trianglesDePolygone, geometrieSolPercee, aretesGardeCorpsTremie, creerGardeCorpsTremie } from "@/components/plan/Escalier3D";
@@ -811,8 +811,15 @@ const Vue3D = forwardRef<Vue3DHandle, {
       // INTÉRIEURE du mur le plus proche de leur pièce (orientés vers l'intérieur de la
       // pièce), ou au plafond pour un point lumineux. Un électroménager est posé au sol,
       // dos au mur.
+      // Plaques multiples : les postes partagent le même centre, la même hauteur et le même mur que sur le plan 2D (centre de la
+      // plaque ancré UNE fois, puis postes décalés d'un entraxe) — sans ça un poste ancré seul pouvait se retrouver sur un autre mur,
+      // dans un angle ou à une autre hauteur, donc enfoui ou invisible.
+      const plaques3D = infosPlaques(piece.appareillages);
       piece.appareillages.forEach(app => {
-        const hCable = hauteurInstallation(app.type, app.hauteur, hauteurMurs);
+        const infoPl = app.groupeId != null ? plaques3D.get(app.groupeId) : undefined;
+        const postesPl = infoPl ? piece.appareillages.filter(a => a.groupeId === app.groupeId) : [];
+        const hauteurApp = infoPl ? (postesPl.find(a => a.hauteur != null)?.hauteur ?? hauteurCommunePlaqueCm(postesPl.map(a => a.type))) : app.hauteur;
+        const hCable = hauteurInstallation(app.type, hauteurApp, hauteurMurs);
         const couleurCircuitApp = showCircuits && app.circuitId != null ? colorMap.get(app.circuitId) : undefined;
         // Volet roulant : dimensions = celles de la fenêtre du mur (baieDuVolet), centré dessus,
         // coffre à l'intérieur ou à l'extérieur, tablier ouvert/fermé (setOuverture).
@@ -846,13 +853,17 @@ const Vue3D = forwardRef<Vue3DHandle, {
         if (modele.montage === "plafond") {
           py = hCable;
         } else {
-          const anc = ancrageMural({ x: app.x, y: app.y }, piece, niveau.zones ?? []);
+          const anc = ancrageMural(infoPl ? { x: infoPl.gx, y: infoPl.gy } : { x: app.x, y: app.y }, piece, niveau.zones ?? []);
           if (anc) {
             // Face de pose : intérieure finie du mur, façade extérieure, ou face d'une cloison de zone ; +z local → côté où l'appareillage regarde.
             const recul = anc.faceM + 0.002;
             nx = anc.normale.x; nz = anc.normale.y;
             px = anc.pied.x + nx * recul;
             pz = anc.pied.y + nz * recul;
+            if (infoPl) {   // poste de plaque : décalé le long du mur depuis le centre de la plaque (rang 0 à gauche, vu de la pièce)
+              const dr = droiteFaceAuMur(anc.normale), d = ((app.rangPlaque ?? 0) - (infoPl.n - 1) / 2) * ENTRAXE_POSTE_M;
+              px += dr.x * d; pz += dr.y * d;
+            }
             rotY = Math.atan2(nx, nz);
             murPose = anc.facade || anc.cloison ? null : parametresMur3D(piece, anc.segIndex);
           }
