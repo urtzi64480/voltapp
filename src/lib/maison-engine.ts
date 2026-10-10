@@ -902,7 +902,7 @@ export function messageDepassement(famille: string, appareils: Pick<Appareillage
  * composer à la main, sans lancer la génération automatique du reste. Les autres appareillages restent sans circuit ; la
  * génération complète (genererCircuits) reprendra ensuite les circuits manuels tels quels.
  */
-export function genererCircuitsManuelsSeuls(maison: Maison): ResultatGeneration {
+export function genererCircuitsManuelsSeuls(maison: Maison, precedent?: ResultatGeneration | null): ResultatGeneration {
   const exclusionsOrigine = new Map(maison.niveaux.map(n => [n.id, n.appareillagesExclus] as const));
   const niveaux: Niveau[] = maison.niveaux.map(n => {
     const manuelsValides = new Set((n.circuitsManuels ?? []).map(m => m.id));
@@ -910,9 +910,38 @@ export function genererCircuitsManuelsSeuls(maison: Maison): ResultatGeneration 
     return { ...n, appareillagesExclus: Array.from(new Set([...(n.appareillagesExclus ?? []), ...horsManuel])) };
   });
   const res = genererCircuits({ niveaux });
-  return {
+  const resultat: ResultatGeneration = {
     ...res,
     alertes: [], // pas de génération automatique : « sans circuit » n'a pas de sens ici
     maison: { niveaux: res.maison.niveaux.map(n => ({ ...n, appareillagesExclus: exclusionsOrigine.get(n.id) })) },
   };
+  if (!precedent) return resultat;
+
+  // Des circuits AUTOMATIQUES existent déjà : ils restent tels quels (aucune régénération). Seuls changent les circuits
+  // manuels ; un appareillage passé dans un circuit manuel quitte son ancien circuit automatique (qui est allégé d'autant).
+  const autoPrec: Breaker[] = precedent.breakers.filter(b => b.manuelId == null).map(b => ({ ...b, pieces: b.pieces.map(pc => ({ ...pc, groupes: [...pc.groupes] })) }));
+  const autoParId = new Map(autoPrec.map(b => [b.id, b]));
+  const circuitPrecedent = new Map<number, number>();
+  maison.niveaux.forEach(n => n.pieces.forEach(p => p.appareillages.forEach(a => {
+    if (a.circuitId != null && autoParId.has(a.circuitId)) circuitPrecedent.set(a.id, a.circuitId);
+  })));
+  const piecesDe = (niveau: Niveau) => new Map(niveau.pieces.flatMap(p => p.appareillages.map(a => [a.id, p] as const)));
+  resultat.maison.niveaux.forEach(n => {
+    const pieceDe = piecesDe(n);
+    n.pieces.forEach(p => p.appareillages.forEach(a => {
+      const prec = circuitPrecedent.get(a.id);
+      if (prec == null) return;
+      if (a.circuitId == null) { a.circuitId = prec; return; }     // reste sur son circuit automatique
+      // Passé dans un circuit manuel : on l'enlève de l'ancien circuit automatique.
+      const b = autoParId.get(prec)!;
+      const nomPiece = pieceDe.get(a.id)?.nom;
+      const pc = b.pieces.find(x => x.nom === nomPiece) ?? b.pieces.find(x => x.nbPrises > 0 || x.groupes.length > 0);
+      if (!pc) return;
+      if (CIRCUITS[b.circuit]?.category === "lumiere") { if (estLumiere(a.type)) pc.groupes.pop(); }
+      else if (!estCommande(a.type)) pc.nbPrises = Math.max(0, pc.nbPrises - 1);
+    }));
+  });
+  const vivants = autoPrec.filter(b => resultat.maison.niveaux.some(n => n.pieces.some(p => p.appareillages.some(a => a.circuitId === b.id))));
+  vivants.forEach(b => { b.pieces = b.pieces.filter(pc => pc.nbPrises > 0 || pc.groupes.length > 0); });
+  return { ...resultat, breakers: [...vivants, ...resultat.breakers], alertes: precedent.alertes };
 }

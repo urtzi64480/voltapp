@@ -2168,11 +2168,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const invalidateResultat = () => { if (resultat) { setResultat(null); setShowCircuits(false); } };
 
-  // Recalcule les circuits TOUT DE SUITE après une édition de circuit manuel : génération complète si les circuits étaient déjà
-  // générés (les circuits manuels restent en place, les automatiques sont recalculés), sinon uniquement les circuits manuels
-  // (le reste attend la génération automatique, qui les reprendra tels quels).
+  // Recalcule TOUT DE SUITE les circuits MANUELS après une édition — et uniquement eux : les circuits automatiques déjà générés
+  // restent tels quels, et rien n'est généré tant que tu ne cliques pas sur « Générer » (qui reprendra les manuels tels quels).
   const recalculerCircuits = (nv: Niveau[]): ResultatGeneration => {
-    const res = resultat ? genererCircuits({ niveaux: nv }) : genererCircuitsManuelsSeuls({ niveaux: nv });
+    const res = genererCircuitsManuelsSeuls({ niveaux: nv }, resultat);
     setNiveaux(res.maison.niveaux);
     setResultat(res);
     setShowCircuits(true);
