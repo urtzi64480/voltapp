@@ -4785,19 +4785,24 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     for (const paires of niveaux.flatMap(nv => Object.values(nv.liaisonsDirectesLumiere ?? {}))) {
       for (const [i, j] of paires) { const u = parId.get(i), v = parId.get(j); if (u && v && u.a.id !== v.a.id) aretes.push({ de: u, vers: v, kind: "direct" }); }
     }
-    // Composante connexe de la sélection : tout ce qui est relié, de proche en proche (ex. point lumineux → ses 2 va-et-vient → …).
-    const voisins = new Map<number, number[]>();
-    for (const e of aretes) {
-      voisins.set(e.de.a.id, [...(voisins.get(e.de.a.id) ?? []), e.vers.a.id]);
-      voisins.set(e.vers.a.id, [...(voisins.get(e.vers.a.id) ?? []), e.de.a.id]);
+    // Seul le circuit d'éclairage concerné : les points lumineux de la sélection (ceux qu'elle commande, ou elle-même si
+    // c'est un point lumineux), prolongés par leurs liaisons directes, puis TOUTES les commandes de ces lampes
+    // (va-et-vient partenaires…). On ne remonte pas plus loin : les autres lampes d'un partenaire ou d'une plaque
+    // multiple appartiennent à d'autres circuits et ne sont pas affichées.
+    const lampes = new Set<number>();
+    if (estLumiere(sel.type)) lampes.add(sel.id);
+    for (const e of aretes) if (e.kind !== "direct" && e.de.a.id === sel.id) lampes.add(e.vers.a.id);
+    for (let change = true; change;) {
+      change = false;
+      for (const e of aretes) if (e.kind === "direct") {
+        const u = e.de.a.id, v = e.vers.a.id;
+        if (lampes.has(u) && !lampes.has(v)) { lampes.add(v); change = true; }
+        else if (lampes.has(v) && !lampes.has(u)) { lampes.add(u); change = true; }
+      }
     }
+    const aretesSel = aretes.filter(e => (e.kind === "direct" ? lampes.has(e.de.a.id) && lampes.has(e.vers.a.id) : lampes.has(e.vers.a.id)));
     const vus = new Set<number>([sel.id]);
-    const file = [sel.id];
-    while (file.length) {
-      const cur = file.pop()!;
-      for (const n of voisins.get(cur) ?? []) if (!vus.has(n)) { vus.add(n); file.push(n); }
-    }
-    const aretesSel = aretes.filter(e => vus.has(e.de.a.id) && vus.has(e.vers.a.id));
+    aretesSel.forEach(e => { vus.add(e.de.a.id); vus.add(e.vers.a.id); });
     const membres = tous.filter(x => x.a.id !== sel.id && vus.has(x.a.id));
     const memeCircuit = tous.filter(x => x.a.id !== sel.id && (
       (sel.circuitId != null && x.a.circuitId === sel.circuitId) || (sel.circuitManuelId != null && x.a.circuitManuelId === sel.circuitManuelId)));
