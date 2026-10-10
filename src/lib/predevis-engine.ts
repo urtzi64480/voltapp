@@ -172,6 +172,12 @@ const LABEL_APPAREILLAGE_DOMOTIQUE: Record<string, string> = {
 // la page Catalogue (SOUS_CATEGORIES_CONNUES) pour que la liste d'autocomplétion ne puisse plus dériver du
 // moteur. Tout nouveau type d'appareillage ajouté à LABEL_APPAREILLAGE (ou à sa variante domotique) y
 // apparaît automatiquement. "prise_specialisee" = sortie dédiée d'un appareil (four, lave-linge…).
+// Besoin d'APPAREILLAGE (prise, interrupteur, commande, variantes domotiques, plaques de finition) — par opposition aux boîtes,
+// câbles, disjoncteurs… Sert au choix « même marque partout » du pré-devis.
+export function estSousCategorieAppareillage(sousCategorie: string): boolean {
+  return sousCategorie in LABEL_APPAREILLAGE || sousCategorie.endsWith("_domotique") || sousCategorie === "prise_specialisee" || sousCategorie.startsWith("plaque_");
+}
+
 export const NOMENCLATURE_APPAREILLAGE: { code: string; label: string }[] = [
   ...Object.entries(LABEL_APPAREILLAGE).map(([code, label]) => ({ code, label })),
   ...Object.entries(LABEL_APPAREILLAGE_DOMOTIQUE).map(([type, label]) => ({ code: `${type}_domotique`, label })),

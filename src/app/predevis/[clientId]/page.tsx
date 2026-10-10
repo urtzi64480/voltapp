@@ -10,10 +10,10 @@ import { Niveau } from "@/lib/maison-types";
 import { BreakerRow } from "@/lib/electrical-constants";
 import {
   calculerBesoinsBruts, apparierCatalogue, optionsPourSousCategorie, genererLignesDevis, estBobinable,
-  multiplicateurPourArticle, estPieceReelle, estPieceTableau, optionAvecOffre, prixCompagnonAuMetre,
+  multiplicateurPourArticle, estSousCategorieAppareillage, estPieceReelle, estPieceTableau, optionAvecOffre, prixCompagnonAuMetre,
   ResultatPreDevis, BesoinApparie, OptionArticle, ChoixLigne, POSTE_MAIN_OEUVRE, POSTE_CABLAGE,
 } from "@/lib/predevis-engine";
-import { attacherFournisseurs, libelleOffreMarque, offrePrincipale, offresTriees, prixVenteOffre } from "@/lib/fournisseurs";
+import { attacherFournisseurs, libelleOffreMarque, marqueOffre, normTexte, offrePrincipale, offresTriees, prixVenteOffre } from "@/lib/fournisseurs";
 import { colonnesFournisseur, colonnesImage } from "@/lib/devis-lignes";
 import ProduitPicker from "@/components/devis/ProduitPicker";
 import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
@@ -312,6 +312,10 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Le tableau électrique (disjoncteurs, différentiels, goulottes de montage) entre-t-il dans le devis ?
   // null = pas encore répondu → l'alerte s'affiche à l'ouverture du pré-devis (sauf si un brouillon porte déjà la réponse).
   const [inclureTableau, setInclureTableau] = useState<boolean | null>(null);
+  // « Même marque partout » : marque choisie + portée (appareillage et plaques seulement, ou tout le matériel) + dernier résultat.
+  const [marqueGlobale, setMarqueGlobale] = useState("");
+  const [porteeMarque, setPorteeMarque] = useState<"appareillage" | "tout">("appareillage");
+  const [bilanMarque, setBilanMarque] = useState<{ marque: string; appliques: number; sans: string[] } | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -460,6 +464,56 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   function majChoix(cle: string, e: EtatChoix) {
     setChoix(prev => ({ ...prev, [cle]: e }));
+  }
+
+  // ── Même marque partout ──
+  // Offre d'un article pour une marque (la principale d'abord, sinon la moins chère) ; undefined si l'article n'existe pas dans cette marque.
+  function offreDeMarque(p: Prestation, marqueNorm: string) {
+    const offres = offresTriees(p.fournisseurs).filter(o => normTexte(marqueOffre(p, o)) === marqueNorm);
+    if (offres.length === 0) return undefined;
+    return offres.find(o => o.principal) ?? [...offres].sort((a, b) => prixVenteOffre(p, a) - prixVenteOffre(p, b))[0];
+  }
+  const besoinsMarquables = useMemo(
+    () => Object.values(parPieceFiltre).flat().filter(b => !estBobinable(b.sousCategorie) && b.options.length > 0
+      && (porteeMarque === "tout" || estSousCategorieAppareillage(b.sousCategorie))),
+    [parPieceFiltre, porteeMarque]);
+  const marquesDisponibles = useMemo(() => {
+    const m = new Map<string, { nom: string; lignes: Set<string> }>();
+    besoinsMarquables.forEach(b => b.options.forEach(opt => {
+      const p = prestations.find(x => x.id === opt.prestation_id);
+      if (!p) return;
+      (p.fournisseurs && p.fournisseurs.length > 0 ? p.fournisseurs.map(o => marqueOffre(p, o)) : [marqueOffre(p, null)]).forEach(nom => {
+        const k = normTexte(nom);
+        if (!k) return;
+        const e = m.get(k) ?? { nom, lignes: new Set<string>() };
+        e.lignes.add(b.cle); m.set(k, e);
+      });
+    }));
+    return Array.from(m.entries()).map(([k, e]) => ({ cle: k, nom: e.nom, nbLignes: e.lignes.size })).sort((a, b) => b.nbLignes - a.nbLignes || a.nom.localeCompare(b.nom));
+  }, [besoinsMarquables, prestations]);
+  function appliquerMarque() {
+    const k = normTexte(marqueGlobale);
+    const info = marquesDisponibles.find(x => x.cle === k);
+    if (!k || !info) return;
+    let appliques = 0;
+    const sans: string[] = [];
+    {
+      const suite = { ...choix };
+      besoinsMarquables.forEach(b => {
+        const etat = suite[b.cle] ?? etatParDefaut(b);
+        if (etat.mode === "exclu") return;
+        // L'option (gamme) déjà cochée est gardée si elle existe dans la marque ; sinon la première qui l'a.
+        const ordre = [etat.mode === "option" ? etat.optionIndex : -1, ...b.options.map((_, i) => i)].filter(i => i >= 0 && i < b.options.length);
+        for (const i of ordre) {
+          const p = prestations.find(x => x.id === b.options[i].prestation_id);
+          const offre = p ? offreDeMarque(p, k) : undefined;
+          if (p && offre) { suite[b.cle] = { ...etat, mode: "option", optionIndex: i, fournisseurId: offre.id }; appliques++; return; }
+        }
+        sans.push(`${b.label} (${b.piece})`);
+      });
+      setChoix(suite);
+    }
+    setBilanMarque({ marque: info.nom, appliques, sans });
   }
 
   // Total HT approximatif affiché en direct — le total exact (avec décomposition en
@@ -712,6 +766,36 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
           </div>
           );
         })()}
+
+        {resultat && marquesDisponibles.length > 0 && (
+          <div className="card card-inner mb-4">
+            <h2 className="font-semibold text-ink-800 text-sm mb-1">Même marque partout</h2>
+            <p className="text-xs text-ink-400 mb-2">Choisis une marque : toutes les lignes qui existent dans cette marque passent d'un coup sur elle (même gamme conservée si possible). Tu peux ensuite corriger ligne par ligne.</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select value={marqueGlobale} onChange={e => { setMarqueGlobale(e.target.value); setBilanMarque(null); }}
+                className="text-sm border border-ink-200 rounded-lg py-1.5 px-2 bg-white min-w-[12rem]">
+                <option value="">Marque…</option>
+                {marquesDisponibles.map(m => <option key={m.cle} value={m.nom}>{m.nom} — {m.nbLignes} ligne{m.nbLignes > 1 ? "s" : ""}</option>)}
+              </select>
+              <button onClick={appliquerMarque} disabled={!marqueGlobale} className="btn-volt !text-xs disabled:opacity-40">Appliquer à toutes les lignes</button>
+              <label className="flex items-center gap-1.5 text-xs text-ink-500 cursor-pointer">
+                <input type="checkbox" checked={porteeMarque === "tout"} onChange={e => { setPorteeMarque(e.target.checked ? "tout" : "appareillage"); setBilanMarque(null); }} />
+                Aussi boîtes, disjoncteurs et autre matériel (pas seulement l'appareillage et les plaques)
+              </label>
+            </div>
+            {bilanMarque && (
+              <div className="mt-2 text-xs">
+                <p className="text-emerald-700">{bilanMarque.appliques} ligne{bilanMarque.appliques > 1 ? "s" : ""} passée{bilanMarque.appliques > 1 ? "s" : ""} en {bilanMarque.marque}.</p>
+                {bilanMarque.sans.length > 0 && (
+                  <details className="text-amber-700 mt-1">
+                    <summary className="cursor-pointer">{bilanMarque.sans.length} ligne{bilanMarque.sans.length > 1 ? "s" : ""} sans article {bilanMarque.marque} (inchangée{bilanMarque.sans.length > 1 ? "s" : ""})</summary>
+                    <ul className="list-disc ml-5 mt-1">{bilanMarque.sans.map((s, i) => <li key={i}>{s}</li>)}</ul>
+                  </details>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {resultat && Object.entries(parPieceFiltre)
           .map(([piece, besoins]) => [piece, besoins.filter(b => !estBobinable(b.sousCategorie))] as const)
