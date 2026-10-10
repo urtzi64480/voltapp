@@ -2804,6 +2804,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (vue3D && mode === "zone") setMode("select");
   }, [mode, vue3D]);
   useEffect(() => { setZonePoints([]); setZoneEnAttente(null); setSelectedZoneId(null); setSelectedZoneOuv(null); }, [niveauActifId]);
+  // Suppr : supprime l'appareillage sélectionné (ou la sélection multiple), hors saisie de texte.
+  useEffect(() => {
+    if (mode !== "select" || (selectedAppareillageId == null && selectionMulti.length === 0)) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (e.key !== "Delete") return;
+      e.preventDefault();
+      removerAppareillages(selectionMulti.length > 0 ? selectionMulti : [selectedAppareillageId!]);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, selectedAppareillageId, selectionMulti, niveaux]);
   // Suppr : supprime la cloison / zone sélectionnée (hors saisie de texte).
   useEffect(() => {
     if (selectedZoneId == null || selectedZoneOuv || mode !== "select") return;
@@ -3141,26 +3155,32 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     invalidateResultat();
   };
 
-  const removerAppareillage = (appareillageId: number) => {
+  // Supprime un ou plusieurs appareillages — SANS aucune limite de norme : la NF C 15-100 alerte, elle n'interdit rien ici.
+  const removerAppareillages = (ids: number[]) => {
+    const aSupprimer = new Set(ids);
+    if (aSupprimer.size === 0) return;
     setNiveaux(nvs => nvs.map(n => ({
       ...n,
       pieces: n.pieces.map(p => {
-        const gid = p.appareillages.find(a => a.id === appareillageId)?.groupeId;
-        const sans: Piece = {
+        const groupes = new Set(p.appareillages.filter(a => aSupprimer.has(a.id) && a.groupeId != null).map(a => a.groupeId!));
+        let sans: Piece = {
           ...p,
           appareillages: p.appareillages
-            .filter(a => a.id !== appareillageId)
-            .map(a => (a.commandePourIds?.includes(appareillageId) || a.commandePourIds2?.includes(appareillageId))
-              ? { ...a, commandePourIds: a.commandePourIds?.filter(id => id !== appareillageId), commandePourIds2: a.commandePourIds2?.filter(id => id !== appareillageId) }
+            .filter(a => !aSupprimer.has(a.id))
+            .map(a => (a.commandePourIds?.some(id => aSupprimer.has(id)) || a.commandePourIds2?.some(id => aSupprimer.has(id)))
+              ? { ...a, commandePourIds: a.commandePourIds?.filter(id => !aSupprimer.has(id)), commandePourIds2: a.commandePourIds2?.filter(id => !aSupprimer.has(id)) }
               : a),
         };
         // Plaque multiple : les postes restants se re-serrent (et un poste seul redevient simple).
-        return gid != null ? normaliserPlaques(sans, gid) : sans;
+        groupes.forEach(g => { sans = normaliserPlaques(sans, g); });
+        return sans;
       }),
     })));
     setSelectedAppareillageId(null);
+    setSelectionMulti([]);
     invalidateResultat();
   };
+  const removerAppareillage = (appareillageId: number) => removerAppareillages([appareillageId]);
 
   // ─── MOBILIER SIMPLE (vue 3D) ───────────────────────────────────────────────────
   // Purement visuel : jamais d'invalidateResultat() ici, un meuble n'entre dans aucun
@@ -5727,10 +5747,30 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   <p className="text-[11px] font-semibold text-ink-700">{bilanControle.raccordes} / {bilanControle.total} appareillages raccordés à un circuit</p>
                   {bilanControle.problemes.length === 0 && <p className="text-[11px] text-emerald-700">Rien d&apos;oublié : tout est raccordé, chaque commande a sa lampe et aucun circuit n&apos;est en surcharge.</p>}
                   {bilanControle.problemes.map((pb, i) => (
-                    <button key={i} onClick={() => allerAuProbleme(pb)}
-                      className={`text-left text-[11px] rounded px-1.5 py-1 hover:bg-ink-50 border ${pb.gravite === "erreur" ? "border-red-200 text-red-700" : "border-amber-200 text-amber-700"}`}>
-                      {pb.message}
-                    </button>
+                    <div key={i} className={`rounded border ${pb.gravite === "erreur" ? "border-red-200" : "border-amber-200"}`}>
+                      <button onClick={() => allerAuProbleme(pb)}
+                        className={`w-full text-left text-[11px] px-1.5 py-1 hover:bg-ink-50 ${pb.gravite === "erreur" ? "text-red-700" : "text-amber-700"}`}>
+                        {pb.message}
+                      </button>
+                      {(pb.code === "depassement" || pb.code === "non_raccorde" || pb.code === "commande_sans_lampe" || pb.code === "lampe_sans_commande") && (
+                        <div className="flex gap-1 px-1.5 pb-1">
+                          {pb.code === "depassement" ? (() => {
+                            const nbEnTrop = Number((pb.message.match(/: (\d+) /) ?? [])[1] ?? 0) - Number((pb.message.match(/maximum (\d+)/) ?? [])[1] ?? 0);
+                            return nbEnTrop > 0 ? (
+                              <button className="text-[10px] text-red-700 underline"
+                                onClick={() => { const ids = pb.appareilIds.slice(-nbEnTrop); if (window.confirm(`Supprimer les ${nbEnTrop} derniers appareillages de ce circuit (les plus récemment posés) ?`)) removerAppareillages(ids); }}>
+                                Supprimer les {nbEnTrop} en trop
+                              </button>
+                            ) : null;
+                          })() : (
+                            <button className="text-[10px] text-red-700 underline"
+                              onClick={() => { if (window.confirm("Supprimer cet appareillage ?")) removerAppareillages([pb.appareilIds[0]]); }}>
+                              Supprimer cet appareillage
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   ))}
                   <p className="text-[10px] text-ink-400">Les appareillages en cause sont cerclés de rouge sur le plan ; clique une ligne pour y aller.</p>
                 </div>
