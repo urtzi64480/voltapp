@@ -4724,21 +4724,38 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // ─── Liens de l'appareillage sélectionné : ce qu'il commande, ce qui le commande, ses liaisons directes et son circuit.
   // Dessinés sur le plan (traits + anneaux) et listés dans son panneau, pour ne rien oublier quand il y en a beaucoup.
   type AppAvecPiece = { piece: Piece; a: AppareillagePlace };
+  type Arete = { de: AppAvecPiece; vers: AppAvecPiece; kind: "v1" | "v2" | "direct" };
   const relationsSel = (() => {
     if (!niveauActif || !selectedAppareillage) return null;
     const tous: AppAvecPiece[] = niveauActif.pieces.flatMap(piece => piece.appareillages.map(a => ({ piece, a })));
     const parId = new Map(tous.map(x => [x.a.id, x] as const));
     const sel = selectedAppareillage;
-    const pris = (ids: number[] | undefined): AppAvecPiece[] => (ids ?? []).map(id => parId.get(id)).filter((x): x is AppAvecPiece => !!x && x.a.id !== sel.id);
-    const voie1 = pris(sel.commandePourIds), voie2 = pris(sel.commandePourIds2);
-    const commandes = tous.filter(x => x.a.id !== sel.id && (x.a.commandePourIds?.includes(sel.id) || x.a.commandePourIds2?.includes(sel.id)));
-    const directes = Array.from(new Set(Object.values(niveauActif.liaisonsDirectesLumiere ?? {}).flat()
-      .filter(([x, y]) => x === sel.id || y === sel.id).map(([x, y]) => (x === sel.id ? y : x))))
-      .map(id => parId.get(id)).filter((x): x is AppAvecPiece => !!x);
+    // Toutes les liaisons du niveau : commande (voie 1 / voie 2) et liaisons directes entre points lumineux.
+    const aretes: Arete[] = [];
+    for (const x of tous) {
+      for (const id of x.a.commandePourIds ?? []) { const v = parId.get(id); if (v && v.a.id !== x.a.id) aretes.push({ de: x, vers: v, kind: "v1" }); }
+      for (const id of x.a.commandePourIds2 ?? []) { const v = parId.get(id); if (v && v.a.id !== x.a.id) aretes.push({ de: x, vers: v, kind: "v2" }); }
+    }
+    for (const paires of Object.values(niveauActif.liaisonsDirectesLumiere ?? {})) {
+      for (const [i, j] of paires) { const u = parId.get(i), v = parId.get(j); if (u && v && u.a.id !== v.a.id) aretes.push({ de: u, vers: v, kind: "direct" }); }
+    }
+    // Composante connexe de la sélection : tout ce qui est relié, de proche en proche (ex. point lumineux → ses 2 va-et-vient → …).
+    const voisins = new Map<number, number[]>();
+    for (const e of aretes) {
+      voisins.set(e.de.a.id, [...(voisins.get(e.de.a.id) ?? []), e.vers.a.id]);
+      voisins.set(e.vers.a.id, [...(voisins.get(e.vers.a.id) ?? []), e.de.a.id]);
+    }
+    const vus = new Set<number>([sel.id]);
+    const file = [sel.id];
+    while (file.length) {
+      const cur = file.pop()!;
+      for (const n of voisins.get(cur) ?? []) if (!vus.has(n)) { vus.add(n); file.push(n); }
+    }
+    const aretesSel = aretes.filter(e => vus.has(e.de.a.id) && vus.has(e.vers.a.id));
+    const membres = tous.filter(x => x.a.id !== sel.id && vus.has(x.a.id));
     const memeCircuit = tous.filter(x => x.a.id !== sel.id && (
       (sel.circuitId != null && x.a.circuitId === sel.circuitId) || (sel.circuitManuelId != null && x.a.circuitManuelId === sel.circuitManuelId)));
-    const dejaLies = new Set([...voie1, ...voie2, ...commandes, ...directes].map(x => x.a.id));
-    return { voie1, voie2, commandes, directes, memeCircuit: memeCircuit.filter(x => !dejaLies.has(x.a.id)), tous: memeCircuit };
+    return { aretes: aretesSel, membres, memeCircuit: memeCircuit.filter(x => !vus.has(x.a.id)), tous: memeCircuit };
   })();
   // Centre du symbole tel qu'il est dessiné (collé à la face du mur / de la cloison, décalé dans sa plaque) : les traits de lien y aboutissent.
   const positionAfficheeApp = (piece: Piece, a: AppareillagePlace): Point => {
@@ -6110,22 +6127,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 const anneau = (cle: string, c: Point, couleur: string, epais = 2.4, pointille = false) => (
                   <circle key={cle} cx={c.x} cy={c.y} r={R} fill="none" stroke={couleur} strokeWidth={epais} strokeDasharray={pointille ? "3,3" : undefined} />
                 );
-                const double = estCommandeDouble(selectedAppareillage.type);
                 const AMBRE = "#D97706", CYAN = "#0891B2", CIRCUIT = "#6366F1";
                 const centreDe = (x: AppAvecPiece) => positionAfficheeApp(x.piece, x.a);
                 return (
                   <g pointerEvents="none">
-                    {/* Même circuit (sans lien direct) : anneau pointillé discret */}
+                    {/* Même circuit (sans lien) : anneau pointillé discret */}
                     {relationsSel.memeCircuit.map(x => anneau(`rc${x.a.id}`, centreDe(x), CIRCUIT, 1.6, true))}
-                    {/* Ce qu'il commande */}
-                    {relationsSel.voie1.map(x => lien(`v1${x.a.id}`, cSel, centreDe(x), AMBRE, { fleche: true, etiquette: double ? "1" : undefined }))}
-                    {relationsSel.voie2.map(x => lien(`v2${x.a.id}`, cSel, centreDe(x), AMBRE, { fleche: true, pointille: true, etiquette: "2" }))}
-                    {/* Ce qui le commande */}
-                    {relationsSel.commandes.map(x => lien(`cm${x.a.id}`, centreDe(x), cSel, AMBRE, { fleche: true }))}
-                    {/* Liaisons directes entre points lumineux */}
-                    {relationsSel.directes.map(x => lien(`dl${x.a.id}`, cSel, centreDe(x), CYAN, { pointille: true }))}
-                    {[...relationsSel.voie1, ...relationsSel.voie2, ...relationsSel.commandes].map(x => anneau(`ra${x.a.id}`, centreDe(x), AMBRE))}
-                    {relationsSel.directes.map(x => anneau(`rd${x.a.id}`, centreDe(x), CYAN))}
+                    {/* Tous les éléments reliés, de proche en proche */}
+                    {relationsSel.aretes.map((e, i) => lien(`ar${i}`, centreDe(e.de), centreDe(e.vers), e.kind === "direct" ? CYAN : AMBRE, {
+                      fleche: e.kind !== "direct", pointille: e.kind !== "v1",
+                      etiquette: e.kind === "v2" ? "2" : e.kind === "v1" && estCommandeDouble(e.de.a.type) ? "1" : undefined,
+                    }))}
+                    {relationsSel.membres.map(x => anneau(`ra${x.a.id}`, centreDe(x), AMBRE))}
                     <circle cx={cSel.x} cy={cSel.y} r={R + 1} fill="none" stroke="#F59E0B" strokeWidth={2.6} />
                   </g>
                 );
@@ -6940,18 +6953,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     </button>
                   );
                   const commande = estCommande(sel.type);
-                  const double = estCommandeDouble(sel.type);
-                  const nbLiens = relationsSel.voie1.length + relationsSel.voie2.length + relationsSel.commandes.length + relationsSel.directes.length;
+                  const nbLiens = relationsSel.membres.length;
+                  const role = (x: { a: AppareillagePlace }) => estLumiere(x.a.type) ? "Point lumineux" : estCommande(x.a.type) ? "Commande" : "Relié";
                   return (
                     <div className="flex flex-col gap-0.5 text-xs text-ink-500 border-t border-ink-100 pt-2">
                       <span className="font-semibold text-ink-700">Relié à {nbLiens > 0 ? `(${nbLiens})` : ""}</span>
-                      {commande && relationsSel.voie1.length === 0 && relationsSel.voie2.length === 0 && (
+                      {commande && !relationsSel.aretes.some(e => e.de.a.id === sel.id) && (
                         <span className="text-red-500">⚠ Ne commande aucun point lumineux</span>
                       )}
-                      {relationsSel.voie1.map(x => ligne(x, "#D97706", double ? "Voie 1 → " : "Commande → "))}
-                      {relationsSel.voie2.map(x => ligne(x, "#D97706", "Voie 2 → "))}
-                      {relationsSel.commandes.map(x => ligne(x, "#D97706", "Commandé par "))}
-                      {relationsSel.directes.map(x => ligne(x, "#0891B2", "Liaison directe : "))}
+                      {relationsSel.membres.map(x => ligne(x, "#D97706", `${role(x)} : `))}
                       {!commande && nbLiens === 0 && estLumiere(sel.type) && <span className="text-ink-400">Aucune commande ni liaison directe</span>}
                       {relationsSel.tous.length > 0 && (
                         <span className="text-ink-400 pt-0.5">Circuit : {relationsSel.tous.length + 1} appareillages (cercles pointillés sur le plan)</span>
