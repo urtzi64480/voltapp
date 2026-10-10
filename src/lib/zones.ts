@@ -222,6 +222,28 @@ export function ancrageCloisonLePlusProche(pt: Point, zones: Zone[], seuilM: num
   return best;
 }
 
+// Cloison dont la FACE passe par pt (affichage d'un appareillage déjà posé) : |distance à l'axe − demi-épaisseur| ≤ tolM, la plus
+// juste d'abord. Distincte d'ancrageCloisonLePlusProche : dans un angle de cloisons, le point posé sur la face d'une cloison peut
+// se trouver à 0 de l'AXE d'une autre — la « plus proche » serait alors celle-là, et l'appareillage perdrait son mur.
+export function ancrageCloisonSurFace(pt: Point, zones: Zone[], tolM: number): AncrageCloison | null {
+  let best: (AncrageCloison & { ecart: number }) | null = null;
+  for (const z of zones) {
+    for (const c of cloisonsDeZone(z)) {
+      const L = distance(c.a, c.b);
+      if (L < 1e-6) continue;
+      const ux = (c.b.x - c.a.x) / L, uy = (c.b.y - c.a.y) / L;
+      const t = Math.max(0, Math.min(L, (pt.x - c.a.x) * ux + (pt.y - c.a.y) * uy));
+      const pied = { x: c.a.x + ux * t, y: c.a.y + uy * t };
+      const dAxe = distance(pt, pied), demi = c.epaisseurM / 2;
+      const ecart = Math.abs(dAxe - demi);
+      if (ecart > tolM || (best && ecart >= best.ecart)) continue;
+      const side = ((pt.x - pied.x) * -uy + (pt.y - pied.y) * ux) >= 0 ? 1 : -1;
+      best = { pied, normale: { x: -uy * side, y: ux * side }, distanceAxe: dAxe, demiEpaisseur: demi, ecart };
+    }
+  }
+  return best;
+}
+
 // Aimantation d'un appareillage mural posé DANS une pièce : mur de la pièce ou cloison de zone, le plus proche des deux.
 export function aimanterMural(pt: Point, piece: Piece, zones: Zone[], type: AppareillageType, seuilM: number): Point {
   if (!estMural(type)) return pt;
@@ -240,8 +262,8 @@ export function aimanterMural(pt: Point, piece: Piece, zones: Zone[], type: Appa
 //  · segIndex : mur de la pièce (-1 pour une cloison de zone).
 export interface AncrageMural { pied: Point; normale: Point; faceM: number; segIndex: number; facade: boolean; cloison: boolean }
 export function ancrageMural(pt: Point, piece: Piece, zones: Zone[]): AncrageMural | null {
-  const cl = ancrageCloisonLePlusProche(pt, zones, 0.02);
-  if (cl && Math.abs(cl.distanceAxe - cl.demiEpaisseur) <= 0.02) {
+  const cl = ancrageCloisonSurFace(pt, zones, 0.02);
+  if (cl) {
     return { pied: cl.pied, normale: cl.normale, faceM: cl.demiEpaisseur, segIndex: -1, facade: false, cloison: true };
   }
   const anc: AncrageMur | null = ancrageMurLePlusProche(pt, piece.contour);
@@ -262,10 +284,9 @@ export function ancrageMural(pt: Point, piece: Piece, zones: Zone[]): AncrageMur
 export function aimanterMeuble(pt: Point, pieces: Piece[], zones: Zone[], profondeurM: number): { x: number; y: number; rotation: number } | null {
   const portee = profondeurM / 2 + 0.3;
   let cand: { pied: Point; n: Point; faceM: number; dFace: number } | null = null;
-  // Toutes les pièces qui contiennent le point (des pièces peuvent se chevaucher) ; sinon la plus proche (façade).
-  let candidates = pieces.filter(p => p.contour.length >= 3 && pointDansPolygone(pt, p.contour));
-  if (candidates.length === 0) { const pp = pieceLaPlusProche(pt, pieces); candidates = pp ? [pp] : []; }
-  for (const piece of candidates) {
+  // TOUTES les pièces : face intérieure de celles qui contiennent le point, façade extérieure des autres (le mur d'une pièce
+  // voisine, ou d'une petite pièce dans une grande, se vise depuis l'extérieur) ; le plus proche gagne.
+  for (const piece of pieces.filter(p => p.contour.length >= 3)) {
     const anc = ancrageMurLePlusProche(pt, piece.contour);
     if (!anc) continue;
     const dedans = pointDansPolygone(pt, piece.contour);
@@ -287,35 +308,41 @@ export function aimanterMeuble(pt: Point, pieces: Piece[], zones: Zone[], profon
   };
 }
 
-// Appareillage mural : choisit LA pièce (et le mur / la cloison) contre laquelle il se pose. Des pièces peuvent se
-// chevaucher (pièce englobante, mur mitoyen…) : on prend le mur le plus proche de TOUTES les pièces qui contiennent
-// le point, et de toutes les cloisons de zone — pas seulement la première pièce trouvée. Hors de toute pièce : pièce la
-// plus proche, collé sur sa façade. pieceDefaut = pièce utilisée quand rien n'est aimanté (la plus petite qui contient le point).
+// Appareillage mural : choisit LA pièce (et le mur / la cloison) contre laquelle il se pose. TOUS les murs sont candidats :
+//  - pour une pièce qui CONTIENT le point : sa face intérieure finie ;
+//  - pour toute autre pièce : sa façade extérieure (le mur d'une pièce voisine, ou d'une petite pièce posée dans une plus grande,
+//    se vise depuis l'extérieur même quand le clic tombe dans une autre pièce) ;
+//  - toutes les cloisons de zone, dans ou hors d'une pièce.
+// Le plus proche gagne (à égalité, l'intérieur). pieceDefaut = pièce utilisée quand rien n'est aimanté (la plus petite qui
+// contient le point, sinon la plus proche).
 export function resoudreMural(pt: Point, pieces: Piece[], zones: Zone[], type: AppareillageType, seuilM: number):
   { piece: Piece | null; pieceDefaut: Piece | null; point: Point; aimante: boolean; horsPiece: boolean } {
-  const dedans = pieces.filter(p => p.contour.length >= 3 && pointDansPolygone(pt, p.contour))
+  const valides = pieces.filter(p => p.contour.length >= 3);
+  const dedans = valides.filter(p => pointDansPolygone(pt, p.contour))
     .sort((a, b) => aireDuPolygone(a.contour) - aireDuPolygone(b.contour));
-  if (dedans.length === 0) {
-    const piece = pieceLaPlusProche(pt, pieces);
-    const point = piece ? aimanterEnFacade(pt, piece.contour, type, seuilM * 2) : pt;
-    return { piece, pieceDefaut: piece, point, aimante: point !== pt, horsPiece: true };
-  }
-  const defaut = dedans[0];
-  if (!estMural(type)) return { piece: defaut, pieceDefaut: defaut, point: pt, aimante: false, horsPiece: false };
-  let best: { d: number; piece: Piece; point: Point } | null = null;
-  for (const p of dedans) {
-    const anc = ancrageMurLePlusProche(pt, contourUtile(p));
-    if (!anc || anc.distance > seuilM) continue;
-    if (!best || anc.distance < best.d) best = { d: anc.distance, piece: p, point: aimanterSurFaceMur(pt, p, type, seuilM) };
+  const defaut = dedans[0] ?? pieceLaPlusProche(pt, valides);
+  const horsDefaut = dedans.length === 0;
+  if (!estMural(type)) return { piece: defaut, pieceDefaut: defaut, point: pt, aimante: false, horsPiece: horsDefaut };
+  let best: { d: number; piece: Piece | null; point: Point; horsPiece: boolean } | null = null;
+  const proposer = (d: number, piece: Piece | null, point: Point, horsPiece: boolean) => {
+    if (!best || d < best.d - 0.001 || (Math.abs(d - best.d) <= 0.001 && !horsPiece && best.horsPiece)) best = { d, piece, point, horsPiece };
+  };
+  for (const p of valides) {
+    if (dedans.includes(p)) {
+      const anc = ancrageMurLePlusProche(pt, contourUtile(p));
+      if (anc && anc.distance <= seuilM) proposer(anc.distance, p, aimanterSurFaceMur(pt, p, type, seuilM), false);
+    } else {
+      const anc = ancrageMurLePlusProche(pt, p.contour);
+      if (anc && anc.distance <= seuilM * 2) proposer(anc.distance, p, aimanterEnFacade(pt, p.contour, type, seuilM * 2), true);
+    }
   }
   const cl = ancrageCloisonLePlusProche(pt, zones, seuilM);
   if (cl) {
     const dFace = Math.max(0, cl.distanceAxe - cl.demiEpaisseur);
-    if (!best || dFace < best.d) {
-      const e = cl.demiEpaisseur + JEU_FACE_M;
-      best = { d: dFace, piece: defaut, point: { x: cl.pied.x + cl.normale.x * e, y: cl.pied.y + cl.normale.y * e } };
-    }
+    const e = cl.demiEpaisseur + JEU_FACE_M;
+    proposer(dFace, defaut, { x: cl.pied.x + cl.normale.x * e, y: cl.pied.y + cl.normale.y * e }, horsDefaut);
   }
-  return best ? { piece: best.piece, pieceDefaut: defaut, point: best.point, aimante: true, horsPiece: false }
-    : { piece: defaut, pieceDefaut: defaut, point: pt, aimante: false, horsPiece: false };
+  const r = best as { d: number; piece: Piece | null; point: Point; horsPiece: boolean } | null;
+  return r ? { piece: r.piece, pieceDefaut: defaut, point: r.point, aimante: true, horsPiece: r.horsPiece }
+    : { piece: defaut, pieceDefaut: defaut, point: pt, aimante: false, horsPiece: horsDefaut };
 }

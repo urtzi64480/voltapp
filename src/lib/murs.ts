@@ -335,13 +335,15 @@ export function aimanterSurFaceMur(pt: Point, piece: Piece, type: AppareillageTy
 // (la face avant du tableau regarde vers la normale gauche de la direction).
 export function aimanterTableauSurMur(pt: Point, pieces: Piece[], seuilExterieurM: number): { pos: Point; rotationDeg: number } | null {
   let meilleur: { piece: Piece; anc: NonNullable<ReturnType<typeof ancrageMurLePlusProche>>; dedans: boolean } | null = null;
+  // Un mur de pièce NE CONTENANT PAS le point (voisine, petite pièce dans une grande) est candidat par sa façade, s'il est à portée :
+  // il l'emporte alors sur un mur lointain de la pièce qui contient le point.
   for (const p of pieces) {
     if (p.contour.length < 3) continue;
     const anc = ancrageMurLePlusProche(pt, p.contour);
     if (!anc) continue;
     const dedans = pointDansPolygone(pt, p.contour);
     if (!dedans && anc.distance > seuilExterieurM) continue;
-    if (!meilleur || (dedans && !meilleur.dedans) || (dedans === meilleur.dedans && anc.distance < meilleur.anc.distance)) meilleur = { piece: p, anc, dedans };
+    if (!meilleur || anc.distance < meilleur.anc.distance - 0.001 || (Math.abs(anc.distance - meilleur.anc.distance) <= 0.001 && dedans && !meilleur.dedans)) meilleur = { piece: p, anc, dedans };
   }
   if (!meilleur) return null;
   const { piece, anc, dedans } = meilleur;

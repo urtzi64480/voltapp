@@ -45,7 +45,7 @@ import { decalerNiveau } from "@/lib/deplacer-niveau";
 import { migrerModeleMurs, aimanterSurFaceMur, aimanterTableauSurMur, preparerMurs, definirMitoyens, mitoyensDe, longueursUtilesCm, geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
 import { accrocherSurContour, apercuCloison, appliquerCloison, OptionsCloison, PointAccroche } from "@/lib/cloisons";
 import type { CloisonZone } from "@/lib/zones";
-import { cotesParDefaut, resoudreMural, aimanterMeuble, ancrageMural, ancrageCloisonLePlusProche, nouvelleZone, validerTraceZone, surfaceZone, centreEtiquetteZone, cloisonsDeZone, quadCloison, decoupeOuvertureZone, longueurCote, nbCotes, segmentsZone, definirTypeCote, trouverCloisonZone, positionOuvertureValide } from "@/lib/zones";
+import { cotesParDefaut, resoudreMural, aimanterMeuble, ancrageMural, ancrageCloisonSurFace, nouvelleZone, validerTraceZone, surfaceZone, centreEtiquetteZone, cloisonsDeZone, quadCloison, decoupeOuvertureZone, longueurCote, nbCotes, segmentsZone, definirTypeCote, trouverCloisonZone, positionOuvertureValide } from "@/lib/zones";
 import { enCm, estRectangle, redimensionnerMur, redimensionnerMurUtile, reporterAppareillages } from "@/lib/dimensions-piece";
 import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece";
 import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, aimanterEnFacade, estEnFacade, pieceLaPlusProche, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
@@ -2259,7 +2259,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           let deplaces: AppareillagePlace[];
           if (gid != null) {
             const membres = src.appareillages.filter(a => a.groupeId === gid).sort((a, b) => (a.rangPlaque ?? 0) - (b.rangPlaque ?? 0));
-            const clPl = ancrageCloisonLePlusProche(m, n.zones ?? [], 0.02);
+            const clPl = ancrageCloisonSurFace(m, n.zones ?? [], 0.02);
             const pts = disposerPlaque(m, cible.contour, membres.length, clPl?.normale);
             deplaces = membres.map((a, k) => ({ ...a, x: pts[k].x, y: pts[k].y }));
           } else {
@@ -4045,7 +4045,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       if (plaquePostes && plaquePostes.length >= MIN_POSTES_PLAQUE) {
         // Appareillage multiple : tous les postes d'un coup, alignés le long du mur, centrés sur le clic.
         const postes = nouvellePlaque(plaquePostes, mPose.x, mPose.y);
-        const clPl = ancrageCloisonLePlusProche(mPose, niveauActif?.zones ?? [], 0.02);
+        const clPl = ancrageCloisonSurFace(mPose, niveauActif?.zones ?? [], 0.02);
         const pts = disposerPlaque(mPose, piece.contour, postes.length, clPl?.normale);
         postes.forEach((a, i) => { a.x = pts[i].x; a.y = pts[i].y; });
         updateNiveauActif(n => ({
