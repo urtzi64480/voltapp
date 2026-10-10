@@ -4640,8 +4640,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const ids = new Set(resultat.breakers.filter(filtre).map(b => b.id));
     if (ids.size === 0 && !reinitialiser) return;
     const reste = resultat.breakers.filter(b => !ids.has(b.id));
+    // Effacer un circuit efface AUSSI son nom (renommage retenu par libellé) ; tout réinitialiser : plus aucun nom.
+    const labelsEfface = new Set(resultat.breakers.filter(b => ids.has(b.id)).map(b => b.label));
+    const sansNoms = (n: Niveau): Niveau["nomsCircuits"] => {
+      if (reinitialiser) return {};
+      const reste = { ...(n.nomsCircuits ?? {}) };
+      labelsEfface.forEach(l => { delete reste[l]; });
+      return reste;
+    };
     const strip = (n: Niveau): Niveau => ({
       ...n,
+      nomsCircuits: sansNoms(n),
       ...(reinitialiser ? { circuitsManuels: [], appareillagesExclus: [] } : {}),
       pieces: n.pieces.map(p => ({
         ...p,
