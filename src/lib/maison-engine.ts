@@ -570,33 +570,6 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     // Marque chaque circuit créé pour ce niveau : sert à le router vers le bon tableau
     // (principal ou annexe) au moment du "Pousser" — voir Niveau.tableauId.
     for (let i = debutBreakersNiveau; i < breakers.length; i++) breakers[i].niveauId = niveau.id;
-
-    // Noms retenus par composition : un circuit automatique qui regroupe (à peu près) les mêmes appareillages qu'un circuit
-    // nommé retrouve son nom, même après effacement / régénération ou changement de numéro.
-    if ((niveau.nomsCircuitsMembres ?? []).length > 0) {
-      const noms = { ...(niveau.nomsCircuits ?? {}) };
-      const libres = [...(niveau.nomsCircuitsMembres ?? [])];
-      const apps = niveau.pieces.flatMap(p => p.appareillages);
-      const candidats: { b: Breaker; i: number; score: number }[] = [];
-      for (let k = debutBreakersNiveau; k < breakers.length; k++) {
-        const b = breakers[k];
-        if (b.manuelId != null) continue;
-        const membres = new Set(apps.filter(a => a.circuitId === b.id).map(a => a.id));
-        if (membres.size === 0) continue;
-        libres.forEach((e, i) => {
-          const commun = e.ids.filter(id => membres.has(id)).length;
-          const score = commun / Math.max(e.ids.length, membres.size);
-          if (score >= 0.6) candidats.push({ b, i, score });
-        });
-      }
-      const bUtilises = new Set<number>(), iUtilises = new Set<number>();
-      candidats.sort((x, y) => y.score - x.score).forEach(c => {
-        if (bUtilises.has(c.b.id) || iUtilises.has(c.i)) return;
-        bUtilises.add(c.b.id); iUtilises.add(c.i);
-        noms[c.b.label] = libres[c.i].nom;
-      });
-      niveau.nomsCircuits = noms;
-    }
   }
 
   return { maison: { niveaux }, breakers, alertes };

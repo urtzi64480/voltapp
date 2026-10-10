@@ -3782,17 +3782,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         ...n, circuitsManuels: (n.circuitsManuels ?? []).map(m => m.id === b.manuelId ? { ...m, nom } : m),
       }));
     } else {
-      updateNiveauActif(n => {
-        // Nom retenu aussi par COMPOSITION (ids des appareillages) : il survit à l'effacement et à la régénération des circuits.
-        const ids = n.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id).map(a => a.id);
-        const idsSet = new Set(ids);
-        const autres = (n.nomsCircuitsMembres ?? []).filter(e => e.ids.filter(id => idsSet.has(id)).length / Math.max(e.ids.length, ids.length, 1) < 0.6);
-        return {
-          ...n,
-          nomsCircuits: { ...(n.nomsCircuits ?? {}), [b.label]: nom },
-          nomsCircuitsMembres: ids.length > 0 && nom.trim() !== "" ? [...autres, { ids, nom }] : autres,
-        };
-      });
+      updateNiveauActif(n => ({ ...n, nomsCircuits: { ...(n.nomsCircuits ?? {}), [b.label]: nom } }));
     }
   };
   const nomAffiche = (b: Breaker): string => niveauActif?.nomsCircuits?.[b.label] ?? b.label;
@@ -4652,14 +4642,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const reste = resultat.breakers.filter(b => !ids.has(b.id));
     const strip = (n: Niveau): Niveau => ({
       ...n,
-      ...(reinitialiser ? {
-        circuitsManuels: [], appareillagesExclus: [],
-        // Les circuits manuels qu'on réinitialise gardent leur NOM (retrouvé par composition à la prochaine génération).
-        nomsCircuitsMembres: [
-          ...(n.nomsCircuitsMembres ?? []),
-          ...(n.circuitsManuels ?? []).map(m => ({ ids: n.pieces.flatMap(p => p.appareillages).filter(a => a.circuitManuelId === m.id).map(a => a.id), nom: m.nom })).filter(e => e.ids.length > 0),
-        ],
-      } : {}),
+      ...(reinitialiser ? { circuitsManuels: [], appareillagesExclus: [] } : {}),
       pieces: n.pieces.map(p => ({
         ...p,
         appareillages: p.appareillages.map(a => {
