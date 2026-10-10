@@ -20,6 +20,7 @@ import {
   estCommande, baseCommande, commandeCetteLumiere, estLumiere,
   SegmentCircuit, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage,
 } from "./maison-types";
+import { appareillagesParPieceReelle } from "./piece-reelle";
 
 // Appareillages dédiés → 1 circuit par instance (correspondance directe avec CIRCUITS).
 // Le chauffage n'en fait PAS partie : plusieurs radiateurs peuvent partager un circuit
@@ -351,16 +352,21 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
 
   // Tous les appareillages de la maison (tous niveaux) : une commande peut piloter un point lumineux d'un autre
   // étage (va-et-vient entre rez-de-chaussée et étage) — la déduction du type de commande doit donc la voir.
+  // Pièce RÉELLE de chaque appareillage (voir piece-reelle.ts) : une prise posée dehors contre le mur des WC n'est pas « aux WC ».
+  const reellesParNiveau = new Map(niveaux.map(n => [n.id, appareillagesParPieceReelle(n)] as const));
   const itemsMaison: Item[] = niveaux.flatMap(n => n.pieces.flatMap(piece =>
-    piece.appareillages.map(a => ({ base: a, pieceNom: piece.nom, piece, x: a.x, y: a.y }) as Item)));
+    piece.appareillages.map(a => { const r = reellesParNiveau.get(n.id)!.vers.get(a.id) ?? piece; return { base: a, pieceNom: r.nom, piece: r, x: a.x, y: a.y } as Item; })));
 
   for (const niveau of niveaux) {
     const debutBreakersNiveau = breakers.length;
     const tousItems: Item[] = [];
+    const reelles = reellesParNiveau.get(niveau.id)!;
     niveau.pieces.forEach(piece => {
-      piece.appareillages.forEach(a => tousItems.push({ base: a, pieceNom: piece.nom, piece, x: a.x, y: a.y }));
-
-      const nbPrises = piece.appareillages.filter(a => a.type === "prise" || a.type === "prise_commandee").length;
+      piece.appareillages.forEach(a => { const r = reelles.vers.get(a.id) ?? piece; tousItems.push({ base: a, pieceNom: r.nom, piece: r, x: a.x, y: a.y }); });
+    });
+    // Contrôles par pièce (minimum de prises, chauffage) : sur les appareillages RÉELLEMENT dans la pièce.
+    [...reelles.pieces.values()].forEach(({ piece, apps }) => {
+      const nbPrises = apps.filter(a => a.type === "prise" || a.type === "prise_commandee").length;
       const minFn = MIN_PRISES_PIECE[piece.type] ?? MIN_PRISES_PIECE.autre;
       const minReq = minFn(aireDuPolygone(piece.contour));
       if (minReq > 0 && nbPrises < minReq) {
@@ -372,7 +378,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
       // 20A/4500W max, NF C 15-100 amdt A5) peut donc ne pas correspondre à la réalité une
       // fois la puissance réelle connue. Prévient plutôt que de laisser un circuit
       // silencieusement mal dimensionné.
-      piece.appareillages.filter(a => a.type === "chauffage" && a.puissanceW == null).forEach(() => {
+      apps.filter(a => a.type === "chauffage" && a.puissanceW == null).forEach(() => {
         alertes.push(`"${piece.nom || piece.type}" (${niveau.nom}) : chauffage sans puissance renseignée — regroupement basé sur ${PUISSANCE_CHAUFFAGE_DEFAUT_W} W par défaut, à vérifier (calibre limité à 3500 W en 16A ou 4500 W en 20A, NF C 15-100 amdt A5).`);
       });
     });

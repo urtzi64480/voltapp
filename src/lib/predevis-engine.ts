@@ -70,6 +70,7 @@ import {
   genererCircuits, segmentsPourCircuit, ResultatGeneration, cleCircuitDedie,
 } from "./maison-engine";
 import { MAX_POSTES_PLAQUE, estCommande, estLumiere } from "./maison-types";
+import { appareillagesParPieceReelle } from "./piece-reelle";
 import {
   Breaker as TableauBreaker, BreakerRow, BREAKER_TYPES, CIRCUITS,
   effectiveSection, gaineRecommandee, uid, estCircuitSansDisjoncteur,
@@ -282,9 +283,12 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
 
   resultat.maison.niveaux.forEach(niveau => {
     // ─── Appareillages (mécanismes) et sorties dédiées, par pièce ──────────
-    niveau.pieces.forEach(piece => {
+    // Par pièce RÉELLE (voir piece-reelle.ts) : une prise posée dehors contre le mur des WC se compte à l'extérieur, pas aux WC.
+    const reelles = appareillagesParPieceReelle(niveau);
+    reelles.pieces.forEach(({ piece, apps }) => {
+      if (apps.length === 0) return;
       const clustersEncastrement: { id: number; x: number; y: number; groupeId?: number }[] = [];
-      piece.appareillages.forEach(a => {
+      apps.forEach(a => {
         if (a.dejaExistant) return; // déjà installé chez le client — jamais facturé, ni lui ni sa boîte
         const estCmd = estCommande(a.type);
         if (estCmd && a.domotique && LABEL_APPAREILLAGE_DOMOTIQUE[a.type]) {
@@ -309,7 +313,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       // Spot non étanche en pièce humide ou à l'extérieur : à vérifier (volumes 1 et 2 d'une salle de bains =
       // IPX4 mini, NF C 15-100). Une seule alerte par pièce, avec le nombre de spots concernés.
       if (piece.type === "sdb" || piece.type === "exterieur") {
-        const nbSpotsNonEtanches = piece.appareillages.filter(a => a.type === "spot" && !a.dejaExistant).length;
+        const nbSpotsNonEtanches = apps.filter(a => a.type === "spot" && !a.dejaExistant).length;
         if (nbSpotsNonEtanches > 0) {
           alertes.push(`Pré-devis : ${nbSpotsNonEtanches} spot${nbSpotsNonEtanches > 1 ? "s" : ""} non étanche${nbSpotsNonEtanches > 1 ? "s" : ""} dans « ${piece.nom || "Pièce"} » — admis seulement hors volumes de protection ; sinon choisir des spots étanches (IP44 mini).`);
         }
@@ -366,8 +370,8 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
     const origineVDI = niveau.tableauPos ?? origineTrace;
     const ctxVDI = creerContexteLongueurs(niveau);
     const hauteurPriseVDI = hauteurAncreFn(ctxVDI);
-    niveau.pieces.forEach(piece => {
-      piece.appareillages.forEach(a => {
+    reelles.pieces.forEach(({ piece, apps }) => {
+      apps.forEach(a => {
         if ((a.type !== "rj45" && a.type !== "prise_tv") || a.dejaExistant) return;
         const tv = a.type === "prise_tv";
         const horizontale = Math.abs(a.x - origineVDI.x) + Math.abs(a.y - origineVDI.y);
