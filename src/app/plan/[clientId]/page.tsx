@@ -4721,6 +4721,46 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Murs extérieurs / mitoyens du niveau affiché : à déduire de l'ensemble des pièces avant de dessiner les murs.
   if (niveauActif) preparerMurs(niveauActif.pieces);
 
+  // ─── Liens de l'appareillage sélectionné : ce qu'il commande, ce qui le commande, ses liaisons directes et son circuit.
+  // Dessinés sur le plan (traits + anneaux) et listés dans son panneau, pour ne rien oublier quand il y en a beaucoup.
+  type AppAvecPiece = { piece: Piece; a: AppareillagePlace };
+  const relationsSel = (() => {
+    if (!niveauActif || !selectedAppareillage) return null;
+    const tous: AppAvecPiece[] = niveauActif.pieces.flatMap(piece => piece.appareillages.map(a => ({ piece, a })));
+    const parId = new Map(tous.map(x => [x.a.id, x] as const));
+    const sel = selectedAppareillage;
+    const pris = (ids: number[] | undefined): AppAvecPiece[] => (ids ?? []).map(id => parId.get(id)).filter((x): x is AppAvecPiece => !!x && x.a.id !== sel.id);
+    const voie1 = pris(sel.commandePourIds), voie2 = pris(sel.commandePourIds2);
+    const commandes = tous.filter(x => x.a.id !== sel.id && (x.a.commandePourIds?.includes(sel.id) || x.a.commandePourIds2?.includes(sel.id)));
+    const directes = Array.from(new Set(Object.values(niveauActif.liaisonsDirectesLumiere ?? {}).flat()
+      .filter(([x, y]) => x === sel.id || y === sel.id).map(([x, y]) => (x === sel.id ? y : x))))
+      .map(id => parId.get(id)).filter((x): x is AppAvecPiece => !!x);
+    const memeCircuit = tous.filter(x => x.a.id !== sel.id && (
+      (sel.circuitId != null && x.a.circuitId === sel.circuitId) || (sel.circuitManuelId != null && x.a.circuitManuelId === sel.circuitManuelId)));
+    const dejaLies = new Set([...voie1, ...voie2, ...commandes, ...directes].map(x => x.a.id));
+    return { voie1, voie2, commandes, directes, memeCircuit: memeCircuit.filter(x => !dejaLies.has(x.a.id)), tous: memeCircuit };
+  })();
+  // Centre du symbole tel qu'il est dessiné (collé à la face du mur / de la cloison, décalé dans sa plaque) : les traits de lien y aboutissent.
+  const positionAfficheeApp = (piece: Piece, a: AppareillagePlace): Point => {
+    const infoPl = a.groupeId != null ? infosPlaquesParPiece.get(piece.id)?.get(a.groupeId) : undefined;
+    const ptAncre = infoPl ? { x: infoPl.gx, y: infoPl.gy } : { x: a.x, y: a.y };
+    const anc = estMural(a.type) ? ancrageMural(ptAncre, piece, niveauActif?.zones ?? []) : null;
+    let c = toScreen(ptAncre);
+    if (anc) {
+      const pPied = toScreen(anc.pied);
+      const pN = toScreen({ x: anc.pied.x + anc.normale.x * 0.1, y: anc.pied.y + anc.normale.y * 0.1 });
+      const len = Math.hypot(pN.x - pPied.x, pN.y - pPied.y) || 1;
+      const demi = boxSize / 2 + Math.max(2, anc.faceM * PX_PER_M * zoom);
+      c = { x: pPied.x + (pN.x - pPied.x) / len * demi, y: pPied.y + (pN.y - pPied.y) / len * demi };
+    }
+    if (infoPl) {
+      const dr = anc ? droiteFaceAuMur(anc.normale) : { x: 1, y: 0 };
+      const off = ((a.rangPlaque ?? 0) - (infoPl.n - 1) / 2) * (boxSize + 1);
+      c = { x: c.x + dr.x * off, y: c.y + dr.y * off };
+    }
+    return c;
+  };
+
   // Épaisseur de chaque mur (cm) — structure, + doublage — posée sur le mur, uniquement si le trait
   // est assez épais à l'écran pour la porter (sinon elle ne servirait qu'à encombrer).
   const epaisseursMurs = showCotesPieces && niveauActif ? niveauActif.pieces.filter(pc => !pc.masquerDimensions).flatMap(pc => {
@@ -6041,6 +6081,56 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 );
               })}
 
+              {relationsSel && selectedAppareillage && niveauActif && mode === "select" && (() => {
+                const piecesParApp = new Map(niveauActif.pieces.flatMap(pc => pc.appareillages.map(a => [a.id, pc] as const)));
+                const pieceSel = piecesParApp.get(selectedAppareillage.id);
+                if (!pieceSel) return null;
+                const cSel = positionAfficheeApp(pieceSel, selectedAppareillage);
+                const R = boxSize / 2 + 5;
+                // Trait de lien de A vers B, raccourci aux bords des anneaux ; flèche en B si fleche.
+                const lien = (cle: string, A: Point, B: Point, couleur: string, opts: { pointille?: boolean; fleche?: boolean; etiquette?: string } = {}) => {
+                  const dx = B.x - A.x, dy = B.y - A.y, L = Math.hypot(dx, dy);
+                  if (L < R * 2 + 2) return null;
+                  const ux = dx / L, uy = dy / L;
+                  const x1 = A.x + ux * R, y1 = A.y + uy * R, x2 = B.x - ux * R, y2 = B.y - uy * R;
+                  return (
+                    <g key={cle}>
+                      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#fff" strokeWidth={5} strokeLinecap="round" opacity={0.85} />
+                      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={couleur} strokeWidth={2.4} strokeLinecap="round" strokeDasharray={opts.pointille ? "7,5" : undefined} />
+                      {opts.fleche && <polygon points={`${x2},${y2} ${x2 - ux * 9 - uy * 4.5},${y2 - uy * 9 + ux * 4.5} ${x2 - ux * 9 + uy * 4.5},${y2 - uy * 9 - ux * 4.5}`} fill={couleur} stroke="#fff" strokeWidth={0.8} />}
+                      {opts.etiquette && (
+                        <g transform={`translate(${(x1 + x2) / 2}, ${(y1 + y2) / 2})`}>
+                          <circle r={7} fill={couleur} stroke="#fff" strokeWidth={1.2} />
+                          <text y={3.3} textAnchor="middle" fontSize={9} fontWeight={800} fill="#fff">{opts.etiquette}</text>
+                        </g>
+                      )}
+                    </g>
+                  );
+                };
+                const anneau = (cle: string, c: Point, couleur: string, epais = 2.4, pointille = false) => (
+                  <circle key={cle} cx={c.x} cy={c.y} r={R} fill="none" stroke={couleur} strokeWidth={epais} strokeDasharray={pointille ? "3,3" : undefined} />
+                );
+                const double = estCommandeDouble(selectedAppareillage.type);
+                const AMBRE = "#D97706", CYAN = "#0891B2", CIRCUIT = "#6366F1";
+                const centreDe = (x: AppAvecPiece) => positionAfficheeApp(x.piece, x.a);
+                return (
+                  <g pointerEvents="none">
+                    {/* Même circuit (sans lien direct) : anneau pointillé discret */}
+                    {relationsSel.memeCircuit.map(x => anneau(`rc${x.a.id}`, centreDe(x), CIRCUIT, 1.6, true))}
+                    {/* Ce qu'il commande */}
+                    {relationsSel.voie1.map(x => lien(`v1${x.a.id}`, cSel, centreDe(x), AMBRE, { fleche: true, etiquette: double ? "1" : undefined }))}
+                    {relationsSel.voie2.map(x => lien(`v2${x.a.id}`, cSel, centreDe(x), AMBRE, { fleche: true, pointille: true, etiquette: "2" }))}
+                    {/* Ce qui le commande */}
+                    {relationsSel.commandes.map(x => lien(`cm${x.a.id}`, centreDe(x), cSel, AMBRE, { fleche: true }))}
+                    {/* Liaisons directes entre points lumineux */}
+                    {relationsSel.directes.map(x => lien(`dl${x.a.id}`, cSel, centreDe(x), CYAN, { pointille: true }))}
+                    {[...relationsSel.voie1, ...relationsSel.voie2, ...relationsSel.commandes].map(x => anneau(`ra${x.a.id}`, centreDe(x), AMBRE))}
+                    {relationsSel.directes.map(x => anneau(`rd${x.a.id}`, centreDe(x), CYAN))}
+                    <circle cx={cSel.x} cy={cSel.y} r={R + 1} fill="none" stroke="#F59E0B" strokeWidth={2.6} />
+                  </g>
+                );
+              })()}
+
               {etiquettesPieces.map(({ piece, nom, surf, w, h, x, y, centrePx }) => {
                 const poigneeActive = piece.id === selectedPieceId && mode === "select";
                 return (
@@ -6839,6 +6929,36 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     {postesPlaqueSel.length >= 2 && <p className="text-ink-400">Hauteur, couleur et position sont communes à la plaque ; le bouton corbeille en haut ne retire que ce poste.</p>}
                   </div>
                 )}
+                {relationsSel && (() => {
+                  const sel = selectedAppareillage;
+                  const nomDe = (x: { piece: Piece; a: AppareillagePlace }) => `${x.a.nom ? x.a.nom + " · " : ""}${labelAppareillagePlace(x.a)} — ${x.piece.nom}`;
+                  const ligne = (x: { piece: Piece; a: AppareillagePlace }, couleur: string, prefixe = "") => (
+                    <button key={`${prefixe}${x.a.id}`} onClick={() => setSelectedAppareillageId(x.a.id)} title="Sélectionner cet appareillage"
+                      className="flex items-center gap-1.5 text-left hover:bg-ink-50 rounded px-1 py-0.5">
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: couleur }} />
+                      <span className="truncate">{prefixe}{nomDe(x)}</span>
+                    </button>
+                  );
+                  const commande = estCommande(sel.type);
+                  const double = estCommandeDouble(sel.type);
+                  const nbLiens = relationsSel.voie1.length + relationsSel.voie2.length + relationsSel.commandes.length + relationsSel.directes.length;
+                  return (
+                    <div className="flex flex-col gap-0.5 text-xs text-ink-500 border-t border-ink-100 pt-2">
+                      <span className="font-semibold text-ink-700">Relié à {nbLiens > 0 ? `(${nbLiens})` : ""}</span>
+                      {commande && relationsSel.voie1.length === 0 && relationsSel.voie2.length === 0 && (
+                        <span className="text-red-500">⚠ Ne commande aucun point lumineux</span>
+                      )}
+                      {relationsSel.voie1.map(x => ligne(x, "#D97706", double ? "Voie 1 → " : "Commande → "))}
+                      {relationsSel.voie2.map(x => ligne(x, "#D97706", "Voie 2 → "))}
+                      {relationsSel.commandes.map(x => ligne(x, "#D97706", "Commandé par "))}
+                      {relationsSel.directes.map(x => ligne(x, "#0891B2", "Liaison directe : "))}
+                      {!commande && nbLiens === 0 && estLumiere(sel.type) && <span className="text-ink-400">Aucune commande ni liaison directe</span>}
+                      {relationsSel.tous.length > 0 && (
+                        <span className="text-ink-400 pt-0.5">Circuit : {relationsSel.tous.length + 1} appareillages (cercles pointillés sur le plan)</span>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="flex items-center gap-2 text-xs text-ink-500">
                   <span className="shrink-0 w-16">Position X/Y</span>
                   <input type="number" step="0.01" className="input !py-1 !text-xs !w-20"
