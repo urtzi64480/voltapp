@@ -64,6 +64,14 @@ const LABEL_NON_RACCORDE: Record<string, string> = {
   detecteur_mouvement: "Détecteur de mouvement", detecteur_mouvement_exterieur: "Détecteur de mouvement extérieur",
 };
 
+// Circuits d'un niveau. Se base sur Breaker.niveauId (posé à la génération) et non sur les NOMS de pièces : un circuit dont
+// l'appareil est rattaché à « Extérieur » (façade hors de toute pièce) ou deux niveaux aux pièces homonymes
+// ne doivent ni disparaître, ni se dupliquer. Repli sur les noms pour un Breaker sans niveauId (ancien format).
+export function breakersDuNiveau(breakers: Breaker[], niveau: Pick<Niveau, "id" | "pieces">): Breaker[] {
+  const noms = new Set(niveau.pieces.map(p => p.nom));
+  return breakers.filter(b => b.niveauId != null ? b.niveauId === niveau.id : b.pieces.some(pc => noms.has(pc.nom)));
+}
+
 export interface ResultatGeneration {
   maison: Maison; // copie de la maison d'entrée, avec circuitId renseigné sur chaque appareillage concerné
   breakers: Breaker[];
@@ -520,8 +528,7 @@ export function construireColorMap(resultat: ResultatGeneration, niveauxVivants?
   let compteur = 0;
   resultat.maison.niveaux.forEach(niveauResultat => {
     const niveau = niveauxVivants?.find(n => n.id === niveauResultat.id) ?? niveauResultat;
-    const nomsPieces = new Set(niveauResultat.pieces.map(p => p.nom));
-    const breakersNiveau = resultat.breakers.filter(b => b.pieces.some(pc => nomsPieces.has(pc.nom)));
+    const breakersNiveau = breakersDuNiveau(resultat.breakers, niveauResultat);
     breakersNiveau.forEach(b => {
       const manuel = b.manuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === b.manuelId) : undefined;
       const couleur = niveau.couleursCircuits?.[b.label] ?? manuel?.couleur ?? couleurCircuit(compteur);
@@ -704,12 +711,10 @@ export function genererGainesNiveaux(resultat: ResultatGeneration): TronconGaine
   const troncons: TronconGaine[] = [];
 
   for (const niveau of niveauxTries) {
-    const nomsPieces = new Set(niveau.pieces.map(p => p.nom));
     // Un circuit manuel "déjà existant" (CircuitManuel.nonRelieTableau) ne remonte jamais
     // au tableau — il ne consomme donc aucune place dans la gaine principale tableau→niveau.
-    const circuitsNiveau = resultat.breakers.filter(b => {
+    const circuitsNiveau = breakersDuNiveau(resultat.breakers, niveau).filter(b => {
       if (estCircuitSansDisjoncteur(b)) return false;   // courant faible : pas dans la gaine de puissance
-      if (!b.pieces.some(p => nomsPieces.has(p.nom))) return false;
       const manuel = b.manuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === b.manuelId) : undefined;
       return !manuel?.nonRelieTableau;
     });

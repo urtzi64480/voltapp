@@ -67,7 +67,7 @@ import {
   distance, trouverPiece, cleSegmentLiaison, cheminSegment, SegmentCircuit, origineCircuits,
 } from "./maison-types";
 import {
-  genererCircuits, segmentsPourCircuit, ResultatGeneration, cleCircuitDedie,
+  genererCircuits, segmentsPourCircuit, breakersDuNiveau, ResultatGeneration, cleCircuitDedie,
 } from "./maison-engine";
 import { MAX_POSTES_PLAQUE, estCommande, estLumiere } from "./maison-types";
 import { appareillagesParPieceReelle } from "./piece-reelle";
@@ -292,15 +292,12 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
     // ─── Appareillages (mécanismes) et sorties dédiées, par pièce ──────────
     // Par pièce RÉELLE (voir piece-reelle.ts) : une prise posée dehors contre le mur des WC se compte à l'extérieur, pas aux WC.
     const reelles = appareillagesParPieceReelle(niveau);
-    const breakersDuNiveau = (() => {
-      const noms = new Set(niveau.pieces.map(p => p.nom));
-      return resultat.breakers.filter(b => b.pieces.some(pc => noms.has(pc.nom)));
-    })();
+    const breakersDuNiveauPd = breakersDuNiveau(resultat.breakers, niveau);
     const nomCircuit = (b: { label: string; manuelId?: number }) => `${PREFIXE_CIRCUIT}${resoudreLabelCircuit(b, niveau)} (${niveau.nom || niveau.type})`;
     const nomHorsCircuit = `${PREFIXE_HORS_CIRCUIT}${niveau.nom || niveau.type}`;
     const destDe = (a: AppareillagePlace, piece: Piece): { id: string; nom: string } => {
       if (mode === "circuit") {
-        const b = a.circuitId != null ? breakersDuNiveau.find(x => x.id === a.circuitId) : undefined;
+        const b = a.circuitId != null ? breakersDuNiveauPd.find(x => x.id === a.circuitId) : undefined;
         const nom = b ? nomCircuit(b) : nomHorsCircuit;
         return { id: `c${niveau.id}:${b ? b.id : "hors"}`, nom };
       }
@@ -426,7 +423,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
     const pieceDeAppareil = indexPiecesAppareils(niveau);
 
     // ─── Boîtes de dérivation (une par circuit lumière qui en utilise) ─────
-    const breakersNiveau = breakersDuNiveau;
+    const breakersNiveau = breakersDuNiveauPd;
 
     breakersNiveau.forEach(b => {
       // Circuit de communication (RJ45) : son câble est déjà chiffré plus haut (étoile vers le coffret) — le

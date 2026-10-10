@@ -52,7 +52,7 @@ import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece
 import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, aimanterEnFacade, estEnFacade, pieceLaPlusProche, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import Vue3DMaison from "@/components/plan/Vue3DMaison";
-import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
+import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, breakersDuNiveau, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
 
 const PX_PER_M = 60;
@@ -472,7 +472,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
             s += `<line x1="${chemin[j].x.toFixed(1)}" y1="${chemin[j].y.toFixed(1)}" x2="${chemin[j + 1].x.toFixed(1)}" y2="${chemin[j + 1].y.toFixed(1)}" stroke="#d6d3d1" stroke-width="4" stroke-linecap="round"/>`;
           }
           const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
-          s += `<path d="${d}" fill="none" stroke="${couleurSegment}" stroke-width="1.2" stroke-dasharray="3,2" opacity="0.85"/>`;
+          s += `<path d="${d}" fill="none" stroke="${couleurSegment}" stroke-width="1.6" stroke-linecap="round"/>`;
           if (showLongueurs && seg.type !== "domotique") {
             const sectionsL = tracerLiaison(ctxL, breaker, segments, seg, hAncreL).sections;
             for (let j = 0; j < cheminM.length - 1; j++) {
@@ -692,11 +692,9 @@ function gaineNiveauHtml(troncon: TronconGaine | undefined, niveau: Niveau): str
 
 function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau, showLongueurs: boolean, niveauVivant: Niveau): string {
   if (!resultat) return "";
-  const nomsPieces = new Set(niveau.pieces.map(p => p.nom));
   const colorMap = construireColorMap(resultat, [niveauVivant]);
-  const utilises = resultat.breakers
-    .map(b => ({ b, color: colorMap.get(b.id) ?? "#666" }))
-    .filter(({ b }) => b.pieces.some(p => nomsPieces.has(p.nom)));
+  const utilises = breakersDuNiveau(resultat.breakers, niveau)
+    .map(b => ({ b, color: colorMap.get(b.id) ?? "#666" }));
   if (utilises.length === 0) return "";
   return `<div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 6mm 6mm;font-size:8pt;font-family:monospace;">` +
     utilises.map(({ b, color }) => {
@@ -4893,7 +4891,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   });
 
   const circuitsNiveauActif = niveauActif
-    ? resultat?.breakers.filter(b => b.pieces.some(pc => niveauActif.pieces.some(p => p.nom === pc.nom))) ?? []
+    ? (resultat ? breakersDuNiveau(resultat.breakers, niveauActif) : [])
     : [];
 
   // Fusionne les circuits déjà générés (circuitsNiveauActif) avec les circuits MANUELS qui
@@ -4929,7 +4927,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (!niveauActif || !niveauActif.pieces.some(pc => pc.appareillages.length > 0)) return null;
     const origine = origineCircuits(niveauActif);
     if (resultat && showCircuits && origine) return null;
-    return (
+  return (
       <>
         {!resultat && (
           <button onClick={handleGenerer} className="btn-volt !text-xs shadow-lg"><Sparkles size={13} /> Circuits non affichés — Générer les circuits</button>
@@ -4945,6 +4943,205 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       </>
     );
   })();
+
+    const rendreCircuitsPlan = (couche: "visuel" | "interactif"): ReactNode => {
+    if (!(showCircuits && resultat && niveauActif && origineCircuits(niveauActif))) return null;
+    const visuel = couche === "visuel";
+    // Origine du tracé : le point d'arrivée des gaines quand il est configuré
+    // sur ce niveau (cohérent avec le calcul de facturation, predevis-engine.ts
+    // — origineCalcul), sinon le tableau directement.
+    const tableauPos = origineCircuits(niveauActif)!;
+    const waypointsNiveau = niveauActif.liaisonWaypoints;
+    const tousAppareils = niveauActif.pieces.flatMap(p => p.appareillages);
+    const parCircuit = new Map<number, AppareillagePlace[]>();
+    tousAppareils.forEach(a => {
+      if (a.circuitId == null || !circuitsVisibles.has(a.circuitId)) return;
+      const arr = parCircuit.get(a.circuitId) ?? [];
+      arr.push(a);
+      parCircuit.set(a.circuitId, arr);
+    });
+    return Array.from(parCircuit.entries()).flatMap(([circuitId, points]) => {
+      const breaker = resultat.breakers.find(b => b.id === circuitId);
+      if (!breaker) return [];
+      const color = colorMap.get(circuitId) ?? "#666";
+      const segments = segmentsPourCircuit(breaker, points, niveauActif, tableauPos);
+      const elements: ReactNode[] = [];
+      // Longueur RÉELLE de chaque section (horizontale + montée de départ, + descente finale pour la dernière).
+      const ctxLg = creerContexteLongueurs(niveauActif);
+      const hAncreLg = hauteurAncreFn(ctxLg);
+      segments.forEach(seg => {
+        const sectionsLg = showLongueurs && seg.type !== "domotique" ? tracerLiaison(ctxLg, breaker, segments, seg, hAncreLg).sections : null;
+        const cle = cleSegmentLiaison(seg.aId, seg.bId);
+        const coudes = waypointsNiveau?.[cle] ?? [];
+        // Liaison (navette) entre deux va-et-vient : couleur du circuit assombrie,
+        // pour rester rattachée au circuit tout en se distinguant du reste du tracé.
+        const estDomotique = seg.type === "domotique";
+        const couleurSegment = seg.type === "navette" ? assombrirCouleur(color) : color;
+        // Sous-chaîne du segment : point de départ, coudes existants, point d'arrivée.
+        const sousChaine = [seg.aPoint, ...coudes.map(c => c.point), seg.bPoint];
+        const posesSections = posesTroncons(niveauActif, cle, coudes);
+        for (let j = 0; j < sousChaine.length - 1; j++) {
+          const ptA = sousChaine[j], ptB = sousChaine[j + 1];
+          const aPx = toScreen(ptA), bPx = toScreen(ptB);
+          const apparente = !estDomotique && posesSections[j] === "apparent";
+          const sectionSel = selectedTroncon?.cle === cle && selectedTroncon?.index === j;
+          // Section APPARENTE (le câble sort du mur) : trait plein sur une bande grise = moulure.
+          // Section ENCASTRÉE : pointillé, comme avant (câble caché dans le mur).
+          if (apparente && visuel) {
+            elements.push(<line key={`${cle}-${j}-moulure`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#d6d3d1" strokeWidth={8} strokeLinecap="round" opacity={0.9} style={{ pointerEvents: "none" }} />);
+          }
+          const hSec = hauteursTroncons(niveauActif, cle, coudes)[j];
+          if (visuel && hSec != null && !estDomotique) {
+            const mx = (aPx.x + bPx.x) / 2, my = (aPx.y + bPx.y) / 2;
+            elements.push(
+              <g key={`${cle}-${j}-h`} style={{ pointerEvents: "none" }}>
+                <rect x={mx - 16} y={my - 7} width={32} height={14} rx={4} fill="#fff" stroke={couleurSegment} strokeWidth={1} />
+                <text x={mx} y={my + 3.5} textAnchor="middle" fontSize={9} fontWeight={700} fontFamily="monospace" fill="#1c1917">↕{hSec}</text>
+              </g>);
+          }
+          if (visuel && sectionSel) {
+            elements.push(<line key={`${cle}-${j}-sel`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#F59E0B" strokeWidth={11} strokeLinecap="round" opacity={0.35} style={{ pointerEvents: "none" }} />);
+          }
+          if (!visuel) {
+            // couche interactive : pas de tracé visible ici
+          } else if (estDomotique) {
+            // Liaison "particulière" (domotique/sans fil) : symbole d'onde plutôt
+            // qu'un trait plein, pour tous les types d'interrupteur.
+            const wavePts = pointsOndulesEntre(ptA, ptB).map(toScreen);
+            const dOnde = wavePts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+            elements.push(<polyline key={`${cle}-${j}`} points={dOnde} fill="none" stroke={couleurSegment} strokeWidth={1.8} opacity={0.85} />);
+          } else {
+            elements.push(<line key={`${cle}-${j}-halo`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#fff" strokeWidth={apparente ? 5.2 : 4.4} strokeLinecap="round" opacity={0.7} />);
+            elements.push(<line key={`${cle}-${j}`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={couleurSegment} strokeWidth={apparente ? 3 : 2.4} strokeLinecap="round" />);
+          }
+          if (visuel && sectionsLg) {
+            elements.push(<EtiquetteLongueur key={`${cle}-${j}-lg`} aPx={aPx} bPx={bPx} texte={`${(sectionsLg[j] ?? distance(ptA, ptB)).toFixed(2)}m`} />);
+          }
+          if (!visuel && mode === "select" && !cheminementDessin) {
+            elements.push(
+              <line key={`${cle}-${j}-hit`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="transparent" strokeWidth={14}
+                style={{ cursor: "copy" }}
+                onPointerDown={e => {
+                  e.stopPropagation();
+                  // Maj + clic : choisir la SECTION (pour régler sa pose) ; clic simple : ajouter un point.
+                  if (e.shiftKey) {
+                    setSelectedTroncon({ cle, index: j });
+                    setSelectedWaypoint(null); setSelectedPieceId(null); setSelectedAppareillageId(null);
+                    setSelectedTableau(false); setSelectedBoite(null); setSelectedMeubleId(null);
+                    setPanelResetTick(t => t + 1);
+                    return;
+                  }
+                  const rect = svgRef.current?.getBoundingClientRect();
+                  if (!rect) return;
+                  const m = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+                  // Appui + glisser sur un tracé = nouveau point que l'on tire aussitôt : on déforme le circuit
+                  // d'un seul geste. (Un simple clic sans bouger ajoute juste le point.)
+                  const nouveauId = ajouterWaypoint(cle, j, m);
+                  setSelectedWaypoint({ cle, waypointId: nouveauId });
+                  setSelectedTroncon(null); setSelectedPieceId(null); setSelectedAppareillageId(null);
+                  setSelectedTableau(false); setSelectedBoite(null); setSelectedMeubleId(null);
+                  setPanelResetTick(t => t + 1);
+                  setDragMode({ kind: "liaison", cle, waypointId: nouveauId });
+                }} />
+            );
+          }
+        }
+        // Extrémités du câble : il part du tableau et vient mourir DANS LE MUR, juste derrière l'appareillage
+        // (pied sur l'axe du mur) — petit retour du point enregistré jusqu'à ce pied + pastille d'arrivée.
+        if (visuel && !estDomotique) {
+          [{ id: seg.aId, pt: seg.aPoint }, { id: seg.bId, pt: seg.bPoint }].forEach(({ id, pt }, k) => {
+            const pPx = toScreen(pt);
+            if (id === "tableau" || id.startsWith("boite")) {
+              if (id === "tableau") elements.push(<circle key={`${cle}-ext-${k}`} cx={pPx.x} cy={pPx.y} r={4} fill={couleurSegment} stroke="#fff" strokeWidth={1.5} />);
+              return;
+            }
+            const piece = niveauActif.pieces.find(pc => pc.appareillages.some(x => String(x.id) === id));
+            const ap = piece?.appareillages.find(x => String(x.id) === id);
+            if (!piece || !ap) return;
+            let fin = pPx;
+            if (estMural(ap.type)) {
+              const anc = ancrageMural(pt, piece, niveauActif.zones ?? []);
+              if (anc) {
+                fin = toScreen(anc.pied);
+                if (Math.hypot(fin.x - pPx.x, fin.y - pPx.y) > 0.5) {
+                  elements.push(<line key={`${cle}-stub-${k}`} x1={pPx.x} y1={pPx.y} x2={fin.x} y2={fin.y} stroke={couleurSegment} strokeWidth={2.4} strokeLinecap="round" />);
+                }
+              }
+            }
+            elements.push(<circle key={`${cle}-ext-${k}`} cx={fin.x} cy={fin.y} r={2.8} fill={couleurSegment} stroke="#fff" strokeWidth={1.2} />);
+          });
+        }
+        coudes.forEach(c => {
+          if (visuel) return;
+          const cPx = toScreen(c.point);
+          const estSel = selectedWaypoint?.cle === cle && selectedWaypoint?.waypointId === c.id;
+          elements.push(
+            <g key={`${cle}-wp-${c.id}`}
+              style={{ cursor: mode === "select" ? "grab" : "default" }}
+              onPointerDown={e => {
+                if (mode !== "select" || cheminementDessin) return;
+                e.stopPropagation();
+                // Sélectionne ET arme le déplacement dès le premier appui, comme les
+                // appareillages et le tableau — un simple clic sans bouger reste une
+                // sélection puisque le déplacement ne prend effet qu'au premier pointermove.
+                setSelectedWaypoint({ cle, waypointId: c.id });
+                setSelectedPieceId(null);
+                setSelectedAppareillageId(null);
+                setSelectedTableau(false);
+                setSelectedBoite(null);
+                setSelectedMeubleId(null);
+                setPanelResetTick(t => t + 1);
+                setDragMode({ kind: "liaison", cle, waypointId: c.id });
+              }}
+              onDoubleClick={e => { e.stopPropagation(); supprimerWaypoint(cle, c.id); }}>
+              <circle cx={cPx.x} cy={cPx.y} r={14} fill={estSel ? "#FEF3C7" : "transparent"} stroke="none" />
+              <rect x={cPx.x - 5} y={cPx.y - 5} width={10} height={10} rx={2}
+                fill={estSel ? "#F59E0B" : "#fff"} stroke={color} strokeWidth={2} style={{ pointerEvents: "none" }} />
+            </g>
+          );
+        });
+      });
+      // Boîte(s) de dérivation, déplaçables en drag-drop et nommées indépendamment
+      // — le câble les chaîne dans l'ordre, chaque lampe repart en étoile depuis
+      // la boîte la plus proche d'elle (voir construireBranchesCircuitEclairage).
+      if (!visuel && breaker.circuit === "lumiere") {
+        const lumieres = points.filter(a => estLumiere(a.type));
+        const boitesExistantes = niveauActif.boitesDerivation?.[breaker.label] ?? [];
+        if (boitesExistantes.length > 0) {
+          boitesExistantes.forEach(boite => {
+            const p = toScreen(boite.point);
+            const estSelBoite = selectedBoite?.label === breaker.label && selectedBoite?.boiteId === boite.id;
+            elements.push(
+              <g key={`boite-${breaker.label}-${boite.id}`} onPointerDown={e => onBoitePointerDown(breaker.label, boite, boite.point, e)}
+                style={{ cursor: mode === "select" ? "grab" : "default" }}>
+                <circle cx={p.x} cy={p.y} r={13} fill={estSelBoite ? "#FEF3C7" : "transparent"} stroke="none" />
+                <rect x={p.x - 6} y={p.y - 6} width={12} height={12} fill="#fff" stroke={color} strokeWidth={2} />
+                <line x1={p.x - 4.5} y1={p.y - 4.5} x2={p.x + 4.5} y2={p.y + 4.5} stroke={color} strokeWidth={1} />
+                <line x1={p.x - 4.5} y1={p.y + 4.5} x2={p.x + 4.5} y2={p.y - 4.5} stroke={color} strokeWidth={1} />
+                <text x={p.x} y={p.y - 10} textAnchor="middle" fontSize="9" fontWeight="700" fill="#1c1917" style={{ pointerEvents: "none" }}>{boite.nom}</text>
+                {estSelBoite && <circle cx={p.x} cy={p.y} r={13} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
+              </g>
+            );
+          });
+        } else if (lumieres.length > 1) {
+          // Boîte implicite (jamais nommée) — la première interaction la promeut
+          // en vraie boîte nommée, voir onBoitePointerDown.
+          const boitePos = centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y })));
+          const p = toScreen(boitePos);
+          elements.push(
+            <g key={`boite-${breaker.label}-implicite`} onPointerDown={e => onBoitePointerDown(breaker.label, null, boitePos, e)}
+              style={{ cursor: mode === "select" ? "grab" : "default" }}>
+              <circle cx={p.x} cy={p.y} r={13} fill="transparent" stroke="none" />
+              <rect x={p.x - 6} y={p.y - 6} width={12} height={12} fill="#fff" stroke={color} strokeWidth={2} />
+              <line x1={p.x - 4.5} y1={p.y - 4.5} x2={p.x + 4.5} y2={p.y + 4.5} stroke={color} strokeWidth={1} />
+              <line x1={p.x - 4.5} y1={p.y + 4.5} x2={p.x + 4.5} y2={p.y - 4.5} stroke={color} strokeWidth={1} />
+            </g>
+          );
+        }
+      }
+      return elements;
+    });
+  };
 
   return (
     <Shell>
@@ -5783,173 +5980,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 );
               })}
 
-              {showCircuits && resultat && niveauActif && origineCircuits(niveauActif) && (() => {
-                // Origine du tracé : le point d'arrivée des gaines quand il est configuré
-                // sur ce niveau (cohérent avec le calcul de facturation, predevis-engine.ts
-                // — origineCalcul), sinon le tableau directement.
-                const tableauPos = origineCircuits(niveauActif)!;
-                const waypointsNiveau = niveauActif.liaisonWaypoints;
-                const tousAppareils = niveauActif.pieces.flatMap(p => p.appareillages);
-                const parCircuit = new Map<number, AppareillagePlace[]>();
-                tousAppareils.forEach(a => {
-                  if (a.circuitId == null || !circuitsVisibles.has(a.circuitId)) return;
-                  const arr = parCircuit.get(a.circuitId) ?? [];
-                  arr.push(a);
-                  parCircuit.set(a.circuitId, arr);
-                });
-                return Array.from(parCircuit.entries()).flatMap(([circuitId, points]) => {
-                  const breaker = resultat.breakers.find(b => b.id === circuitId);
-                  if (!breaker) return [];
-                  const color = colorMap.get(circuitId) ?? "#666";
-                  const segments = segmentsPourCircuit(breaker, points, niveauActif, tableauPos);
-                  const elements: ReactNode[] = [];
-                  // Longueur RÉELLE de chaque section (horizontale + montée de départ, + descente finale pour la dernière).
-                  const ctxLg = creerContexteLongueurs(niveauActif);
-                  const hAncreLg = hauteurAncreFn(ctxLg);
-                  segments.forEach(seg => {
-                    const sectionsLg = showLongueurs && seg.type !== "domotique" ? tracerLiaison(ctxLg, breaker, segments, seg, hAncreLg).sections : null;
-                    const cle = cleSegmentLiaison(seg.aId, seg.bId);
-                    const coudes = waypointsNiveau?.[cle] ?? [];
-                    // Liaison (navette) entre deux va-et-vient : couleur du circuit assombrie,
-                    // pour rester rattachée au circuit tout en se distinguant du reste du tracé.
-                    const estDomotique = seg.type === "domotique";
-                    const couleurSegment = seg.type === "navette" ? assombrirCouleur(color) : color;
-                    // Sous-chaîne du segment : point de départ, coudes existants, point d'arrivée.
-                    const sousChaine = [seg.aPoint, ...coudes.map(c => c.point), seg.bPoint];
-                    const posesSections = posesTroncons(niveauActif, cle, coudes);
-                    for (let j = 0; j < sousChaine.length - 1; j++) {
-                      const ptA = sousChaine[j], ptB = sousChaine[j + 1];
-                      const aPx = toScreen(ptA), bPx = toScreen(ptB);
-                      const apparente = !estDomotique && posesSections[j] === "apparent";
-                      const sectionSel = selectedTroncon?.cle === cle && selectedTroncon?.index === j;
-                      // Section APPARENTE (le câble sort du mur) : trait plein sur une bande grise = moulure.
-                      // Section ENCASTRÉE : pointillé, comme avant (câble caché dans le mur).
-                      if (apparente) {
-                        elements.push(<line key={`${cle}-${j}-moulure`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#d6d3d1" strokeWidth={8} strokeLinecap="round" opacity={0.9} style={{ pointerEvents: "none" }} />);
-                      }
-                      const hSec = hauteursTroncons(niveauActif, cle, coudes)[j];
-                      if (hSec != null && !estDomotique) {
-                        const mx = (aPx.x + bPx.x) / 2, my = (aPx.y + bPx.y) / 2;
-                        elements.push(
-                          <g key={`${cle}-${j}-h`} style={{ pointerEvents: "none" }}>
-                            <rect x={mx - 16} y={my - 7} width={32} height={14} rx={4} fill="#fff" stroke={couleurSegment} strokeWidth={1} />
-                            <text x={mx} y={my + 3.5} textAnchor="middle" fontSize={9} fontWeight={700} fontFamily="monospace" fill="#1c1917">↕{hSec}</text>
-                          </g>);
-                      }
-                      if (sectionSel) {
-                        elements.push(<line key={`${cle}-${j}-sel`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#F59E0B" strokeWidth={11} strokeLinecap="round" opacity={0.35} style={{ pointerEvents: "none" }} />);
-                      }
-                      if (estDomotique) {
-                        // Liaison "particulière" (domotique/sans fil) : symbole d'onde plutôt
-                        // qu'un trait plein, pour tous les types d'interrupteur.
-                        const wavePts = pointsOndulesEntre(ptA, ptB).map(toScreen);
-                        const dOnde = wavePts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
-                        elements.push(<polyline key={`${cle}-${j}`} points={dOnde} fill="none" stroke={couleurSegment} strokeWidth={1.8} opacity={0.85} />);
-                      } else {
-                        elements.push(<line key={`${cle}-${j}`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={couleurSegment} strokeWidth={apparente ? 2.4 : 2} strokeDasharray={apparente ? undefined : "6,4"} opacity={apparente ? 1 : 0.8} />);
-                      }
-                      if (sectionsLg) {
-                        elements.push(<EtiquetteLongueur key={`${cle}-${j}-lg`} aPx={aPx} bPx={bPx} texte={`${(sectionsLg[j] ?? distance(ptA, ptB)).toFixed(2)}m`} />);
-                      }
-                      if (mode === "select" && !cheminementDessin) {
-                        elements.push(
-                          <line key={`${cle}-${j}-hit`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="transparent" strokeWidth={14}
-                            style={{ cursor: "copy" }}
-                            onPointerDown={e => {
-                              e.stopPropagation();
-                              // Maj + clic : choisir la SECTION (pour régler sa pose) ; clic simple : ajouter un point.
-                              if (e.shiftKey) {
-                                setSelectedTroncon({ cle, index: j });
-                                setSelectedWaypoint(null); setSelectedPieceId(null); setSelectedAppareillageId(null);
-                                setSelectedTableau(false); setSelectedBoite(null); setSelectedMeubleId(null);
-                                setPanelResetTick(t => t + 1);
-                                return;
-                              }
-                              const rect = svgRef.current?.getBoundingClientRect();
-                              if (!rect) return;
-                              const m = toMeters(e.clientX - rect.left, e.clientY - rect.top);
-                              // Appui + glisser sur un tracé = nouveau point que l'on tire aussitôt : on déforme le circuit
-                              // d'un seul geste. (Un simple clic sans bouger ajoute juste le point.)
-                              const nouveauId = ajouterWaypoint(cle, j, m);
-                              setSelectedWaypoint({ cle, waypointId: nouveauId });
-                              setSelectedTroncon(null); setSelectedPieceId(null); setSelectedAppareillageId(null);
-                              setSelectedTableau(false); setSelectedBoite(null); setSelectedMeubleId(null);
-                              setPanelResetTick(t => t + 1);
-                              setDragMode({ kind: "liaison", cle, waypointId: nouveauId });
-                            }} />
-                        );
-                      }
-                    }
-                    coudes.forEach(c => {
-                      const cPx = toScreen(c.point);
-                      const estSel = selectedWaypoint?.cle === cle && selectedWaypoint?.waypointId === c.id;
-                      elements.push(
-                        <g key={`${cle}-wp-${c.id}`}
-                          style={{ cursor: mode === "select" ? "grab" : "default" }}
-                          onPointerDown={e => {
-                            if (mode !== "select" || cheminementDessin) return;
-                            e.stopPropagation();
-                            // Sélectionne ET arme le déplacement dès le premier appui, comme les
-                            // appareillages et le tableau — un simple clic sans bouger reste une
-                            // sélection puisque le déplacement ne prend effet qu'au premier pointermove.
-                            setSelectedWaypoint({ cle, waypointId: c.id });
-                            setSelectedPieceId(null);
-                            setSelectedAppareillageId(null);
-                            setSelectedTableau(false);
-                            setSelectedBoite(null);
-                            setSelectedMeubleId(null);
-                            setPanelResetTick(t => t + 1);
-                            setDragMode({ kind: "liaison", cle, waypointId: c.id });
-                          }}
-                          onDoubleClick={e => { e.stopPropagation(); supprimerWaypoint(cle, c.id); }}>
-                          <circle cx={cPx.x} cy={cPx.y} r={14} fill={estSel ? "#FEF3C7" : "transparent"} stroke="none" />
-                          <rect x={cPx.x - 5} y={cPx.y - 5} width={10} height={10} rx={2}
-                            fill={estSel ? "#F59E0B" : "#fff"} stroke={color} strokeWidth={2} style={{ pointerEvents: "none" }} />
-                        </g>
-                      );
-                    });
-                  });
-                  // Boîte(s) de dérivation, déplaçables en drag-drop et nommées indépendamment
-                  // — le câble les chaîne dans l'ordre, chaque lampe repart en étoile depuis
-                  // la boîte la plus proche d'elle (voir construireBranchesCircuitEclairage).
-                  if (breaker.circuit === "lumiere") {
-                    const lumieres = points.filter(a => estLumiere(a.type));
-                    const boitesExistantes = niveauActif.boitesDerivation?.[breaker.label] ?? [];
-                    if (boitesExistantes.length > 0) {
-                      boitesExistantes.forEach(boite => {
-                        const p = toScreen(boite.point);
-                        const estSelBoite = selectedBoite?.label === breaker.label && selectedBoite?.boiteId === boite.id;
-                        elements.push(
-                          <g key={`boite-${breaker.label}-${boite.id}`} onPointerDown={e => onBoitePointerDown(breaker.label, boite, boite.point, e)}
-                            style={{ cursor: mode === "select" ? "grab" : "default" }}>
-                            <circle cx={p.x} cy={p.y} r={13} fill={estSelBoite ? "#FEF3C7" : "transparent"} stroke="none" />
-                            <rect x={p.x - 6} y={p.y - 6} width={12} height={12} fill="#fff" stroke={color} strokeWidth={2} />
-                            <line x1={p.x - 4.5} y1={p.y - 4.5} x2={p.x + 4.5} y2={p.y + 4.5} stroke={color} strokeWidth={1} />
-                            <line x1={p.x - 4.5} y1={p.y + 4.5} x2={p.x + 4.5} y2={p.y - 4.5} stroke={color} strokeWidth={1} />
-                            <text x={p.x} y={p.y - 10} textAnchor="middle" fontSize="9" fontWeight="700" fill="#1c1917" style={{ pointerEvents: "none" }}>{boite.nom}</text>
-                            {estSelBoite && <circle cx={p.x} cy={p.y} r={13} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
-                          </g>
-                        );
-                      });
-                    } else if (lumieres.length > 1) {
-                      // Boîte implicite (jamais nommée) — la première interaction la promeut
-                      // en vraie boîte nommée, voir onBoitePointerDown.
-                      const boitePos = centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y })));
-                      const p = toScreen(boitePos);
-                      elements.push(
-                        <g key={`boite-${breaker.label}-implicite`} onPointerDown={e => onBoitePointerDown(breaker.label, null, boitePos, e)}
-                          style={{ cursor: mode === "select" ? "grab" : "default" }}>
-                          <circle cx={p.x} cy={p.y} r={13} fill="transparent" stroke="none" />
-                          <rect x={p.x - 6} y={p.y - 6} width={12} height={12} fill="#fff" stroke={color} strokeWidth={2} />
-                          <line x1={p.x - 4.5} y1={p.y - 4.5} x2={p.x + 4.5} y2={p.y + 4.5} stroke={color} strokeWidth={1} />
-                          <line x1={p.x - 4.5} y1={p.y + 4.5} x2={p.x + 4.5} y2={p.y - 4.5} stroke={color} strokeWidth={1} />
-                        </g>
-                      );
-                    }
-                  }
-                  return elements;
-                });
-              })()}
+              {rendreCircuitsPlan("interactif")}
 
               {/* Pendant le déplacement d'étage : contours (pointillés bleus) des niveaux reliés par un escalier, pour caler les murs. */}
               {deplacementNiveau && niveauActif && (() => {
@@ -6304,6 +6335,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   </g>
                 );
               })}
+
+              {/* Circuits : tracé VISIBLE, toujours au-dessus de tout (murs, appareillages, meubles…), sans capter la souris. */}
+              <g style={{ pointerEvents: "none" }}>{rendreCircuitsPlan("visuel")}</g>
 
               {niveauActif?.tableauPos && (() => {
                 const p = toScreen(niveauActif.tableauPos);
