@@ -262,7 +262,7 @@ export function murAfterSuppressionSommet(murs: MurSpec[] | undefined, index: nu
 
 // Hauteur d'installation par défaut (mètres) quand l'appareillage n'a pas de hauteur saisie.
 export const HAUTEUR_DEFAUT: Partial<Record<AppareillageType, number>> = {
-  prise: 0.3, prise_commandee: 0.3, rj45: 0.3, prise_dediee: 0.3, prise_exterieure: 0.5,
+  prise: 0.3, prise_commandee: 0.3, rj45: 0.3, prise_tv: 0.3, prise_dediee: 0.3, prise_exterieure: 0.5,
   interrupteur: 1.1, va_et_vient: 1.1, telerupteur: 1.1, interrupteur_double: 1.1, va_et_vient_double: 1.1, telerupteur_double: 1.1,
   applique: 1.8,
   // Extérieur : applique à 2,20 m, interrupteur étanche à 1,10 m. Détecteurs de mouvement muraux : 2,20 m (intérieur),

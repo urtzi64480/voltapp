@@ -16,7 +16,7 @@ export type AppareillageType =
   | "chauffe_eau" | "chauffage" | "clim" | "seche_serviette" | "congelateur"
   | "irve" | "piscine" | "vmc" | "alarme"
   | "volet_roulant"
-  | "rj45" | "prise_dediee" | "prise_exterieure"
+  | "rj45" | "prise_tv" | "prise_dediee" | "prise_exterieure"
   // Extérieur (étanche) : applique murale, point lumineux (sous avancée de toit / plafond de terrasse), interrupteur.
   | "applique_exterieure" | "point_lumineux_exterieur" | "interrupteur_exterieur"
   // Détecteurs de mouvement : commandent l'allumage de points lumineux (comme un interrupteur), à l'intérieur ou à l'extérieur (IP55).
@@ -802,8 +802,12 @@ export const MIN_POSTES_PLAQUE = 2;
 // Types que l'on peut poser sur un poste de plaque : prises, commandes, RJ45, prise dédiée.
 export const TYPES_POSTE_PLAQUE: AppareillageType[] = [
   "prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur",
-  "interrupteur_double", "va_et_vient_double", "telerupteur_double", "rj45", "prise_dediee",
+  "interrupteur_double", "va_et_vient_double", "telerupteur_double", "rj45", "prise_tv", "prise_dediee",
 ];
+
+// Courant faible (RJ45, prise TV / antenne) : câblé en étoile vers le coffret de communication, jamais sur un circuit de puissance.
+export const TYPES_COURANT_FAIBLE: AppareillageType[] = ["rj45", "prise_tv"];
+export const estCourantFaible = (type: AppareillageType): boolean => TYPES_COURANT_FAIBLE.includes(type);
 
 // Appareils alimentables par une prise dédiée (un circuit dédié chacun, voir CIRCUIT_DEDIE).
 export const TYPES_USAGE_DEDIE: AppareillageType[] = [
@@ -1378,7 +1382,7 @@ export const COULEURS_VOLET: { nom: string; hex: string }[] = [
 // Prises et commandes dont la couleur de plaque se choisit (vue 3D).
 export const TYPES_APPAREILLAGE_COLORABLES: AppareillageType[] = [
   "prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur",
-  "interrupteur_double", "va_et_vient_double", "telerupteur_double", "rj45", "prise_dediee",
+  "interrupteur_double", "va_et_vient_double", "telerupteur_double", "rj45", "prise_tv", "prise_dediee",
 ];
 // Teintes courantes de plaques/mécanismes (gammes blanc, gris, anthracite, laiton…) — un
 // sélecteur de couleur libre complète cette liste côté interface.

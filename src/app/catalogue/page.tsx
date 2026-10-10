@@ -497,6 +497,7 @@ const SOUS_CATEGORIES_CONNUES: { code: string; label: string }[] = [
   { code: "plaque_3postes", label: "Plaque de finition triple (3 postes)" },
   { code: "plaque_4postes", label: "Plaque de finition quadruple (4 postes)" },
   { code: "cable_rj45", label: "Câble RJ45 cat. 6 STP (au mètre / bobine)" },
+  { code: "cable_coax", label: "Câble coaxial TV / antenne (au mètre / bobine)" },
   { code: "disjoncteur_2A", label: "Disjoncteur 2A" },
   { code: "disjoncteur_6A", label: "Disjoncteur 6A" },
   { code: "disjoncteur_10A", label: "Disjoncteur 10A" },

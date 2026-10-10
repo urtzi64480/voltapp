@@ -28,7 +28,7 @@ import {
   cheminSegment, longueurBranchesEclairage, centroidePoints, assombrirCouleur, pointsOndulesEntre,
   BoiteDerivation, migrerBoitesDerivation,
   Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, nouvelleVoiture, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
-  estCommande, estCommandeDouble, estLumiere, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM,
+  estCommande, estCommandeDouble, estLumiere, estCourantFaible, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM,
   Escalier, EscalierType, EscalierTournant,
 } from "@/lib/maison-types";
 import {
@@ -1489,7 +1489,7 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
   const [couleur, setCouleur] = useState(existing?.couleur ?? "");
   const [creerBoite, setCreerBoite] = useState(false);
   const [nonRelieTableau, setNonRelieTableau] = useState(existing?.nonRelieTableau ?? false);
-  const tousAppareils = niveau.pieces.flatMap(p => p.appareillages.filter(a => a.type !== "rj45").map(a => ({ a, pieceNom: p.nom }))); // RJ45 : courant faible, pas de circuit de puissance
+  const tousAppareils = niveau.pieces.flatMap(p => p.appareillages.filter(a => !estCourantFaible(a.type)).map(a => ({ a, pieceNom: p.nom }))); // RJ45 / TV : courant faible, pas de circuit de puissance
   const [membres, setMembres] = useState<Set<number>>(
     () => new Set(existing ? tousAppareils.filter(({ a }) => a.circuitManuelId === existing.id).map(({ a }) => a.id) : []),
   );
@@ -6130,7 +6130,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 // après génération (exclu, commande orpheline…) se repère sans devoir ouvrir
                 // la liste des alertes. Uniquement pertinent une fois un résultat généré :
                 // avant ça, l'absence de circuitId ne veut encore rien dire.
-                const nonRaccorde = resultat != null && a.circuitId == null && a.type !== "rj45"; // RJ45 : courant faible, jamais de circuit de puissance
+                const nonRaccorde = resultat != null && a.circuitId == null && !estCourantFaible(a.type); // RJ45 / TV : courant faible, jamais de circuit de puissance
                 return (
                   <g key={a.id}
                     onPointerDown={e => onAppareillagePointerDown(piece, a, e)}
@@ -7082,7 +7082,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     </div>
                   </div>
                 )}
-                {(niveauActif?.circuitsManuels?.length ?? 0) > 0 && selectedAppareillage.type !== "rj45" && (
+                {(niveauActif?.circuitsManuels?.length ?? 0) > 0 && !estCourantFaible(selectedAppareillage.type) && (
                   <div className="flex items-center gap-2 text-xs text-ink-500 border-t border-ink-100 pt-2">
                     <span className="shrink-0">Circuit</span>
                     <select className="input !py-1 !text-xs flex-1"
@@ -7146,7 +7146,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     <span className="text-amber-700">Exclu de la génération automatique</span>
                     <button onClick={() => reinclureAppareillage(selectedAppareillage.id)} className="btn-ghost !text-[11px] !px-1.5 !py-0.5 shrink-0">Réinclure</button>
                   </div>
-                ) : selectedAppareillage.type === "rj45" ? (
+                ) : estCourantFaible(selectedAppareillage.type) ? (
                   <p className="text-xs text-ink-400">Courant faible : câblée en étoile vers le coffret de communication — aucun circuit de puissance.</p>
                 ) : resultat ? (
                   <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-2 py-1.5">Non raccordé à un circuit.</p>

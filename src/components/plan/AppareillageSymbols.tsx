@@ -6,6 +6,7 @@ export const PALETTE: { type: AppareillageType; label: string; categorie: string
   { type: "prise_commandee", label: "Prise commandée",               categorie: "Prises" },
   { type: "prise_dediee",    label: "Prise dédiée (20 A / 32 A)",    categorie: "Prises" },
   { type: "rj45",           label: "Prise RJ45 (communication)",    categorie: "Prises" },
+  { type: "prise_tv",       label: "Prise TV / antenne",            categorie: "Prises" },
   { type: "point_lumineux",  label: "Point lumineux (plafond)",      categorie: "Éclairage" },
   { type: "applique",        label: "Applique murale",                categorie: "Éclairage" },
   { type: "spot",            label: "Spot encastré (plafond)",        categorie: "Éclairage" },
@@ -61,7 +62,7 @@ const DEDIE_INITIALES: Record<string, string> = {
 // même logique que les symboles 2D mais réduite à 1-3 caractères.
 const INITIALES_BASE: Record<string, string> = {
   prise: "P", prise_commandee: "PC", point_lumineux: "PL", applique: "AP", spot: "SP", spot_etanche: "SE",
-  interrupteur: "I", va_et_vient: "VV", telerupteur: "BP", rj45: "RJ", prise_dediee: "PD", prise_exterieure: "PE",
+  interrupteur: "I", va_et_vient: "VV", telerupteur: "BP", rj45: "RJ", prise_tv: "TV", prise_dediee: "PD", prise_exterieure: "PE",
   interrupteur_double: "I2", va_et_vient_double: "VV2", telerupteur_double: "BP2",
   applique_exterieure: "AE", point_lumineux_exterieur: "PLE", interrupteur_exterieur: "IE",
   detecteur_mouvement: "DM", detecteur_mouvement_exterieur: "DME",
@@ -145,6 +146,10 @@ const SYMBOLES: Record<AppareillageType, DefSymbole> = {
   // carré plein (prise de communication — voltage faible, jamais sur un circuit de puissance).
   rj45: { oriente: true, prims: [
     { k: "p", d: "M 4.5 19 L 19.5 19 L 12 6 Z" }, { k: "r", x: 10, y: 13, w: 4, h: 4, f: true },
+  ] },
+  // Prise TV / antenne (coaxiale) : triangle posé sur le mur comme la RJ45, repéré par un cercle plein (âme du coaxial).
+  prise_tv: { oriente: true, prims: [
+    { k: "p", d: "M 4.5 19 L 19.5 19 L 12 6 Z" }, { k: "c", cx: 12, cy: 14.5, r: 2.3, f: true },
   ] },
   // Applique extérieure (étanche) : applique (cercle croisé tangent au mur) entourée d'un second cercle — même
   // convention « double contour = étanche » que le spot étanche et la prise extérieure.

@@ -45,7 +45,7 @@ export function cleCircuitDedie(a: Pick<AppareillagePlace, "type" | "usageDedie"
 
 // Types sans circuit de PUISSANCE : une prise RJ45 est un courant faible (câblage de communication
 // en étoile vers le coffret VDI) — jamais rattachée à un disjoncteur, donc jamais « non raccordée ».
-export const TYPES_SANS_CIRCUIT: string[] = ["rj45"];
+export const TYPES_SANS_CIRCUIT: string[] = ["rj45", "prise_tv"];
 
 // Libellés pour le message d'alerte "non raccordé" — soit une commande (interrupteur/
 // va-et-vient/télérupteur) qui ne pointe vers aucun point lumineux raccordé, soit un
@@ -56,7 +56,7 @@ const LABEL_NON_RACCORDE: Record<string, string> = {
   interrupteur: "Interrupteur", va_et_vient: "Va-et-vient", telerupteur: "Télérupteur",
   interrupteur_double: "Double interrupteur", va_et_vient_double: "Double va-et-vient", telerupteur_double: "Double bouton poussoir",
   prise: "Prise", prise_commandee: "Prise commandée", volet_roulant: "Volet roulant",
-  prise_dediee: "Prise dédiée", prise_exterieure: "Prise extérieure",
+  prise_dediee: "Prise dédiée", prise_exterieure: "Prise extérieure", prise_tv: "Prise TV / antenne",
   point_lumineux: "Point lumineux", applique: "Applique", spot: "Spot", spot_etanche: "Spot étanche",
   applique_exterieure: "Applique extérieure", point_lumineux_exterieur: "Point lumineux extérieur",
   interrupteur_exterieur: "Interrupteur extérieur",
@@ -445,12 +445,14 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     // Prises RJ45 : UN circuit (de communication) par prise — une plaque « prise + RJ45 » donne donc deux circuits :
     // le circuit de puissance de la prise et le câble RJ45. Sans disjoncteur (voir CIRCUIT_COMMUNICATION).
     let nRj45 = 0;
-    const nbRj45Niveau = resteApresExclusion.filter(a => a.base.type === "rj45").length;
-    resteApresExclusion.filter(a => a.base.type === "rj45").forEach(item => {
+    const courantsFaibles = resteApresExclusion.filter(a => a.base.type === "rj45" || a.base.type === "prise_tv");
+    const nbRj45Niveau = courantsFaibles.length;
+    courantsFaibles.forEach(item => {
       nRj45++;
       const spec = CIRCUITS[CIRCUIT_COMMUNICATION];
+      const nomCircuit = item.base.type === "prise_tv" ? "Antenne TV (coaxial)" : spec.label;
       const b: Breaker = {
-        id: uid(), label: `${spec.label} ${nbRj45Niveau > 1 ? `n°${nRj45} ` : ""}— ${item.pieceNom || niveau.nom}`, circuit: CIRCUIT_COMMUNICATION,
+        id: uid(), label: `${nomCircuit} ${nbRj45Niveau > 1 ? `n°${nRj45} ` : ""}— ${item.pieceNom || niveau.nom}`, circuit: CIRCUIT_COMMUNICATION,
         amperes: 0, type: "1P",
         pieces: [{ nom: item.pieceNom, nbPrises: 1, groupes: [] }],
       };

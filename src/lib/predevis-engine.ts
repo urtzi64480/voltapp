@@ -151,6 +151,7 @@ const LABEL_APPAREILLAGE: Record<string, string> = {
   point_lumineux: "Point lumineux (DCL)", applique: "Sortie applique",
   spot: "Spot encastré", spot_etanche: "Spot encastré étanche (IP65)",
   rj45: "Prise RJ45 (communication)",
+  prise_tv: "Prise TV / antenne (coaxiale)",
   prise_exterieure: "Prise extérieure (étanche IP44)",
   applique_exterieure: "Applique extérieure (étanche IP44)",
   point_lumineux_exterieur: "Point lumineux extérieur (étanche IP44)",
@@ -198,7 +199,7 @@ function estCommandeType(t?: AppareillageType): boolean {
 
 // Le détecteur de mouvement intérieur (type interrupteur à détection) s'encastre comme un mécanisme : boîte + plaque.
 // L'appareillage extérieur (prise, interrupteur, détecteur, applique) est étanche et posé EN SAILLIE : ni boîte ni plaque.
-const TYPES_ENCASTRABLES: AppareillageType[] = ["prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur", "interrupteur_double", "va_et_vient_double", "telerupteur_double", "detecteur_mouvement", "rj45", "prise_dediee"];
+const TYPES_ENCASTRABLES: AppareillageType[] = ["prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur", "interrupteur_double", "va_et_vient_double", "telerupteur_double", "detecteur_mouvement", "rj45", "prise_tv", "prise_dediee"];
 
 const LABEL_POSTES = (n: number) => n === 1 ? "simple" : n === 2 ? "double" : n === 3 ? "triple" : "quadruple";
 
@@ -361,10 +362,13 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
     const hauteurPriseVDI = hauteurAncreFn(ctxVDI);
     niveau.pieces.forEach(piece => {
       piece.appareillages.forEach(a => {
-        if (a.type !== "rj45" || a.dejaExistant) return;
+        if ((a.type !== "rj45" && a.type !== "prise_tv") || a.dejaExistant) return;
+        const tv = a.type === "prise_tv";
         const horizontale = Math.abs(a.x - origineVDI.x) + Math.abs(a.y - origineVDI.y);
         const verticale = Math.abs(ctxVDI.hauteurGaine - ctxVDI.hauteurTableau) + Math.abs(ctxVDI.hauteurGaine - hauteurPriseVDI(String(a.id)));
-        ajouter(`cable_rj45@${piece.id}`, "cable_rj45", "Câble RJ45 cat. 6 STP (étoile vers le coffret de communication)",
+        if (tv) ajouter(`cable_coax@${piece.id}`, "cable_coax", "Câble coaxial TV / antenne (étoile vers le coffret de communication)",
+          piece.nom || "Pièce", horizontale + verticale, "m");
+        else ajouter(`cable_rj45@${piece.id}`, "cable_rj45", "Câble RJ45 cat. 6 STP (étoile vers le coffret de communication)",
           piece.nom || "Pièce", horizontale + verticale, "m");
       });
     });
@@ -684,7 +688,7 @@ function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArt
 
 export function estBobinable(sousCategorie: string): boolean {
   return sousCategorie.startsWith("cablage_") || sousCategorie.startsWith("fil_")
-    || sousCategorie.startsWith("gaine_irl") || sousCategorie === "moulure" || sousCategorie === "cable_rj45";
+    || sousCategorie.startsWith("gaine_irl") || sousCategorie === "moulure" || sousCategorie === "cable_rj45" || sousCategorie === "cable_coax";
 }
 
 // Poste du devis (devis_lignes.poste) porté par un besoin du pré-devis : chaque PIÈCE du plan devient un poste du
