@@ -29,6 +29,7 @@ import {
 } from "@/lib/maison-engine";
 import { appareillagesParPieceReelle } from "@/lib/piece-reelle";
 import { PREFIXE_CIRCUIT } from "@/lib/predevis-engine";
+import { conducteursSegment, nbConducteurs } from "@/lib/couleurs-fils";
 import { migrerModeleMurs } from "@/lib/murs";
 import { migrerBoitesDerivation, reamorcerCompteurId, dedupliquerIds } from "@/lib/maison-types";
 import { hauteurAppareilM } from "@/lib/murs";
@@ -755,18 +756,19 @@ export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
         let role = "chaine", fonction = "Câble du circuit", roleLiaison: "commande" | "normal" = "normal";
         const lignes: string[] = [];
         if (eclairage) {
-          if (kA === "tableau" && kB === "boite") { role = "depart"; fonction = "Départ : tableau → boîte de dérivation"; lignes.push("Câble d'alimentation du circuit : phase, neutre, terre."); }
+          if (seg.type === "commande") { role = "alim"; fonction = "Ligne de commande des boutons-poussoirs (télérupteur)"; lignes.push("Les boutons-poussoirs sont en parallèle : phase + un fil de retour par télérupteur + terre. Le télérupteur est au tableau, la lampe est alimentée directement."); roleLiaison = "commande"; }
+          else if (kA === "tableau" && kB === "boite") { role = "depart"; fonction = "Départ : tableau → boîte de dérivation"; lignes.push("Câble d'alimentation du circuit : phase, neutre, terre."); }
           else if (kA === "tableau" && kB === "commande") { role = "depart"; fonction = "Départ : tableau → commande (aller)"; lignes.push("La phase arrive à la borne COM de la commande ; neutre et terre poursuivent vers la lampe sans se raccorder au mécanisme."); }
           else if (kA === "tableau" && kB === "lampe") { role = "depart"; fonction = "Départ : tableau → point lumineux"; lignes.push("Phase, neutre, terre jusqu'à la boîte DCL."); }
           else if (kA === "boite" && kB === "boite") { role = "boite"; fonction = "Liaison entre boîtes de dérivation"; lignes.push("Prolongement du câble d'alimentation : phase, neutre, terre."); }
           else if (kA === "boite" && kB === "commande") { role = "alim"; fonction = "Alimentation de la commande (aller depuis la boîte)"; lignes.push("La phase part de la boîte vers la borne COM de la commande ; neutre et terre accompagnent le câble pour atteindre la lampe."); }
           else if (kA === "boite" && kB === "lampe") { role = "alim"; fonction = "Alimentation du point lumineux depuis la boîte"; lignes.push("Phase, neutre, terre jusqu'à la boîte DCL."); }
           else if (kA === "commande" && kB === "commande") {
-            if (seg.type === "navette") { role = "navette"; fonction = "Navettes entre commandes"; lignes.push("Deux fils de navette (couleurs distinctes, repérées) + terre : navette 1 sur L1, navette 2 sur L2 de chaque mécanisme."); roleLiaison = "commande"; }
+            if (seg.type === "navette") { role = "navette"; fonction = "Navettes entre commandes"; lignes.push(`Fils de navette (deux par voie, repérés) : navette 1 sur L1, navette 2 sur L2 de chaque mécanisme${seg.neutre ? " ; le neutre de la lampe traverse ce câble" : " ; le retour de chaque voie repasse par ce câble jusqu'à la lampe"}.`); roleLiaison = "commande"; }
             else { role = "navette"; fonction = "Liaison entre commandes"; lignes.push("Fils de commande entre les boutons (en parallèle) : voir le guide de câblage."); roleLiaison = "commande"; }
           }
           else if (kA === "commande" && kB === "lampe") { role = "retour"; fonction = "Retour : commande → point lumineux"; lignes.push("Fil de RETOUR (phase commutée) + neutre + terre qui alimentent la lampe."); roleLiaison = "commande"; }
-          else if (kA === "lampe" && kB === "commande") { role = "retour"; fonction = "Commande alimentée depuis le point lumineux"; lignes.push("Circuit sans amont tracé : l'alimentation de la commande vient de la lampe."); roleLiaison = "commande"; }
+          else if (kA === "lampe" && kB === "commande") { role = "retour"; fonction = "Commande alimentée depuis le point lumineux"; lignes.push(seg.neutre ? "Lampe alimentée en bout de chaîne : le détecteur reçoit neutre + phase de la lampe et lui renvoie le retour." : "Lampe alimentée en bout de chaîne : la phase monte à la commande, le retour redescend vers la lampe (pas de neutre dans ce câble)."); roleLiaison = "commande"; }
           else if (kA === "lampe" && kB === "lampe") { role = "directe"; fonction = "Liaison directe entre points lumineux"; lignes.push("Chaînage lampe à lampe sans boîte : phase, neutre, terre (et retours selon les commandes)."); }
         } else {
           fonction = seg.aId === "tableau" ? `Câble de départ du ${sansDisj ? "coffret de communication" : "tableau"}` : "Câble du circuit (en chaîne)";
@@ -779,10 +781,11 @@ export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
         const apparent = trace.jambes.filter(j => j.pose === "apparent").reduce((s, j) => s + longueurJambe(j), 0);
         const waypoints = (niveau.liaisonWaypoints?.[cleSegmentLiaison(seg.aId, seg.bId)] ?? []).length;
         const pose = apparent <= 0.005 ? "encastré" : apparent >= longueur - 0.005 ? "apparent (moulure)" : `mixte (${fmtM(apparent)} apparents)`;
-        const cable = b.circuit === "communication" ? (A?.type === "prise_tv" || B?.type === "prise_tv" ? "coaxial" : "RJ45 cat.6 STP") : `3G${fmtSection(sectionSeg)}`;
+        const cable = b.circuit === "communication" ? (A?.type === "prise_tv" || B?.type === "prise_tv" ? "coaxial" : "RJ45 cat.6 STP") : `${eclairage ? nbConducteurs(seg) : 3}G${fmtSection(sectionSeg)}`;
         const gaine = pose === "apparent (moulure)" ? "moulure" : gaineRecommandee([sectionSeg, sectionSeg, sectionSeg]).gaine;
         const cleK = cleLiaisonCoche(niveau.id, noeudCle(seg.aId), noeudCle(seg.bId));
         const titre = `${nomNoeud(seg.aId)} → ${nomNoeud(seg.bId)}`;
+        if (eclairage) lignes.push(`Fils du câble : ${conducteursSegment(seg).map(c => c.libelle).join(", ")}.`);
         const details = [...lignes, `Longueur prévue : ${fmtM(longueur)} (montées et descentes comprises).`];
         details.push(pose === "encastré" ? `Pose encastrée sous gaine ${gaine}.` : pose === "apparent (moulure)" ? "Pose apparente sous moulure." : `Pose ${pose} — gaine ${gaine} sur la partie encastrée.`);
         if (waypoints > 0) details.push(`Passe par ${pluriel(waypoints, "point de passage imposé", "points de passage imposés")} (coudes définis sur le plan).`);

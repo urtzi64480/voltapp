@@ -1132,15 +1132,18 @@ export function pointsOndulesEntre(a: Point, b: Point, amplitude = 0.06, longueu
 // type : « navette » = fils entre deux va-et-vient ; « retour » = câble de la (dernière) commande vers la lampe (ou, pour une lampe
 // alimentée en bout de chaîne, de la lampe vers sa première commande) ; « domotique » = liaison sans fil ; absent = câble
 // d'alimentation / de circuit classique. Couleurs de fils : voir lib/couleurs-fils.ts.
-export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoint: Point; type?: "navette" | "retour" | "domotique";
-  // Navette d'un câblage alimenté par l'amont (alimentation → commande(s) → lampe) : le neutre de la lampe passe par ce câble, qui
-  // porte donc le neutre EN PLUS des deux fils de navette. Absent pour une lampe alimentée en bout de chaîne (commandes en antenne).
+export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoint: Point; type?: "navette" | "retour" | "commande" | "domotique";
+  // ── Composition des fils (voir conducteursSegment, lib/couleurs-fils.ts) ──
+  // Navette d'un câblage alimenté par l'amont (alimentation → commande(s) → lampe) : le neutre de la lampe passe par ce câble.
   neutre?: boolean;
-  // « retour » d'une lampe alimentée en bout de chaîne vers une commande SANS besoin de neutre (interrupteur, va-et-vient) :
-  // le câble porte phase + retour + terre. Les détecteurs et télérupteurs gardent leur neutre.
+  // Navette d'une lampe alimentée en bout de chaîne : le fil de RETOUR de chaque voie repasse par ce câble.
+  retourTraversant?: boolean;
+  // Retour lampe → commande (lampe alimentée en bout de chaîne) : la phase monte à la commande (pas de neutre, sauf détecteur : neutre = true).
   phase?: boolean;
-  // Navette entre deux commandes DOUBLES (deux voies) : un seul segment tracé, mais deux paires de fils de navette.
-  double?: boolean; }
+  // Alimentation entre deux commandes en parallèle sur la même lampe (interrupteurs simples, détecteurs) : le retour de la première la traverse.
+  avecRetour?: boolean;
+  // Nombre de mécanismes indépendants qui traversent ce câble (va-et-vient / télérupteur DOUBLES : 2 voies). Absent = 1.
+  voies?: number; }
 
 export function centroidePoints(points: Point[]): Point {
   if (points.length === 0) return { x: 0, y: 0 };
@@ -1187,32 +1190,77 @@ export function construireBranchesCircuitEclairage(
   // commande plusieurs lampes n'est alimentée qu'UNE fois, puis repart vers chacune.
   // Commande domotique : aucun fil (onde pointillée), la lampe reste alimentée directement.
   const dejaPose = new Set<string>();
-  const poser = (seg: SegmentCircuit) => {
-    const cle = `${seg.aId}->${seg.bId}`;
-    if (dejaPose.has(cle)) return;
-    dejaPose.add(cle);
-    segments.push(seg);
+  const parCle = new Map<string, SegmentCircuit>();
+  const mecanismes = new Map<string, Set<string>>(); // câble → mécanismes distincts qui le traversent (voir SegmentCircuit.voies)
+  const poser = (seg: SegmentCircuit, meca?: string[]) => {
+    let cle = `${seg.aId}->${seg.bId}`;
+    // Un câble entre deux commandes est le MÊME câble quel que soit le sens où on le parcourt (chaînes de deux lampes différentes).
+    if (!dejaPose.has(cle) && seg.type === "navette" && dejaPose.has(`${seg.bId}->${seg.aId}`)) cle = `${seg.bId}->${seg.aId}`;
+    if (!dejaPose.has(cle)) { dejaPose.add(cle); segments.push(seg); parCle.set(cle, seg); }
+    else {
+      // Même câble demandé par deux lampes (ex. voies A et B d'un va-et-vient double) : on cumule les fils nécessaires.
+      const ex = parCle.get(cle)!;
+      if (seg.neutre) ex.neutre = true;
+      if (seg.retourTraversant) ex.retourTraversant = true;
+      if (seg.phase) ex.phase = true;
+      if (seg.avecRetour) ex.avecRetour = true;
+    }
+    if (meca && meca.length > 0) {
+      const ens = mecanismes.get(cle) ?? new Set<string>();
+      meca.forEach(m => ens.add(m));
+      mecanismes.set(cle, ens);
+    }
   };
+  // Mécanisme d'une commande pour une lampe : « id commande : voie » (voie 1 ou 2 d'une commande double).
+  const meca = (c: AppareillagePlace, l: AppareillagePlace) => `${c.id}:${c.commandePourIds?.includes(l.id) ? 1 : 2}`;
+  // Télérupteur : un retour par télérupteur ; deux boutons qui commandent les mêmes lampes pilotent LE MÊME télérupteur.
+  const mecaBP = (c: AppareillagePlace, l: AppareillagePlace) => `bp:${[...((c.commandePourIds?.includes(l.id) ? c.commandePourIds : c.commandePourIds2) ?? [l.id])].sort((x, y) => x - y).join(",")}`;
+  const parProximite = (liste: AppareillagePlace[], pt: Point) =>
+    [...liste].sort((c1, c2) => distance(pt, { x: c1.x, y: c1.y }) - distance(pt, { x: c2.x, y: c2.y }));
+  const estVV = (c: AppareillagePlace) => baseCommande(c.type) === "va_et_vient";
+  const estBP = (c: AppareillagePlace) => baseCommande(c.type) === "telerupteur";
+  const estDetecteur = (c: AppareillagePlace) => c.type === "detecteur_mouvement" || c.type === "detecteur_mouvement_exterieur";
+  const pasDomo = (c: AppareillagePlace) => !c.domotique;
+
+  // Télérupteur : le module est au TABLEAU. La lampe est donc alimentée directement (phase commutée par le télérupteur), et les
+  // boutons-poussoirs forment une ligne de commande en parallèle (phase + un retour par télérupteur) tirée depuis le tableau.
+  // Chaque tronçon porte les fils de TOUS les boutons situés en aval (leurs retours le traversent).
+  const poserBoutons = (l: AppareillagePlace, boutons: AppareillagePlace[], depart0: { id: string; point: Point }) => {
+    if (boutons.length === 0) return;
+    const ordre = parProximite(boutons, depart0.point);
+    let precedent = depart0;
+    ordre.forEach((c, i) => {
+      const pc = { x: c.x, y: c.y };
+      const aval = ordre.slice(i).map(x => mecaBP(x, l));
+      poser({ aId: precedent.id, aPoint: precedent.point, bId: String(c.id), bPoint: pc, type: "commande" }, aval);
+      precedent = { id: String(c.id), point: pc };
+    });
+  };
+  const departBoutons = (ancre: { id: string; point: Point }) => (relieAuTableau ? { id: "tableau", point: depart } : ancre);
+
   const lampesRaccordees = new Set<number>(); // lampes dont l'alimentation (via leur commande) est déjà tracée
   const raccorderLampe = (l: AppareillagePlace, ancre: { id: string; point: Point }) => {
     lampesRaccordees.add(l.id);
     const pl = { x: l.x, y: l.y };
-    const filaires = commandes
-      .filter(c => commandeCetteLumiere(c, l.id) && !c.domotique)
-      .sort((c1, c2) => distance(ancre.point, { x: c1.x, y: c1.y }) - distance(ancre.point, { x: c2.x, y: c2.y }));
-    if (filaires.length === 0) {
+    const filaires = commandes.filter(c => commandeCetteLumiere(c, l.id) && pasDomo(c));
+    const boutons = filaires.filter(estBP);
+    const chaine = parProximite(filaires.filter(c => !estBP(c)), ancre.point);
+    poserBoutons(l, boutons, departBoutons(ancre));
+    if (chaine.length === 0) {
+      // Aucune commande « en série » : alimentation directe (lampe seule, ou commandée par télérupteur / domotique).
       poser({ aId: ancre.id, aPoint: ancre.point, bId: String(l.id), bPoint: pl });
     } else {
       let precedent: { id: string; point: Point } = ancre;
-      filaires.forEach(c => {
+      let cPrec: AppareillagePlace | null = null;
+      chaine.forEach(c => {
         const pc = { x: c.x, y: c.y };
-        const vaEtVient = baseCommande(c.type) === "va_et_vient";
-        poser({ aId: precedent.id, aPoint: precedent.point, bId: String(c.id), bPoint: pc,
-          ...(vaEtVient && precedent.id !== ancre.id ? { type: "navette" as const, neutre: true,
-            ...(c.type === "va_et_vient_double" ? { double: true } : {}) } : {}) });
+        if (cPrec === null) poser({ aId: precedent.id, aPoint: precedent.point, bId: String(c.id), bPoint: pc });
+        else if (estVV(cPrec) && estVV(c)) poser({ aId: precedent.id, aPoint: precedent.point, bId: String(c.id), bPoint: pc, type: "navette", neutre: true }, [`${meca(cPrec, l)}|${meca(c, l)}`]);
+        else poser({ aId: precedent.id, aPoint: precedent.point, bId: String(c.id), bPoint: pc, avecRetour: true });
         precedent = { id: String(c.id), point: pc };
+        cPrec = c;
       });
-      // Retour : de la dernière commande de la chaîne vers la lampe.
+      // Retour : de la dernière commande de la chaîne vers la lampe (le neutre de la lampe traverse les boîtes des commandes).
       poser({ aId: precedent.id, aPoint: precedent.point, bId: String(l.id), bPoint: pl, type: "retour" });
     }
     // Commandes domotiques de cette lampe : liaison sans fil, tracée en onde depuis la lampe.
@@ -1324,26 +1372,34 @@ export function construireBranchesCircuitEclairage(
   });
 
   // Lampes sans alimentation propre tracée ci-dessus (alimentées en bout de chaîne lampe à lampe, ou circuit
-  // « déjà existant » sans point de départ) : l'alimentation arrive par la lampe, le fil de commande en repart
-  // (lampe → commande, va-et-vient chaînés par navette), comme avant.
+  // « déjà existant » sans point de départ) : l'alimentation arrive par la lampe, le fil de commande en repart.
+  //  · va-et-vient : phase + retour partent de la lampe vers le 1er va-et-vient ; les va-et-vient suivants sont chaînés par les
+  //    navettes, et le retour du dernier repasse par chaque boîte pour revenir à la lampe (donc 2 navettes + retour par voie) ;
+  //  · interrupteur : phase + retour ; détecteur : neutre + phase + retour ; télérupteur : boutons tirés depuis le tableau.
   lumieres.filter(l => !lampesRaccordees.has(l.id)).forEach(l => {
     const pl = { x: l.x, y: l.y };
-    const vaEtVient = commandes
-      .filter(c => commandeCetteLumiere(c, l.id) && baseCommande(c.type) === "va_et_vient")
-      .sort((c1, c2) => distance({ x: c1.x, y: c1.y }, l) - distance({ x: c2.x, y: c2.y }, l));
-    const autres = commandes.filter(c => commandeCetteLumiere(c, l.id) && baseCommande(c.type) !== "va_et_vient");
+    const filaires = commandes.filter(c => commandeCetteLumiere(c, l.id) && pasDomo(c));
+    const vaEtVient = parProximite(filaires.filter(estVV), pl);
+    poserBoutons(l, filaires.filter(estBP), relieAuTableau ? { id: "tableau", point: depart } : { id: String(l.id), point: pl });
     vaEtVient.forEach((c, i) => {
       const pc = { x: c.x, y: c.y };
-      if (i === 0) poser({ aId: String(l.id), aPoint: pl, bId: String(c.id), bPoint: pc, type: c.domotique ? "domotique" : "retour", ...(c.domotique ? {} : { phase: true }) });
+      if (i === 0) poser({ aId: String(l.id), aPoint: pl, bId: String(c.id), bPoint: pc, type: "retour", phase: true });
       else {
-        const precedent = vaEtVient[i - 1];
-        poser({ aId: String(precedent.id), aPoint: { x: precedent.x, y: precedent.y }, bId: String(c.id), bPoint: pc, type: c.domotique ? "domotique" : "navette",
-          ...(!c.domotique && c.type === "va_et_vient_double" ? { double: true } : {}) });
+        const prec = vaEtVient[i - 1];
+        poser({ aId: String(prec.id), aPoint: { x: prec.x, y: prec.y }, bId: String(c.id), bPoint: pc, type: "navette", retourTraversant: true }, [`${meca(prec, l)}|${meca(c, l)}`]);
       }
     });
-    // Détecteurs et télérupteurs ont besoin du neutre ; un interrupteur simple/double n'a besoin que de phase + retour.
-    autres.forEach(c => poser({ aId: String(l.id), aPoint: pl, bId: String(c.id), bPoint: { x: c.x, y: c.y }, type: c.domotique ? "domotique" : "retour",
-      ...(c.domotique || baseCommande(c.type) !== "interrupteur" || c.type === "detecteur_mouvement" || c.type === "detecteur_mouvement_exterieur" ? {} : { phase: true }) }));
+    filaires.filter(c => !estVV(c) && !estBP(c)).forEach(c =>
+      poser({ aId: String(l.id), aPoint: pl, bId: String(c.id), bPoint: { x: c.x, y: c.y }, type: "retour", phase: true, ...(estDetecteur(c) ? { neutre: true } : {}) }));
+    // Commandes domotiques : liaison sans fil.
+    commandes.filter(c => commandeCetteLumiere(c, l.id) && c.domotique).forEach(c =>
+      poser({ aId: String(l.id), aPoint: pl, bId: String(c.id), bPoint: { x: c.x, y: c.y }, type: "domotique" }));
+  });
+
+  // Voies : nombre de mécanismes distincts qui traversent un même câble (va-et-vient / télérupteur doubles = 2 voies).
+  mecanismes.forEach((ens, cle) => {
+    const seg = parCle.get(cle);
+    if (seg && ens.size > 1) seg.voies = ens.size;
   });
   return segments;
 }

@@ -9,7 +9,8 @@ import Shell from "@/components/layout/Shell";
 import { useProjets, qsProjet, modifierProjet, sauverTableau, sauverAnnexes, synchroniserAnnexes, lireAnnexes, nouvelIdAnnexe, TABLEAU_PRINCIPAL, TableauAnnexe } from "@/lib/projets";
 import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import SchemaTechniqueCircuit, { type NoeudSchema } from "@/components/plan/SchemaTechniqueCircuit";
+import SchemaTechniqueCircuit from "@/components/plan/SchemaTechniqueCircuit";
+import { construireSchemaTechnique } from "@/lib/schema-technique";
 import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, Hand, X,
@@ -57,7 +58,7 @@ import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererG
 import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
 import { verifierEclairageManuel } from "@/lib/controle-eclairage";
 import { coudesSegment } from "@/lib/routage-circuits";
-import { natureLiaison, geometrieCable, couleurDominante, COULEUR_FIL, LEGENDE_FILS, LIBELLE_NATURE } from "@/lib/couleurs-fils";
+import { natureLiaison, conducteursSegment, geometrieCable, couleurDominante, COULEUR_FIL, LEGENDE_FILS, LIBELLE_NATURE } from "@/lib/couleurs-fils";
 
 const PX_PER_M = 60;
 const MIN_ZOOM = 0.25;
@@ -482,7 +483,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
           s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>`;
           if (seg.type !== "domotique") {
             for (let j = 0; j < chemin.length - 1; j++) {
-              geometrieCable(chemin[j], chemin[j + 1], nature, 1.9).forEach(t => {
+              geometrieCable(chemin[j], chemin[j + 1], conducteursSegment(seg), 1.9).forEach(t => {
                 s += `<line x1="${t.x1.toFixed(1)}" y1="${t.y1.toFixed(1)}" x2="${t.x2.toFixed(1)}" y2="${t.y2.toFixed(1)}" stroke="${t.couleur}" stroke-width="1.5" stroke-linecap="round"/>`;
                 if (t.couleur2) s += `<line x1="${t.x1.toFixed(1)}" y1="${t.y1.toFixed(1)}" x2="${t.x2.toFixed(1)}" y2="${t.y2.toFixed(1)}" stroke="${t.couleur2}" stroke-width="1.5" stroke-dasharray="3 3"/>`;
               });
@@ -492,7 +493,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
               for (let j = 0; j < chemin.length - 1; j++) { const l = Math.hypot(chemin[j + 1].x - chemin[j].x, chemin[j + 1].y - chemin[j].y); if (l > lmax) { lmax = l; mj = j; } }
               const dxp = chemin[mj + 1].x - chemin[mj].x, dyp = chemin[mj + 1].y - chemin[mj].y, lp = Math.hypot(dxp, dyp) || 1;
               const px = chemin[mj].x + dxp * 0.42 - (dyp / lp) * 8, py = chemin[mj].y + dyp * 0.42 + (dxp / lp) * 8;
-              const txt = nature === "retour" ? "retour" : "navette", wP = txt.length * 4.2 + 7;
+              const txt = nature === "retour" ? "retour" : nature === "commande" ? "commande" : "navette", wP = txt.length * 4.2 + 7;
               s += `<rect x="${(px - wP / 2).toFixed(1)}" y="${(py - 5).toFixed(1)}" width="${wP.toFixed(1)}" height="10" rx="5" fill="${couleurSegment}" stroke="#fff" stroke-width="0.8"/>`
                 + `<text x="${px.toFixed(1)}" y="${(py + 2.8).toFixed(1)}" font-size="7" font-weight="bold" text-anchor="middle" font-family="monospace" fill="#fff">${txt}</text>`;
             }
@@ -5222,7 +5223,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           } else {
             // Câble 3 conducteurs : un trait par fil (phase rouge, neutre bleu, terre jaune/vert, retour violet, navette orange).
             const larg = (apparente ? 1.9 : 1.6) * ez, ecart = larg + 0.5 * ez;
-            const traits = geometrieCable(aPx, bPx, nature, ecart);
+            const traits = geometrieCable(aPx, bPx, conducteursSegment(seg), ecart);
             const largTotale = ecart * (traits.length - 1) + larg;
             if (teinteCircuit) {
               // Gaine : liseré plein dans la couleur choisie pour le circuit, autour des fils.
@@ -5278,7 +5279,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           const pA = toScreen(sousChaine[meilleur]), pB = toScreen(sousChaine[meilleur + 1]);
           const dxs = pB.x - pA.x, dys = pB.y - pA.y, ls = Math.hypot(dxs, dys) || 1;
           const px = pA.x + dxs * 0.42 - (dys / ls) * 9, py = pA.y + dys * 0.42 + (dxs / ls) * 9;
-          const texte = nature === "retour" ? "retour" : "navette";
+          const texte = nature === "retour" ? "retour" : nature === "commande" ? "commande" : "navette";
           const wPastille = texte.length * 4.6 + 8;
           elements.push(
             <g key={`${cle}-etiq`} style={{ pointerEvents: "none" }} opacity={opaciteSeg}>
@@ -8295,17 +8296,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               const b = circuitsNiveauActif.find(x => x.id === schemaCircuitId);
               const origine = origineCircuits(niveauActif);
               if (!b || !origine) return null;
-              const pieceDe = new Map<number, string>();
-              niveauActif.pieces.forEach(p => p.appareillages.forEach(a => pieceDe.set(a.id, p.nom || "Pièce")));
-              const points = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
+              const tous = niveauActif.pieces.flatMap(p => p.appareillages.map(a => ({ a, piece: p.nom || "Pièce" })));
+              const points = tous.map(t => t.a).filter(a => a.circuitId === b.id);
               const segs = segmentsPourCircuit(b, points, niveauActif, origine);
-              const noeuds: Record<string, NoeudSchema> = {
-                tableau: { titre: "Tableau", sous: `${b.amperes} A · ${nomAffiche(b)}`, genre: "tableau" },
-                boite: { titre: "Boîte de dérivation", genre: "boite" },
-              };
-              (niveauActif.boitesDerivation?.[b.label] ?? []).forEach(bd => { noeuds[`boite-${bd.id}`] = { titre: bd.nom || "Boîte de dérivation", genre: "boite" }; });
-              points.forEach(a => {
-                noeuds[String(a.id)] = { titre: labelAppareillagePlace(a), sous: pieceDe.get(a.id), genre: estLumiere(a.type) ? "lampe" : estCommande(a.type) ? "commande" : "autre" };
+              const nomsCircuits = new Map<number, string>(circuitsNiveauActif.map(x => [x.id, nomAffiche(x)] as const));
+              const schema = construireSchemaTechnique({
+                circuitId: b.id, libelleTableau: `${b.amperes} A · ${nomAffiche(b)}`, points, tous, segments: segs,
+                boites: niveauActif.boitesDerivation?.[b.label] ?? [], libelle: labelAppareillagePlace,
+                nomCircuit: id => (id != null ? nomsCircuits.get(id) : undefined) ?? "sans circuit",
               });
               const section = b.customSection ?? CIRCUITS[b.circuit]?.section ?? "1.5";
               const ctx = creerContexteLongueurs(niveauActif);
@@ -8318,7 +8316,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               return (
                 <SchemaTechniqueCircuit titre={nomAffiche(b)} couleurCircuit={colorMap.get(b.id) ?? "#666666"}
                   descriptionTableau={`Disjoncteur ${b.amperes} A · câble ${fmtSectionTxt(section)} mm² · ${points.length} appareillage${points.length > 1 ? "s" : ""}`}
-                  section={section} segments={segs} noeuds={noeuds} longueurs={longueurs} onClose={() => setSchemaCircuitId(null)} />
+                  section={section} segments={schema.segments} noeuds={schema.noeuds} avertissements={schema.avertissements}
+                  longueurs={longueurs} onClose={() => setSchemaCircuitId(null)} />
               );
             })()}
 

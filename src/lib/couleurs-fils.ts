@@ -14,36 +14,70 @@ export const COULEUR_FIL = {
   navette: "#f97316",
 } as const;
 
-export type NatureLiaison = "alimentation" | "retour" | "retour_phase" | "navette" | "navette_neutre" | "navette_neutre_double";
+// Famille d'une liaison (couleur dominante, étiquettes, atténuation) — la composition EXACTE des fils vient de conducteursSegment().
+export type NatureLiaison = "alimentation" | "retour" | "navette" | "commande";
 export type RoleConducteur = "phase" | "neutre" | "terre" | "retour" | "navette";
 
 export interface Conducteur { role: RoleConducteur; libelle: string }
 
-/** Nature d'un segment de tracé (les segments domotiques n'ont pas de fil : à traiter avant). */
-export const natureLiaison = (seg: Pick<SegmentCircuit, "type" | "neutre" | "phase" | "double">): NatureLiaison =>
-  seg.type === "navette" ? (seg.double && seg.neutre ? "navette_neutre_double" : seg.neutre ? "navette_neutre" : "navette")
-    : seg.type === "retour" ? (seg.phase ? "retour_phase" : "retour") : "alimentation";
+type ChampsFils = Pick<SegmentCircuit, "type" | "neutre" | "phase" | "retourTraversant" | "avecRetour" | "voies">;
 
-/** Conducteurs d'un câble 3 G, dans l'ordre d'affichage (de gauche à droite, vu dans le sens du tracé). */
-export const CONDUCTEURS: Record<NatureLiaison, Conducteur[]> = {
-  alimentation: [{ role: "neutre", libelle: "Neutre" }, { role: "phase", libelle: "Phase" }, { role: "terre", libelle: "Terre" }],
-  retour: [{ role: "neutre", libelle: "Neutre" }, { role: "retour", libelle: "Retour" }, { role: "terre", libelle: "Terre" }],
-  // Lampe alimentée en bout de chaîne : la phase monte à la commande, le retour redescend (pas de neutre dans ce câble).
-  retour_phase: [{ role: "phase", libelle: "Phase" }, { role: "retour", libelle: "Retour" }, { role: "terre", libelle: "Terre" }],
-  navette: [{ role: "navette", libelle: "Navette 1" }, { role: "navette", libelle: "Navette 2" }, { role: "terre", libelle: "Terre" }],
-  // Le neutre de la lampe traverse les commandes : il suit donc aussi le câble de navette.
-  navette_neutre: [{ role: "neutre", libelle: "Neutre" }, { role: "navette", libelle: "Navette 1" }, { role: "navette", libelle: "Navette 2" }, { role: "terre", libelle: "Terre" }],
-  // Deux voies (va-et-vient doubles) : deux paires de navettes + le neutre commun.
-  navette_neutre_double: [{ role: "neutre", libelle: "Neutre" }, { role: "navette", libelle: "Navette 1 (voie A)" }, { role: "navette", libelle: "Navette 2 (voie A)" },
-    { role: "navette", libelle: "Navette 1 (voie B)" }, { role: "navette", libelle: "Navette 2 (voie B)" }, { role: "terre", libelle: "Terre" }],
-};
+/** Famille d'un segment de tracé (les segments domotiques n'ont pas de fil : à traiter avant). */
+export const natureLiaison = (seg: Pick<SegmentCircuit, "type">): NatureLiaison =>
+  seg.type === "navette" ? "navette" : seg.type === "retour" ? "retour" : seg.type === "commande" ? "commande" : "alimentation";
+
+const LETTRES = ["A", "B", "C", "D"];
+const N: Conducteur = { role: "neutre", libelle: "Neutre" };
+const P: Conducteur = { role: "phase", libelle: "Phase" };
+const T: Conducteur = { role: "terre", libelle: "Terre" };
+const nomVoie = (i: number, voies: number) => (voies > 1 ? ` (voie ${LETTRES[i] ?? i + 1})` : "");
+
+/**
+ * Conducteurs EXACTS d'un câble d'éclairage, dans l'ordre d'affichage (de gauche à droite, vu dans le sens du tracé).
+ *  · alimentation               : neutre, phase, terre (+ retour si des commandes sont en parallèle sur la même lampe)
+ *  · retour (commande → lampe)  : neutre, retour, terre — le neutre de la lampe traverse la boîte de la commande
+ *  · retour (lampe → commande)  : lampe alimentée en bout de chaîne : phase, retour, terre ; un détecteur a en plus besoin du neutre
+ *  · navette (amont → aval)     : neutre + 2 fils de navette PAR VOIE + terre (le neutre de la lampe traverse les va-et-vient)
+ *  · navette (lampe alimentée)  : 2 fils de navette PAR VOIE + le retour de chaque voie (il repasse par les boîtes) + terre
+ *  · commande (boutons-poussoirs d'un télérupteur, en parallèle) : phase + un fil de retour par télérupteur + terre
+ * « voies » = nombre de mécanismes distincts qui traversent le câble (un va-et-vient double = 2 voies, de lampes indépendantes).
+ */
+export function conducteursSegment(seg: ChampsFils): Conducteur[] {
+  const voies = Math.max(1, seg.voies ?? 1);
+  const parVoie = (fn: (i: number) => Conducteur[]) => Array.from({ length: voies }, (_, i) => fn(i)).flat();
+  const nav = parVoie(i => [
+    { role: "navette" as const, libelle: `Navette 1${nomVoie(i, voies)}` },
+    { role: "navette" as const, libelle: `Navette 2${nomVoie(i, voies)}` },
+  ]);
+  const ret = (i: number): Conducteur => ({ role: "retour", libelle: `Retour${nomVoie(i, voies)}` });
+  if (seg.type === "navette") {
+    return [...(seg.neutre ? [N] : []), ...nav, ...(seg.retourTraversant ? parVoie(i => [ret(i)]) : []), T];
+  }
+  if (seg.type === "commande") return [P, ...parVoie(i => [ret(i)]), T];
+  if (seg.type === "retour") {
+    if (seg.phase) return seg.neutre ? [N, P, ret(0), T] : [P, ret(0), T];
+    return [N, ret(0), T];
+  }
+  return seg.avecRetour ? [N, P, ret(0), T] : [N, P, T];
+}
+
+export const nbConducteurs = (seg: ChampsFils): number => conducteursSegment(seg).length;
 
 export const couleurConducteur = (role: RoleConducteur): string =>
   role === "terre" ? COULEUR_FIL.terreVert : COULEUR_FIL[role];
 
 export const LIBELLE_NATURE: Record<NatureLiaison, string> = {
-  alimentation: "Alimentation / circuit", retour: "Retour (commande → lampe)", retour_phase: "Phase + retour (lampe → commande)", navette: "Navette (entre va-et-vient)", navette_neutre: "Navette + neutre (entre va-et-vient)", navette_neutre_double: "2 navettes + neutre (entre va-et-vient doubles)",
+  alimentation: "Alimentation / circuit", retour: "Retour (commande ↔ lampe)", navette: "Navette (entre va-et-vient)", commande: "Commande (boutons-poussoirs)",
 };
+
+/** Libellé précis d'une liaison (schéma technique). */
+export function libelleLiaison(seg: ChampsFils): string {
+  const voies = seg.voies ?? 1;
+  if (seg.type === "navette") return seg.neutre ? `${voies > 1 ? "Navettes doubles" : "Navettes"} + neutre` : `${voies > 1 ? "Navettes doubles" : "Navettes"} + retour`;
+  if (seg.type === "commande") return voies > 1 ? "Commande boutons-poussoirs (2 télérupteurs)" : "Commande boutons-poussoirs";
+  if (seg.type === "retour") return seg.phase ? (seg.neutre ? "Alimentation détecteur + retour" : "Phase + retour (lampe → commande)") : "Retour commande → lampe";
+  return seg.avecRetour ? "Alimentation + retour (commandes en parallèle)" : "Alimentation";
+}
 
 /** Légende : couleur de chaque fil. */
 export const LEGENDE_FILS: { libelle: string; couleur: string; terre?: boolean }[] = [
@@ -60,8 +94,8 @@ export interface TraitFil { decalage: number; couleur: string; couleur2?: string
  * Traits parallèles représentant un câble : un trait par conducteur, décalés perpendiculairement au tracé (en pixels).
  * `ecart` = distance entre les axes de deux traits voisins. La terre porte deux couleurs (vert + jaune en pointillés par-dessus).
  */
-export function traitsCable(nature: NatureLiaison, ecart: number): TraitFil[] {
-  const c = CONDUCTEURS[nature];
+export function traitsCable(conducteurs: Conducteur[], ecart: number): TraitFil[] {
+  const c = conducteurs;
   return c.map((cond, i) => ({
     decalage: (i - (c.length - 1) / 2) * ecart,
     couleur: couleurConducteur(cond.role),
@@ -72,10 +106,10 @@ export function traitsCable(nature: NatureLiaison, ecart: number): TraitFil[] {
 export interface TraitGeo { x1: number; y1: number; x2: number; y2: number; couleur: string; couleur2?: string }
 
 /** Géométrie (en pixels) des traits parallèles d'un câble entre deux points — partagée par l'écran et l'impression. */
-export function geometrieCable(a: { x: number; y: number }, b: { x: number; y: number }, nature: NatureLiaison, ecart: number): TraitGeo[] {
+export function geometrieCable(a: { x: number; y: number }, b: { x: number; y: number }, conducteurs: Conducteur[], ecart: number): TraitGeo[] {
   const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
   const nx = -dy / len, ny = dx / len;
-  return traitsCable(nature, ecart).map(t => ({
+  return traitsCable(conducteurs, ecart).map(t => ({
     x1: a.x + nx * t.decalage, y1: a.y + ny * t.decalage, x2: b.x + nx * t.decalage, y2: b.y + ny * t.decalage,
     couleur: t.couleur, ...(t.couleur2 ? { couleur2: t.couleur2 } : {}),
   }));
@@ -83,4 +117,4 @@ export function geometrieCable(a: { x: number; y: number }, b: { x: number; y: n
 
 /** Couleur dominante d'un câble (pastilles d'extrémité, étiquettes) : phase, retour ou navette. */
 export const couleurDominante = (nature: NatureLiaison): string =>
-  nature === "navette" || nature === "navette_neutre" || nature === "navette_neutre_double" ? COULEUR_FIL.navette : nature === "retour" || nature === "retour_phase" ? COULEUR_FIL.retour : COULEUR_FIL.phase;
+  nature === "navette" ? COULEUR_FIL.navette : nature === "retour" || nature === "commande" ? COULEUR_FIL.retour : COULEUR_FIL.phase;

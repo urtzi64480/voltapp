@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
 import { coudesSegment } from "@/lib/routage-circuits";
-import { natureLiaison, CONDUCTEURS, COULEUR_FIL, couleurConducteur } from "@/lib/couleurs-fils";
+import { conducteursSegment, COULEUR_FIL, couleurConducteur } from "@/lib/couleurs-fils";
 import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, battantsFenetre, nbVantauxBaie, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, estLumiere, estLumierePlafond, estSpot, HAUTEUR_PERSONNE_M, ENTRAXE_POSTE_M, hauteurCommunePlaqueCm, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
@@ -1043,8 +1043,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
             couche2,
           });
           // Fils aux couleurs normalisées (lib/couleurs-fils.ts), indépendantes de la couleur du circuit : un tube par conducteur.
-          const natureSeg = natureLiaison(seg);
-          const conducteurs3D = CONDUCTEURS[natureSeg].flatMap((cd, i, tab) => {
+          const conducteurs3D = conducteursSegment(seg).flatMap((cd, i, tab) => {
             const decal = (i - (tab.length - 1) / 2) * 0.0085;
             return cd.role === "terre"
               ? [{ couleur: COULEUR_FIL.terreVert, decal: decal - 0.0028 }, { couleur: COULEUR_FIL.terreJaune, decal: decal + 0.0028 }]

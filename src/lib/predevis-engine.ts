@@ -66,6 +66,7 @@ import {
   Maison, Niveau, Piece, Point, AppareillagePlace, AppareillageType,
   distance, trouverPiece, cleSegmentLiaison, cheminSegment, SegmentCircuit, origineCircuits,
 } from "./maison-types";
+import { nbConducteurs } from "./couleurs-fils";
 import {
   genererCircuits, segmentsPourCircuit, breakersDuNiveau, ResultatGeneration, cleCircuitDedie,
 } from "./maison-engine";
@@ -484,7 +485,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         // elle, est du câblage normal du circuit (même section que le reste), pas un « retour lampe ».
         const typeA = idToAppareillage.get(seg.aId)?.type, typeB = idToAppareillage.get(seg.bId)?.type;
         const estLampeType = (t?: AppareillageType) => estLumiere(t);
-        const estLiaisonCommande = seg.type === "navette"
+        const estLiaisonCommande = seg.type === "navette" || seg.type === "commande"
           || (estCommandeType(typeA) && (estLampeType(typeB) || estCommandeType(typeB)))
           || (estCommandeType(typeB) && estLampeType(typeA));
         const section = estLiaisonCommande ? "1.5" : sectionCircuit;
@@ -503,15 +504,16 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           // Métrage par circuit (information)
           const estAller = !estLiaisonCommande && estCommandeType(typeB) && !estCommandeType(typeA);
           noterCircuit(niveau, b, nomCircuit(b),
-            estLiaisonCommande ? (seg.type === "navette" ? "navette" : "retour_lampe") : estAller ? "aller_commande" : `cablage_${section}`,
-            estLiaisonCommande ? (seg.type === "navette" ? "Navettes (câble 3G1.5)" : "Retour lampe (câble 3G1.5)") : estAller ? `Aller vers commande (câble ${section} mm²)` : `Câble ${section} mm²`, legLength, "m");
+            estLiaisonCommande ? (seg.type === "navette" ? "navette" : seg.type === "commande" ? "aller_commande" : "retour_lampe") : estAller ? "aller_commande" : `cablage_${section}`,
+            estLiaisonCommande ? (seg.type === "navette" ? `Navettes (câble ${nbConducteurs(seg)}G1.5)` : seg.type === "commande" ? `Commande boutons-poussoirs (câble ${nbConducteurs(seg)}G1.5)` : `Retour lampe (câble ${nbConducteurs(seg)}G1.5)`) : estAller ? `Aller vers commande (câble ${section} mm²)` : `Câble ${section} mm²`, legLength, "m");
           if (pose === "apparent") noterCircuit(niveau, b, nomCircuit(b), "moulure", "Moulure (pose apparente)", legLength, "m");
           else { const gi = gaineRecommandee([section, section, section]); noterCircuit(niveau, b, nomCircuit(b), `gaine_irl${gi.gaine.replace(/\D/g, "")}`, `Gaine ${gi.gaine}`, legLength, "m"); }
 
-          // Câblage d'une liaison d'éclairage — TOUJOURS un câble à 3 conducteurs (3G1.5) :
+          // Câblage d'une liaison d'éclairage (composition exacte : couleurs-fils.ts → conducteursSegment) :
           //  · alimentation → commande : l'ALLER (phase), + neutre + terre qui poursuivent vers la lampe ;
-          //  · navette entre deux va-et-vient : les 2 fils navette + terre (+ neutre en transit) ;
+          //  · navette entre deux va-et-vient : 2 fils navette par voie + neutre (ou retour) + terre — 4 conducteurs, 6 à 7 pour des doubles ;
           //  · commande → lampe : le RETOUR (phase commutée) + neutre + terre qui alimentent la lampe.
+          // Le métrage reste chiffré au prix du câble de la section (la différence de nombre de conducteurs n'est pas valorisée).
           // Compter le retour et la navette comme un simple fil sous-estimait le métrage (neutre/terre d'une lampe alimentée
           // par sa commande, 2 navettes par liaison) : chaque tronçon est donc chiffré comme le câble d'alimentation.
           ajouter(`cablage_${section}@${nomPiece}`, `cablage_${section}`, LABEL_CABLAGE[section] ?? `Câblage ${section}mm²`,
