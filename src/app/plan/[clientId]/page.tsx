@@ -1546,19 +1546,25 @@ function symboleBoitePlan(p: Point, color: string, nom: string, selectionnee: bo
   );
 }
 
-function CircuitLumiereForm({ niveau, onValidate, onCancel }: {
-  niveau: Niveau;
-  onValidate: (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[], creerBoite: boolean, nonRelieTableau: boolean, relier: boolean) => void;
+function CircuitLumiereForm({ niveaux, niveauActifId, onValidate, onCancel }: {
+  niveaux: Niveau[];
+  niveauActifId: number;
+  onValidate: (nom: string, couleur: string | undefined, membreIds: number[], creerBoite: boolean) => void;
   onCancel: () => void;
 }) {
   const [nom, setNom] = useState("");
   const [couleur, setCouleur] = useState("");
   const [creerBoite, setCreerBoite] = useState(false);
   const [choisies, setChoisies] = useState<Set<number>>(new Set());
-  const tous = niveau.pieces.flatMap(p => p.appareillages);
+  // Tous les étages : un va-et-vient peut être à un autre niveau que sa lampe (la liaison passe par la gaine technique).
+  const plusieursNiveaux = niveaux.length > 1;
+  const tous = niveaux.flatMap(n => n.pieces.flatMap(p => p.appareillages));
   const pieceDe = new Map<number, string>();
-  niveau.pieces.forEach(p => p.appareillages.forEach(a => pieceDe.set(a.id, p.nom || "Pièce")));
-  const lampesParPiece = niveau.pieces.map(p => ({ nom: p.nom || "Pièce", lampes: p.appareillages.filter(a => estLumiere(a.type)) })).filter(g => g.lampes.length > 0);
+  const niveauDe = new Map<number, Niveau>();
+  niveaux.forEach(n => n.pieces.forEach(p => p.appareillages.forEach(a => { pieceDe.set(a.id, `${plusieursNiveaux ? `${n.nom || n.type} · ` : ""}${p.nom || "Pièce"}`); niveauDe.set(a.id, n); })));
+  const lampesParPiece = [...niveaux].sort((a, b) => (a.id === niveauActifId ? -1 : b.id === niveauActifId ? 1 : 0))
+    .flatMap(n => n.pieces.map(p => ({ nom: `${plusieursNiveaux ? `${n.nom || n.type} · ` : ""}${p.nom || "Pièce"}`, lampes: p.appareillages.filter(a => estLumiere(a.type)) })))
+    .filter(g => g.lampes.length > 0);
   const { lampes, commandes } = fermetureCircuitLumiere(tous, choisies);
   const ajoutees = lampes.filter(id => !choisies.has(id));
   const parId = new Map(tous.map(a => [a.id, a]));
@@ -1566,7 +1572,11 @@ function CircuitLumiereForm({ niveau, onValidate, onCancel }: {
   const partagees = commandesPartagees(tous, commandes, new Set(lampes));   // double va-et-vient dont l'autre voie sert un autre circuit : il y reste
   const membres = new Set<number>([...lampes, ...commandes.filter(id => !partagees.has(id))]);
   const bilan = lampes.length > 0 ? verifierEclairageManuel(tous, membres, nomDe) : null;
-  const autreCircuit = (id: number) => { const m = parId.get(id)?.circuitManuelId; return m != null ? (niveau.circuitsManuels ?? []).find(c => c.id === m && c.nom) : undefined; };
+  const circuitsManuelsTous = niveaux.flatMap(n => n.circuitsManuels ?? []);
+  const autreCircuit = (id: number) => { const m = parId.get(id)?.circuitManuelId; return m != null ? circuitsManuelsTous.find(c => c.id === m && c.nom) : undefined; };
+  // Niveaux traversés par le circuit : chacun doit avoir son point d'arrivée des gaines (ou son tableau) pour que la liaison se trace.
+  const niveauxConcernes = niveaux.filter(n => [...membres].some(id => niveauDe.get(id)?.id === n.id));
+  const sansGaine = niveauxConcernes.length > 1 ? niveauxConcernes.filter(n => !origineCircuits(n)) : [];
   const bascule = (ids: number[], on: boolean) => setChoisies(s => { const n = new Set(s); ids.forEach(id => (on ? n.add(id) : n.delete(id))); return n; });
   const valide = nom.trim() !== "" && lampes.length > 0 && !(bilan && bilan.bloquants.length > 0);
 
@@ -1619,7 +1629,7 @@ function CircuitLumiereForm({ niveau, onValidate, onCancel }: {
                   <div key={id} className="flex items-center gap-2 px-1.5 py-0.5 text-xs">
                     <AppareillageSymbol type={c.type} size={14} />
                     <span className="text-ink-700 truncate flex-1">{nomDe(c)} → {[c.commandePourIds ?? [], c.commandePourIds2 ?? []].map((voie, v) => { const ls = voie.filter(i => lampes.includes(i)).map(i => parId.get(i)).filter((l): l is AppareillagePlace => !!l).map(l => l.nom || labelAppareillagePlace(l)); return ls.length ? `${estCommandeDouble(c.type) ? `voie ${v === 0 ? "A" : "B"} : ` : ""}${ls.join(", ")}` : ""; }).filter(Boolean).join(" · ") || "—"}</span>
-                    {partagees.has(id) ? <span className="text-[10px] text-sky-600 shrink-0 whitespace-nowrap">reste sur « {(niveau.circuitsManuels ?? []).find(m => m.id === partagees.get(id))?.nom ?? "autre circuit"} » (son autre voie)</span>
+                    {partagees.has(id) ? <span className="text-[10px] text-sky-600 shrink-0 whitespace-nowrap">reste sur « {circuitsManuelsTous.find(m => m.id === partagees.get(id))?.nom ?? "autre circuit"} » (son autre voie)</span>
                       : autreCircuit(id) && <span className="text-[10px] text-amber-600 shrink-0 whitespace-nowrap">déplacé depuis « {autreCircuit(id)!.nom} »</span>}
                   </div>
                 ); })}
@@ -1632,6 +1642,12 @@ function CircuitLumiereForm({ niveau, onValidate, onCancel }: {
               <ul className="space-y-1">{bilan.bloquants.map((pb, i) => <li key={i} className="text-xs text-red-800 leading-snug">• {pb.message}</li>)}</ul>
             </div>
           )}
+          {niveauxConcernes.length > 1 && (
+            <p className="text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded-lg px-2.5 py-2">
+              Circuit sur {niveauxConcernes.length} étages ({niveauxConcernes.map(n => n.nom || n.type).join(", ")}) : les commandes d'un autre étage sont reliées à leur lampe par la gaine technique (point d'arrivée des gaines de chaque niveau).
+              {sansGaine.length > 0 && <span className="block font-semibold text-amber-700 mt-1">⚠ Place d'abord le point d'arrivée des gaines sur : {sansGaine.map(n => n.nom || n.type).join(", ")} — sinon la liaison n'est pas tracée sur ce niveau.</span>}
+            </p>
+          )}
           {bilan && bilan.bloquants.length === 0 && (
             <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-2">✓ Chaque lampe a sa commande (retour) et chaque va-et-vient son second (navette) : le câblage sera généré complet.</p>
           )}
@@ -1641,7 +1657,7 @@ function CircuitLumiereForm({ niveau, onValidate, onCancel }: {
           </label>
         </div>
         <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
-          <button disabled={!valide} onClick={() => onValidate(nom.trim(), "lumiere", couleur || undefined, Array.from(membres), creerBoite, false, false)}
+          <button disabled={!valide} onClick={() => onValidate(nom.trim(), couleur || undefined, Array.from(membres), creerBoite)}
             className="btn-volt flex-1 disabled:opacity-40"><Save size={14} /> Générer le circuit et son câblage</button>
         </div>
       </div>
@@ -3932,6 +3948,30 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       demarrerDessinCheminement(breaker);
     }
   };
+  // Circuit de lumière généré depuis le formulaire dédié : ses membres peuvent être sur PLUSIEURS étages. Le circuit (CircuitManuel) est défini
+  // sur le niveau qui porte le plus de lampes (le niveau actif en cas d'égalité) ; les membres des autres étages y sont rattachés par
+  // circuitManuelId (voir genererCircuits : un seul disjoncteur, câblage de chaque étage depuis son point d'arrivée des gaines).
+  const validerCircuitLumiereEtages = (nom: string, couleur: string | undefined, membreIds: number[], creerBoite: boolean) => {
+    if (!niveauActif) return;
+    const id = uidMaison();
+    const nbLampes = (n: Niveau) => n.pieces.flatMap(p => p.appareillages).filter(a => estLumiere(a.type) && membreIds.includes(a.id)).length;
+    const principal = niveaux.reduce((m, n) => (nbLampes(n) > nbLampes(m) ? n : m), niveauActif);
+    const nv = niveaux.map(n => {
+      const aDesMembres = n.pieces.some(p => p.appareillages.some(a => membreIds.includes(a.id)));
+      if (!aDesMembres && n.id !== principal.id) return n;
+      return {
+        ...n,
+        ...(n.id === principal.id ? {
+          boitesDerivation: creerBoite ? { ...(n.boitesDerivation ?? {}), [nom]: [{ id: uidMaison(), nom: "Boîte 1", point: origineCircuits(n) ?? { x: 0, y: 0 } }] } : n.boitesDerivation,
+          circuitsManuels: [...(n.circuitsManuels ?? []), { id, nom, famille: "lumiere" as FamilleCircuitManuel, couleur, nonRelieTableau: false }],
+        } : {}),
+        appareillagesExclus: (n.appareillagesExclus ?? []).filter(x => !membreIds.includes(x)),
+        pieces: n.pieces.map(p => ({ ...p, appareillages: p.appareillages.map(a => membreIds.includes(a.id) ? { ...a, circuitManuelId: id } : a) })),
+      };
+    });
+    recalculerCircuits(nv);
+    if (principal.id !== niveauActif.id) changerNiveau(principal.id);
+  };
   const supprimerCircuitManuelEtFermer = (manuelId: number) => {
     supprimerCircuitManuel(manuelId);
     setCircuitManuelForm(null);
@@ -5384,11 +5424,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Contrôle sur le plan VIVANT (appareillages ajoutés ou supprimés depuis la dernière génération compris).
   // Circuits d'éclairage MANUELS dont des retours / navettes manquent (bloquant : voir verifierEclairageManuel).
   const eclairageManuelIncomplet = niveaux.flatMap(n => (n.circuitsManuels ?? []).filter(m => m.famille === "lumiere").flatMap(m => {
-    const apps = n.pieces.flatMap(p => p.appareillages);
+    // Tous les étages : un va-et-vient d'un autre niveau que sa lampe fait partie du même circuit.
+    const apps = niveaux.flatMap(nv => nv.pieces.flatMap(p => p.appareillages));
     const membres = new Set(apps.filter(a => a.circuitManuelId === m.id).map(a => a.id));
     if (membres.size === 0) return [];
     const pieceDe = new Map<number, string>();
-    n.pieces.forEach(p => p.appareillages.forEach(a => pieceDe.set(a.id, p.nom || "Pièce")));
+    niveaux.forEach(nv => nv.pieces.forEach(p => p.appareillages.forEach(a => pieceDe.set(a.id, `${niveaux.length > 1 ? `${nv.nom || nv.type} · ` : ""}${p.nom || "Pièce"}`))));
     const v = verifierEclairageManuel(apps, membres, a => `${labelAppareillagePlace(a)} (${pieceDe.get(a.id) ?? "?"})`);
     return v.bloquants.length > 0 ? [{ niveauId: n.id, niveauNom: n.nom, manuel: m, messages: v.bloquants.map(b => b.message) }] : [];
   }));
@@ -8944,8 +8985,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       )}
 
       {circuitLumiereForm && niveauActif && (
-        <CircuitLumiereForm niveau={niveauActif} onCancel={() => setCircuitLumiereForm(false)}
-          onValidate={(...args) => { setCircuitLumiereForm(false); validerCircuitManuel(...args); }} />
+        <CircuitLumiereForm niveaux={niveaux} niveauActifId={niveauActif.id} onCancel={() => setCircuitLumiereForm(false)}
+          onValidate={(...args) => { setCircuitLumiereForm(false); validerCircuitLumiereEtages(...args); }} />
       )}
 
       {circuitManuelForm && niveauActif && (

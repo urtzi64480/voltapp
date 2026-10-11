@@ -34,6 +34,9 @@ export function construireSchemaTechnique(e: EntreeSchema): SchemaTechnique {
     boite: { titre: "Boîte de dérivation", sous: "Bornes Wago 221", genre: "boite" },
   };
   e.boites.forEach(b => { noeuds[`boite-${b.id}`] = { titre: b.nom || "Boîte de dérivation", sous: "Bornes Wago 221", genre: "boite" }; });
+  // Liaison avec un autre étage : les commandes lointaines sont reliées par un passage de gaine (boîte au point d'arrivée des gaines).
+  if (e.segments.some(sg => sg.aId === "boite-etage" || sg.bId === "boite-etage"))
+    noeuds["boite-etage"] = { titre: "Passage d'étage", sous: "gaine technique · Wago 221 · autre niveau", genre: "boite" };
   const segments = e.segments.map(sg => ({ ...sg }));
   const avertissements: string[] = [];
   const voieExterne: Record<string, 0 | 1> = {};

@@ -39,6 +39,11 @@ export interface Breaker {
   // le bon tableau (principal ou annexe, voir Niveau.tableauId) au moment du "Pousser". Non
   // conservé une fois le circuit dans un tableau_config ; ignoré ailleurs (module Tableau).
   niveauId?: number;
+  // Éclairage réparti sur plusieurs ÉTAGES (va-et-vient entre niveaux) — posé par le module Plan à la génération :
+  // lampes dont une commande est à un autre niveau (« vv » = va-et-vient, « simple » = autre commande), et commandes qui
+  // pilotent une lampe de ce circuit située à un autre niveau. Voir construireBranchesCircuitEclairage (maison-types.ts).
+  lampesAilleurs?: Record<number, "vv" | "simple">;
+  commandesAilleurs?: number[];
 }
 
 export interface BreakerRow {

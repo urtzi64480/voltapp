@@ -1148,6 +1148,10 @@ export function pointsOndulesEntre(a: Point, b: Point, amplitude = 0.06, longueu
 // type : « navette » = fils entre deux va-et-vient ; « retour » = câble de la (dernière) commande vers la lampe (ou, pour une lampe
 // alimentée en bout de chaîne, de la lampe vers sa première commande) ; « domotique » = liaison sans fil ; absent = câble
 // d'alimentation / de circuit classique. Couleurs de fils : voir lib/couleurs-fils.ts.
+// Liaison d'un circuit d'éclairage avec un AUTRE niveau (voir construireBranchesCircuitEclairage) : lampes de ce niveau dont une commande est
+// à un autre étage ("vv" = va-et-vient, "simple" = autre commande) et commandes de ce niveau qui pilotent une lampe d'un autre étage.
+export interface LiaisonEtage { lampes: Map<number, "vv" | "simple">; commandes: Set<number> }
+
 export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoint: Point; type?: "navette" | "retour" | "commande" | "domotique";
   // ── Composition des fils (voir conducteursSegment, lib/couleurs-fils.ts) ──
   // Navette d'un câblage alimenté par l'amont (alimentation → commande(s) → lampe) : le neutre de la lampe passe par ce câble.
@@ -1228,10 +1232,26 @@ export function centroidePoints(points: Point[]): Point {
 // télérupteur) — n'a pas de câblage physique retour/navette vers sa lampe : le segment est
 // marqué (type: "domotique") pour être tracé sous forme d'onde plutôt qu'un trait plein.
 export function construireBranchesCircuitEclairage(
-  depart: Point, boites: BoiteDerivation[], lumieres: AppareillagePlace[], commandes: AppareillagePlace[],
-  liaisonsDirectes: [number, number][] = [], relieAuTableau: boolean = true, pieces?: Piece[],
+  depart: Point, boites: BoiteDerivation[], lumieres: AppareillagePlace[], commandesLocales: AppareillagePlace[],
+  liaisonsDirectes: [number, number][] = [], relieAuTableau: boolean = true, pieces?: Piece[], ailleurs?: LiaisonEtage,
 ): SegmentCircuit[] {
   const segments: SegmentCircuit[] = [];
+  // ── Liaison entre ÉTAGES ───────────────────────────────────────────────────────────────────────
+  // Une commande (va-et-vient…) d'un AUTRE niveau que sa lampe est représentée, de chaque côté, par un relais posé au point de passage
+  // des gaines (`depart`) : sur le niveau de la lampe, c'est la « commande lointaine » placée en dernier dans la chaîne (navette
+  // jusqu'à la gaine, retour de la gaine à la lampe) ; sur le niveau de la commande, la chaîne part de la gaine, traverse ses commandes
+  // et revient à la gaine. Le câble qui monte ou descend dans la gaine est celui de ces navettes / retours.
+  const PSEUDO_VV = -9000001, PSEUDO_SIMPLE = -9000002, ID_GAINE = "boite-etage";
+  const estPseudo = (c: AppareillagePlace) => c.id === PSEUDO_VV || c.id === PSEUDO_SIMPLE;
+  const pseudos: AppareillagePlace[] = [];
+  if (ailleurs && ailleurs.lampes.size > 0) {
+    ([["vv", PSEUDO_VV, "va_et_vient"], ["simple", PSEUDO_SIMPLE, "interrupteur_simple"]] as const).forEach(([genre, id, type]) => {
+      const ids = [...ailleurs.lampes.entries()].filter(([, g]) => g === genre).map(([l]) => l).filter(l => lumieres.some(x => x.id === l));
+      if (ids.length > 0) pseudos.push({ id, type, x: depart.x, y: depart.y, commandePourIds: ids } as AppareillagePlace);
+    });
+  }
+  const commandes = [...commandesLocales, ...pseudos];
+  const pseudoALaFin = (liste: AppareillagePlace[]) => [...liste.filter(c => !estPseudo(c)), ...liste.filter(estPseudo)];
   const idsLumieres = new Set(lumieres.map(l => l.id));
   const liaisonsValides = liaisonsDirectes.filter(([a, b]) => idsLumieres.has(a) && idsLumieres.has(b));
   const lumiereParId = new Map(lumieres.map(l => [l.id, l]));
@@ -1299,7 +1319,7 @@ export function construireBranchesCircuitEclairage(
     const pl = { x: l.x, y: l.y };
     const filaires = commandes.filter(c => commandeCetteLumiere(c, l.id) && pasDomo(c));
     const boutons = filaires.filter(estBP);
-    const chaine = parProximite(filaires.filter(c => !estBP(c)), ancre.point);
+    const chaine = pseudoALaFin(parProximite(filaires.filter(c => !estBP(c)), ancre.point));
     poserBoutons(l, boutons, departBoutons(ancre));
     if (chaine.length === 0) {
       // Aucune commande « en série » : alimentation directe (lampe seule, ou commandée par télérupteur / domotique).
@@ -1441,7 +1461,7 @@ export function construireBranchesCircuitEclairage(
   lumieres.filter(l => !lampesRaccordees.has(l.id)).forEach(l => {
     const pl = { x: l.x, y: l.y };
     const filaires = commandes.filter(c => commandeCetteLumiere(c, l.id) && pasDomo(c));
-    const vaEtVient = parProximite(filaires.filter(estVV), pl);
+    const vaEtVient = pseudoALaFin(parProximite(filaires.filter(estVV), pl));
     poserBoutons(l, filaires.filter(estBP), relieAuTableau ? { id: "tableau", point: depart } : { id: String(l.id), point: pl });
     vaEtVient.forEach((c, i) => {
       const pc = { x: c.x, y: c.y };
@@ -1458,12 +1478,41 @@ export function construireBranchesCircuitEclairage(
       poser({ aId: String(l.id), aPoint: pl, bId: String(c.id), bPoint: { x: c.x, y: c.y }, type: "domotique" }));
   });
 
+  // Commandes de CE niveau qui pilotent une lampe d'un AUTRE niveau : chaîne gaine → commandes → gaine.
+  if (ailleurs && ailleurs.commandes.size > 0) {
+    const gaine = { id: ID_GAINE, point: depart };
+    const orphelines = commandesLocales.filter(c => ailleurs.commandes.has(c.id) && pasDomo(c));
+    const vvO = parProximite(orphelines.filter(estVV), depart);
+    vvO.forEach((c, i) => {
+      const pc = { x: c.x, y: c.y };
+      const prec = i === 0 ? gaine : { id: String(vvO[i - 1].id), point: { x: vvO[i - 1].x, y: vvO[i - 1].y } };
+      poser({ aId: prec.id, aPoint: prec.point, bId: String(c.id), bPoint: pc, type: "navette", neutre: true }, [`${prec.id}:E|${c.id}:E`]);
+    });
+    if (vvO.length > 0) {
+      const dern = vvO[vvO.length - 1];
+      poser({ aId: String(dern.id), aPoint: { x: dern.x, y: dern.y }, bId: gaine.id, bPoint: depart, type: "retour" });
+    }
+    parProximite(orphelines.filter(c => !estVV(c) && !estBP(c)), depart).forEach(c => {
+      const pc = { x: c.x, y: c.y };
+      poser({ aId: gaine.id, aPoint: depart, bId: String(c.id), bPoint: pc, ...(estDetecteur(c) ? { detecteur: true } : {}) });
+      poser({ aId: String(c.id), aPoint: pc, bId: gaine.id, bPoint: depart, type: "retour", ...(estDetecteur(c) ? { detecteur: true } : {}) });
+    });
+  }
+
   // Voies : nombre de mécanismes distincts qui traversent un même câble (va-et-vient / télérupteur doubles = 2 voies).
   mecanismes.forEach((ens, cle) => {
     const seg = parCle.get(cle);
     if (seg && ens.size > 1) seg.voies = ens.size;
   });
-  return segments;
+  // Relais « autre étage » : identifiant de boîte au point de passage des gaines ; un câble de longueur nulle (relais sur le départ)
+  // disparaît et le relais prend l'identité de l'autre extrémité.
+  const idPseudo = (id: string) => (id === String(PSEUDO_VV) || id === String(PSEUDO_SIMPLE) ? ID_GAINE : id);
+  const renomme = segments.map(sg => ({ ...sg, aId: idPseudo(sg.aId), bId: idPseudo(sg.bId) }));
+  const nuls = renomme.filter(sg => (sg.aId === ID_GAINE || sg.bId === ID_GAINE) && Math.hypot(sg.aPoint.x - sg.bPoint.x, sg.aPoint.y - sg.bPoint.y) < 1e-6);
+  if (nuls.length === 0) return renomme;
+  const fusion = new Map<string, string>();
+  nuls.forEach(sg => { if (sg.aId === ID_GAINE) fusion.set(ID_GAINE, sg.bId); else fusion.set(ID_GAINE, sg.aId); });
+  return renomme.filter(sg => !nuls.includes(sg)).map(sg => ({ ...sg, aId: sg.aId === ID_GAINE ? (fusion.get(ID_GAINE) ?? sg.aId) : sg.aId, bId: sg.bId === ID_GAINE ? (fusion.get(ID_GAINE) ?? sg.bId) : sg.bId }));
 }
 
 // Chemin d'UN segment de la topologie en étoile, coudes manuels compris (même clé stable

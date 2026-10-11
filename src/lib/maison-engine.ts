@@ -69,7 +69,11 @@ const LABEL_NON_RACCORDE: Record<string, string> = {
 // ne doivent ni disparaître, ni se dupliquer. Repli sur les noms pour un Breaker sans niveauId (ancien format).
 export function breakersDuNiveau(breakers: Breaker[], niveau: Pick<Niveau, "id" | "pieces">): Breaker[] {
   const noms = new Set(niveau.pieces.map(p => p.nom));
-  return breakers.filter(b => b.niveauId != null ? b.niveauId === niveau.id : b.pieces.some(pc => noms.has(pc.nom)));
+  // Un circuit d'éclairage peut aussi avoir des membres (lampes ou commandes) sur un AUTRE niveau que le sien : il compte alors
+  // aussi pour ce niveau (câblage de sa partie, métrés), sans jamais être dupliqué dans le tableau.
+  const idsPresents = new Set(niveau.pieces.flatMap(p => p.appareillages).map(a => a.circuitId).filter((x): x is number => x != null));
+  return breakers.filter(b => (b.niveauId != null ? b.niveauId === niveau.id : b.pieces.some(pc => noms.has(pc.nom)))
+    || (b.circuit === "lumiere" && idsPresents.has(b.id)));
 }
 
 export interface ResultatGeneration {
@@ -466,15 +470,25 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     const idsManuelsValides = new Set(manuels.map(m => m.id));
     const itemsParManuel = new Map<number, Item[]>();
     const reste: Item[] = [];
+    // Circuit d'éclairage manuel réparti sur plusieurs étages : le circuit est défini sur UN niveau (CircuitManuel), ses membres
+    // des autres niveaux y sont rattachés ici ; sur leur propre niveau ils n'entrent dans aucune classification automatique.
+    const idsManuelsAilleurs = new Set(niveaux.filter(n => n.id !== niveau.id).flatMap(n => (n.circuitsManuels ?? []).map(m => m.id)));
     tousItems.forEach(item => {
       const mid = item.base.circuitManuelId;
       if (mid != null && idsManuelsValides.has(mid)) {
         const arr = itemsParManuel.get(mid) ?? [];
         arr.push(item);
         itemsParManuel.set(mid, arr);
+      } else if (mid != null && idsManuelsAilleurs.has(mid)) {
+        // membre d'un circuit défini sur un autre niveau : pris en charge par ce niveau-là
       } else {
         reste.push(item);
       }
+    });
+    manuels.forEach(m => {
+      if (m.famille !== "lumiere") return;
+      const exterieurs = itemsMaison.filter(it => it.base.circuitManuelId === m.id && !tousItems.some(t => t.base.id === it.base.id));
+      if (exterieurs.length > 0) itemsParManuel.set(m.id, [...(itemsParManuel.get(m.id) ?? []), ...exterieurs]);
     });
     genererBreakersManuels(itemsParManuel, manuels, niveau.nom, breakers, itemsMaison);
 
@@ -575,6 +589,24 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     for (let i = debutBreakersNiveau; i < breakers.length; i++) breakers[i].niveauId = niveau.id;
   }
 
+  // Éclairage sur plusieurs étages : repère, pour chaque circuit, les lampes commandées depuis un autre niveau et les commandes
+  // qui pilotent une lampe du circuit située à un autre niveau (voir Breaker.lampesAilleurs).
+  const niveauDe = new Map<number, number>();
+  niveaux.forEach(n => n.pieces.forEach(p => p.appareillages.forEach(a => niveauDe.set(a.id, n.id))));
+  const appareils = new Map(itemsMaison.map(it => [it.base.id, it.base] as const));
+  breakers.filter(b => b.circuit === "lumiere").forEach(b => {
+    const lampes = [...appareils.values()].filter(a => a.circuitId === b.id && estLumiere(a.type));
+    const lampesAilleurs: Record<number, "vv" | "simple"> = {};
+    const commandesAilleurs = new Set<number>();
+    lampes.forEach(l => {
+      [...appareils.values()].filter(c => estCommande(c.type) && !c.domotique && commandeCetteLumiere(c, l.id) && niveauDe.get(c.id) !== niveauDe.get(l.id)).forEach(c => {
+        commandesAilleurs.add(c.id);
+        if (lampesAilleurs[l.id] !== "vv") lampesAilleurs[l.id] = baseCommande(c.type) === "va_et_vient" ? "vv" : "simple";
+      });
+    });
+    if (commandesAilleurs.size > 0) { b.lampesAilleurs = lampesAilleurs; b.commandesAilleurs = [...commandesAilleurs]; }
+  });
+
   return { maison: { niveaux }, breakers, alertes };
 }
 
@@ -595,6 +627,7 @@ export function construireColorMap(resultat: ResultatGeneration, niveauxVivants?
     const niveau = niveauxVivants?.find(n => n.id === niveauResultat.id) ?? niveauResultat;
     const breakersNiveau = breakersDuNiveau(resultat.breakers, niveauResultat);
     breakersNiveau.forEach(b => {
+      if (map.has(b.id)) return; // circuit d'éclairage déjà vu sur le niveau de sa lampe (membres sur plusieurs étages)
       const manuel = b.manuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === b.manuelId) : undefined;
       const couleur = niveau.couleursCircuits?.[b.label] ?? manuel?.couleur ?? couleurCircuit(compteur);
       map.set(b.id, couleur);
@@ -749,7 +782,11 @@ function segmentsDeBase(breaker: Breaker, points: AppareillagePlace[], niveau: N
     const commandes = points.filter(a => estCommande(a.type));
     const boites = boitesPourBase;
     const liaisonsDirectes = niveau.liaisonsDirectesLumiere?.[breaker.label] ?? [];
-    return construireBranchesCircuitEclairage(tableauPos, boites, lumieres, commandes, liaisonsDirectes, relieAuTableau, niveau.pieces);
+    const ids = new Set(points.map(a => a.id));
+    const lampesAilleurs = new Map(Object.entries(breaker.lampesAilleurs ?? {}).map(([id, g]) => [Number(id), g] as const).filter(([id]) => ids.has(id)));
+    const commandesAilleurs = new Set((breaker.commandesAilleurs ?? []).filter(id => ids.has(id)));
+    const ailleurs = lampesAilleurs.size > 0 || commandesAilleurs.size > 0 ? { lampes: lampesAilleurs, commandes: commandesAilleurs } : undefined;
+    return construireBranchesCircuitEclairage(tableauPos, boites, lumieres, commandes, liaisonsDirectes, relieAuTableau, niveau.pieces, ailleurs);
   }
   const ordre = niveau.ordresCircuits?.[breaker.label];
   // Boîtes de dérivation posées à la main sur un circuit NON éclairage (prises, chauffage, dédiés, manuels) :
