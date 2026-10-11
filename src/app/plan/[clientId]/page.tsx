@@ -8237,7 +8237,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       : null;
                     const lg = lgDetail ? lgDetail.totale : null;
                     return (
-                      <label key={item.key} className={`flex items-center gap-1.5 text-[11px] cursor-pointer ${visible ? "text-ink-600" : "text-ink-300"}`}>
+                      <label key={item.key} className={`flex flex-wrap items-center gap-1.5 text-[11px] cursor-pointer ${visible ? "text-ink-600" : "text-ink-300"}`}>
                         {b ? (
                           <input type="checkbox" checked={visible} onChange={() => toggleCircuitVisible(b.id)}
                             title={visible ? "Masquer ce circuit" : "Afficher ce circuit"} />
@@ -8255,12 +8255,6 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         {lg !== null && <span className="font-mono text-ink-400 shrink-0" title={lgDetail ? `${lgDetail.horizontale.toFixed(2)} m à l'horizontale + ${lgDetail.verticale.toFixed(2)} m de montées / descentes` : undefined}>{lg.toFixed(1)}m</span>}
                         {!b && <span className="text-[9px] text-ink-400 shrink-0 italic whitespace-nowrap">à générer</span>}
                         {manuel?.nonRelieTableau && <span className="text-[9px] text-sky-600 shrink-0" title="Circuit déjà existant, non relié au tableau">🔗✕</span>}
-                        {b && (
-                          <button onClick={e => { e.preventDefault(); e.stopPropagation(); setSchemaCircuitId(b.id); }}
-                            className="btn-ghost !p-0.5 shrink-0" title="Montrer le schéma technique (du tableau à chaque appareillage, tous les fils)">
-                            <Network size={12} />
-                          </button>
-                        )}
                         {b && CIRCUITS[b.circuit]?.category !== "lumiere" && (
                           <button onClick={e => { e.preventDefault(); e.stopPropagation(); demarrerDessinCheminement(b); }}
                             className="btn-ghost !p-0.5 shrink-0" title="Dessiner le cheminement">
@@ -8283,6 +8277,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                           className="btn-ghost !p-0.5 shrink-0 !text-red-500" title="Supprimer ce circuit">
                           <Trash2 size={12} />
                         </button>
+                        {b && (
+                          <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); setSchemaCircuitId(b.id); }}
+                            className="basis-full text-left text-[10px] font-semibold text-volt-600 inline-flex items-center gap-1 pl-[34px] -mt-0.5"
+                            title="Schéma technique : du tableau à chaque appareillage, tous les fils">
+                            <Network size={11} /> Montrer le schéma technique
+                          </button>
+                        )}
                       </label>
                     );
                   })}
