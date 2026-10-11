@@ -625,7 +625,7 @@ export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
           id: `b|${niveau.id}|${noeudCle(id)}`, categorie: "boite", titre: bx.nom ? `Boîte de dérivation « ${bx.nom} »` : "Boîte de dérivation",
           sousTitre: `${piece ? nomPiece(piece) : "Hors pièces"} · ${reperePlan(bx.point)}`,
           details: [
-            `Boîte de dérivation à hauteur de gaine (${(lctx.hauteurGaine * 100).toFixed(0)} cm) : point où se séparent les départs vers les commandes et les points lumineux (${pluriel(lampesBoite, "lampe", "lampes")} sur ce circuit).`,
+            `Boîte de dérivation à hauteur de gaine (${(lctx.hauteurGaine * 100).toFixed(0)} cm) : point où se séparent les départs ${eclairage ? `vers les commandes et les points lumineux (${pluriel(lampesBoite, "lampe", "lampes")} sur ce circuit)` : `vers les appareils du circuit (${pluriel(points.length, "appareil", "appareils")})`}.`,
             ...(bx.nom ? [] : ["Boîte non nommée sur le plan : sa position est calculée au centre des lampes du circuit (à ajuster en posant une boîte nommée dans le plan)."]),
             "Dérivation : tout câble qui se sépare en plusieurs se raccorde ICI, sur dominos / bornes à levier (un domino pour la phase, un pour le neutre, un pour la terre). Jamais d'épissure dans le vide, dans un mur ou sous une moulure.",
             ...(piece ? [] : ["Cette boîte tombe hors des pièces : la déplacer dans une pièce (glisser le repère carré sur le plan) pour qu'elle reste accessible."]),

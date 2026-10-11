@@ -531,8 +531,8 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
           });
         }
       });
-      if (showCircuits && breaker.circuit === "lumiere") {
-        const lumieres = points.filter(a => estLumiere(a.type));
+      if (showCircuits) {
+        const lumieres = breaker.circuit === "lumiere" ? points.filter(a => estLumiere(a.type)) : [];
         const boitesExistantes = n.boitesDerivation?.[breaker.label] ?? [];
         const dessinerBoiteImprimee = (pt: Point, nom?: string) => {
           const pos = toPx(pt);
@@ -4531,7 +4531,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     let centre = origineCircuits(niveauActif) ?? { x: 0, y: 0 };
     if (breaker) {
       const lumieres = niveauActif.pieces.flatMap(p => p.appareillages)
-        .filter(a => a.circuitId === breaker.id && (estLumiere(a.type)));
+        .filter(a => a.circuitId === breaker.id);
       if (lumieres.length > 0) centre = pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), niveauActif.pieces);
     }
     const existantes = niveauActif.boitesDerivation?.[label] ?? [];
@@ -5342,8 +5342,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       // Boîte(s) de dérivation, déplaçables en drag-drop et nommées indépendamment
       // — le câble les chaîne dans l'ordre, chaque lampe repart en étoile depuis
       // la boîte la plus proche d'elle (voir construireBranchesCircuitEclairage).
-      if (!visuel && breaker.circuit === "lumiere") {
-        const lumieres = points.filter(a => estLumiere(a.type));
+      if (!visuel) {
+        const lumieres = breaker.circuit === "lumiere" ? points.filter(a => estLumiere(a.type)) : [];
         const boitesExistantes = niveauActif.boitesDerivation?.[breaker.label] ?? [];
         if (boitesExistantes.length > 0) {
           boitesExistantes.forEach(boite => {
@@ -8263,17 +8263,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                             <Route size={12} />
                           </button>
                         )}
+                        <button onClick={e => { e.preventDefault(); e.stopPropagation(); ajouterBoiteDerivation(labelStockage); }}
+                          className="btn-ghost !p-0.5 shrink-0" title="Ajouter une boîte de dérivation (avec dominos) sur ce circuit">
+                          <Plus size={12} />
+                        </button>
                         {circuitEclairage && (
-                          <>
-                            <button onClick={e => { e.preventDefault(); e.stopPropagation(); ajouterBoiteDerivation(labelStockage); }}
-                              className="btn-ghost !p-0.5 shrink-0" title="Ajouter une boîte de dérivation">
-                              <Plus size={12} />
-                            </button>
-                            <button onClick={e => { e.preventDefault(); e.stopPropagation(); demarrerLiaisonDirecteLumiere(labelStockage); }}
-                              className="btn-ghost !p-0.5 shrink-0" title="Lier des points lumineux directement, sans boîte">
-                              <Link2 size={12} />
-                            </button>
-                          </>
+                          <button onClick={e => { e.preventDefault(); e.stopPropagation(); demarrerLiaisonDirecteLumiere(labelStockage); }}
+                            className="btn-ghost !p-0.5 shrink-0" title="Lier des points lumineux directement, sans boîte">
+                            <Link2 size={12} />
+                          </button>
                         )}
                         <button onClick={e => { e.preventDefault(); e.stopPropagation(); b ? supprimerCircuit(b) : supprimerCircuitManuel(manuel!.id); }}
                           className="btn-ghost !p-0.5 shrink-0 !text-red-500" title="Supprimer ce circuit">

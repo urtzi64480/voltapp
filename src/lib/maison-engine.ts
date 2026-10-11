@@ -18,7 +18,7 @@ import {
   Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone,
   CircuitManuel, familleCircuitManuelAppareillage, couleurCircuit, USAGE_DEDIE_DEFAUT,
   estCommande, baseCommande, commandeCetteLumiere, estLumiere, lumieresCommandees,
-  SegmentCircuit, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage,
+  SegmentCircuit, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage, ordonnerAncresParProximite,
 } from "./maison-types";
 import { appareillagesParPieceReelle } from "./piece-reelle";
 
@@ -625,6 +625,38 @@ export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[
     return construireBranchesCircuitEclairage(tableauPos, boites, lumieres, commandes, liaisonsDirectes, relieAuTableau, niveau.pieces);
   }
   const ordre = niveau.ordresCircuits?.[breaker.label];
+  // Boîtes de dérivation posées à la main sur un circuit NON éclairage (prises, chauffage, dédiés, manuels) :
+  // tableau → boîte 1 → boîte 2 … (câble d'alimentation), puis chaque appareil est rattaché à la boîte la plus proche
+  // et les appareils d'une même boîte restent en chaîne (ordre manuel conservé, sinon plus proche voisin depuis la boîte).
+  const boitesPosees = niveau.boitesDerivation?.[breaker.label] ?? [];
+  if (boitesPosees.length > 0) {
+    const segments: SegmentCircuit[] = [];
+    let precId = relieAuTableau ? "tableau" : `boite-${boitesPosees[0].id}`;
+    let precPt = relieAuTableau ? tableauPos : boitesPosees[0].point;
+    (relieAuTableau ? boitesPosees : boitesPosees.slice(1)).forEach(bo => {
+      segments.push({ aId: precId, aPoint: precPt, bId: `boite-${bo.id}`, bPoint: bo.point });
+      precId = `boite-${bo.id}`; precPt = bo.point;
+    });
+    const ordonnes = ordre
+      ? sequenceAncresCircuitOrdonnee(tableauPos, points, ordre, false)
+      : points.map(a => ({ id: String(a.id), point: { x: a.x, y: a.y } }));
+    const groupes = new Map<number, typeof ordonnes>();
+    ordonnes.forEach(anc => {
+      let best = 0, bd = Infinity;
+      boitesPosees.forEach((bo, i) => { const d = (bo.point.x - anc.point.x) ** 2 + (bo.point.y - anc.point.y) ** 2; if (d < bd) { bd = d; best = i; } });
+      groupes.set(best, [...(groupes.get(best) ?? []), anc]);
+    });
+    groupes.forEach((groupe, i) => {
+      const bo = boitesPosees[i];
+      const suite = ordre ? groupe : ordonnerAncresParProximite(bo.point, groupe);
+      let a = { id: `boite-${bo.id}`, point: bo.point };
+      suite.forEach(anc => {
+        segments.push({ aId: a.id, aPoint: a.point, bId: anc.id, bPoint: anc.point });
+        a = anc;
+      });
+    });
+    return segments;
+  }
   const sequence = ordre
     ? sequenceAncresCircuitOrdonnee(tableauPos, points, ordre, relieAuTableau)
     : sequenceAncresCircuit(tableauPos, points, relieAuTableau);

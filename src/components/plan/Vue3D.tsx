@@ -1083,8 +1083,8 @@ const Vue3D = forwardRef<Vue3DHandle, {
         // Boîte(s) de dérivation — un petit repère cubique par boîte nommée, à la hauteur
         // par défaut des coudes (sous plafond) ; sans boîte nommée, une seule implicite au
         // centroïde des lampes (comportement historique).
-        if (breaker.circuit === "lumiere") {
-          const lumieres = points.filter(a => estLumiere(a.type));
+        {
+          const lumieres = breaker.circuit === "lumiere" ? points.filter(a => estLumiere(a.type)) : [];
           const boitesExistantes = niveau.boitesDerivation?.[breaker.label] ?? [];
           const dessinerBoite3D = (pt: { x: number; y: number }, ancreId: string) => {
             const geo = new THREE.BoxGeometry(0.08, 0.05, 0.08);

@@ -449,8 +449,9 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       // recompter ici doublerait la ligne, et il n'a ni section de puissance ni disjoncteur au tableau.
       if (estCircuitSansDisjoncteur(b)) return;
       const points = niveau.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
-      if (b.circuit === "lumiere") {
-        const lumieres = points.filter(a => estLumiere(a.type));
+      {
+        // Éclairage : boîte implicite si plusieurs lampes sans boîte posée ; tous circuits : les boîtes posées à la main.
+        const lumieres = b.circuit === "lumiere" ? points.filter(a => estLumiere(a.type)) : [];
         const boitesExistantes = niveau.boitesDerivation?.[b.label] ?? [];
         const nbBoites = boitesExistantes.length > 0 ? boitesExistantes.length : (lumieres.length > 1 ? 1 : 0);
         if (nbBoites > 0) {
