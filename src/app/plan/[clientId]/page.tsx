@@ -9,12 +9,13 @@ import Shell from "@/components/layout/Shell";
 import { useProjets, qsProjet, modifierProjet, sauverTableau, sauverAnnexes, synchroniserAnnexes, lireAnnexes, nouvelIdAnnexe, TABLEAU_PRINCIPAL, TableauAnnexe } from "@/lib/projets";
 import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import SchemaTechniqueCircuit, { type NoeudSchema } from "@/components/plan/SchemaTechniqueCircuit";
 import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, Hand, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
   GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt, Box,
-  Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler, ShieldCheck,
+  Network, Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler, ShieldCheck,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -2109,6 +2110,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [retoursSeuls, setRetoursSeuls] = useState(false);
   const [teinteCircuit, setTeinteCircuit] = useState(true);
   const [alerteEclairage, setAlerteEclairage] = useState(false);
+  const fmtSectionTxt = (v: string) => v.replace(".", ",");
+  const [schemaCircuitId, setSchemaCircuitId] = useState<number | null>(null);
   // Ids de breakers actuellement affichés sur le plan (sous-ensemble de resultat.breakers) —
   // permet d'isoler un ou plusieurs circuits à l'écran pour vérifier leur tracé avant de les
   // retoucher à la main. Réinitialisé à "tous visibles" à chaque nouvelle génération
@@ -8252,6 +8255,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         {lg !== null && <span className="font-mono text-ink-400 shrink-0" title={lgDetail ? `${lgDetail.horizontale.toFixed(2)} m à l'horizontale + ${lgDetail.verticale.toFixed(2)} m de montées / descentes` : undefined}>{lg.toFixed(1)}m</span>}
                         {!b && <span className="text-[9px] text-ink-400 shrink-0 italic whitespace-nowrap">à générer</span>}
                         {manuel?.nonRelieTableau && <span className="text-[9px] text-sky-600 shrink-0" title="Circuit déjà existant, non relié au tableau">🔗✕</span>}
+                        {b && (
+                          <button onClick={e => { e.preventDefault(); e.stopPropagation(); setSchemaCircuitId(b.id); }}
+                            className="btn-ghost !p-0.5 shrink-0" title="Montrer le schéma technique (du tableau à chaque appareillage, tous les fils)">
+                            <Network size={12} />
+                          </button>
+                        )}
                         {b && CIRCUITS[b.circuit]?.category !== "lumiere" && (
                           <button onClick={e => { e.preventDefault(); e.stopPropagation(); demarrerDessinCheminement(b); }}
                             className="btn-ghost !p-0.5 shrink-0" title="Dessiner le cheminement">
@@ -8280,6 +8289,37 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 </div>
               </DraggablePanel>
             )}
+
+            {schemaCircuitId != null && niveauActif && (() => {
+              const b = circuitsNiveauActif.find(x => x.id === schemaCircuitId);
+              const origine = origineCircuits(niveauActif);
+              if (!b || !origine) return null;
+              const pieceDe = new Map<number, string>();
+              niveauActif.pieces.forEach(p => p.appareillages.forEach(a => pieceDe.set(a.id, p.nom || "Pièce")));
+              const points = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
+              const segs = segmentsPourCircuit(b, points, niveauActif, origine);
+              const noeuds: Record<string, NoeudSchema> = {
+                tableau: { titre: "Tableau", sous: `${b.amperes} A · ${nomAffiche(b)}`, genre: "tableau" },
+                boite: { titre: "Boîte de dérivation", genre: "boite" },
+              };
+              (niveauActif.boitesDerivation?.[b.label] ?? []).forEach(bd => { noeuds[`boite-${bd.id}`] = { titre: bd.nom || "Boîte de dérivation", genre: "boite" }; });
+              points.forEach(a => {
+                noeuds[String(a.id)] = { titre: labelAppareillagePlace(a), sous: pieceDe.get(a.id), genre: estLumiere(a.type) ? "lampe" : estCommande(a.type) ? "commande" : "autre" };
+              });
+              const section = b.customSection ?? CIRCUITS[b.circuit]?.section ?? "1.5";
+              const ctx = creerContexteLongueurs(niveauActif);
+              const hAncre = hauteurAncreFn(ctx);
+              const longueurs: Record<string, number> = {};
+              segs.forEach(sg => {
+                if (sg.type === "domotique") return;
+                longueurs[`${sg.aId}->${sg.bId}`] = tracerLiaison(ctx, b, segs, sg, hAncre).sections.reduce((t, v) => t + v, 0);
+              });
+              return (
+                <SchemaTechniqueCircuit titre={nomAffiche(b)} couleurCircuit={colorMap.get(b.id) ?? "#666666"}
+                  descriptionTableau={`Disjoncteur ${b.amperes} A · câble ${fmtSectionTxt(section)} mm² · ${points.length} appareillage${points.length > 1 ? "s" : ""}`}
+                  section={section} segments={segs} noeuds={noeuds} longueurs={longueurs} onClose={() => setSchemaCircuitId(null)} />
+              );
+            })()}
 
             {niveauActif && niveauActif.pieces.length === 0 && mode === "select" && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
