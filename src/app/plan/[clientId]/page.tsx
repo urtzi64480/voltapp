@@ -6837,7 +6837,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   : undefined;
                 const relieAuTableau = !manuelDuCircuit?.nonRelieTableau;
                 const boitesNiv = toutesBoitesNiveau(niveauActif);
-                const marche = segmentsDepuisMarche(origineCircuits(niveauActif)!, cheminementDessin.ordre.filter(t => boitesNiv.has(t) || membres.some(m => m.id === t)), membres, boitesNiv, relieAuTableau, new Set((niveauActif.boitesDerivation?.[cheminementDessin.breaker.label] ?? []).filter(b => !!b.surSegment).map(b => b.id)));
+                const marche = segmentsDepuisMarche(origineCircuits(niveauActif)!, cheminementDessin.ordre.filter(t => boitesNiv.has(t) || membres.some(m => m.id === t)), membres, boitesNiv, relieAuTableau, new Set((niveauActif.boitesDerivation?.[cheminementDessin.breaker.label] ?? []).map(b => b.id)));
                 const d = marche.map(sg => { const a = toScreen(sg.aPoint), b = toScreen(sg.bPoint); return `M ${a.x.toFixed(1)} ${a.y.toFixed(1)} L ${b.x.toFixed(1)} ${b.y.toFixed(1)}`; }).join(" ");
                 return (
                   <>

@@ -621,9 +621,10 @@ export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[
     if (ordreManuel.some(t => boitesNiveau.has(t))) {
       const manuel = breaker.manuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === breaker.manuelId) : undefined;
       // Une boîte déjà posée SUR le câblage de ce circuit en fait partie : la cliquer = repartir d'elle (elle reste insérée sur son tronçon).
-      const surCircuit = new Set(toutes.filter(b => !!b.surSegment).map(b => b.id));
+      // Toute boîte de CE circuit (posée sur un tronçon ou non) en fait partie ; sans tronçon mémorisé, elle se pose sur le tronçon le plus proche.
+      const surCircuit = new Set(toutes.map(b => b.id));
       const marche = segmentsDepuisMarche(tableauPos, ordreManuel, points, boitesNiveau, !manuel?.nonRelieTableau, surCircuit);
-      return insererBoitesSurTroncons(marche, toutes.filter(b => !!b.surSegment));
+      return insererBoitesSurTroncons(marche, toutes);
     }
   }
   const base = segmentsDeBase(breaker, points, niveau, tableauPos, toutes.filter(b => !b.surSegment));
@@ -713,10 +714,14 @@ function insererBoitesSurTroncons(segments: SegmentCircuit[], enLigne: BoiteDeri
   };
   enLigne.forEach(bo => {
     if (res.length === 0) return;
-    let idx = res.findIndex(s => (s.aId === bo.surSegment!.a && s.bId === bo.surSegment!.b) || (s.aId === bo.surSegment!.b && s.bId === bo.surSegment!.a));
+    const ss = bo.surSegment;
+    let idx = ss ? res.findIndex(s => (s.aId === ss.a && s.bId === ss.b) || (s.aId === ss.b && s.bId === ss.a)) : -1;
     if (idx < 0) {
       let best = Infinity;
-      res.forEach((s, i) => { const d = dSeg(bo.point, s.aPoint, s.bPoint); if (d < best) { best = d; idx = i; } });
+      const moi = `boite-${bo.id}`;
+      // Jamais un tronçon qui part déjà de cette boîte (c'est sa propre branche).
+      res.forEach((s, i) => { if (s.aId === moi || s.bId === moi) return; const d = dSeg(bo.point, s.aPoint, s.bPoint); if (d < best) { best = d; idx = i; } });
+      if (idx < 0) return;
     }
     const seg = res[idx], id = `boite-${bo.id}`;
     res = [...res.slice(0, idx), { ...seg, bId: id, bPoint: bo.point }, { ...seg, aId: id, aPoint: bo.point }, ...res.slice(idx + 1)];
