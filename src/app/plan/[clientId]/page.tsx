@@ -476,7 +476,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
             s += `<line x1="${chemin[j].x.toFixed(1)}" y1="${chemin[j].y.toFixed(1)}" x2="${chemin[j + 1].x.toFixed(1)}" y2="${chemin[j + 1].y.toFixed(1)}" stroke="#d6d3d1" stroke-width="4" stroke-linecap="round"/>`;
           }
           const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
-          s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity="0.28"/>`;
+          s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>`;
           if (seg.type !== "domotique") {
             for (let j = 0; j < chemin.length - 1; j++) {
               geometrieCable(chemin[j], chemin[j + 1], nature, 1.9).forEach(t => {
@@ -718,7 +718,7 @@ function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau
     .map(b => ({ b, color: colorMap.get(b.id) ?? "#666" }));
   if (utilises.length === 0) return "";
   const legendeFils = `<div style="display:flex;flex-wrap:wrap;gap:10px;margin:0 6mm 3mm;font-size:8pt;font-family:monospace;align-items:center;"><b>Fils :</b>` +
-    LEGENDE_FILS.map(f => `<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:16px;height:4px;border-radius:2px;display:inline-block;background:${f.terre ? `repeating-linear-gradient(90deg,${COULEUR_FIL.terreVert} 0 4px,${COULEUR_FIL.terreJaune} 4px 8px)` : f.couleur};"></span>${f.libelle}${f.terre ? " (jaune/vert)" : ""}</span>`).join("") + `<span style="color:#666;">· le liseré sous les fils et la couleur des appareillages = couleur du circuit</span></div>`;
+    LEGENDE_FILS.map(f => `<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:16px;height:4px;border-radius:2px;display:inline-block;background:${f.terre ? `repeating-linear-gradient(90deg,${COULEUR_FIL.terreVert} 0 4px,${COULEUR_FIL.terreJaune} 4px 8px)` : f.couleur};"></span>${f.libelle}${f.terre ? " (jaune/vert)" : ""}</span>`).join("") + `<span style="color:#666;">· la gaine autour des fils et les appareillages = couleur du circuit</span></div>`;
   return legendeFils + `<div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 6mm 6mm;font-size:8pt;font-family:monospace;">` +
     utilises.map(({ b, color }) => {
       let lgTxt = "";
@@ -5218,10 +5218,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             const traits = geometrieCable(aPx, bPx, nature, ecart);
             const largTotale = ecart * (traits.length - 1) + larg;
             if (teinteCircuit) {
-              // Repère du circuit : liseré translucide dans la couleur choisie pour le circuit, sous les fils.
-              elements.push(<line key={`${cle}-${j}-teinte`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={color} strokeWidth={largTotale + 4.5 * ez} strokeLinecap="round" opacity={0.3 * opaciteSeg} />);
+              // Gaine : liseré plein dans la couleur choisie pour le circuit, autour des fils.
+              elements.push(<line key={`${cle}-${j}-gaine`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={color} strokeWidth={largTotale + 4 * ez} strokeLinecap="round" opacity={opaciteSeg} />);
+            } else {
+              elements.push(<line key={`${cle}-${j}-halo`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#fff" strokeWidth={largTotale + 1.8 * ez} strokeLinecap="round" opacity={0.78 * opaciteSeg} />);
             }
-            elements.push(<line key={`${cle}-${j}-halo`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#fff" strokeWidth={largTotale + 1.8 * ez} strokeLinecap="round" opacity={0.78 * opaciteSeg} />);
             traits.forEach((t, k) => {
               elements.push(<line key={`${cle}-${j}-f${k}`} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke={t.couleur} strokeWidth={larg} strokeLinecap="round" opacity={opaciteSeg} />);
               if (t.couleur2) elements.push(<line key={`${cle}-${j}-f${k}b`} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke={t.couleur2} strokeWidth={larg} strokeDasharray={`${3 * ez} ${3 * ez}`} opacity={opaciteSeg} />);
@@ -8192,9 +8193,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       </span>
                     ))}
                   </div>
-                  <label className="flex items-center gap-1.5 text-[10px] text-ink-500 mt-1.5 cursor-pointer" title="Liseré translucide dans la couleur du circuit sous les fils, pour distinguer les circuits entre eux">
+                  <label className="flex items-center gap-1.5 text-[10px] text-ink-500 mt-1.5 cursor-pointer" title="La gaine qui entoure les fils prend la couleur choisie pour le circuit">
                     <input type="checkbox" checked={teinteCircuit} onChange={e => setTeinteCircuit(e.target.checked)} />
-                    Liseré de la couleur du circuit sous les fils
+                    Gaine aux couleurs du circuit
                   </label>
                 </div>
                 {eclairageManuelIncomplet.length > 0 && (
