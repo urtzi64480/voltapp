@@ -7,7 +7,7 @@ import { qsProjet, supprimerProjet, viderDonneesHistoriques } from "@/lib/projet
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { LayoutTemplate, Plus, Search, ChevronRight, X, Trash2 } from "lucide-react";
+import { LayoutTemplate, ListChecks, Plus, Search, ChevronRight, X, Trash2 } from "lucide-react";
 
 interface Niveau { id: number; nom: string; type: string; pieces: { id: number }[]; }
 
@@ -218,6 +218,9 @@ export default function PlansPage() {
                       <div className="flex gap-2 mt-3">
                         <Link href={`/plan/${entry.clientId}${qsProjet(entry.projetId)}`} className="btn-volt !py-1.5 !text-xs">
                           <LayoutTemplate size={12} /> Ouvrir
+                        </Link>
+                        <Link href={`/plan/${entry.clientId}/suivi${qsProjet(entry.projetId)}`} className="btn-ghost !py-1.5 !text-xs" title="Suivi de réalisation des circuits">
+                          <ListChecks size={12} /> Suivi
                         </Link>
                         <button onClick={() => setASupprimer(entry)} className="btn-ghost !py-1.5 !text-xs text-red-500 ml-auto" title="Supprimer ce plan">
                           <Trash2 size={12} /> Supprimer

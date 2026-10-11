@@ -295,6 +295,9 @@ export interface Projet {
   // JSON [{ id, nom, rows }] — tableaux annexes (pool house, garage…) ; le principal reste
   // dans tableau_config. Voir lireAnnexes / sauverAnnexes (src/lib/projets.ts).
   tableaux_annexes?: string | null;
+  // JSON {v:1, coches:{clé: date ISO}} — suivi de réalisation du plan (voir lib/suivi-persistance.ts, migration 008).
+  // Absent tant que la migration 008 n'a pas été exécutée.
+  suivi_realisation?: string | null;
   created_at: string;
   updated_at: string;
 }
