@@ -7,10 +7,10 @@ import type { SegmentCircuit } from "@/lib/maison-types";
 
 export const COULEUR_FIL = {
   phase: "#dc2626",
-  neutre: "#2563eb",
+  neutre: "#0ea5e9",
   terreVert: "#16a34a",
   terreJaune: "#facc15",
-  retour: "#7c3aed",
+  retour: "#7e22ce",
   navette: "#f97316",
 } as const;
 
