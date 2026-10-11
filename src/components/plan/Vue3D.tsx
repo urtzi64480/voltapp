@@ -1087,15 +1087,18 @@ const Vue3D = forwardRef<Vue3DHandle, {
           const lumieres = breaker.circuit === "lumiere" ? points.filter(a => estLumiere(a.type)) : [];
           const boitesExistantes = niveau.boitesDerivation?.[breaker.label] ?? [];
           const dessinerBoite3D = (pt: { x: number; y: number }, ancreId: string) => {
-            const geo = new THREE.BoxGeometry(0.08, 0.05, 0.08);
-            const mat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+            // Boîte de dérivation bien visible : 16 × 8 × 16 cm, orange vif, arêtes noires, avec un témoin lumineux.
+            const geo = new THREE.BoxGeometry(0.16, 0.08, 0.16);
+            const mat = new THREE.MeshStandardMaterial({ color: 0xf97316, emissive: 0x7c2d12, emissiveIntensity: 0.5 });
             const mesh = new THREE.Mesh(geo, mat);
             mesh.position.set(pt.x, hauteurAncre(ancreId), pt.y);
+            const aretes = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: 0x1c1917 }));
+            mesh.add(aretes);
             scene.add(mesh);
           };
           boitesExistantes.forEach(b => dessinerBoite3D(b.point, `boite-${b.id}`));
           if (!boitesExistantes.some(x => !x.surSegment) && lumieres.length > 1) {
-            const centre = pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), niveau.pieces);
+            const centre = pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), niveau.pieces, origineCircuits(niveau));
             dessinerBoite3D(centre, "boite");
           }
         }

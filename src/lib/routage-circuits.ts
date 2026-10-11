@@ -275,6 +275,8 @@ export function coudesSegment(niveau: Niveau, seg: SegmentCircuit): LiaisonWaypo
   const manuels = niveau.liaisonWaypoints?.[cleSegmentLiaison(seg.aId, seg.bId)];
   if (manuels && manuels.length > 0) return manuels;
   if (seg.type === "domotique") return [];
+  // Éclairage : par le plafond, au PLUS COURT (droite, ou plus court chemin qui reste dans le bâti) — pas de détour par les murs.
+  if (seg.plafond) return routeDansPieces(seg.aPoint, seg.bPoint, niveau.pieces).map((point, i) => ({ id: -(i + 1), point }));
   // 1) dans l'épaisseur des murs (câbles encastrés) ; 2) à défaut, parallèle aux murs dans les pièces ; 3) à défaut, tracé direct.
   const murs = routeDansMurs(seg.aPoint, seg.bPoint, niveau.pieces);
   if (murs) return murs.map((w, i) => ({ id: -(i + 1), point: w.point, ...(w.hauteurMini != null ? { hauteurMini: w.hauteurMini } : {}) }));

@@ -615,6 +615,12 @@ export function construireColorMap(resultat: ResultatGeneration, niveauxVivants?
 // sequenceAncresCircuitOrdonnee) pour tout le reste (prises, chauffage, appareils dédiés,
 // manuels non-éclairage). Partagé par le rendu 2D et la vue 3D.
 export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[], niveau: Niveau, tableauPos: Point): SegmentCircuit[] {
+  const res = segmentsPourCircuitBrut(breaker, points, niveau, tableauPos);
+  // Éclairage : les liaisons passent par le plafond, au plus court (voir coudesSegment, routage-circuits.ts).
+  return breaker.circuit === "lumiere" ? res.map(sg => ({ ...sg, plafond: true })) : res;
+}
+
+function segmentsPourCircuitBrut(breaker: Breaker, points: AppareillagePlace[], niveau: Niveau, tableauPos: Point): SegmentCircuit[] {
   const toutes = niveau.boitesDerivation?.[breaker.label] ?? [];
   // Cheminement dessiné à la main PASSANT PAR DES BOÎTES (de ce circuit ou d'un autre : plusieurs circuits peuvent traverser la même boîte,
   // et on peut repartir d'une boîte quand on veut) : le tracé est exactement la marche cliquée.

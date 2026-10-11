@@ -290,8 +290,8 @@ function tracePropre(pts: Point[], murs: number[]): boolean {
 }
 
 export function reconformerTracesNiveau(niveau: Niveau, resultat: ResultatGeneration | null): Niveau {
-  if (niveau.tracesMurs === 3) return niveau;
-  let n: Niveau = { ...niveau, tracesMurs: 3 };
+  if (niveau.tracesMurs === 4) return niveau;
+  let n: Niveau = { ...niveau, tracesMurs: 4 };
   const origine = origineCircuits(niveau);
   if (!resultat || !origine) return n;
   const murs = anglesMurs(niveau);
@@ -305,6 +305,23 @@ export function reconformerTracesNiveau(niveau: Niveau, resultat: ResultatGenera
       if (seg.type === "domotique") return;
       const cle = cleSegmentLiaison(seg.aId, seg.bId);
       if ((n.liaisonWaypoints?.[cle] ?? []).length === 0) return;
+      if (seg.plafond) {
+        // Éclairage : au plafond, au PLUS COURT. Un tracé figé plus long que le plus court chemin (ex. remis dans les murs) est refait.
+        const ancienL = polyDe(n, seg);
+        const { [cle]: _r, ...resteL } = n.liaisonWaypoints ?? {};
+        const nvCoudes = coudesSegment({ ...n, liaisonWaypoints: resteL }, seg);
+        const ptsN = [seg.aPoint, ...nvCoudes.map(c => c.point), seg.bPoint];
+        const lg = (pts: Point[]) => pts.reduce((t, q, i) => (i ? t + Math.hypot(q.x - pts[i - 1].x, q.y - pts[i - 1].y) : 0), 0);
+        if (lg(ancienL.pts) <= lg(ptsN) + 0.05) return;
+        const poses: PoseTroncon[] = [], hauts: (number | undefined)[] = [];
+        for (let k = 0; k + 1 < ptsN.length; k++) {
+          const kk = plusProchePoly(ancienL, { x: (ptsN[k].x + ptsN[k + 1].x) / 2, y: (ptsN[k].y + ptsN[k + 1].y) / 2 }).k;
+          poses.push(ancienL.poses[kk] ?? "encastre");
+          hauts.push(ancienL.hauts[kk] ?? ancienL.meta[kk + 1]?.hauteur ?? ancienL.meta[kk]?.hauteur);
+        }
+        n = ecrirePoly(n, { seg, cle, pts: ptsN, poses, hauts, meta: [null, ...nvCoudes.map(() => ({ id: uidMaison() })), null] });
+        return;
+      }
       const ancien = polyDe(n, seg);
       let coudes: LiaisonWaypoint[];
       if (tracePropre(ancien.pts, murs)) {

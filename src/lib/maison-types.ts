@@ -557,7 +557,7 @@ export interface Niveau {
   // Circuits VERROUILLÉS (labels, même clé que boitesDerivation / ordresCircuits) : leur cheminement (tracé, boîtes, coudes, pose, liaisons) est protégé contre toute modification par erreur.
   circuitsVerrouilles?: string[];
   // 3 = tracés remis dans les murs ET passages de portes / fenêtres traités (2 = sans les passages)  (lib/pose-circuits.ts : reconformerTracesNiveau) ; absent = à faire une fois.
-  tracesMurs?: 2 | 3;
+  tracesMurs?: 2 | 3 | 4;
   hauteurPlafond?: number; // mètres — pour la vue 3D (2.5 par défaut)
   // Orientation du bâtiment : angle (degrés, sens horaire) entre le HAUT du plan et le Nord géographique.
   // 0 = le Nord est en haut du plan. Valeur commune à tous les niveaux (réglée depuis le plan, voir page du plan) ;
@@ -1159,15 +1159,17 @@ export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoin
   // Alimentation entre deux commandes en parallèle sur la même lampe (interrupteurs simples, détecteurs) : le retour de la première la traverse.
   avecRetour?: boolean;
   // Nombre de mécanismes indépendants qui traversent ce câble (va-et-vient / télérupteur DOUBLES : 2 voies). Absent = 1.
-  voies?: number; }
+  voies?: number;
+  // Liaison d'un circuit d'ÉCLAIRAGE : elle peut passer par le plafond (gaine sous plafond), donc au plus court — pas besoin de suivre les murs.
+  plafond?: boolean; }
 
 /**
  * Emplacement de la boîte de dérivation IMPLICITE d'un circuit d'éclairage (celle que le plan crée quand aucune boîte n'est posée) :
  * le centre des lampes — mais jamais dans le vide. Sur un plan en L ou à plusieurs pièces, le centre peut tomber hors du bâti ou dans
  * une cour : on pose alors la boîte dans la pièce de la lampe la plus proche, à 30 cm de la lampe vers le centre (en restant dans la pièce).
  */
-export function pointBoiteImplicite(points: Point[], pieces?: Piece[]): Point {
-  const c = centroidePoints(points);
+export function pointBoiteImplicite(points: Point[], pieces?: Piece[], origine?: Point): Point {
+  const c = medianeGeometrique(origine ? [origine, ...points] : points);
   if (!pieces || pieces.length === 0 || points.length === 0) return c;
   if (pieces.some(p => pointDansPolygone(c, p.contour))) return c;
   const proche = points.reduce((m, p) => (distance(p, c) < distance(m, c) ? p : m), points[0]);
@@ -1177,6 +1179,22 @@ export function pointBoiteImplicite(points: Point[], pieces?: Piece[]): Point {
   const t = d > 0 ? Math.min(0.3, d) / d : 0;
   const decale = { x: proche.x + (c.x - proche.x) * t, y: proche.y + (c.y - proche.y) * t };
   return pointDansPolygone(decale, piece.contour) ? decale : proche;
+}
+
+/** Point qui MINIMISE la somme des distances aux points donnés (médiane géométrique, algorithme de Weiszfeld) : la boîte d'une étoile y économise le plus de fil. */
+export function medianeGeometrique(points: Point[]): Point {
+  if (points.length <= 2) return centroidePoints(points);
+  let c = centroidePoints(points);
+  for (let it = 0; it < 60; it++) {
+    let sx = 0, sy = 0, sw = 0;
+    for (const p of points) { const d = Math.hypot(p.x - c.x, p.y - c.y); if (d < 1e-9) continue; sx += p.x / d; sy += p.y / d; sw += 1 / d; }
+    if (sw === 0) break;
+    const n = { x: sx / sw, y: sy / sw };
+    const dep = Math.hypot(n.x - c.x, n.y - c.y);
+    c = n;
+    if (dep < 1e-4) break;
+  }
+  return c;
 }
 
 export function centroidePoints(points: Point[]): Point {
@@ -1346,7 +1364,7 @@ export function construireBranchesCircuitEclairage(
       if (lumieresLibres.length <= 1) {
         lumieresLibres.forEach(l => raccorderLampe(l, { id: "tableau", point: depart }));
       } else {
-        const centre = pointBoiteImplicite(lumieresLibres.map(l => ({ x: l.x, y: l.y })), pieces);
+        const centre = pointBoiteImplicite(lumieresLibres.map(l => ({ x: l.x, y: l.y })), pieces, depart);
         segments.push({ aId: "tableau", aPoint: depart, bId: "boite", bPoint: centre });
         lumieresLibres.forEach(l => raccorderLampe(l, { id: "boite", point: centre }));
       }

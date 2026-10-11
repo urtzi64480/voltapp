@@ -537,14 +537,15 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
         const boitesExistantes = n.boitesDerivation?.[breaker.label] ?? [];
         const dessinerBoiteImprimee = (pt: Point, nom?: string) => {
           const pos = toPx(pt);
-          s += `<rect x="${(pos.x - 4).toFixed(1)}" y="${(pos.y - 4).toFixed(1)}" width="8" height="8" fill="#fff" stroke="${color}" stroke-width="1.2"/>`;
-          s += `<line x1="${(pos.x - 3.5).toFixed(1)}" y1="${(pos.y - 3.5).toFixed(1)}" x2="${(pos.x + 3.5).toFixed(1)}" y2="${(pos.y + 3.5).toFixed(1)}" stroke="${color}" stroke-width="0.8"/>`;
-          s += `<line x1="${(pos.x - 3.5).toFixed(1)}" y1="${(pos.y + 3.5).toFixed(1)}" x2="${(pos.x + 3.5).toFixed(1)}" y2="${(pos.y - 3.5).toFixed(1)}" stroke="${color}" stroke-width="0.8"/>`;
-          if (nom) s += `<text x="${pos.x.toFixed(1)}" y="${(pos.y - 6).toFixed(1)}" font-size="6" text-anchor="middle" font-family="monospace" fill="#111">${escapeXml(nom)}</text>`;
+          const X = pos.x, Y = pos.y;
+          s += `<rect x="${(X - 8).toFixed(1)}" y="${(Y - 8).toFixed(1)}" width="16" height="16" rx="2" fill="#fff" stroke="#111" stroke-width="1.6"/>`;
+          s += `<rect x="${(X - 8).toFixed(1)}" y="${(Y - 8).toFixed(1)}" width="16" height="4" rx="1.5" fill="${color}"/>`;
+          [-4.5, 0, 4.5].forEach(dx => { s += `<rect x="${(X + dx - 1.8).toFixed(1)}" y="${(Y - 2).toFixed(1)}" width="3.6" height="6.5" rx="0.8" fill="#e7e5e4" stroke="#57534e" stroke-width="0.6"/><rect x="${(X + dx - 1.8).toFixed(1)}" y="${(Y - 3.2).toFixed(1)}" width="3.6" height="2" rx="0.8" fill="#f97316"/>`; });
+          s += `<text x="${X.toFixed(1)}" y="${(Y - 11).toFixed(1)}" font-size="7.5" font-weight="700" text-anchor="middle" font-family="monospace" fill="#111">${escapeXml(nom || "Boîte")}</text>`;
         };
         boitesExistantes.forEach(b => dessinerBoiteImprimee(b.point, b.nom));
         if (!boitesExistantes.some(x => !x.surSegment) && lumieres.length > 1) {
-          dessinerBoiteImprimee(pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), n.pieces));
+          dessinerBoiteImprimee(pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), n.pieces, origineCircuits(n)));
         }
       }
     });
@@ -1530,6 +1531,21 @@ function estDansFiltre(a: Pick<AppareillagePlace, "type" | "usageDedie">, f: Fil
 // Outil « Générer un circuit de lumière » : on coche les POINTS LUMINEUX voulus ; les commandes qui les pilotent (interrupteurs, va-et-vient,
 // télérupteurs…) et les autres lampes qu'elles commandent sont ajoutées d'office, et tout le câblage (alimentation, retours, navettes) est
 // généré d'après ces liens commande ↔ lampe — sans rien relier à la main.
+// Boîte de dérivation sur le plan : bien visible quel que soit le zoom — pastille 22 px, halo blanc, bornes Wago (3 leviers), nom en étiquette.
+function symboleBoitePlan(p: Point, color: string, nom: string, selectionnee: boolean): JSX.Element {
+  return (
+    <g>
+      <circle cx={p.x} cy={p.y} r={19} fill={selectionnee ? "#FEF3C7" : "#ffffff"} fillOpacity={selectionnee ? 1 : 0.85} stroke="none" />
+      <rect x={p.x - 11} y={p.y - 11} width={22} height={22} rx={3} fill="#ffffff" stroke="#1c1917" strokeWidth={2.2} />
+      <rect x={p.x - 11} y={p.y - 11} width={22} height={5} rx={2} fill={color} />
+      {[-6.5, 0, 6.5].map(dx => (<g key={dx}><rect x={p.x + dx - 2.6} y={p.y - 3} width={5.2} height={9} rx={1} fill="#e7e5e4" stroke="#57534e" strokeWidth={0.8} /><rect x={p.x + dx - 2.6} y={p.y - 4.5} width={5.2} height={3} rx={1} fill="#f97316" /></g>))}
+      <rect x={p.x - Math.max(18, nom.length * 3.3 + 6)} y={p.y - 32} width={Math.max(36, nom.length * 6.6 + 12)} height={14} rx={7} fill="#1c1917" style={{ pointerEvents: "none" }} />
+      <text x={p.x} y={p.y - 22} textAnchor="middle" fontSize="9.5" fontWeight="700" fill="#ffffff" style={{ pointerEvents: "none" }}>{nom}</text>
+      {selectionnee && <circle cx={p.x} cy={p.y} r={19} fill="none" stroke="#F59E0B" strokeWidth={2} />}
+    </g>
+  );
+}
+
 function CircuitLumiereForm({ niveau, onValidate, onCancel }: {
   niveau: Niveau;
   onValidate: (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[], creerBoite: boolean, nonRelieTableau: boolean, relier: boolean) => void;
@@ -2439,7 +2455,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Tracés enregistrés avant le routage « dans les murs » (coudes obliques / décrochements) : remis au propre UNE fois par niveau,
   // pose et hauteurs conservées, circuits verrouillés épargnés (voir reconformerTracesNiveau).
   useEffect(() => {
-    if (loading || !resultat || niveaux.every(n => n.tracesMurs === 3)) return;
+    if (loading || !resultat || niveaux.every(n => n.tracesMurs === 4)) return;
     setNiveaux(nvs => nvs.map(n => reconformerTracesNiveau(n, resultat)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, resultat, niveaux]);
@@ -4838,7 +4854,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (breaker) {
       const lumieres = niveauActif.pieces.flatMap(p => p.appareillages)
         .filter(a => a.circuitId === breaker.id);
-      if (lumieres.length > 0) centre = pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), niveauActif.pieces);
+      if (lumieres.length > 0) centre = pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), niveauActif.pieces, origineCircuits(niveauActif));
     }
     const existantes = niveauActif.boitesDerivation?.[label] ?? [];
     const decalage = existantes.length * 0.4;
@@ -5676,12 +5692,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             elements.push(
               <g key={`boite-${breaker.label}-${boite.id}`} onPointerDown={e => onBoitePointerDown(breaker.label, boite, boite.point, e)}
                 style={{ cursor: mode === "select" ? "grab" : "default" }}>
-                <circle cx={p.x} cy={p.y} r={13} fill={estSelBoite ? "#FEF3C7" : "transparent"} stroke="none" />
-                <rect x={p.x - 6} y={p.y - 6} width={12} height={12} fill="#fff" stroke={color} strokeWidth={2} />
-                <line x1={p.x - 4.5} y1={p.y - 4.5} x2={p.x + 4.5} y2={p.y + 4.5} stroke={color} strokeWidth={1} />
-                <line x1={p.x - 4.5} y1={p.y + 4.5} x2={p.x + 4.5} y2={p.y - 4.5} stroke={color} strokeWidth={1} />
-                <text x={p.x} y={p.y - 10} textAnchor="middle" fontSize="9" fontWeight="700" fill="#1c1917" style={{ pointerEvents: "none" }}>{boite.nom}</text>
-                {estSelBoite && <circle cx={p.x} cy={p.y} r={13} fill="none" stroke="#F59E0B" strokeWidth={1.5} />}
+                {symboleBoitePlan(p, color, boite.nom, estSelBoite)}
               </g>
             );
           });
@@ -5689,15 +5700,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         if (!boitesExistantes.some(x => !x.surSegment) && lumieres.length > 1) {
           // Boîte implicite (jamais nommée) — la première interaction la promeut
           // en vraie boîte nommée, voir onBoitePointerDown.
-          const boitePos = pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), niveauActif?.pieces);
+          const boitePos = pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), niveauActif?.pieces, niveauActif ? origineCircuits(niveauActif) : undefined);
           const p = toScreen(boitePos);
           elements.push(
             <g key={`boite-${breaker.label}-implicite`} onPointerDown={e => onBoitePointerDown(breaker.label, null, boitePos, e)}
               style={{ cursor: mode === "select" ? "grab" : "default" }}>
-              <circle cx={p.x} cy={p.y} r={13} fill="transparent" stroke="none" />
-              <rect x={p.x - 6} y={p.y - 6} width={12} height={12} fill="#fff" stroke={color} strokeWidth={2} />
-              <line x1={p.x - 4.5} y1={p.y - 4.5} x2={p.x + 4.5} y2={p.y + 4.5} stroke={color} strokeWidth={1} />
-              <line x1={p.x - 4.5} y1={p.y + 4.5} x2={p.x + 4.5} y2={p.y - 4.5} stroke={color} strokeWidth={1} />
+              {symboleBoitePlan(p, color, "Boîte", false)}
             </g>
           );
         }
