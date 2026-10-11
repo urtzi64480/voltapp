@@ -541,9 +541,8 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
           s += `<line x1="${(pos.x - 3.5).toFixed(1)}" y1="${(pos.y + 3.5).toFixed(1)}" x2="${(pos.x + 3.5).toFixed(1)}" y2="${(pos.y - 3.5).toFixed(1)}" stroke="${color}" stroke-width="0.8"/>`;
           if (nom) s += `<text x="${pos.x.toFixed(1)}" y="${(pos.y - 6).toFixed(1)}" font-size="6" text-anchor="middle" font-family="monospace" fill="#111">${escapeXml(nom)}</text>`;
         };
-        if (boitesExistantes.length > 0) {
-          boitesExistantes.forEach(b => dessinerBoiteImprimee(b.point, b.nom));
-        } else if (lumieres.length > 1) {
+        boitesExistantes.forEach(b => dessinerBoiteImprimee(b.point, b.nom));
+        if (!boitesExistantes.some(x => !x.surSegment) && lumieres.length > 1) {
           dessinerBoiteImprimee(pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), n.pieces));
         }
       }
@@ -4178,9 +4177,26 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (placingBoiteLabel != null) {
       const label = placingBoiteLabel;
       const nouvelId = uidMaison();
+      // Tronçon visé : le plus proche du clic parmi ceux du circuit ; la boîte est posée sur le tracé (projection du clic), A → boîte → B.
+      let surSegment: { a: string; b: string } | undefined;
+      let pointBoite = m;
+      const bk = resultat?.breakers.find(x => x.label === label);
+      const orig = niveauActif ? origineCircuits(niveauActif) : null;
+      if (bk && niveauActif && orig) {
+        const pts = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === bk.id);
+        const segs = segmentsPourCircuit(bk, pts, niveauActif, orig);
+        let meilleur = Infinity;
+        segs.forEach(sg => {
+          const dx = sg.bPoint.x - sg.aPoint.x, dy = sg.bPoint.y - sg.aPoint.y, l2 = dx * dx + dy * dy;
+          const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((m.x - sg.aPoint.x) * dx + (m.y - sg.aPoint.y) * dy) / l2));
+          const proj = { x: sg.aPoint.x + t * dx, y: sg.aPoint.y + t * dy };
+          const d = Math.hypot(m.x - proj.x, m.y - proj.y);
+          if (d < meilleur) { meilleur = d; surSegment = { a: sg.aId, b: sg.bId }; pointBoite = m; }
+        });
+      }
       updateNiveauActif(n => {
         const existantes = n.boitesDerivation?.[label] ?? [];
-        return { ...n, boitesDerivation: { ...(n.boitesDerivation ?? {}), [label]: [...existantes, { id: nouvelId, nom: `Boîte ${existantes.length + 1}`, point: m }] } };
+        return { ...n, boitesDerivation: { ...(n.boitesDerivation ?? {}), [label]: [...existantes, { id: nouvelId, nom: `Boîte ${existantes.length + 1}`, point: pointBoite, ...(surSegment ? { surSegment } : {}) }] } };
       });
       setSelectedBoite({ label, boiteId: nouvelId });
       setPlacingBoiteLabel(null);
@@ -5390,7 +5406,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       if (!visuel) {
         const lumieres = breaker.circuit === "lumiere" ? points.filter(a => estLumiere(a.type)) : [];
         const boitesExistantes = niveauActif.boitesDerivation?.[breaker.label] ?? [];
-        if (boitesExistantes.length > 0) {
+        {
           boitesExistantes.forEach(boite => {
             const p = toScreen(boite.point);
             const estSelBoite = selectedBoite?.label === breaker.label && selectedBoite?.boiteId === boite.id;
@@ -5406,7 +5422,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               </g>
             );
           });
-        } else if (lumieres.length > 1) {
+        }
+        if (!boitesExistantes.some(x => !x.surSegment) && lumieres.length > 1) {
           // Boîte implicite (jamais nommée) — la première interaction la promeut
           // en vraie boîte nommée, voir onBoitePointerDown.
           const boitePos = pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), niveauActif?.pieces);
@@ -8191,7 +8208,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             )}
             {placingBoiteLabel != null && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-lg flex items-center gap-3">
-                Clique sur le plan là où tu veux la boîte de dérivation
+                Clique sur le tronçon du circuit où tu veux la boîte de dérivation (elle se place là où tu cliques)
                 <button onClick={() => setPlacingBoiteLabel(null)} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">Annuler</button>
               </div>
             )}

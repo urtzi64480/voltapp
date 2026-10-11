@@ -453,7 +453,8 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         // Éclairage : boîte implicite si plusieurs lampes sans boîte posée ; tous circuits : les boîtes posées à la main.
         const lumieres = b.circuit === "lumiere" ? points.filter(a => estLumiere(a.type)) : [];
         const boitesExistantes = niveau.boitesDerivation?.[b.label] ?? [];
-        const nbBoites = boitesExistantes.length > 0 ? boitesExistantes.length : (lumieres.length > 1 ? 1 : 0);
+        const nbEtoile = boitesExistantes.filter(x => !x.surSegment).length;
+        const nbBoites = (nbEtoile > 0 ? nbEtoile : (lumieres.length > 1 ? 1 : 0)) + (boitesExistantes.length - nbEtoile);
         if (nbBoites > 0) {
           noterCircuit(niveau, b, nomCircuit(b), "boite_derivation", "Boîte de dérivation", nbBoites, "u");
           if (mode === "circuit") ajouter(`boite_derivation@c${niveau.id}:${b.id}`, "boite_derivation", "Boîte de dérivation", nomCircuit(b), nbBoites, "u");

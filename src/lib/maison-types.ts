@@ -422,7 +422,13 @@ export interface BoiteDerivation {
   id: number;
   nom: string;
   point: Point;
+  // Boîte posée SUR un tronçon du circuit (câble A → B devient A → boîte → B) : ids des deux extrémités du tronçon choisi.
+  // Absente = boîte « en étoile » (les appareils les plus proches s'y raccordent).
+  surSegment?: { a: string; b: string };
 }
+
+/** Boîtes qui structurent le circuit en étoile (hors boîtes posées sur un tronçon). */
+export const boitesEtoile = (boites: BoiteDerivation[] | undefined): BoiteDerivation[] => (boites ?? []).filter(b => !b.surSegment);
 
 // ─── CIRCUITS MANUELS ────────────────────────────────────────────────────────
 // Un circuit créé et composé à la main par l'utilisateur — nom, type électrique ET

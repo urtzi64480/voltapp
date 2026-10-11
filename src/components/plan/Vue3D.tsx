@@ -1093,9 +1093,8 @@ const Vue3D = forwardRef<Vue3DHandle, {
             mesh.position.set(pt.x, hauteurAncre(ancreId), pt.y);
             scene.add(mesh);
           };
-          if (boitesExistantes.length > 0) {
-            boitesExistantes.forEach(b => dessinerBoite3D(b.point, `boite-${b.id}`));
-          } else if (lumieres.length > 1) {
+          boitesExistantes.forEach(b => dessinerBoite3D(b.point, `boite-${b.id}`));
+          if (!boitesExistantes.some(x => !x.surSegment) && lumieres.length > 1) {
             const centre = pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), niveau.pieces);
             dessinerBoite3D(centre, "boite");
           }

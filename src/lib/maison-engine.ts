@@ -15,7 +15,7 @@ import {
   CIRCUIT_COMMUNICATION, estCircuitSansDisjoncteur,
 } from "./electrical-constants";
 import {
-  Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone,
+  Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone, BoiteDerivation,
   CircuitManuel, familleCircuitManuelAppareillage, couleurCircuit, USAGE_DEDIE_DEFAUT,
   estCommande, baseCommande, commandeCetteLumiere, estLumiere, lumieresCommandees,
   SegmentCircuit, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage, ordonnerAncresParProximite,
@@ -612,6 +612,34 @@ export function construireColorMap(resultat: ResultatGeneration, niveauxVivants?
 // sequenceAncresCircuitOrdonnee) pour tout le reste (prises, chauffage, appareils dédiés,
 // manuels non-éclairage). Partagé par le rendu 2D et la vue 3D.
 export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[], niveau: Niveau, tableauPos: Point): SegmentCircuit[] {
+  const toutes = niveau.boitesDerivation?.[breaker.label] ?? [];
+  const base = segmentsDeBase(breaker, points, niveau, tableauPos, toutes.filter(b => !b.surSegment));
+  return insererBoitesSurTroncons(base, toutes.filter(b => !!b.surSegment));
+}
+
+// Boîtes posées sur un tronçon : le câble A → B devient A → boîte → B (mêmes fils des deux côtés — le câble traverse la boîte).
+// Tronçon introuvable (le tracé a changé depuis) : on retombe sur le tronçon le plus proche de la boîte.
+function insererBoitesSurTroncons(segments: SegmentCircuit[], enLigne: BoiteDerivation[]): SegmentCircuit[] {
+  let res = [...segments];
+  const dSeg = (p: Point, a: Point, b: Point) => {
+    const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+    const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  };
+  enLigne.forEach(bo => {
+    if (res.length === 0) return;
+    let idx = res.findIndex(s => (s.aId === bo.surSegment!.a && s.bId === bo.surSegment!.b) || (s.aId === bo.surSegment!.b && s.bId === bo.surSegment!.a));
+    if (idx < 0) {
+      let best = Infinity;
+      res.forEach((s, i) => { const d = dSeg(bo.point, s.aPoint, s.bPoint); if (d < best) { best = d; idx = i; } });
+    }
+    const seg = res[idx], id = `boite-${bo.id}`;
+    res = [...res.slice(0, idx), { ...seg, bId: id, bPoint: bo.point }, { ...seg, aId: id, aPoint: bo.point }, ...res.slice(idx + 1)];
+  });
+  return res;
+}
+
+function segmentsDeBase(breaker: Breaker, points: AppareillagePlace[], niveau: Niveau, tableauPos: Point, boitesPourBase: BoiteDerivation[]): SegmentCircuit[] {
   // Circuit manuel marqué "déjà existant" (CircuitManuel.nonRelieTableau) : aucun segment
   // n'est tracé vers le tableau, quel que soit le type de circuit — voir
   // relieAuTableau dans sequenceAncresCircuit(Ordonnee) / construireBranchesCircuitEclairage.
@@ -620,7 +648,7 @@ export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[
   if (breaker.circuit === "lumiere") {
     const lumieres = points.filter(a => estLumiere(a.type));
     const commandes = points.filter(a => estCommande(a.type));
-    const boites = niveau.boitesDerivation?.[breaker.label] ?? [];
+    const boites = boitesPourBase;
     const liaisonsDirectes = niveau.liaisonsDirectesLumiere?.[breaker.label] ?? [];
     return construireBranchesCircuitEclairage(tableauPos, boites, lumieres, commandes, liaisonsDirectes, relieAuTableau, niveau.pieces);
   }
@@ -628,7 +656,7 @@ export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[
   // Boîtes de dérivation posées à la main sur un circuit NON éclairage (prises, chauffage, dédiés, manuels) :
   // tableau → boîte 1 → boîte 2 … (câble d'alimentation), puis chaque appareil est rattaché à la boîte la plus proche
   // et les appareils d'une même boîte restent en chaîne (ordre manuel conservé, sinon plus proche voisin depuis la boîte).
-  const boitesPosees = niveau.boitesDerivation?.[breaker.label] ?? [];
+  const boitesPosees = boitesPourBase;
   if (boitesPosees.length > 0) {
     const segments: SegmentCircuit[] = [];
     let precId = relieAuTableau ? "tableau" : `boite-${boitesPosees[0].id}`;
