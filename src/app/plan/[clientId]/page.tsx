@@ -8294,10 +8294,6 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                             <Route size={12} />
                           </button>
                         )}
-                        <button onClick={e => { e.preventDefault(); e.stopPropagation(); ajouterBoiteDerivation(labelStockage); }}
-                          className="btn-ghost !p-0.5 shrink-0" title="Ajouter une boîte de dérivation (avec dominos) sur ce circuit">
-                          <Plus size={12} />
-                        </button>
                         {circuitEclairage && (
                           <button onClick={e => { e.preventDefault(); e.stopPropagation(); demarrerLiaisonDirecteLumiere(labelStockage); }}
                             className="btn-ghost !p-0.5 shrink-0" title="Lier des points lumineux directement, sans boîte">
@@ -8308,13 +8304,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                           className="btn-ghost !p-0.5 shrink-0 !text-red-500" title="Supprimer ce circuit">
                           <Trash2 size={12} />
                         </button>
-                        {b && (
-                          <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); setSchemaCircuitId(b.id); }}
-                            className="basis-full text-left text-[10px] font-semibold text-volt-600 inline-flex items-center gap-1 pl-[34px] -mt-0.5"
-                            title="Schéma technique : du tableau à chaque appareillage, tous les fils">
-                            <Network size={11} /> Montrer le schéma technique
+                        <div className="basis-full flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-[34px] -mt-0.5">
+                          <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); ajouterBoiteDerivation(labelStockage); }}
+                            className="text-left text-[10px] font-semibold text-volt-600 inline-flex items-center gap-1"
+                            title="Ajouter une boîte de dérivation (avec dominos) sur ce circuit">
+                            <Plus size={11} /> Ajouter une boîte de dérivation
                           </button>
-                        )}
+                          {b && (
+                            <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); setSchemaCircuitId(b.id); }}
+                              className="text-left text-[10px] font-semibold text-volt-600 inline-flex items-center gap-1"
+                              title="Schéma technique : du tableau à chaque appareillage, tous les fils">
+                              <Network size={11} /> Montrer le schéma technique
+                            </button>
+                          )}
+                        </div>
                       </label>
                     );
                   })}
