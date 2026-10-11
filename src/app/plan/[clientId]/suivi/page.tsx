@@ -565,16 +565,21 @@ function Suivi({ clientId, projet, projets, onSelect, onChanged }: { clientId: s
           <div className="min-w-0">
             <h1 className="font-display text-3xl text-ink-900">Suivi de réalisation</h1>
             <p className="text-ink-500 text-sm mt-1">
-              {nomClient}{projets.length > 1 ? ` · ${projet.nom}` : ""}
+              {nomClient} · {nomChantier}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <ProjetSwitcher clientId={clientId} projets={projets} projetId={projet.id} onSelect={onSelect} onChanged={onChanged} />
             <button type="button" onClick={() => void actualiser()} className="btn-ghost !py-2" title="Relire les coches enregistrées">
               <RefreshCw size={14} className={enCours ? "animate-spin" : ""} /> Actualiser
             </button>
             <Link href={lienPlan} className="btn-ghost !py-2"><LayoutTemplate size={14} /> Ouvrir le plan</Link>
           </div>
+        </div>
+
+        <div className="card card-inner mb-4">
+          <label className="label">Projet suivi{projets.length > 1 ? ` (${projets.length} projets pour ce client)` : ""}</label>
+          <ProjetSwitcher clientId={clientId} projets={projets} projetId={projet.id} onSelect={onSelect} onChanged={onChanged} libelles />
+          <p className="text-[11px] text-ink-400 mt-2">Choisis le projet à suivre. « Renommer » donne un nom clair à chaque projet, y compris ceux qui existent déjà (« Logement principal » par exemple) ; « Nouveau » en crée un autre pour ce client.</p>
         </div>
 
         {colonneAbsente && (

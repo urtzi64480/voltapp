@@ -5,11 +5,11 @@ import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
 import { suiviDepuisConfig, progressionPlan, Progression } from "@/lib/suivi-realisation";
 import { lireSuivi } from "@/lib/suivi-persistance";
-import { qsProjet, supprimerProjet, viderDonneesHistoriques, listerProjets, creerProjet } from "@/lib/projets";
+import { qsProjet, supprimerProjet, viderDonneesHistoriques, listerProjets, creerProjet, modifierProjet } from "@/lib/projets";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { LayoutTemplate, ListChecks, FilePlus2, Plus, Search, ChevronRight, X, Trash2 } from "lucide-react";
+import { LayoutTemplate, ListChecks, FilePlus2, Pencil, Plus, Search, ChevronRight, X, Trash2 } from "lucide-react";
 
 interface Niveau { id: number; nom: string; type: string; pieces: { id: number }[]; }
 
@@ -153,6 +153,19 @@ export default function PlansPage() {
   const [aSupprimer, setASupprimer] = useState<PlanEntry | null>(null);
   const [suppEnCours, setSuppEnCours] = useState(false);
   const [nouveauPour, setNouveauPour] = useState<Client | null>(null);
+  const [aRenommer, setARenommer] = useState<PlanEntry | null>(null);
+  const [nomSaisi, setNomSaisi] = useState("");
+  const [renommageEnCours, setRenommageEnCours] = useState(false);
+
+  const confirmerRenommage = async () => {
+    if (!aRenommer?.projetId || !nomSaisi.trim()) return;
+    setRenommageEnCours(true);
+    const ok = await modifierProjet(aRenommer.projetId, { nom: nomSaisi.trim() });
+    setRenommageEnCours(false);
+    if (!ok) { alert("Le renommage a échoué."); return; }
+    setARenommer(null);
+    charger();
+  };
 
   const charger = () => {
     Promise.all([
@@ -174,7 +187,7 @@ export default function PlansPage() {
         }
         ps.forEach(p => {
           const plan = lirePlan(p.maison_config);
-          if (plan) entries.push({ key: p.id, clientId: c.id, projetId: p.id, projetNom: ps.length > 1 ? p.nom : null, client: c, avancement: calculerAvancement(p), valideLe: lireSuivi(p.suivi_realisation).chantier.valide_le ?? null, ...plan });
+          if (plan) entries.push({ key: p.id, clientId: c.id, projetId: p.id, projetNom: p.nom, client: c, avancement: calculerAvancement(p), valideLe: lireSuivi(p.suivi_realisation).chantier.valide_le ?? null, ...plan });
         });
       });
       setPlans(entries);
@@ -280,11 +293,16 @@ export default function PlansPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-ink-900">{client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</p>
+                      {projetNom && (
+                        <button type="button" onClick={() => { setARenommer(entry); setNomSaisi(projetNom); }}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-volt-700 hover:text-volt-800 mt-0.5" title="Renommer ce plan / chantier">
+                          {projetNom} <Pencil size={11} />
+                        </button>
+                      )}
                       <p className="text-xs text-ink-400">
                         {niveaux.filter(n => n.type !== "annexe").length} niveau{niveaux.filter(n => n.type !== "annexe").length > 1 ? "x" : ""}
                         {niveaux.some(n => n.type === "annexe") ? ` + ${niveaux.filter(n => n.type === "annexe").length} annexe${niveaux.filter(n => n.type === "annexe").length > 1 ? "s" : ""}` : ""}
                         {" "}· {nbPieces} pièce{nbPieces > 1 ? "s" : ""}
-                        {projetNom ? ` · ${projetNom}` : ""}
                         {client.ville ? ` · ${client.ville}` : ""}
                       </p>
                       {entry.avancement && entry.avancement.total > 0 && (() => {
@@ -293,7 +311,7 @@ export default function PlansPage() {
                         return (
                           <div className="mt-3" title="Avancement de la réalisation du chantier">
                             <div className="flex items-center justify-between text-[11px] text-ink-500 mb-1">
-                              <span className="font-semibold truncate">Réalisation chantier{entry.projetNom ? ` · ${entry.projetNom}` : ""}</span>
+                              <span className="font-semibold truncate">Réalisation chantier</span>
                               <span className={`shrink-0 ${fini ? "font-semibold text-emerald-700" : "tabular-nums"}`}>{fini ? "Terminé ✓" : `${av.fait}/${av.total} · ${av.pct}%`}</span>
                             </div>
                             <div className="h-2 rounded-full bg-ink-100 overflow-hidden">
@@ -343,6 +361,20 @@ export default function PlansPage() {
         onCancel={() => setASupprimer(null)}
         loading={suppEnCours}
       />
+
+      {aRenommer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={() => !renommageEnCours && setARenommer(null)}>
+          <div className="card w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
+            <p className="font-semibold text-ink-900 mb-3">Renommer le plan / chantier</p>
+            <input autoFocus className="input mb-4" value={nomSaisi} maxLength={80} onChange={e => setNomSaisi(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && void confirmerRenommage()} />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setARenommer(null)} disabled={renommageEnCours} className="btn-ghost">Annuler</button>
+              <button onClick={() => void confirmerRenommage()} disabled={renommageEnCours || !nomSaisi.trim()} className="btn-volt">{renommageEnCours ? "…" : "Enregistrer"}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {nouveauPour && (
         <NouveauPlanModal client={nouveauPour} existants={plans.filter(p => p.clientId === nouveauPour.id)}

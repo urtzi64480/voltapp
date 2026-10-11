@@ -17,9 +17,11 @@ interface Props {
    *  (null = aucun projet restant : la page en recrée un vierge). */
   onChanged: (nextId: string | null) => Promise<void> | void;
   compact?: boolean;
+  /** Boutons avec texte (« Nouveau », « Renommer », « Supprimer ») au lieu d'icônes seules. */
+  libelles?: boolean;
 }
 
-export default function ProjetSwitcher({ clientId, projets, projetId, avantChangement, onSelect, onChanged, compact }: Props) {
+export default function ProjetSwitcher({ clientId, projets, projetId, avantChangement, onSelect, onChanged, compact, libelles }: Props) {
   const [modal, setModal] = useState<null | { mode: "new" | "edit" }>(null);
   const [nom, setNom] = useState("");
   const [adresse, setAdresse] = useState("");
@@ -70,20 +72,20 @@ export default function ProjetSwitcher({ clientId, projets, projetId, avantChang
 
   return (
     <>
-      <div className="flex items-center gap-1.5 min-w-0">
+      <div className={`flex items-center gap-1.5 min-w-0 ${libelles ? "flex-wrap" : ""}`}>
         <Home size={14} className="text-ink-400 shrink-0" />
         <select
-          className={`input !py-1.5 text-sm min-w-0 ${compact ? "max-w-[9rem]" : "max-w-[14rem]"}`}
+          className={`input !py-1.5 text-sm min-w-0 ${compact ? "max-w-[9rem]" : libelles ? "max-w-full sm:max-w-[18rem]" : "max-w-[14rem]"}`}
           value={projetId ?? ""}
           onChange={e => changer(e.target.value)}
           title="Projet (logement / chantier)"
         >
           {projets.map(p => <option key={p.id} value={p.id}>{p.nom}</option>)}
         </select>
-        <button type="button" onClick={() => ouvrir("new")} className="btn-ghost !px-2 !py-1.5" title="Nouveau projet pour ce client"><Plus size={14} /></button>
-        <button type="button" onClick={() => ouvrir("edit")} className="btn-ghost !px-2 !py-1.5" title="Renommer le projet"><Pencil size={13} /></button>
+        <button type="button" onClick={() => ouvrir("new")} className="btn-ghost !px-2 !py-1.5" title="Nouveau projet pour ce client"><Plus size={14} />{libelles && <span className="text-xs">Nouveau</span>}</button>
+        <button type="button" onClick={() => ouvrir("edit")} className="btn-ghost !px-2 !py-1.5" title="Renommer le projet"><Pencil size={13} />{libelles && <span className="text-xs">Renommer</span>}</button>
         <button type="button" onClick={() => setConfirmDel(true)} className="btn-ghost !px-2 !py-1.5 text-red-500"
-          title={projets.length > 1 ? "Supprimer ce projet (logement)" : "Supprimer le plan de ce client (remise à zéro)"}><Trash2 size={13} /></button>
+          title={projets.length > 1 ? "Supprimer ce projet (logement)" : "Supprimer le plan de ce client (remise à zéro)"}><Trash2 size={13} />{libelles && <span className="text-xs">Supprimer</span>}</button>
       </div>
 
       {modal && (
