@@ -28,14 +28,20 @@ interface Props {
   onClose: () => void;
 }
 
-const LARG = 156, COL = 340, LIGNE = 112, MARGE = 28, ECART = 6;
+const LARG = 172, COL = 372, MARGE = 28, ECART = 6, GAP_SORTIE = 12, PLACE_ETIQUETTE = 42;
 const fmtSection = (s: string) => s.replace(".", ",");
-const hauteurNoeud = (n: NoeudSchema | undefined) => 58 + Math.max(0, (n?.lignes?.length ?? 0) - 0) * 12;
 const ROLE_COURT: Record<string, string> = { Neutre: "N", Phase: "Ph", Terre: "PE" };
+const HALO = { paintOrder: "stroke", stroke: "#fff", strokeWidth: 3.5, strokeLinejoin: "round" } as const;
 const court = (libelle: string) => ROLE_COURT[libelle]
   ?? libelle.replace("Navette 1", "Nav1").replace("Navette 2", "Nav2").replace("Retour", "Ret").replace(" (voie ", " ").replace(")", "");
 
 interface Place { id: string; x: number; y: number; h: number }
+/** Emplacement d'un câble sur le bord d'un nœud : décalage du centre de son faisceau par rapport au centre du nœud. */
+interface Fente { idx: number; decal: number }
+
+/** Hauteur du faisceau de traits d'un câble (distance entre le premier et le dernier fil). */
+const hFaisceau = (sg: SegmentCircuit) => (sg.type === "domotique" ? 0 : (conducteursSegment(sg).length - 1) * ECART);
+const hauteurBase = (n: NoeudSchema | undefined) => (n?.genre === "boite" ? 86 : 58 + (n?.lignes?.length ?? 0) * 12);
 
 function disposer(segments: SegmentCircuit[], noeuds: Record<string, NoeudSchema>) {
   const enfants = new Map<string, string[]>();
@@ -49,20 +55,30 @@ function disposer(segments: SegmentCircuit[], noeuds: Record<string, NoeudSchema
     if (!l.includes(s.bId)) l.push(s.bId);
     enfants.set(s.aId, l);
   });
+  // Hauteur de chaque nœud : assez haut pour poser côte à côte, sans chevauchement, tous les câbles qui en partent / y arrivent.
+  const sortiesDe = (id: string) => segments.map((sg, idx) => ({ sg, idx })).filter(t => t.sg.aId === id);
+  const entreesDe = (id: string) => segments.map((sg, idx) => ({ sg, idx })).filter(t => t.sg.bId === id);
+  const hNoeud = new Map<string, number>();
+  ids.forEach(id => {
+    const sorties = sortiesDe(id).reduce((t, x) => t + hFaisceau(x.sg) + GAP_SORTIE, GAP_SORTIE);
+    const entrees = entreesDe(id).reduce((t, x) => t + hFaisceau(x.sg) + PLACE_ETIQUETTE, 0) - PLACE_ETIQUETTE + 2 * GAP_SORTIE;
+    hNoeud.set(id, Math.max(hauteurBase(noeuds[id]), sorties, entrees));
+  });
   const amont = (id: string) => noeuds[id]?.genre === "externe" && id.startsWith("ext-amont");
   // Racines : le tableau d'abord, puis tout nœud sans parent (lampe alimentée en bout de chaîne…) ; les sources d'un autre circuit sont posées à part.
   const racines = ids.filter(id => !cibles.has(id) && !amont(id)).sort((a, b) => (a === "tableau" ? -1 : b === "tableau" ? 1 : 0));
   if (racines.length === 0 && ids.some(id => !amont(id))) racines.push(ids.find(id => !amont(id))!);
   const pos = new Map<string, Place>();
-  let ligne = 0;
+  let curseur = MARGE + 14;
+  const prendreLigne = (h: number) => { const c = curseur + h / 2; curseur += h + 56; return c; };
   const poser = (id: string, prof: number): number => {
     if (pos.has(id)) return pos.get(id)!.y + pos.get(id)!.h / 2;
-    const h = hauteurNoeud(noeuds[id]);
+    const h = hNoeud.get(id) ?? 58;
     const p: Place = { id, x: MARGE + prof * COL, y: 0, h };
     pos.set(id, p);
     const fils = (enfants.get(id) ?? []).filter(f => !pos.has(f));
     let centre: number;
-    if (fils.length === 0) { centre = MARGE + ligne * LIGNE + 40; ligne++; }
+    if (fils.length === 0) centre = prendreLigne(h);
     else {
       const cs = fils.map(f => poser(f, prof + 1));
       centre = (cs[0] + cs[cs.length - 1]) / 2;
@@ -73,17 +89,46 @@ function disposer(segments: SegmentCircuit[], noeuds: Record<string, NoeudSchema
   racines.forEach(r => poser(r, 0));
   ids.filter(id => !amont(id)).forEach(id => { if (!pos.has(id)) poser(id, 0); });
   // Sources d'un autre circuit : sur leur propre rangée, une colonne avant la lampe qu'elles commandent.
-  const sources = ids.filter(amont);
-  sources.forEach(id => {
+  ids.filter(amont).forEach(id => {
     const enfant = pos.get((enfants.get(id) ?? [])[0]);
-    const h = hauteurNoeud(noeuds[id]);
-    pos.set(id, { id, x: (enfant?.x ?? MARGE + COL) - COL, y: MARGE + ligne * LIGNE + 40 - h / 2, h });
-    ligne++;
+    const h = hNoeud.get(id) ?? 58;
+    pos.set(id, { id, x: (enfant?.x ?? MARGE + COL) - COL, y: prendreLigne(h) - h / 2, h });
   });
   const minX = Math.min(MARGE, ...Array.from(pos.values()).map(p => p.x));
   if (minX < MARGE) pos.forEach(p => { p.x += MARGE - minX; });
   const maxX = Math.max(...Array.from(pos.values()).map(p => p.x + LARG), 0);
-  return { pos, largeur: maxX + MARGE, hauteur: MARGE * 2 + Math.max(1, ligne) * LIGNE };
+
+  // Fentes : chaque câble a SA place sur le bord du nœud (ordre = ordre vertical des nœuds reliés → pas de croisement inutile).
+  const centreDe = (id: string) => { const p = pos.get(id); return p ? p.y + p.h / 2 : 0; };
+  const fentesSortie = new Map<number, number>();   // idx segment → décalage côté source
+  const fentesEntree = new Map<number, number>();   // idx segment → décalage côté cible
+  const empiler = (liste: { sg: SegmentCircuit; idx: number }[], reserve: number, table: Map<number, number>) => {
+    const total = liste.reduce((t, x) => t + hFaisceau(x.sg) + reserve, 0) - reserve;
+    let cur = -total / 2;
+    liste.forEach(x => { const hb = hFaisceau(x.sg); table.set(x.idx, cur + hb / 2); cur += hb + reserve; });
+  };
+  ids.forEach(id => {
+    const sorties = sortiesDe(id).sort((u, v) => centreDe(u.sg.bId) - centreDe(v.sg.bId));
+    empiler(sorties, GAP_SORTIE, fentesSortie);
+    const entrees = entreesDe(id).sort((u, v) => centreDe(u.sg.aId) - centreDe(v.sg.aId));
+    empiler(entrees, PLACE_ETIQUETTE, fentesEntree);
+  });
+  // Colonne verticale (« tronc ») de chaque câble : les câbles qui montent s'emboîtent (le plus bas = le plus à droite), ceux qui descendent aussi.
+  const tronc = new Map<number, number>();
+  ids.forEach(id => {
+    const a = pos.get(id); if (!a) return;
+    const sorties = sortiesDe(id).sort((u, v) => centreDe(u.sg.bId) - centreDe(v.sg.bId));
+    const yDe = (t: { idx: number }) => a.y + a.h / 2 + (fentesSortie.get(t.idx) ?? 0);
+    const yVers = (t: { sg: SegmentCircuit; idx: number }) => centreDe(t.sg.bId) + (fentesEntree.get(t.idx) ?? 0);
+    const montent = sorties.filter(t => yVers(t) < yDe(t) - 0.5);
+    const descendent = sorties.filter(t => yVers(t) > yDe(t) + 0.5).reverse();
+    let x = a.x + LARG + 26;
+    const larg = (t: { sg: SegmentCircuit }) => hFaisceau(t.sg) + 12;
+    montent.forEach(t => { tronc.set(t.idx, x); x += larg(t); });
+    let x2 = a.x + LARG + 26;
+    descendent.forEach(t => { tronc.set(t.idx, x2); x2 += larg(t); });
+  });
+  return { pos, tronc, fentesSortie, fentesEntree, largeur: maxX + MARGE, hauteur: curseur + MARGE - 56 };
 }
 
 function Symbole({ genre, x, y, h, couleur }: { genre: GenreNoeud; x: number; y: number; h: number; couleur: string }) {
@@ -103,9 +148,21 @@ function Symbole({ genre, x, y, h, couleur }: { genre: GenreNoeud; x: number; y:
     </g>);
   }
   if (genre === "boite") {
+    // Boîte de dérivation : 3 bornes Wago 221 (levier orange) — une par conducteur commun (phase, neutre, terre).
+    const bornes = [{ c: COULEUR_FIL.phase, t: "Ph" }, { c: COULEUR_FIL.neutre, t: "N" }, { c: COULEUR_FIL.terreVert, t: "PE", terre: true }];
     return (<g>
       <rect x={x} y={y} width={LARG} height={h} rx={4} fill="#f5f5f4" stroke="#44403c" strokeWidth={1.8} strokeDasharray="5 3" />
-      <circle cx={x + 20} cy={cy} r={9} fill="#fff" stroke="#44403c" strokeWidth={1.4} />
+      <rect x={x + 8} y={y + 8} width={22} height={22} rx={3} fill="#fff" stroke="#44403c" strokeWidth={1.2} />
+      <circle cx={x + 19} cy={y + 19} r={6} fill="none" stroke="#44403c" strokeWidth={1.2} />
+      {bornes.map((b, i) => (
+        <g key={b.t} transform={`translate(${x + 40 + i * 42},${y + h - 36})`}>
+          <rect x={0} y={4} width={36} height={14} rx={2.5} fill="#e7e5e4" stroke="#a8a29e" strokeWidth={0.8} />
+          <rect x={0} y={0} width={36} height={6} rx={2} fill="#f97316" />
+          <rect x={4} y={9} width={28} height={4} rx={1} fill={b.c} />
+          {b.terre && <rect x={4} y={9} width={28} height={4} rx={1} fill={COULEUR_FIL.terreJaune} opacity={0.9} style={{ clipPath: "inset(0 50% 0 0)" }} />}
+          <text x={18} y={29} fontSize={7.5} fontWeight={700} fill="#57534e" textAnchor="middle">{b.t}</text>
+        </g>
+      ))}
     </g>);
   }
   if (genre === "tableau") {
@@ -124,70 +181,65 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
   const [detailId, setDetailId] = useState<string | null>(null);
   const detail = detailId && vueAppareil ? vueAppareil(detailId) : null;
   const svgRef = useRef<SVGSVGElement>(null);
-  const { pos, largeur, hauteur } = useMemo(() => disposer(segments, noeuds), [segments, noeuds]);
-  const H_LEGENDE = 70;
+  const { pos, tronc, fentesSortie, fentesEntree, largeur, hauteur } = useMemo(() => disposer(segments, noeuds), [segments, noeuds]);
+  const H_LEGENDE = 84;
   const W = Math.max(largeur, 640), Ht = hauteur + H_LEGENDE;
 
-  const rangFratrie = new Map<string, number>();
-  const compteur = new Map<string, number>();
-  segments.forEach(s => { const k = compteur.get(s.aId) ?? 0; rangFratrie.set(`${s.aId}->${s.bId}`, k); compteur.set(s.aId, k + 1); });
-
-  const elements: JSX.Element[] = [];
+  const fils: JSX.Element[] = [];
+  const etiquettes: JSX.Element[] = [];
   segments.forEach((seg, idx) => {
     const a = pos.get(seg.aId), b = pos.get(seg.bId);
     if (!a || !b) return;
     const cle = `${seg.aId}->${seg.bId}`;
-    const x1 = a.x + LARG, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
-    const rang = rangFratrie.get(cle) ?? 0;
+    const x1 = a.x + LARG, x2 = b.x;
+    const yc1 = a.y + a.h / 2 + (fentesSortie.get(idx) ?? 0), yc2 = b.y + b.h / 2 + (fentesEntree.get(idx) ?? 0);
+    const xmax = Math.max(x1 + 10, x2 - 24);
+    const xt = Math.min(tronc.get(idx) ?? x1 + 26, xmax);
     if (seg.type === "domotique") {
-      const xm = x1 + 30 + rang * 10;
-      elements.push(
-        <g key={`seg-${idx}`}>
-          <polyline points={`${x1},${y1} ${xm},${y1} ${xm},${y2} ${x2},${y2}`} fill="none" stroke="#a8a29e" strokeWidth={2} strokeDasharray="3 5" />
-          <text x={x2 - 80} y={y2 - 8} fontSize={10} fill="#78716c" textAnchor="middle">Liaison sans fil (domotique)</text>
-        </g>);
+      fils.push(<polyline key={`seg-${idx}`} points={`${x1},${yc1} ${xt},${yc1} ${xt},${yc2} ${x2},${yc2}`} fill="none" stroke="#a8a29e" strokeWidth={2} strokeDasharray="3 5" />);
+      etiquettes.push(<text key={`lab-${idx}`} x={x2 - 70} y={yc2 - 8} fontSize={10} fill="#78716c" textAnchor="middle" style={HALO}>Liaison sans fil (domotique)</text>);
       return;
     }
     const cond = conducteursSegment(seg);
     const sectionCable = seg.type || seg.avecRetour ? "1.5" : section;
     const descr = `${cond.length}G${fmtSection(sectionCable)}`;
     const lg = longueurs?.[cle];
-    const descendant = y2 >= y1;
-    const base = x1 + 34 + rang * 12;
-    const xmBase = Math.min(base, Math.max(x1 + 10, x2 - 20));
-    const hGroupe = ((cond.length - 1) / 2) * ECART;
+    const hb = hFaisceau(seg);
+    const descendant = yc2 >= yc1;
     cond.forEach((c, i) => {
       const off = (i - (cond.length - 1) / 2) * ECART;
-      const xm = xmBase + (descendant ? -off : off);
-      const pts = `${x1},${y1 + off} ${xm},${y1 + off} ${xm},${y2 + off} ${x2},${y2 + off}`;
+      const xm = xt + (descendant ? -off : off);
+      const pts = `${x1},${yc1 + off} ${xm},${yc1 + off} ${xm},${yc2 + off} ${x2},${yc2 + off}`;
       const couleur = couleurConducteur(c.role);
-      elements.push(<polyline key={`c-${idx}-${i}`} points={pts} fill="none" stroke={couleur} strokeWidth={3.2} strokeLinejoin="round" />);
-      if (c.role === "terre") elements.push(<polyline key={`cj-${idx}-${i}`} points={pts} fill="none" stroke={COULEUR_FIL.terreJaune} strokeWidth={3.2} strokeDasharray="6 6" strokeLinejoin="round" />);
-      elements.push(<circle key={`d1-${idx}-${i}`} cx={x1} cy={y1 + off} r={2.8} fill={couleur} stroke="#fff" strokeWidth={0.8} />);
-      elements.push(<circle key={`d2-${idx}-${i}`} cx={x2} cy={y2 + off} r={2.8} fill={couleur} stroke="#fff" strokeWidth={0.8} />);
+      fils.push(<polyline key={`c-${idx}-${i}`} points={pts} fill="none" stroke={couleur} strokeWidth={3.2} strokeLinejoin="round" />);
+      if (c.role === "terre") fils.push(<polyline key={`cj-${idx}-${i}`} points={pts} fill="none" stroke={COULEUR_FIL.terreJaune} strokeWidth={3.2} strokeDasharray="6 6" strokeLinejoin="round" />);
+      fils.push(<circle key={`d1-${idx}-${i}`} cx={x1} cy={yc1 + off} r={2.8} fill={couleur} stroke="#fff" strokeWidth={0.8} />);
+      fils.push(<circle key={`d2-${idx}-${i}`} cx={x2} cy={yc2 + off} r={2.8} fill={couleur} stroke="#fff" strokeWidth={0.8} />);
     });
-    const lx = x2 - 78;
-    const ly = Math.min(y1, y2) - hGroupe - 28;
-    elements.push(
+    // Étiquette posée au-dessus de la dernière portion horizontale, avec un halo blanc : jamais coupée par un fil voisin.
+    const lx = Math.max(xt + 70, (xt + x2) / 2);
+    const ly = yc2 - hb / 2 - 26;
+    etiquettes.push(
       <g key={`lab-${idx}`}>
-        <text x={lx} y={ly} fontSize={11} fontWeight={700} fill="#1c1917" textAnchor="middle">{descr}{lg != null ? ` · ${lg.toFixed(1)} m` : ""}</text>
-        <text x={lx} y={ly + 10} fontSize={8.5} fill="#57534e" textAnchor="middle">{libelleLiaison(seg)}</text>
-        <text x={lx} y={ly + 20} fontSize={7.5} fontWeight={700} textAnchor="middle">
+        <text x={lx} y={ly} fontSize={11} fontWeight={700} fill="#1c1917" textAnchor="middle" style={HALO}>{descr}{lg != null ? ` · ${lg.toFixed(1).replace(".", ",")} m` : ""}</text>
+        <text x={lx} y={ly + 11} fontSize={8.5} fill="#57534e" textAnchor="middle" style={HALO}>{libelleLiaison(seg)}</text>
+        <text x={lx} y={ly + 21} fontSize={7.5} fontWeight={700} textAnchor="middle" style={HALO}>
           {cond.map((c, i) => (
             <tspan key={i} fill={c.role === "terre" ? COULEUR_FIL.terreVert : couleurConducteur(c.role)}>{i > 0 ? " · " : ""}{court(c.libelle)}</tspan>
           ))}
         </text>
       </g>);
   });
+  const elements = [...fils, ...etiquettes];
 
   const noeudsDessines = Array.from(pos.values()).map(p => {
     const n = noeuds[p.id] ?? { titre: p.id, genre: "autre" as GenreNoeud };
     const fillTexte = n.genre === "tableau" ? "#fff" : "#1c1917";
-    const tx = n.genre === "tableau" ? p.x + 36 : n.genre === "lampe" || n.genre === "commande" || n.genre === "boite" ? p.x + 40 : p.x + 8;
+    const tx = n.genre === "tableau" ? p.x + 36 : n.genre === "lampe" || n.genre === "commande" ? p.x + 40 : n.genre === "boite" ? p.x + 38 : p.x + 8;
     const maxCar = Math.floor((LARG - (tx - p.x) - 4) / 5.2);
     const coupe = (t: string) => (t.length > maxCar ? t.slice(0, maxCar - 1) + "…" : t);
     const textes = [{ t: n.titre, gras: true }, ...(n.sous ? [{ t: n.sous, gras: false }] : []), ...(n.lignes ?? []).map(t => ({ t, gras: false }))];
-    const y0 = p.y + p.h / 2 - ((textes.length - 1) * 12) / 2 + 3;
+    const y0 = n.genre === "boite" ? p.y + 20 : p.y + p.h / 2 - ((textes.length - 1) * 12) / 2 + 3;
     return (
       <g key={`n-${p.id}`} style={n.genre !== "externe" && vueAppareil ? { cursor: "pointer" } : undefined}
         onClick={n.genre !== "externe" && vueAppareil ? () => setDetailId(p.id) : undefined}>
@@ -255,7 +307,7 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
                     <text x={32} y={3.5} fontSize={10} fill="#44403c">{f.libelle}</text>
                   </g>
                 ))}
-                <text x={0} y={46} fontSize={9} fill="#78716c">Un trait par conducteur · pastille = point de raccordement · contour = couleur du circuit · clic sur un appareil = branchements borne par borne · cadre violet pointillé = autre circuit (nom seul) · voie A / B = les deux mécanismes d'une commande double</text>
+                <text x={0} y={46} fontSize={9} fill="#78716c">Un trait par conducteur · pastille = point de raccordement · boîte pointillée = 3 bornes Wago 221 (Ph · N · PE) · contour = couleur du circuit · clic sur un appareil = branchements borne par borne · cadre violet pointillé = autre circuit (nom seul) · voie A / B = les deux mécanismes d'une commande double</text>
               </g>
             </svg>
           )}
