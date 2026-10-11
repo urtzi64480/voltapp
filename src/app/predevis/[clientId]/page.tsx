@@ -133,10 +133,84 @@ function decompositionLabel(besoin: BesoinApparie, option: { longueur_unitaire?:
   return `→ ${bobinesFinales} bobine${bobinesFinales > 1 ? "s" : ""} de ${L}m (couvre les ${quantiteReelle.toFixed(2)}m nécessaires — pas d'article au mètre pour ${besoin.label} en stock)`;
 }
 
-function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
+// Création d'un article au catalogue SANS quitter le pré-devis : le formulaire est pré-rempli à partir du besoin non identifié,
+// l'article créé est ajouté au catalogue chargé puis sélectionné tout de suite sur la ligne.
+function AjoutCatalogueRapide({ besoin, prestations, onCree, onFermer }: {
+  besoin: BesoinApparie; prestations: Prestation[]; onCree: (p: Prestation) => void; onFermer: () => void;
+}) {
+  const voisin = prestations.find(p => aSousCategorie(p, besoin.sousCategorie));
+  const [nom, setNom] = useState(besoin.label);
+  const [unite, setUnite] = useState<string>(besoin.unite === "m" ? "ml" : besoin.unite === "heure" ? "heure" : "u");
+  const [branche, setBranche] = useState<"materiau" | "service">(besoin.unite === "heure" ? "service" : "materiau");
+  const [prixVente, setPrixVente] = useState("");
+  const [prixAchat, setPrixAchat] = useState("");
+  const [marque, setMarque] = useState("");
+  const [longueur, setLongueur] = useState("");
+  const [categorie, setCategorie] = useState(voisin?.categorie ?? "");
+  const [enCours, setEnCours] = useState(false);
+  const [erreur, setErreur] = useState("");
+  const categories = Array.from(new Set(prestations.map(p => p.categorie).filter(Boolean))).sort((a, b) => a.localeCompare(b, "fr"));
+
+  async function creer() {
+    const pv = parseFloat(prixVente.replace(",", "."));
+    if (!nom.trim()) { setErreur("Donne un nom à l'article."); return; }
+    if (isNaN(pv) || pv < 0) { setErreur("Le prix de vente HT est obligatoire."); return; }
+    const pa = prixAchat.trim() === "" ? null : parseFloat(prixAchat.replace(",", "."));
+    if (pa != null && isNaN(pa)) { setErreur("Prix d'achat invalide."); return; }
+    const lg = longueur.trim() === "" ? null : parseFloat(longueur.replace(",", "."));
+    if (lg != null && (isNaN(lg) || lg <= 0)) { setErreur("Longueur de bobine invalide."); return; }
+    setEnCours(true); setErreur("");
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) { setErreur("Session expirée : reconnecte-toi."); setEnCours(false); return; }
+    const { data, error } = await supabase.from("prestations").insert({
+      user_id: session.user.id, nom: nom.trim(), description: null, prix_unitaire: pv, prix_achat: pa, unite,
+      type_branche: branche, categorie: categorie.trim() || "Autre", actif: true, sous_categorie: besoin.sousCategorie || null,
+      marque: marque.trim() || null, liens_fournisseurs: [], image_url: null, gamme: null, longueur_unitaire: unite === "ml" ? lg : null,
+    }).select().single();
+    setEnCours(false);
+    if (error || !data) { setErreur("Erreur : " + (error?.message ?? "création impossible")); return; }
+    onCree({ ...(data as Prestation), fournisseurs: [] });
+  }
+
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-3" onClick={onFermer}>
+      <div className="card card-inner w-full max-w-md flex flex-col gap-2.5" onClick={e => e.stopPropagation()}>
+        <div>
+          <p className="text-sm font-bold text-ink-900">Ajouter au catalogue</p>
+          <p className="text-xs text-ink-400">Besoin : {besoin.label} · l'article est créé puis sélectionné ici, tu restes sur le pré-devis.</p>
+        </div>
+        <input className="input !text-sm" placeholder="Nom de l'article" value={nom} onChange={e => setNom(e.target.value)} autoFocus />
+        <div className="grid grid-cols-2 gap-2">
+          <input className="input !text-sm" inputMode="decimal" placeholder="Prix de vente HT €" value={prixVente} onChange={e => setPrixVente(e.target.value)} />
+          <input className="input !text-sm" inputMode="decimal" placeholder="Prix d'achat TTC € (facultatif)" value={prixAchat} onChange={e => setPrixAchat(e.target.value)} />
+          <select className="input !text-sm" value={unite} onChange={e => setUnite(e.target.value)}>
+            {["u", "ml", "m2", "heure", "forfait"].map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+          <select className="input !text-sm" value={branche} onChange={e => setBranche(e.target.value as "materiau" | "service")}>
+            <option value="materiau">Matériau</option>
+            <option value="service">Service</option>
+          </select>
+          <input className="input !text-sm" placeholder="Marque (facultatif)" value={marque} onChange={e => setMarque(e.target.value)} />
+          <input className="input !text-sm" list="cats-ajout-rapide" placeholder="Catégorie" value={categorie} onChange={e => setCategorie(e.target.value)} />
+          <datalist id="cats-ajout-rapide">{categories.map(c => <option key={c} value={c} />)}</datalist>
+          {unite === "ml" && <input className="input !text-sm col-span-2" inputMode="decimal" placeholder="Longueur d'une bobine en m (vide = vendu au mètre)" value={longueur} onChange={e => setLongueur(e.target.value)} />}
+        </div>
+        {erreur && <p className="text-xs text-red-600">{erreur}</p>}
+        <div className="flex justify-end gap-2">
+          <button className="btn-ghost !text-xs" onClick={onFermer}>Annuler</button>
+          <button className="btn-volt !text-xs disabled:opacity-40" disabled={enCours} onClick={creer}>{enCours ? "Création…" : "Ajouter et utiliser"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BesoinRow({ besoin, etat, onChange, prestations, detail, onCatalogueAjoute }: {
   besoin: BesoinApparie; etat: EtatChoix; onChange: (e: EtatChoix) => void; prestations: Prestation[]; detail?: string;
+  onCatalogueAjoute: (p: Prestation) => void;
 }) {
   const [pickerOuvert, setPickerOuvert] = useState(false);
+  const [ajoutOuvert, setAjoutOuvert] = useState(false);
   const autrePrestation = prestations.find(p => p.id === etat.autrePrestationId);
   const effective = optionEffective(besoin, etat, prestations);
 
@@ -177,9 +251,12 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
           {detail && <p className="text-[11px] text-ink-400 italic mt-0.5">{detail}</p>}
         </div>
         {besoin.options.length === 0 && (
-          <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
-            <AlertTriangle size={12} /> Non identifié au catalogue
-          </span>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+              <AlertTriangle size={12} /> Non identifié au catalogue
+            </span>
+            <button type="button" className="btn-volt !text-xs !py-1" onClick={() => setAjoutOuvert(true)}>+ Ajouter au catalogue</button>
+          </div>
         )}
       </div>
 
@@ -249,6 +326,11 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail }: {
         )}
       </div>
 
+      {ajoutOuvert && (
+        <AjoutCatalogueRapide besoin={besoin} prestations={prestations} onFermer={() => setAjoutOuvert(false)}
+          onCree={p => { onCatalogueAjoute(p); onChange({ ...etat, mode: "autre", autrePrestationId: p.id, fournisseurId: "" }); setAjoutOuvert(false); }} />
+      )}
+
       {pickerOuvert && (
         <ProduitPicker
           prestations={prestations}
@@ -288,6 +370,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const [client, setClient] = useState<Client | null>(null);
   const [prestations, setPrestations] = useState<Prestation[]>([]);
+  const ajouterAuCatalogue = (p: Prestation) => setPrestations(prev => (prev.some(x => x.id === p.id) ? prev : [...prev, p]));
   const [profil, setProfil] = useState<any>(null);
   const [resultat, setResultat] = useState<ResultatPreDevis | null>(null);
   // Toutes les pièces du plan (nom + niveau), même celles sans aucun besoin — sert au contrôle « rien oublié ».
@@ -886,7 +969,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <div className="flex flex-col gap-2">
               {besoins.map(b => (
                 <BesoinRow key={b.cle} besoin={b} etat={choix[b.cle] ?? etatParDefaut(b)}
-                  onChange={e => majChoix(b.cle, e)} prestations={prestations} />
+                  onChange={e => majChoix(b.cle, e)} prestations={prestations} onCatalogueAjoute={ajouterAuCatalogue} />
               ))}
             </div>
           </div>
@@ -902,7 +985,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <div className="flex flex-col gap-2">
               {besoinsAgreges.map(b => (
                 <BesoinRow key={b.cle} besoin={b} etat={choixAgrege[b.cle] ?? etatParDefaut(b)}
-                  onChange={e => setChoixAgrege(prev => ({ ...prev, [b.cle]: e }))} prestations={prestations} detail={b.piece} />
+                  onChange={e => setChoixAgrege(prev => ({ ...prev, [b.cle]: e }))} prestations={prestations} detail={b.piece} onCatalogueAjoute={ajouterAuCatalogue} />
               ))}
             </div>
           </div>
