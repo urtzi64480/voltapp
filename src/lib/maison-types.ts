@@ -1132,7 +1132,10 @@ export function pointsOndulesEntre(a: Point, b: Point, amplitude = 0.06, longueu
 // type : « navette » = fils entre deux va-et-vient ; « retour » = câble de la (dernière) commande vers la lampe (ou, pour une lampe
 // alimentée en bout de chaîne, de la lampe vers sa première commande) ; « domotique » = liaison sans fil ; absent = câble
 // d'alimentation / de circuit classique. Couleurs de fils : voir lib/couleurs-fils.ts.
-export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoint: Point; type?: "navette" | "retour" | "domotique"; }
+export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoint: Point; type?: "navette" | "retour" | "domotique";
+  // Navette d'un câblage alimenté par l'amont (alimentation → commande(s) → lampe) : le neutre de la lampe passe par ce câble, qui
+  // porte donc le neutre EN PLUS des deux fils de navette. Absent pour une lampe alimentée en bout de chaîne (commandes en antenne).
+  neutre?: boolean; }
 
 export function centroidePoints(points: Point[]): Point {
   if (points.length === 0) return { x: 0, y: 0 };
@@ -1200,7 +1203,7 @@ export function construireBranchesCircuitEclairage(
         const pc = { x: c.x, y: c.y };
         const vaEtVient = baseCommande(c.type) === "va_et_vient";
         poser({ aId: precedent.id, aPoint: precedent.point, bId: String(c.id), bPoint: pc,
-          ...(vaEtVient && precedent.id !== ancre.id ? { type: "navette" as const } : {}) });
+          ...(vaEtVient && precedent.id !== ancre.id ? { type: "navette" as const, neutre: true } : {}) });
         precedent = { id: String(c.id), point: pc };
       });
       // Retour : de la dernière commande de la chaîne vers la lampe.

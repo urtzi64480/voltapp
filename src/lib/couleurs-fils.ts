@@ -14,27 +14,29 @@ export const COULEUR_FIL = {
   navette: "#f97316",
 } as const;
 
-export type NatureLiaison = "alimentation" | "retour" | "navette";
+export type NatureLiaison = "alimentation" | "retour" | "navette" | "navette_neutre";
 export type RoleConducteur = "phase" | "neutre" | "terre" | "retour" | "navette";
 
 export interface Conducteur { role: RoleConducteur; libelle: string }
 
 /** Nature d'un segment de tracé (les segments domotiques n'ont pas de fil : à traiter avant). */
-export const natureLiaison = (seg: Pick<SegmentCircuit, "type">): NatureLiaison =>
-  seg.type === "navette" ? "navette" : seg.type === "retour" ? "retour" : "alimentation";
+export const natureLiaison = (seg: Pick<SegmentCircuit, "type" | "neutre">): NatureLiaison =>
+  seg.type === "navette" ? (seg.neutre ? "navette_neutre" : "navette") : seg.type === "retour" ? "retour" : "alimentation";
 
 /** Conducteurs d'un câble 3 G, dans l'ordre d'affichage (de gauche à droite, vu dans le sens du tracé). */
 export const CONDUCTEURS: Record<NatureLiaison, Conducteur[]> = {
   alimentation: [{ role: "neutre", libelle: "Neutre" }, { role: "phase", libelle: "Phase" }, { role: "terre", libelle: "Terre" }],
   retour: [{ role: "neutre", libelle: "Neutre" }, { role: "retour", libelle: "Retour" }, { role: "terre", libelle: "Terre" }],
   navette: [{ role: "navette", libelle: "Navette 1" }, { role: "navette", libelle: "Navette 2" }, { role: "terre", libelle: "Terre" }],
+  // Le neutre de la lampe traverse les commandes : il suit donc aussi le câble de navette.
+  navette_neutre: [{ role: "neutre", libelle: "Neutre" }, { role: "navette", libelle: "Navette 1" }, { role: "navette", libelle: "Navette 2" }, { role: "terre", libelle: "Terre" }],
 };
 
 export const couleurConducteur = (role: RoleConducteur): string =>
   role === "terre" ? COULEUR_FIL.terreVert : COULEUR_FIL[role];
 
 export const LIBELLE_NATURE: Record<NatureLiaison, string> = {
-  alimentation: "Alimentation / circuit", retour: "Retour (commande → lampe)", navette: "Navette (entre va-et-vient)",
+  alimentation: "Alimentation / circuit", retour: "Retour (commande → lampe)", navette: "Navette (entre va-et-vient)", navette_neutre: "Navette + neutre (entre va-et-vient)",
 };
 
 /** Légende : couleur de chaque fil. */
@@ -75,4 +77,4 @@ export function geometrieCable(a: { x: number; y: number }, b: { x: number; y: n
 
 /** Couleur dominante d'un câble (pastilles d'extrémité, étiquettes) : phase, retour ou navette. */
 export const couleurDominante = (nature: NatureLiaison): string =>
-  nature === "navette" ? COULEUR_FIL.navette : nature === "retour" ? COULEUR_FIL.retour : COULEUR_FIL.phase;
+  nature === "navette" || nature === "navette_neutre" ? COULEUR_FIL.navette : nature === "retour" ? COULEUR_FIL.retour : COULEUR_FIL.phase;
