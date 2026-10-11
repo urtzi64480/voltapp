@@ -3923,22 +3923,42 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // directement via son CircuitManuel.nom (déjà la source de b.label) ; un circuit
   // automatique n'a pas de nom propre — le renommage est stocké à part (Niveau.nomsCircuits,
   // indexé par le label généré) et résolu à l'affichage via nomAffiche().
+  // Un circuit MANUEL a pour label son nom (+ éventuel suffixe « (x kW) ») : tout ce qui est rangé « par label » (cheminement, boîtes,
+  // liaisons directes, couleur, verrou, nom d'affichage) suit donc le renommage, sinon le circuit perdrait ses réglages à chaque lettre tapée.
+  const migrerLabelCircuit = (n: Niveau, ancien: string, nouveau: string): Niveau => {
+    if (ancien === nouveau) return n;
+    const mig = <T,>(r: Record<string, T> | undefined): Record<string, T> | undefined => {
+      if (!r || !(ancien in r)) return r;
+      const { [ancien]: v, ...reste } = r;
+      return { ...reste, [nouveau]: v };
+    };
+    return {
+      ...n,
+      ordresCircuits: mig(n.ordresCircuits), boitesDerivation: mig(n.boitesDerivation), liaisonsDirectesLumiere: mig(n.liaisonsDirectesLumiere),
+      couleursCircuits: mig(n.couleursCircuits), nomsCircuits: mig(n.nomsCircuits),
+      circuitsVerrouilles: n.circuitsVerrouilles?.map(l => (l === ancien ? nouveau : l)),
+    };
+  };
+  const renommerCircuitManuelParId = (manuelId: number, nom: string) => {
+    const bk = resultatRef.current?.breakers.find(x => x.manuelId === manuelId);
+    const ancienNom = (niveauActif?.circuitsManuels ?? []).find(m => m.id === manuelId)?.nom ?? "";
+    const ancienLabel = bk?.label ?? ancienNom;
+    const suffixe = bk && bk.label.startsWith(ancienNom) ? bk.label.slice(ancienNom.length) : "";
+    const nouveauLabel = nom + suffixe;
+    updateNiveauActif(n => migrerLabelCircuit({
+      ...n, circuitsManuels: (n.circuitsManuels ?? []).map(m => m.id === manuelId ? { ...m, nom } : m),
+    }, ancienLabel, nouveauLabel));
+    if (bk) setResultat(r => r ? { ...r, breakers: r.breakers.map(x => x.manuelId === manuelId ? { ...x, label: nouveauLabel } : x) } : r);
+  };
   const renommerCircuit = (b: Breaker, nom: string) => {
-    if (b.manuelId != null) {
-      updateNiveauActif(n => ({
-        ...n, circuitsManuels: (n.circuitsManuels ?? []).map(m => m.id === b.manuelId ? { ...m, nom } : m),
-      }));
-    } else {
-      updateNiveauActif(n => ({ ...n, nomsCircuits: { ...(n.nomsCircuits ?? {}), [b.label]: nom } }));
-    }
+    if (b.manuelId != null) renommerCircuitManuelParId(b.manuelId, nom);
+    else updateNiveauActif(n => ({ ...n, nomsCircuits: { ...(n.nomsCircuits ?? {}), [b.label]: nom } }));
   };
   const nomAffiche = (b: Breaker): string => niveauActif?.nomsCircuits?.[b.label] ?? b.label;
   // Variantes "directes" pour un circuit MANUEL pas encore généré (aucun Breaker n'existe
   // encore pour lui) — mêmes champs (CircuitManuel.nom / .couleur) que ci-dessus, appelées
   // depuis le panneau "Circuits" quand ce circuit n'a encore aucun appareillage raccordé.
-  const renommerCircuitManuelDirect = (manuelId: number, nom: string) => {
-    updateNiveauActif(n => ({ ...n, circuitsManuels: (n.circuitsManuels ?? []).map(m => m.id === manuelId ? { ...m, nom } : m) }));
-  };
+  const renommerCircuitManuelDirect = (manuelId: number, nom: string) => renommerCircuitManuelParId(manuelId, nom);
   const changerCouleurCircuitManuelDirect = (manuelId: number, couleur: string) => {
     updateNiveauActif(n => ({ ...n, circuitsManuels: (n.circuitsManuels ?? []).map(m => m.id === manuelId ? { ...m, couleur } : m) }));
   };
@@ -8455,7 +8475,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     const manuel = item.manuel;
                     const circuitEclairage = b ? CIRCUITS[b.circuit]?.category === "lumiere" : manuel?.famille === "lumiere";
                     const labelStockage = b ? b.label : manuel!.nom; // clé pour boitesDerivation
-                    const nomAffichage = b ? nomAffiche(b) : manuel!.nom;
+                    const nomAffichage = manuel ? manuel.nom : b ? nomAffiche(b) : "";
                     const couleur = b ? (colorMap.get(b.id) ?? "#666666") : (manuel!.couleur ?? "#78716c");
                     const visible = b ? circuitsVisibles.has(b.id) : true;
                     const pointsCircuit = b ? (niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id) ?? []) : [];
