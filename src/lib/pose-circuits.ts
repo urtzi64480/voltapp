@@ -11,7 +11,7 @@
 // impression et vue 3D lisent tous ici : une section apparente = de la moulure partout.
 
 import {
-  AppareillagePlace, LiaisonWaypoint, Niveau, Point, PoseTroncon, SegmentCircuit, cleSegmentLiaison, origineCircuits,
+  AppareillagePlace, LiaisonWaypoint, Niveau, Point, PoseTroncon, SegmentCircuit, cleSegmentLiaison, origineCircuits, uidMaison,
 } from "@/lib/maison-types";
 import { ResultatGeneration, segmentsPourCircuit } from "@/lib/maison-engine";
 import { coudesSegment } from "@/lib/routage-circuits";
@@ -93,7 +93,7 @@ export function appareillagesEnPoseApparente(
       const coudes = coudesSegment(niveau, seg);
       const poses = posesTroncons(niveau, cle, coudes);
       const hauteurs = hauteursTroncons(niveau, cle, coudes);
-      const entrees = coudes.map(c => ({ point: c.point, hauteurCm: c.hauteur }));
+      const entrees = coudes.map(c => ({ point: c.point, hauteurCm: c.hauteur, hauteurMiniCm: c.hauteurMini }));
       if (poses[0] === "apparent" && ids.has(seg.aId)) {
         res.set(Number(seg.aId), Math.max(res.get(Number(seg.aId)) ?? 0, hauteurCourseSection(0, entrees, hauteurs, hauteurDefaut(seg))));
       }
@@ -111,7 +111,7 @@ export function appareillagesEnPoseApparente(
 // apparente ou encastrée : les points A et B coupent le tracé à l'endroit cliqué (un coude est ajouté, qui garde la pose et la
 // hauteur de la section coupée), puis toutes les sections entre A et B prennent la pose choisie.
 
-interface PolyLiaison { seg: SegmentCircuit; cle: string; pts: Point[]; poses: PoseTroncon[]; hauts: (number | undefined)[]; meta: ({ id: number; hauteur?: number } | null)[] }
+interface PolyLiaison { seg: SegmentCircuit; cle: string; pts: Point[]; poses: PoseTroncon[]; hauts: (number | undefined)[]; meta: ({ id: number; hauteur?: number; hauteurMini?: number } | null)[] }
 
 const dPtSeg = (p: Point, a: Point, b: Point) => {
   const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
@@ -127,14 +127,14 @@ function polyDe(niveau: Niveau, seg: SegmentCircuit): PolyLiaison {
   const hauts = hauteursTroncons(niveau, cle, coudes);
   return {
     seg, cle, pts: [seg.aPoint, ...coudes.map(c => c.point), seg.bPoint], poses: [...poses], hauts: [...hauts],
-    meta: [null, ...coudes.map(c => ({ id: c.id, hauteur: c.hauteur })), null],
+    meta: [null, ...coudes.map(c => ({ id: c.id, hauteur: c.hauteur, hauteurMini: c.hauteurMini })), null],
   };
 }
 
 /** Coupe la liaison au point (déjà sur son tracé) situé dans la section k. Renvoie l'indice du point inséré. */
 function couperPoly(pl: PolyLiaison, k: number, p: Point, nouvelId: () => number): number {
   pl.pts.splice(k + 1, 0, p);
-  pl.meta.splice(k + 1, 0, { id: nouvelId() });
+  pl.meta.splice(k + 1, 0, { id: nouvelId(), ...(pl.meta[k + 1]?.hauteurMini != null ? { hauteurMini: pl.meta[k + 1]!.hauteurMini } : {}) });
   pl.poses.splice(k, 0, pl.poses[k]);
   pl.hauts.splice(k, 0, pl.hauts[k]);
   return k + 1;
@@ -166,6 +166,7 @@ function ecrirePoly(n: Niveau, pl: PolyLiaison): Niveau {
     return {
       id: m?.id ?? 0, point,
       ...(m?.hauteur != null ? { hauteur: m.hauteur } : {}),
+      ...(m?.hauteurMini != null ? { hauteurMini: m.hauteurMini } : {}),
       ...(pose === "apparent" ? { poseType: "apparent" as const } : {}),
       ...(pl.hauts[i] != null ? { hauteurSection: pl.hauts[i] } : {}),
     };
@@ -264,3 +265,62 @@ export function appliquerPoseEntre(
 
 // A est-il avant B sur la même section orientée (depuis son départ) ?
 const memeOrdre = (depart: Point, a: Point, b: Point) => Math.hypot(a.x - depart.x, a.y - depart.y) <= Math.hypot(b.x - depart.x, b.y - depart.y);
+
+
+// ─── REMISE AU PROPRE DES TRACÉS DÉJÀ ENREGISTRÉS ────────────────────────────────────────────────────────────
+// Les circuits créés avant le tracé « dans les murs » ont des coudes figés (obliques, petits décrochements). Une seule fois par niveau
+// (Niveau.tracesMurs), tout tracé dont une portion n'est PARALLÈLE (ou perpendiculaire) À AUCUN MUR est refait dans les murs ; la pose
+// (apparent / encastré) et les hauteurs de chaque partie sont reportées sur les nouvelles sections. Les circuits verrouillés ne bougent pas.
+function anglesMurs(niveau: Niveau): number[] {
+  const res: number[] = [];
+  niveau.pieces.forEach(pc => pc.contour.forEach((p, i) => { const q = pc.contour[(i + 1) % pc.contour.length]; if (Math.hypot(q.x - p.x, q.y - p.y) > 0.05) res.push(Math.atan2(q.y - p.y, q.x - p.x) * 180 / Math.PI); }));
+  return res;
+}
+function tracePropre(pts: Point[], murs: number[]): boolean {
+  for (let k = 0; k + 1 < pts.length; k++) {
+    const p = pts[k], q = pts[k + 1], l = Math.hypot(q.x - p.x, q.y - p.y);
+    if (l < 1e-6) continue;
+    if (l < 0.03 && k > 0 && k + 2 < pts.length) return false;    // petit décrochement (les raccords courts aux appareils sont normaux)
+    const ang = Math.atan2(q.y - p.y, q.x - p.x) * 180 / Math.PI;
+    const ok = murs.some(w => { const d = ((((ang - w) % 90) + 90) % 90); return Math.min(d, 90 - d) < 0.5; });
+    if (!ok) return false;                                         // oblique alors qu'aucun mur ne l'est
+  }
+  return true;
+}
+
+export function reconformerTracesNiveau(niveau: Niveau, resultat: ResultatGeneration | null): Niveau {
+  if (niveau.tracesMurs === 2) return niveau;
+  let n: Niveau = { ...niveau, tracesMurs: 2 };
+  const origine = origineCircuits(niveau);
+  if (!resultat || !origine) return n;
+  const murs = anglesMurs(niveau);
+  const verrous = new Set(niveau.circuitsVerrouilles ?? []);
+  const parCircuit = new Map<number, AppareillagePlace[]>();
+  niveau.pieces.flatMap(p => p.appareillages).forEach(a => { if (a.circuitId != null) parCircuit.set(a.circuitId, [...(parCircuit.get(a.circuitId) ?? []), a]); });
+  parCircuit.forEach((points, circuitId) => {
+    const breaker = resultat.breakers.find(b => b.id === circuitId);
+    if (!breaker || verrous.has(breaker.label)) return;
+    segmentsPourCircuit(breaker, points, niveau, origine).forEach(seg => {
+      if (seg.type === "domotique") return;
+      const cle = cleSegmentLiaison(seg.aId, seg.bId);
+      if ((n.liaisonWaypoints?.[cle] ?? []).length === 0) return;
+      const ancien = polyDe(n, seg);
+      if (tracePropre(ancien.pts, murs)) return;
+      // nouveau tracé : le routage automatique (sans coudes figés)
+      const { [cle]: _retire, ...reste } = n.liaisonWaypoints ?? {};
+      const sans: Niveau = { ...n, liaisonWaypoints: reste };
+      const coudes = coudesSegment(sans, seg);
+      const pts = [seg.aPoint, ...coudes.map(c => c.point), seg.bPoint];
+      const sectionAncienne = (m: Point) => plusProchePoly(ancien, m).k;
+      const poses: PoseTroncon[] = [], hauts: (number | undefined)[] = [];
+      for (let k = 0; k + 1 < pts.length; k++) {
+        const kk = sectionAncienne({ x: (pts[k].x + pts[k + 1].x) / 2, y: (pts[k].y + pts[k + 1].y) / 2 });
+        poses.push(ancien.poses[kk] ?? "encastre");
+        hauts.push(ancien.hauts[kk] ?? ancien.meta[kk + 1]?.hauteur ?? ancien.meta[kk]?.hauteur);
+      }
+      const nouveau: PolyLiaison = { seg, cle, pts, poses, hauts, meta: [null, ...coudes.map(c => ({ id: uidMaison(), ...(c.hauteurMini != null ? { hauteurMini: c.hauteurMini } : {}) })), null] };
+      n = ecrirePoly(n, nouveau);
+    });
+  });
+  return n;
+}

@@ -276,8 +276,8 @@ export function coudesSegment(niveau: Niveau, seg: SegmentCircuit): LiaisonWaypo
   if (manuels && manuels.length > 0) return manuels;
   if (seg.type === "domotique") return [];
   // 1) dans l'épaisseur des murs (câbles encastrés) ; 2) à défaut, parallèle aux murs dans les pièces ; 3) à défaut, tracé direct.
-  const pts = routeDansMurs(seg.aPoint, seg.bPoint, niveau.pieces)
-    ?? routeOrthogonale(seg.aPoint, seg.bPoint, niveau.pieces)
-    ?? routeDansPieces(seg.aPoint, seg.bPoint, niveau.pieces);
+  const murs = routeDansMurs(seg.aPoint, seg.bPoint, niveau.pieces);
+  if (murs) return murs.map((w, i) => ({ id: -(i + 1), point: w.point, ...(w.hauteurMini != null ? { hauteurMini: w.hauteurMini } : {}) }));
+  const pts = routeOrthogonale(seg.aPoint, seg.bPoint, niveau.pieces) ?? routeDansPieces(seg.aPoint, seg.bPoint, niveau.pieces);
   return pts.map((point, i) => ({ id: -(i + 1), point }));
 }

@@ -42,7 +42,7 @@ import {
 import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillageSymbolSvgString, PALETTE, labelAppareillage, labelAppareillagePlace, initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 import { cotesOuvertures, cotesExterieures, coteHorsTout } from "@/lib/cotes-archi";
 import { normaliserAngle } from "@/lib/soleil";
-import { posesTroncons, hauteursTroncons, appliquerPoseEntre } from "@/lib/pose-circuits";
+import { posesTroncons, hauteursTroncons, appliquerPoseEntre, reconformerTracesNiveau } from "@/lib/pose-circuits";
 import { creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurCircuit } from "@/lib/longueurs-circuits";
 import { fusionnerPieces, voisinesFusionnables } from "@/lib/fusion-pieces";
 import { decalerNiveau } from "@/lib/deplacer-niveau";
@@ -2326,6 +2326,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (loading || resultat) return;
     const aDesManuels = niveaux.some(n => (n.circuitsManuels ?? []).some(m => n.pieces.some(p => p.appareillages.some(a => a.circuitManuelId === m.id))));
     if (aDesManuels) recalculerCircuits(niveaux);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, resultat, niveaux]);
+
+  // Tracés enregistrés avant le routage « dans les murs » (coudes obliques / décrochements) : remis au propre UNE fois par niveau,
+  // pose et hauteurs conservées, circuits verrouillés épargnés (voir reconformerTracesNiveau).
+  useEffect(() => {
+    if (loading || !resultat || niveaux.every(n => n.tracesMurs === 2)) return;
+    setNiveaux(nvs => nvs.map(n => reconformerTracesNiveau(n, resultat)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, resultat, niveaux]);
 

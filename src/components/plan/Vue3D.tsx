@@ -1036,7 +1036,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
           const jambes = construireChemin3D({
             depart: { x: depart.x, y: depart.y, z: depart.z },
             arrivee: { x: arrivee.x, y: arrivee.y, z: arrivee.z },
-            coudes: coudes.map(c => ({ point: c.point, hauteurCm: c.hauteur })),
+            coudes: coudes.map(c => ({ point: c.point, hauteurCm: c.hauteur, hauteurMiniCm: c.hauteurMini })),
             poses: posesTroncons(niveau, cle, coudes),
             hauteursSection: hauteursTroncons(niveau, cle, coudes),
             hauteurGaine: hauteurDefaut(seg),

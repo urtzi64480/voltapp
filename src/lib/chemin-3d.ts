@@ -22,7 +22,7 @@ export interface PtPlan { x: number; y: number }
 // Une jambe = un tube rectiligne. extremite : montée/descente verticale qui touche l'ancre de départ ou d'arrivée.
 export interface Jambe3D { a: Pt3; b: Pt3; pose: PoseTroncon; extremite?: "depart" | "arrivee" }
 
-export interface CoudeEntree { point: PtPlan; hauteurCm?: number }
+export interface CoudeEntree { point: PtPlan; hauteurCm?: number; hauteurMiniCm?: number }
 
 export interface EntreeChemin3D {
   depart: Pt3;
@@ -44,6 +44,13 @@ export function hauteurGaineNiveau(hauteurPlafondNiveau: number, hauteursPieces:
 
 // Hauteur (m) à laquelle COURT la section j (voir règles ci-dessus).
 export function hauteurCourseSection(
+  j: number, coudes: CoudeEntree[], hauteursSection: (number | undefined)[], hauteurGaine: number,
+): number {
+  const mini = j < coudes.length ? coudes[j].hauteurMiniCm : undefined; // plancher imposé (passage au-dessus d'une porte)
+  const base = hauteurBaseSection(j, coudes, hauteursSection, hauteurGaine);
+  return mini != null && isFinite(mini) ? Math.max(base, mini / 100) : base;
+}
+function hauteurBaseSection(
   j: number, coudes: CoudeEntree[], hauteursSection: (number | undefined)[], hauteurGaine: number,
 ): number {
   const hs = hauteursSection[j];

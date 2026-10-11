@@ -6,14 +6,14 @@
 // mitoyens, départs de cloisons) et on cherche le plus court chemin dans ce réseau. Les points de départ et d'arrivée sont ramenés
 // sur le mur le plus proche par un tronçon perpendiculaire (la sortie vers la prise, ou la descente vers un point lumineux).
 import type { Niveau, Piece, Point } from "@/lib/maison-types";
-import { distance, pointDansPolygone } from "@/lib/maison-types";
+import { distance, ouverturesEffectivesMur, pointDansPolygone } from "@/lib/maison-types";
 import { decalerContour, epaisseurTotaleM, parametresMur3D } from "@/lib/murs";
 
 const RAYON_LIAISON = 0.45;  // m — deux lignes de câbles de murs voisins (mitoyens, angles, cloisons) à moins de cela sont reliées
 const PORTEE_ANCRE = 1.2;    // m — un point plus loin que cela d'un mur n'est pas rattaché (le tracé direct prend le relais)
 const EPS = 1e-6;
 
-interface Mur { p: Point; q: Point; piece: number }
+interface Mur { p: Point; q: Point; piece: number; i: number }
 interface Reseau { murs: Mur[]; noeuds: Point[]; voisins: { j: number; d: number }[][]; ligneDe: number[][]; }
 
 const caches = new WeakMap<Piece[], Reseau | null>();
@@ -46,9 +46,26 @@ function construire(pieces: Piece[]): Reseau | null {
   const murs: Mur[] = [];
   pieces.forEach((pc, k) => {
     const L = lignesCables(pc);
-    L.forEach((p, i) => { const q = L[(i + 1) % L.length]; if (distance(p, q) > 0.02) murs.push({ p, q, piece: k }); });
+    L.forEach((p, i) => { const q = L[(i + 1) % L.length]; if (distance(p, q) > 0.02) murs.push({ p, q, piece: k, i }); });
   });
   if (murs.length === 0) return null;
+  // Murs mitoyens : les lignes de câbles de deux pièces voisines sont parallèles à quelques cm l'une de l'autre. On les CONFOND (la seconde
+  // est ramenée sur la première) : un câble qui passe d'une pièce à l'autre reste alors sur UNE ligne droite, sans petit décrochement.
+  for (let j = 0; j < murs.length; j++) for (let i = 0; i < j; i++) {
+    const A = murs[i], B = murs[j];
+    if (A.piece === B.piece) continue;
+    const ux = A.q.x - A.p.x, uy = A.q.y - A.p.y, lA = Math.hypot(ux, uy);
+    const vx = B.q.x - B.p.x, vy = B.q.y - B.p.y, lB = Math.hypot(vx, vy);
+    if (lA < EPS || lB < EPS) continue;
+    if (Math.abs(ux * vy - uy * vx) / (lA * lB) > 0.0087) continue;            // pas parallèles (> 0,5°)
+    const nx = -uy / lA, ny = ux / lA;
+    const dist = (B.p.x - A.p.x) * nx + (B.p.y - A.p.y) * ny;
+    if (Math.abs(dist) > RAYON_LIAISON || Math.abs(dist) < 1e-9) continue;
+    const tp = ((B.p.x - A.p.x) * ux + (B.p.y - A.p.y) * uy) / lA, tq = ((B.q.x - A.p.x) * ux + (B.q.y - A.p.y) * uy) / lA;
+    if (Math.min(lA, Math.max(tp, tq)) - Math.max(0, Math.min(tp, tq)) < 0.1) continue; // aucun recouvrement réel
+    const ram = (pt: Point): Point => ({ x: pt.x - nx * ((pt.x - A.p.x) * nx + (pt.y - A.p.y) * ny), y: pt.y - ny * ((pt.x - A.p.x) * nx + (pt.y - A.p.y) * ny) });
+    B.p = ram(B.p); B.q = ram(B.q);
+  }
   // points de coupe sur chaque mur : extrémités, croisements, et projection des extrémités des murs voisins
   const coupes: { t: number; pt: Point }[][] = murs.map(m => [{ t: 0, pt: m.p }, { t: 1, pt: m.q }]);
   const liens: [Point, Point][] = [];
@@ -64,7 +81,9 @@ function construire(pieces: Piece[]): Reseau | null {
       if (A.piece === B.piece && Math.abs(ia - ib) <= 1) return;
       [A.p, A.q].forEach(e => {
         const pr = projeter(e, B.p, B.q);
-        if (pr.d > 0.005 && pr.d <= RAYON_LIAISON) { coupes[ib].push({ t: pr.t, pt: pr.pt }); liens.push([e, pr.pt]); }
+        if (pr.d > RAYON_LIAISON) return;
+        if (pr.t > 0.0005 && pr.t < 0.9995) coupes[ib].push({ t: pr.t, pt: pr.pt });
+        if (pr.d > 0.005) liens.push([e, pr.pt]);
       });
     });
   }));
@@ -104,7 +123,7 @@ function murProche(r: Reseau, pieces: Piece[], pt: Point): { mur: number; pt: Po
 
 const nettoyer = (pts: Point[]): Point[] => {
   const r: Point[] = [];
-  pts.forEach(q => { const d = r[r.length - 1]; if (!d || Math.hypot(q.x - d.x, q.y - d.y) > 0.02) r.push(q); });
+  pts.forEach(q => { const d = r[r.length - 1]; if (!d || Math.hypot(q.x - d.x, q.y - d.y) > 0.003) r.push(q); });
   for (let i = r.length - 2; i >= 1; i--) {
     const p = r[i - 1], q = r[i], n = r[i + 1];
     if (Math.abs((q.x - p.x) * (n.y - q.y) - (q.y - p.y) * (n.x - q.x)) < 1e-6) r.splice(i, 1);
@@ -112,10 +131,61 @@ const nettoyer = (pts: Point[]): Point[] => {
   return r;
 };
 
-const memo = new WeakMap<Piece[], Map<string, Point[] | null>>();
+/** Point de passage d'un câble ; hauteurMini = hauteur plancher (cm) de la section qui y ARRIVE (passage au-dessus d'une porte). */
+export interface PointRoute { point: Point; hauteurMini?: number }
+
+const MARGE_PORTE = 0.1;      // m — le câble passe au-dessus de la porte avec 10 cm de jeu de chaque côté
+const LINTEAU_CM = 10;        // cm — au-dessus du haut de l'ouverture
+const HAUTEUR_PORTE_DEFAUT: Record<string, number> = { porte: 204, porte_coulissante: 204, porte_garage: 210, baie_vitree: 215, ouverture: 210 };
+
+/** Découpe les tronçons qui longent un mur en croisant une porte : le câble y monte au-dessus du linteau (section à hauteur mini). */
+function contournerPortes(r: Reseau, pieces: Piece[], poly: Point[]): PointRoute[] {
+  const sortie: PointRoute[] = [];
+  for (let k = 0; k + 1 < poly.length; k++) {
+    const p = poly[k], q = poly[k + 1];
+    const L = distance(p, q);
+    const coupures: { f0: number; f1: number; mini: number }[] = [];
+    if (L > 0.05) {
+      r.murs.forEach(m => {
+        const lm = distance(m.p, m.q); if (lm < EPS) return;
+        const ux = (m.q.x - m.p.x) / lm, uy = (m.q.y - m.p.y) / lm;
+        const ecartDroite = (pt: Point) => Math.abs(-(pt.x - m.p.x) * uy + (pt.y - m.p.y) * ux);   // distance à la DROITE du mur
+        if (ecartDroite(p) > 0.03 || ecartDroite(q) > 0.03) return;
+        const sOf = (pt: Point) => (pt.x - m.p.x) * ux + (pt.y - m.p.y) * uy;
+        const sp = sOf(p), sq = sOf(q);
+        const pc = pieces[m.piece], a0 = pc.contour[m.i], b0 = pc.contour[(m.i + 1) % pc.contour.length];
+        ouverturesEffectivesMur(pieces, pc, m.i).filter(o => o.type !== "fenetre").forEach(o => {
+          const sc = sOf({ x: a0.x + (b0.x - a0.x) * o.position, y: a0.y + (b0.y - a0.y) * o.position });
+          const demi = o.largeur / 200 + MARGE_PORTE;
+          const lo = Math.max(Math.min(sp, sq), sc - demi), hi = Math.min(Math.max(sp, sq), sc + demi);
+          if (hi - lo < 0.02) return;
+          const haut = (o.allege ?? 0) + (o.hauteur && o.hauteur > 0 ? o.hauteur : HAUTEUR_PORTE_DEFAUT[o.type] ?? 204);
+          const f = (sv: number) => (sq === sp ? 0 : (sv - sp) / (sq - sp));
+          coupures.push({ f0: Math.min(f(lo), f(hi)), f1: Math.max(f(lo), f(hi)), mini: haut + LINTEAU_CM });
+        });
+      });
+    }
+    // fusion des portes qui se touchent, puis découpe
+    coupures.sort((a, b) => a.f0 - b.f0);
+    const fusion: typeof coupures = [];
+    coupures.forEach(c => { const d = fusion[fusion.length - 1]; if (d && c.f0 <= d.f1 + 0.02 / Math.max(L, 0.05)) { d.f1 = Math.max(d.f1, c.f1); d.mini = Math.max(d.mini, c.mini); } else fusion.push({ ...c }); });
+    const au = (f: number): Point => ({ x: p.x + (q.x - p.x) * f, y: p.y + (q.y - p.y) * f });
+    if (k === 0) sortie.push({ point: p });
+    fusion.forEach(c => {
+      if (c.f0 > 0.0001 && distance(sortie[sortie.length - 1].point, au(c.f0)) > 0.02) sortie.push({ point: au(c.f0) });
+      const fin = Math.min(1, c.f1);
+      if (fin < 0.9999) sortie.push({ point: au(fin), hauteurMini: c.mini });
+      else { sortie.push({ point: q, hauteurMini: c.mini }); }
+    });
+    if (!(fusion.length > 0 && fusion[fusion.length - 1].f1 >= 0.9999)) sortie.push({ point: q });
+  }
+  return sortie;
+}
+
+const memo = new WeakMap<Piece[], Map<string, PointRoute[] | null>>();
 
 /** Points de passage INTERMÉDIAIRES d'un câble de a à b en restant dans l'épaisseur des murs ; null = impossible (tracé direct en repli). */
-export function routeDansMurs(a: Point, b: Point, pieces: Piece[]): Point[] | null {
+export function routeDansMurs(a: Point, b: Point, pieces: Piece[]): PointRoute[] | null {
   if (pieces.length === 0 || distance(a, b) < 0.05) return [];
   let m = memo.get(pieces);
   if (!m) { m = new Map(); memo.set(pieces, m); }
@@ -129,7 +199,7 @@ export function routeDansMurs(a: Point, b: Point, pieces: Piece[]): Point[] | nu
   return res;
 }
 
-function calculer(r: Reseau, pieces: Piece[], a: Point, b: Point): Point[] | null {
+function calculer(r: Reseau, pieces: Piece[], a: Point, b: Point): PointRoute[] | null {
   const pa = murProche(r, pieces, a), pb = murProche(r, pieces, b);
   if (!pa || !pb) return null;
   const N = r.noeuds.length, iA = N, iB = N + 1;
@@ -163,7 +233,8 @@ function calculer(r: Reseau, pieces: Piece[], a: Point, b: Point): Point[] | nul
   if (dist[iB] === Infinity) return null;
   const chemin: Point[] = [];
   for (let k = iB; k >= 0; k = prev[k]) chemin.unshift(pts[k]);
-  return nettoyer([a, ...chemin, b]).slice(1, -1);
+  const poly = nettoyer([a, ...chemin, b]);
+  return contournerPortes(r, pieces, poly).slice(1, -1);
 }
 
 /** Le réseau de murs existe-t-il pour ces pièces ? (sert aux tests) */

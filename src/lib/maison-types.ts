@@ -411,6 +411,9 @@ export interface LiaisonWaypoint {
   // Hauteur (cm) de la SECTION qui arrive à ce coude : le câble y court à plat à cette hauteur, avec une montée /
   // descente verticale à chaque bout. Absent = hauteur du coude, sinon hauteur de gaine par défaut (sous plafond) : le câble ne part jamais en pente.
   hauteurSection?: number;
+  // Hauteur MINIMALE (cm) de la section qui arrive à ce coude : le câble y passe au moins à cette hauteur quelle que soit la hauteur
+  // par défaut (ex. au-dessus d'une porte : linteau + 10 cm). Posé par le tracé automatique dans les murs, jamais saisi à la main.
+  hauteurMini?: number;
 }
 // Pose d'une section de circuit : encastrée (dans le doublage / la structure — gaine) ou apparente (moulure).
 export type PoseTroncon = "encastre" | "apparent";
@@ -553,6 +556,8 @@ export interface Niveau {
   liaisonsDirectesLumiere?: Record<string, [number, number][]>;
   // Circuits VERROUILLÉS (labels, même clé que boitesDerivation / ordresCircuits) : leur cheminement (tracé, boîtes, coudes, pose, liaisons) est protégé contre toute modification par erreur.
   circuitsVerrouilles?: string[];
+  // 2 = les tracés déjà enregistrés ont été remis dans les murs (lib/pose-circuits.ts : reconformerTracesNiveau) ; absent = à faire une fois.
+  tracesMurs?: 2;
   hauteurPlafond?: number; // mètres — pour la vue 3D (2.5 par défaut)
   // Orientation du bâtiment : angle (degrés, sens horaire) entre le HAUT du plan et le Nord géographique.
   // 0 = le Nord est en haut du plan. Valeur commune à tous les niveaux (réglée depuis le plan, voir page du plan) ;

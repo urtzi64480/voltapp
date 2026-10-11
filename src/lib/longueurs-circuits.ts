@@ -76,7 +76,7 @@ export function tracerLiaison(
   const poses = posesTroncons(niveau, cle, coudes);
   const hauteurs = hauteursTroncons(niveau, cle, coudes);
   const hDefaut = hauteurDefautLiaison(breaker, segments, hauteurAncre, ctx.hauteurGaine)(seg);
-  const entreesCoudes = coudes.map(c => ({ point: c.point, hauteurCm: c.hauteur }));
+  const entreesCoudes = coudes.map(c => ({ point: c.point, hauteurCm: c.hauteur, hauteurMiniCm: c.hauteurMini }));
   const depart = { x: seg.aPoint.x, y: hauteurAncre(seg.aId), z: seg.aPoint.y };
   const arrivee = { x: seg.bPoint.x, y: hauteurAncre(seg.bId), z: seg.bPoint.y };
   const jambes = construireChemin3D({ depart, arrivee, coudes: entreesCoudes, poses, hauteursSection: hauteurs, hauteurGaine: hDefaut });
