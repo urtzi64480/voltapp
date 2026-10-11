@@ -20,7 +20,7 @@ export type RoleConducteur = "phase" | "neutre" | "terre" | "retour" | "navette"
 
 export interface Conducteur { role: RoleConducteur; libelle: string }
 
-type ChampsFils = Pick<SegmentCircuit, "type" | "neutre" | "phase" | "retourTraversant" | "avecRetour" | "voies">;
+type ChampsFils = Pick<SegmentCircuit, "type" | "neutre" | "phase" | "retourTraversant" | "avecRetour" | "voies" | "detecteur">;
 
 /** Famille d'un segment de tracé (les segments domotiques n'ont pas de fil : à traiter avant). */
 export const natureLiaison = (seg: Pick<SegmentCircuit, "type">): NatureLiaison =>
@@ -75,6 +75,8 @@ export function libelleLiaison(seg: ChampsFils): string {
   const voies = seg.voies ?? 1;
   if (seg.type === "navette") return seg.neutre ? `${voies > 1 ? "Navettes doubles" : "Navettes"} + neutre` : `${voies > 1 ? "Navettes doubles" : "Navettes"} + retour`;
   if (seg.type === "commande") return voies > 1 ? "Commande boutons-poussoirs (2 télérupteurs)" : "Commande boutons-poussoirs";
+  if (seg.detecteur && seg.type === "retour" && !seg.phase) return "Sortie détecteur (L') → lampe";
+  if (seg.detecteur && !seg.type) return seg.avecRetour ? "Alimentation détecteur (L · N) + retour en parallèle" : "Alimentation détecteur (L · N)";
   if (seg.type === "retour") return seg.phase ? (seg.neutre ? "Alimentation détecteur + retour" : "Phase + retour (lampe → commande)") : "Retour commande → lampe";
   return seg.avecRetour ? "Alimentation + retour (commandes en parallèle)" : "Alimentation";
 }

@@ -1161,7 +1161,9 @@ export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoin
   // Nombre de mécanismes indépendants qui traversent ce câble (va-et-vient / télérupteur DOUBLES : 2 voies). Absent = 1.
   voies?: number;
   // Liaison d'un circuit d'ÉCLAIRAGE : elle peut passer par le plafond (gaine sous plafond), donc au plus court — pas besoin de suivre les murs.
-  plafond?: boolean; }
+  plafond?: boolean;
+  // Câble relié à un détecteur de mouvement (alimentation L + N, ou sortie L' vers la lampe) : sert aux libellés du schéma.
+  detecteur?: boolean; }
 
 /**
  * Emplacement de la boîte de dérivation IMPLICITE d'un circuit d'éclairage (celle que le plan crée quand aucune boîte n'est posée) :
@@ -1256,6 +1258,7 @@ export function construireBranchesCircuitEclairage(
       if (seg.retourTraversant) ex.retourTraversant = true;
       if (seg.phase) ex.phase = true;
       if (seg.avecRetour) ex.avecRetour = true;
+      if (seg.detecteur) ex.detecteur = true;
     }
     if (meca && meca.length > 0) {
       const ens = mecanismes.get(cle) ?? new Set<string>();
@@ -1302,18 +1305,25 @@ export function construireBranchesCircuitEclairage(
       // Aucune commande « en série » : alimentation directe (lampe seule, ou commandée par télérupteur / domotique).
       poser({ aId: ancre.id, aPoint: ancre.point, bId: String(l.id), bPoint: pl });
     } else {
-      let precedent: { id: string; point: Point } = ancre;
-      let cPrec: AppareillagePlace | null = null;
-      chaine.forEach(c => {
-        const pc = { x: c.x, y: c.y };
-        if (cPrec === null) poser({ aId: precedent.id, aPoint: precedent.point, bId: String(c.id), bPoint: pc });
-        else if (estVV(cPrec) && estVV(c)) poser({ aId: precedent.id, aPoint: precedent.point, bId: String(c.id), bPoint: pc, type: "navette", neutre: true }, [`${meca(cPrec, l)}|${meca(c, l)}`]);
-        else poser({ aId: precedent.id, aPoint: precedent.point, bId: String(c.id), bPoint: pc, avecRetour: true });
-        precedent = { id: String(c.id), point: pc };
-        cPrec = c;
+      // Va-et-vient d'un côté, interrupteurs simples + détecteurs de l'autre : deux BRANCHES indépendantes depuis l'ancre, qui se
+      // rejoignent à la lampe (montage en parallèle : le détecteur reste alimenté en permanence, l'interrupteur force l'allumage).
+      // Mélanger un détecteur dans la chaîne de navettes d'un va-et-vient n'aurait aucun sens électrique.
+      const branches = [chaine.filter(estVV), chaine.filter(c => !estVV(c))].filter(b => b.length > 0);
+      branches.forEach(branche => {
+        let precedent: { id: string; point: Point } = ancre;
+        let cPrec: AppareillagePlace | null = null;
+        branche.forEach(c => {
+          const pc = { x: c.x, y: c.y };
+          const det = estDetecteur(c) || (cPrec !== null && estDetecteur(cPrec)) ? { detecteur: true } : {};
+          if (cPrec === null) poser({ aId: precedent.id, aPoint: precedent.point, bId: String(c.id), bPoint: pc, ...det });
+          else if (estVV(cPrec) && estVV(c)) poser({ aId: precedent.id, aPoint: precedent.point, bId: String(c.id), bPoint: pc, type: "navette", neutre: true }, [`${meca(cPrec, l)}|${meca(c, l)}`]);
+          else poser({ aId: precedent.id, aPoint: precedent.point, bId: String(c.id), bPoint: pc, avecRetour: true, ...det });
+          precedent = { id: String(c.id), point: pc };
+          cPrec = c;
+        });
+        // Retour : de la dernière commande de la branche vers la lampe (le neutre de la lampe traverse les boîtes des commandes).
+        poser({ aId: precedent.id, aPoint: precedent.point, bId: String(l.id), bPoint: pl, type: "retour", ...(cPrec !== null && estDetecteur(cPrec) ? { detecteur: true } : {}) });
       });
-      // Retour : de la dernière commande de la chaîne vers la lampe (le neutre de la lampe traverse les boîtes des commandes).
-      poser({ aId: precedent.id, aPoint: precedent.point, bId: String(l.id), bPoint: pl, type: "retour" });
     }
     // Commandes domotiques de cette lampe : liaison sans fil, tracée en onde depuis la lampe.
     commandes.filter(c => commandeCetteLumiere(c, l.id) && c.domotique).forEach(c => {

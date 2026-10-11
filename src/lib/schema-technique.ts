@@ -50,7 +50,15 @@ export function construireSchemaTechnique(e: EntreeSchema): SchemaTechnique {
         lignes.push(`Voie B → ${nomsLampes(a.commandePourIds2) || "—"}`);
       } else {
         const cibles = nomsLampes([...(a.commandePourIds ?? []), ...(a.commandePourIds2 ?? [])]);
-        if (cibles) lignes.push(`→ ${cibles}`);
+        if (a.type === "detecteur_mouvement" || a.type === "detecteur_mouvement_exterieur") {
+          lignes.push("L phase permanente · N neutre");
+          if (cibles) lignes.push(`Sortie L' → ${cibles}`);
+          // Autres commandes sur les mêmes lampes : montées en parallèle (l'interrupteur force l'allumage, le détecteur reste actif).
+          const mes = new Set([...(a.commandePourIds ?? []), ...(a.commandePourIds2 ?? [])]);
+          const autres = e.tous.filter(t => t.a.id !== a.id && estCommande(t.a.type) && !t.a.domotique
+            && [...(t.a.commandePourIds ?? []), ...(t.a.commandePourIds2 ?? [])].some(id => mes.has(id)));
+          if (autres.length > 0) lignes.push(`// ${autres.map(t => e.libelle(t.a)).join(", ")} (marche forcée)`);
+        } else if (cibles) lignes.push(`→ ${cibles}`);
       }
       noeuds[String(a.id)] = { titre: e.libelle(a), sous: [piece, a.domotique ? "domotique" : ""].filter(Boolean).join(" · "), lignes, genre: "commande" };
       return;
