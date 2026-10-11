@@ -9,7 +9,7 @@ import { qsProjet, supprimerProjet, viderDonneesHistoriques, listerProjets, cree
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { LayoutTemplate, ListChecks, FilePlus2, Pencil, Plus, Search, ChevronRight, X, Trash2 } from "lucide-react";
+import { LayoutTemplate, ListChecks, FilePlus2, Pencil, ChevronDown, Plus, Search, ChevronRight, X, Trash2 } from "lucide-react";
 
 interface Niveau { id: number; nom: string; type: string; pieces: { id: number }[]; }
 
@@ -153,6 +153,7 @@ export default function PlansPage() {
   const [aSupprimer, setASupprimer] = useState<PlanEntry | null>(null);
   const [suppEnCours, setSuppEnCours] = useState(false);
   const [nouveauPour, setNouveauPour] = useState<Client | null>(null);
+  const [clientsOuverts, setClientsOuverts] = useState<Set<string>>(new Set());
   const [aRenommer, setARenommer] = useState<PlanEntry | null>(null);
   const [nomSaisi, setNomSaisi] = useState("");
   const [renommageEnCours, setRenommageEnCours] = useState(false);
@@ -241,6 +242,17 @@ export default function PlansPage() {
     return requete.split(/\s+/).every(mot => texte.includes(mot));
   });
 
+  // Plans regroupés par client (ordre alphabétique des clients, plans dans l'ordre de création).
+  const groupes = (() => {
+    const m = new Map<string, PlanEntry[]>();
+    filtered.forEach(e => { const l = m.get(e.clientId); if (l) l.push(e); else m.set(e.clientId, [e]); });
+    return [...m.values()];
+  })();
+  const rechercheActive = requete.length > 0;
+  const estOuvert = (clientId: string) => rechercheActive || clientsOuverts.has(clientId);
+  const basculerClient = (clientId: string) => setClientsOuverts(prev => { const n = new Set(prev); if (n.has(clientId)) n.delete(clientId); else n.add(clientId); return n; });
+  const toutOuvert = groupes.length > 0 && groupes.every(g => clientsOuverts.has(g[0].clientId));
+
   return (
     <Shell>
       <div className="p-4 md:p-8 max-w-3xl mx-auto">
@@ -282,28 +294,57 @@ export default function PlansPage() {
             <p className="text-ink-400 text-sm">Aucun résultat pour "{search}"</p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {filtered.map(entry => {
-              const { client, niveaux, nbPieces, projetNom } = entry;
+          <>
+            <div className="flex justify-end mb-2">
+              <button type="button" className="text-xs font-semibold text-volt-700 hover:text-volt-800"
+                onClick={() => setClientsOuverts(toutOuvert ? new Set() : new Set(groupes.map(g => g[0].clientId)))}>
+                {toutOuvert ? "Tout fermer" : "Tout ouvrir"}
+              </button>
+            </div>
+            <div className="space-y-3">
+              {groupes.map(entrees => {
+                const client = entrees[0].client;
+                const ouvert = estOuvert(client.id);
+                const avancements = entrees.map(e => e.avancement).filter((a): a is Progression => !!a && a.total > 0);
+                const totalFait = avancements.reduce((t, a) => t + a.fait, 0);
+                const totalTotal = avancements.reduce((t, a) => t + a.total, 0);
+                const pct = totalTotal > 0 ? Math.round((totalFait / totalTotal) * 100) : 0;
+                return (
+                  <div key={client.id} className="card overflow-hidden">
+                    <button type="button" onClick={() => basculerClient(client.id)} aria-expanded={ouvert}
+                      className="w-full flex items-center gap-3 p-4 text-left">
+                      <div className="w-10 h-10 rounded-full bg-ink-900 flex items-center justify-center text-volt-400 font-semibold text-sm shrink-0">
+                        {(client.prenom ? client.prenom[0] : "") + (client.nom?.[0] ?? "")}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-ink-900 truncate">{client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</p>
+                        <p className="text-xs text-ink-400 truncate">
+                          {entrees.length} plan{entrees.length > 1 ? "s" : ""}{client.ville ? ` · ${client.ville}` : ""}
+                          {totalTotal > 0 ? ` · réalisation ${pct} %` : ""}
+                        </p>
+                      </div>
+                      {ouvert ? <ChevronDown size={18} className="shrink-0 text-ink-400" /> : <ChevronRight size={18} className="shrink-0 text-ink-400" />}
+                    </button>
+                    {ouvert && (
+                      <div className="px-4 pb-4 border-t border-ink-100 pt-3 space-y-2.5">
+                        {entrees.map(entry => {
+                          const { client, niveaux, nbPieces, projetNom } = entry;
               return (
-                <div key={entry.key} className="card card-inner hover:border-volt-300 transition-colors">
+                <div key={entry.key} className="rounded-xl border border-ink-200 bg-white p-3.5 hover:border-volt-300 transition-colors">
                   <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-full bg-ink-900 flex items-center justify-center text-volt-400 font-semibold text-sm shrink-0">
-                      {(client.prenom ? client.prenom[0] : "") + (client.nom?.[0] ?? "")}
-                    </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-ink-900">{client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</p>
-                      {projetNom && (
+                      {projetNom ? (
                         <button type="button" onClick={() => { setARenommer(entry); setNomSaisi(projetNom); }}
-                          className="inline-flex items-center gap-1 text-xs font-semibold text-volt-700 hover:text-volt-800 mt-0.5" title="Renommer ce plan / chantier">
-                          {projetNom} <Pencil size={11} />
+                          className="inline-flex items-center gap-1.5 font-semibold text-ink-900 hover:text-volt-700 text-left" title="Renommer ce plan / chantier">
+                          {projetNom} <Pencil size={12} className="text-ink-400" />
                         </button>
+                      ) : (
+                        <p className="font-semibold text-ink-900">Plan à reprendre (ouvre-le une fois pour pouvoir le nommer)</p>
                       )}
                       <p className="text-xs text-ink-400">
                         {niveaux.filter(n => n.type !== "annexe").length} niveau{niveaux.filter(n => n.type !== "annexe").length > 1 ? "x" : ""}
                         {niveaux.some(n => n.type === "annexe") ? ` + ${niveaux.filter(n => n.type === "annexe").length} annexe${niveaux.filter(n => n.type === "annexe").length > 1 ? "s" : ""}` : ""}
                         {" "}· {nbPieces} pièce{nbPieces > 1 ? "s" : ""}
-                        {client.ville ? ` · ${client.ville}` : ""}
                       </p>
                       {entry.avancement && entry.avancement.total > 0 && (() => {
                         const av = entry.avancement!;
@@ -329,25 +370,29 @@ export default function PlansPage() {
                         <Link href={`/plan/${entry.clientId}${qsProjet(entry.projetId)}`} className="btn-volt !py-1.5 !text-xs">
                           <LayoutTemplate size={12} /> Ouvrir
                         </Link>
-                        <button onClick={() => setNouveauPour(client)} className="btn-ghost !py-1.5 !text-xs" title="Créer un autre plan / chantier pour ce client">
-                          <FilePlus2 size={12} /> Nouveau plan
-                        </button>
                         <Link href={`/plan/${entry.clientId}/suivi${qsProjet(entry.projetId)}`} className="btn-ghost !py-1.5 !text-xs" title="Suivi de réalisation des circuits">
                           <ListChecks size={12} /> Suivi
                         </Link>
                         <button onClick={() => setASupprimer(entry)} className="btn-ghost !py-1.5 !text-xs text-red-500 ml-auto" title="Supprimer ce plan">
                           <Trash2 size={12} /> Supprimer
                         </button>
-                        <Link href={`/clients/${entry.clientId}`} className="btn-ghost !py-1.5 !text-xs">
-                          Fiche client <ChevronRight size={12} />
-                        </Link>
                       </div>
                     </div>
                   </div>
                 </div>
               );
-            })}
-          </div>
+                        })}
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <button onClick={() => setNouveauPour(client)} className="btn-ghost !py-1.5 !text-xs"><FilePlus2 size={12} /> Nouveau plan pour ce client</button>
+                          <Link href={`/clients/${client.id}`} className="btn-ghost !py-1.5 !text-xs">Fiche client <ChevronRight size={12} /></Link>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
         )}
       </div>
 
