@@ -1,0 +1,232 @@
+// src/lib/bornier-appareillage.ts
+//
+// BRANCHEMENTS D'UN APPAREIL, BORNE PAR BORNE. À partir des câbles qui arrivent (amont) et repartent (aval) d'un appareil dans le
+// schéma technique, détermine quel fil se raccorde sur quelle borne du mécanisme — et quels fils sont seulement reliés entre eux
+// dans la boîte (neutre, terre, retour qui traverse…). La composition de chaque câble vient de conducteursSegment() : le schéma
+// technique, le plan et ce bornier ne peuvent donc pas se contredire.
+//
+// Règles (câblage français, appareillage 2 fils de commande) :
+//  · interrupteur / bouton-poussoir : phase → COM ; retour → S (sortie). Neutre et terre ne touchent jamais le mécanisme.
+//  · va-et-vient : COM = phase (premier) ou retour (dernier) ; L1 / L2 = les deux navettes. Entre deux : permutateur (E1 E2 / S1 S2).
+//  · plaque double : deux mécanismes indépendants (voie A / voie B), chacun avec sa lampe.
+//  · détecteur : L = phase, N = neutre, S = sortie vers la lampe.
+//  · lampe (DCL) : L = retour (ou phase si alimentée directement), N, PE.
+import type { AppareillagePlace, SegmentCircuit } from "@/lib/maison-types";
+import { baseCommande, estCommande, estCommandeDouble, estLumiere } from "@/lib/maison-types";
+import { conducteursSegment, libelleLiaison, type RoleConducteur } from "@/lib/couleurs-fils";
+import type { NoeudSchema } from "@/lib/schema-technique";
+
+export interface Cond { role: RoleConducteur; libelle: string; voie?: 0 | 1; cable: string }
+export interface CableVue { cle: string; cote: "amont" | "aval"; autre: string; description: string; conducteurs: Cond[] }
+export interface Borne { id: string; libelle: string; aide?: string }
+export interface Mecanisme { id: string; titre: string; bornes: Borne[] }
+export interface Raccord { mecanisme: string; borne: string; conducteur: Cond }
+export interface Epissure { titre: string; aide: string; conducteurs: Cond[] }
+export interface VueAppareil {
+  id: string; titre: string; sous?: string; genre: NoeudSchema["genre"];
+  cables: CableVue[]; mecanismes: Mecanisme[]; raccords: Raccord[]; epissures: Epissure[]; notes: string[];
+}
+
+export interface EntreeBornier {
+  id: string;
+  segments: SegmentCircuit[];
+  noeuds: Record<string, NoeudSchema>;
+  appareil: (id: string) => AppareillagePlace | undefined;
+  section: string;
+  /** Voie (A=0 / B=1) de la commande qui alimente le circuit étranger représenté par un repère « ext-aval-… » (clé « aId->bId »). */
+  voieExterne?: Record<string, 0 | 1>;
+}
+
+const LETTRES = ["A", "B"] as const;
+const fmt = (s: string) => s.replace(".", ",");
+const lampesVoie = (a: AppareillagePlace, v: 0 | 1) => (v === 0 ? a.commandePourIds : a.commandePourIds2) ?? [];
+const toutesLampes = (a: AppareillagePlace) => [...(a.commandePourIds ?? []), ...(a.commandePourIds2 ?? [])];
+
+export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
+  const noeud = e.noeuds[e.id];
+  if (!noeud || noeud.genre === "externe") return null;
+  const app = e.appareil(e.id);
+  const double = !!app && estCommandeDouble(app.type);
+  const cle = (s: SegmentCircuit) => `${s.aId}->${s.bId}`;
+  const nomNoeud = (id: string) => { const n = e.noeuds[id]; return n ? [n.titre, n.sous].filter(Boolean).join(" · ") : id; };
+
+  // ── Câbles qui touchent l'appareil ───────────────────────────────────────────────────────────────
+  const voieDuCable = (s: SegmentCircuit, cote: "amont" | "aval"): 0 | 1 | undefined => {
+    if (!double || !app) return undefined;
+    const autreId = cote === "amont" ? s.aId : s.bId;
+    if (s.type === "retour") {
+      const lampe = e.appareil(autreId);
+      if (lampe) return lampesVoie(app, 0).includes(lampe.id) ? 0 : lampesVoie(app, 1).includes(lampe.id) ? 1 : undefined;
+      return e.voieExterne?.[cle(s)];
+    }
+    const autre = e.appareil(autreId);
+    if (autre) {
+      const l = toutesLampes(autre);
+      return lampesVoie(app, 0).some(x => l.includes(x)) ? 0 : lampesVoie(app, 1).some(x => l.includes(x)) ? 1 : undefined;
+    }
+    return 0;
+  };
+  const sansFil = e.segments.filter(s => (s.aId === e.id || s.bId === e.id) && s.type === "domotique");
+  const cables: CableVue[] = e.segments.filter(s => (s.aId === e.id || s.bId === e.id) && s.type !== "domotique" && !s.aId.startsWith("ext-amont")).map(s => {
+    const cote = s.bId === e.id ? "amont" : "aval";
+    const k = cle(s);
+    const v1 = voieDuCable(s, cote);
+    const conducteurs: Cond[] = conducteursSegment(s).map(c => {
+      const m = c.libelle.match(/voie ([AB])/);
+      const voie = m ? (m[1] === "A" ? 0 : 1) : (c.role === "navette" || c.role === "retour") ? v1 : undefined;
+      return { role: c.role, libelle: c.libelle, ...(voie !== undefined ? { voie: voie as 0 | 1 } : {}), cable: k };
+    });
+    const sect = s.type || s.avecRetour ? "1.5" : e.section;
+    return { cle: k, cote, autre: nomNoeud(cote === "amont" ? s.aId : s.bId), description: `${conducteurs.length}G${fmt(sect)} · ${libelleLiaison(s)}`, conducteurs };
+  });
+  // Câbles qui arrivent de l'AMONT d'abord.
+  cables.sort((a, b) => (a.cote === b.cote ? 0 : a.cote === "amont" ? -1 : 1));
+  const segDe = new Map(e.segments.map(s => [cle(s), s] as const));
+  const tous = cables.flatMap(c => c.conducteurs);
+  const role = (r: RoleConducteur, f: (c: Cond) => boolean = () => true) => tous.filter(c => c.role === r && f(c));
+  const ofVoie = (v: 0 | 1 | undefined) => (c: Cond) => c.voie === undefined || v === undefined || c.voie === v;
+  const raccords: Raccord[] = [];
+  const epissures: Epissure[] = [];
+  const notes: string[] = [];
+  const mecanismes: Mecanisme[] = [];
+  const lier = (mecanisme: string, borne: string, cs: Cond[]) => cs.forEach(c => raccords.push({ mecanisme, borne, conducteur: c }));
+  const episser = (titre: string, aide: string, cs: Cond[]) => { if (cs.length > 0) epissures.push({ titre, aide, conducteurs: cs }); };
+  const TERRE_NEUTRE_BOITE = "Reliés entre eux dans la boîte d'encastrement (domino / Wago) — ne se raccordent jamais au mécanisme.";
+
+  const vue = (genre: NoeudSchema["genre"]): VueAppareil => ({ id: e.id, titre: noeud.titre, sous: noeud.sous, genre, cables, mecanismes, raccords, epissures, notes });
+
+  // ── Tableau ──────────────────────────────────────────────────────────────────────────────────────
+  if (noeud.genre === "tableau") {
+    mecanismes.push({ id: "t", titre: "Départ du circuit", bornes: [
+      { id: "DJ", libelle: "Disjoncteur", aide: "sortie phase" }, { id: "N", libelle: "Barrette neutre" }, { id: "PE", libelle: "Barrette de terre" }] });
+    lier("t", "DJ", role("phase")); lier("t", "N", role("neutre")); lier("t", "PE", role("terre"));
+    notes.push("Phase sur la borne de sortie du disjoncteur du circuit (après le différentiel), neutre sur la barrette neutre, terre sur la barrette de terre — un fil par borne, serrage au couple.");
+    return vue("tableau");
+  }
+  // ── Boîte de dérivation ──────────────────────────────────────────────────────────────────────────
+  if (noeud.genre === "boite") {
+    episser("Phase", "Tous les fils de phase reliés ensemble (domino).", role("phase"));
+    episser("Neutre", "Tous les neutres reliés ensemble (domino).", role("neutre"));
+    episser("Terre", "Toutes les terres reliées ensemble (domino).", role("terre"));
+    notes.push("Aucun mécanisme : uniquement des dominos. Chaque départ vers une lampe ou une commande reprend phase + neutre + terre.");
+    return vue("boite");
+  }
+  if (!app) {
+    episser("Fils", "Raccordements de ce point.", tous);
+    return vue(noeud.genre);
+  }
+
+  // ── Lampe (boîte DCL) ────────────────────────────────────────────────────────────────────────────
+  if (estLumiere(app.type)) {
+    mecanismes.push({ id: "l", titre: "Luminaire (boîte DCL)", bornes: [{ id: "L", libelle: "L", aide: "phase du luminaire" }, { id: "N", libelle: "N" }, { id: "PE", libelle: "PE" }] });
+    const retours = role("retour");
+    // Le luminaire reçoit le RETOUR (phase commutée) s'il est commandé, sinon la phase du circuit.
+    if (retours.length > 0) {
+      lier("l", "L", retours);
+      const phases = role("phase");
+      if (phases.length > 0) episser("Phase permanente (traverse)", "Phase d'alimentation qui repart vers la commande : reliée aux autres phases, PAS sur le luminaire.", phases);
+      notes.push("Le luminaire est commandé : sa borne L reçoit le fil de RETOUR (violet), jamais la phase permanente.");
+    } else lier("l", "L", role("phase"));
+    lier("l", "N", role("neutre")); lier("l", "PE", role("terre"));
+    if (role("neutre").length > 1) notes.push("Le neutre continue vers d'autres appareils : relier les neutres entre eux au domino avec celui du luminaire.");
+    if (sansFil.length > 0) notes.push("Une commande domotique (sans fil) agit sur ce luminaire : aucun fil de retour ni de navette.");
+    return vue("lampe");
+  }
+
+  if (!estCommande(app.type)) {
+    // Prise ou autre point de dérivation en parallèle : phase, neutre, terre sur les mêmes bornes quel que soit le câble.
+    mecanismes.push({ id: "a", titre: "Appareil", bornes: [{ id: "L", libelle: "L" }, { id: "N", libelle: "N" }, { id: "PE", libelle: "PE" }] });
+    lier("a", "L", role("phase")); lier("a", "N", role("neutre")); lier("a", "PE", role("terre"));
+    notes.push("Dérivation en parallèle : le câble d'arrivée et le câble de départ se raccordent sur les MÊMES bornes.");
+    return vue("autre");
+  }
+
+  // ── Commandes ────────────────────────────────────────────────────────────────────────────────────
+  const base = baseCommande(app.type);
+  const voies: (0 | 1 | undefined)[] = double ? [0, 1] : [undefined];
+  const titreVoie = (v: 0 | 1 | undefined, t: string) => (v === undefined ? t : `${t} — voie ${LETTRES[v]}`);
+  const idM = (v: 0 | 1 | undefined) => (v === undefined ? "m" : `m${v}`);
+
+  if (app.domotique && cables.length === 0) {
+    notes.push("Commande domotique (radio / Wi-Fi) : aucun fil de retour ni de navette. Alimentation du module (phase + neutre) selon la notice du fabricant.");
+    return vue("commande");
+  }
+
+  if (base === "va_et_vient") {
+    voies.forEach(v => {
+      const conc = ofVoie(v);
+      const navAmont = cables.filter(c => c.cote === "amont" && c.conducteurs.some(x => x.role === "navette" && conc(x)));
+      const navAval = cables.filter(c => c.cote === "aval" && c.conducteurs.some(x => x.role === "navette" && conc(x)));
+      const nav = (cs: CableVue[], n: 1 | 2) => cs.flatMap(c => c.conducteurs.filter(x => x.role === "navette" && conc(x) && x.libelle.startsWith(`Navette ${n}`)));
+      const retours = role("retour", conc);
+      const phases = role("phase");
+      if (navAmont.length > 0 && navAval.length > 0) {
+        mecanismes.push({ id: idM(v), titre: titreVoie(v, "Permutateur"), bornes: [
+          { id: "E1", libelle: "E1", aide: "entrée navette 1" }, { id: "E2", libelle: "E2", aide: "entrée navette 2" },
+          { id: "S1", libelle: "S1", aide: "sortie navette 1" }, { id: "S2", libelle: "S2", aide: "sortie navette 2" }] });
+        lier(idM(v), "E1", nav(navAmont, 1)); lier(idM(v), "E2", nav(navAmont, 2));
+        lier(idM(v), "S1", nav(navAval, 1)); lier(idM(v), "S2", nav(navAval, 2));
+        episser(titreVoie(v, "Retour (traverse)"), "Le fil de retour passe dans cette boîte sans se raccorder : relier les deux bouts entre eux.", retours);
+      } else {
+        const com = { id: "COM", libelle: "COM", aide: "borne commune" };
+        mecanismes.push({ id: idM(v), titre: titreVoie(v, "Va-et-vient"), bornes: [com, { id: "L1", libelle: "L1" }, { id: "L2", libelle: "L2" }] });
+        if (navAval.length > 0) {                   // PREMIER (côté alimentation) : navettes vers l'aval
+          lier(idM(v), "L1", nav(navAval, 1)); lier(idM(v), "L2", nav(navAval, 2));
+          lier(idM(v), "COM", phases);
+          if (retours.length > 1) episser(titreVoie(v, "Retour (traverse)"), "Le fil de retour de la lampe passe par cette boîte vers le dernier va-et-vient : relier les deux bouts entre eux, hors mécanisme.", retours);
+        } else if (navAmont.length > 0) {           // DERNIER (côté lampe) : navettes de l'amont, COM = retour
+          lier(idM(v), "L1", nav(navAmont, 1)); lier(idM(v), "L2", nav(navAmont, 2));
+          lier(idM(v), "COM", retours);
+        } else {                                    // seul : phase sur COM, retour sur L1
+          lier(idM(v), "COM", phases); lier(idM(v), "L1", retours);
+          notes.push(`${titreVoie(v, "Va-et-vient")} sans autre commande dans le circuit : câblé en simple allumage (phase sur COM, retour sur L1, L2 inutilisée). Il manque l'autre va-et-vient.`);
+        }
+      }
+    });
+    if (double) notes.push("Plaque double : deux mécanismes INDÉPENDANTS (voie A et voie B), chacun commande sa lampe. Ne pas croiser les fils d'une voie sur l'autre.");
+    if (role("phase").length > 0 && double && voies.every(v => raccords.some(r => r.mecanisme === idM(v) && r.borne === "COM" && r.conducteur.role === "phase"))) {
+      notes.push("La même phase alimente les deux COM : les relier par le pont (peigne) fourni, puis un seul fil de phase.");
+    }
+    episser("Neutre", TERRE_NEUTRE_BOITE, role("neutre"));
+    episser("Terre", TERRE_NEUTRE_BOITE, role("terre"));
+    return vue("commande");
+  }
+
+  if (base === "telerupteur") {
+    voies.forEach(v => {
+      const conc = ofVoie(v);
+      mecanismes.push({ id: idM(v), titre: titreVoie(v, "Bouton-poussoir"), bornes: [{ id: "COM", libelle: "COM", aide: "phase" }, { id: "S", libelle: "S", aide: "retour vers A1" }] });
+      lier(idM(v), "COM", role("phase"));
+      lier(idM(v), "S", role("retour", conc));
+    });
+    notes.push("Bouton-poussoir (jamais un interrupteur à accrochage) : COM = phase, S = fil de retour qui rejoint la borne A1 du télérupteur au tableau. Les boutons sont en PARALLÈLE : le câble d'arrivée et celui de départ se raccordent sur les mêmes bornes.");
+    if (double) notes.push("Plaque double : chaque bouton a son propre retour vers SON télérupteur (voie A → télérupteur A, voie B → télérupteur B).");
+    notes.push("Bouton lumineux : prévoir en plus le neutre (borne N du bouton) — le neutre est présent dans la boîte.");
+    episser("Terre", TERRE_NEUTRE_BOITE, role("terre"));
+    return vue("commande");
+  }
+
+  // interrupteur simple / double / détecteur
+  const detecteur = app.type === "detecteur_mouvement" || app.type === "detecteur_mouvement_exterieur";
+  if (detecteur) {
+    mecanismes.push({ id: "m", titre: "Détecteur de mouvement", bornes: [{ id: "L", libelle: "L", aide: "phase" }, { id: "N", libelle: "N", aide: "neutre" }, { id: "S", libelle: "S", aide: "sortie vers la lampe" }] });
+    lier("m", "L", role("phase")); lier("m", "N", role("neutre")); lier("m", "S", role("retour"));
+    notes.push("Le détecteur est alimenté en permanence (L + N) et commute lui-même la sortie S vers la lampe : le neutre se raccorde donc AUSSI sur le détecteur.");
+    episser("Terre", TERRE_NEUTRE_BOITE, role("terre"));
+    return vue("commande");
+  }
+  const mecas = double ? ([0, 1] as const) : ([undefined] as const);
+  if (double) {
+    mecanismes.push({ id: "m", titre: "Double interrupteur", bornes: [{ id: "COM", libelle: "COM", aide: "communs reliés par le pont" }, { id: "SA", libelle: "S voie A" }, { id: "SB", libelle: "S voie B" }] });
+    lier("m", "COM", role("phase"));
+    mecas.forEach(v => lier("m", v === 0 ? "SA" : "SB", role("retour", ofVoie(v))));
+    notes.push("Double interrupteur : les deux COM sont reliés par le pont fourni (une seule phase), et chaque sortie S part vers SA lampe (voie A / voie B).");
+  } else {
+    mecanismes.push({ id: "m", titre: "Interrupteur", bornes: [{ id: "COM", libelle: "COM", aide: "phase" }, { id: "S", libelle: "S", aide: "retour" }] });
+    lier("m", "COM", role("phase")); lier("m", "S", role("retour"));
+    if (cables.filter(c => c.cote === "aval" && c.conducteurs.some(x => x.role === "retour")).length > 1) notes.push("Plusieurs lampes commandées : tous les retours partent de la MÊME borne S.");
+  }
+  episser("Neutre", TERRE_NEUTRE_BOITE, role("neutre"));
+  episser("Terre", TERRE_NEUTRE_BOITE, role("terre"));
+  return vue("commande");
+}

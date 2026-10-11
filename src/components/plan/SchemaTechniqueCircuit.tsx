@@ -4,11 +4,13 @@
 // SCHÉMA TECHNIQUE d'un circuit : du tableau jusqu'à chaque appareillage, sous forme de schéma (pas de plan), avec UN trait par
 // conducteur aux couleurs normalisées (lib/couleurs-fils.ts) : phase rouge, neutre bleu, terre vert/jaune, retour violet, navette orange.
 // La composition de chaque câble vient de conducteursSegment() — la même source que le plan, la 3D, le pré-devis et le suivi.
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { X, Printer, Download, AlertTriangle } from "lucide-react";
 import type { SegmentCircuit } from "@/lib/maison-types";
 import { COULEUR_FIL, LEGENDE_FILS, conducteursSegment, couleurConducteur, libelleLiaison } from "@/lib/couleurs-fils";
 import type { GenreNoeud, NoeudSchema } from "@/lib/schema-technique";
+import type { VueAppareil } from "@/lib/bornier-appareillage";
+import VueAppareilBranchement from "@/components/plan/VueAppareilBranchement";
 
 interface Props {
   titre: string;
@@ -21,6 +23,8 @@ interface Props {
   avertissements?: string[];
   /** Longueur réelle par clé « aId->bId » (m), si connue. */
   longueurs?: Record<string, number>;
+  /** Vue détaillée (bornes) d'un appareil du schéma — un clic sur l'appareil l'ouvre. */
+  vueAppareil?: (id: string) => VueAppareil | null;
   onClose: () => void;
 }
 
@@ -116,7 +120,9 @@ function Symbole({ genre, x, y, h, couleur }: { genre: GenreNoeud; x: number; y:
   return <rect x={x} y={y} width={LARG} height={h} rx={6} fill="#fff" stroke={couleur} strokeWidth={2.4} />;
 }
 
-export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descriptionTableau, section, segments, noeuds, avertissements = [], longueurs, onClose }: Props) {
+export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descriptionTableau, section, segments, noeuds, avertissements = [], longueurs, vueAppareil, onClose }: Props) {
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const detail = detailId && vueAppareil ? vueAppareil(detailId) : null;
   const svgRef = useRef<SVGSVGElement>(null);
   const { pos, largeur, hauteur } = useMemo(() => disposer(segments, noeuds), [segments, noeuds]);
   const H_LEGENDE = 70;
@@ -183,7 +189,9 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
     const textes = [{ t: n.titre, gras: true }, ...(n.sous ? [{ t: n.sous, gras: false }] : []), ...(n.lignes ?? []).map(t => ({ t, gras: false }))];
     const y0 = p.y + p.h / 2 - ((textes.length - 1) * 12) / 2 + 3;
     return (
-      <g key={`n-${p.id}`}>
+      <g key={`n-${p.id}`} style={n.genre !== "externe" && vueAppareil ? { cursor: "pointer" } : undefined}
+        onClick={n.genre !== "externe" && vueAppareil ? () => setDetailId(p.id) : undefined}>
+        <title>{n.genre !== "externe" && vueAppareil ? "Cliquer pour voir les branchements borne par borne" : n.titre}</title>
         <Symbole genre={n.genre} x={p.x} y={p.y} h={p.h} couleur={couleurCircuit} />
         {textes.map((tt, i) => (
           <text key={i} x={tx} y={y0 + i * 12} fontSize={i === 0 ? 10.5 : 9} fontWeight={tt.gras ? 700 : 400}
@@ -208,6 +216,8 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
   };
 
   return (
+    <>
+    {detail && <VueAppareilBranchement vue={detail} onClose={() => setDetailId(null)} />}
     <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-3" onClick={onClose}>
       <div className="card card-inner !p-0 w-full max-w-[96vw] max-h-[94vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-ink-100">
@@ -245,12 +255,13 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
                     <text x={32} y={3.5} fontSize={10} fill="#44403c">{f.libelle}</text>
                   </g>
                 ))}
-                <text x={0} y={46} fontSize={9} fill="#78716c">Un trait par conducteur · pastille = point de raccordement · contour = couleur du circuit · cadre violet pointillé = autre circuit (nom seul) · voie A / B = les deux mécanismes d'une commande double</text>
+                <text x={0} y={46} fontSize={9} fill="#78716c">Un trait par conducteur · pastille = point de raccordement · contour = couleur du circuit · clic sur un appareil = branchements borne par borne · cadre violet pointillé = autre circuit (nom seul) · voie A / B = les deux mécanismes d'une commande double</text>
               </g>
             </svg>
           )}
         </div>
       </div>
     </div>
+    </>
   );
 }

@@ -22,7 +22,7 @@ export interface EntreeSchema {
   nomCircuit: (circuitId: number | undefined) => string;
 }
 
-export interface SchemaTechnique { noeuds: Record<string, NoeudSchema>; segments: SegmentCircuit[]; avertissements: string[] }
+export interface SchemaTechnique { noeuds: Record<string, NoeudSchema>; segments: SegmentCircuit[]; avertissements: string[]; voieExterne: Record<string, 0 | 1> }
 
 const ORIGINE: Point = { x: 0, y: 0 };
 const LETTRES = ["A", "B"];
@@ -36,6 +36,7 @@ export function construireSchemaTechnique(e: EntreeSchema): SchemaTechnique {
   e.boites.forEach(b => { noeuds[`boite-${b.id}`] = { titre: b.nom || "Boîte de dérivation", genre: "boite" }; });
   const segments = e.segments.map(sg => ({ ...sg }));
   const avertissements: string[] = [];
+  const voieExterne: Record<string, 0 | 1> = {};
   const nomsLampes = (ids: number[] | undefined) => (ids ?? []).map(id => parId.get(id)).filter((t): t is AppareilNiveau => !!t)
     .map(t => t.piece).filter((v, i, tab) => tab.indexOf(v) === i).join(" + ");
 
@@ -94,6 +95,7 @@ export function construireSchemaTechnique(e: EntreeSchema): SchemaTechnique {
       if (sortants.has(lien)) return;
       sortants.add(lien);
       segments.push({ aId: String(c.id), aPoint: ORIGINE, bId: cle, bPoint: ORIGINE, type: "retour" });
+      voieExterne[lien] = c.commandePourIds?.includes(lampeId) ? 0 : 1;
     });
   });
 
@@ -114,5 +116,5 @@ export function construireSchemaTechnique(e: EntreeSchema): SchemaTechnique {
     });
   });
 
-  return { noeuds, segments, avertissements };
+  return { noeuds, segments, avertissements, voieExterne };
 }

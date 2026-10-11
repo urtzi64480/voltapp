@@ -11,6 +11,7 @@ import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import SchemaTechniqueCircuit from "@/components/plan/SchemaTechniqueCircuit";
 import { construireSchemaTechnique } from "@/lib/schema-technique";
+import { construireVueAppareil } from "@/lib/bornier-appareillage";
 import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, Hand, X,
@@ -8317,6 +8318,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 <SchemaTechniqueCircuit titre={nomAffiche(b)} couleurCircuit={colorMap.get(b.id) ?? "#666666"}
                   descriptionTableau={`Disjoncteur ${b.amperes} A · câble ${fmtSectionTxt(section)} mm² · ${points.length} appareillage${points.length > 1 ? "s" : ""}`}
                   section={section} segments={schema.segments} noeuds={schema.noeuds} avertissements={schema.avertissements}
+                  vueAppareil={id => construireVueAppareil({ id, segments: schema.segments, noeuds: schema.noeuds, section, voieExterne: schema.voieExterne,
+                    appareil: i => tous.find(t => String(t.a.id) === String(i))?.a })}
                   longueurs={longueurs} onClose={() => setSchemaCircuitId(null)} />
               );
             })()}
