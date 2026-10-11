@@ -460,12 +460,27 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           if (mode === "circuit") ajouter(`boite_derivation@c${niveau.id}:${b.id}`, "boite_derivation", "Boîte de dérivation", nomCircuit(b), nbBoites, "u");
           else ajouter(`boite_derivation@${niveau.id}`, "boite_derivation", "Boîte de dérivation",
             pseudoCommun(niveau.nom || niveau.type), nbBoites, "u");
-          // Toute dérivation (un câble qui se sépare en plusieurs) se fait dans une boîte, sur dominos / bornes à levier : un pour la phase,
-          // un pour le neutre, un pour la terre, dans chaque boîte.
-          noterCircuit(niveau, b, nomCircuit(b), "domino_derivation", "Dominos de dérivation (phase, neutre, terre)", nbBoites * 3, "u");
-          if (mode === "circuit") ajouter(`domino_derivation@c${niveau.id}:${b.id}`, "domino_derivation", "Dominos de dérivation (phase, neutre, terre)", nomCircuit(b), nbBoites * 3, "u");
-          else ajouter(`domino_derivation@${niveau.id}`, "domino_derivation", "Dominos de dérivation (phase, neutre, terre)",
-            pseudoCommun(niveau.nom || niveau.type), nbBoites * 3, "u");
+          // Toute dérivation (un câble qui se sépare en plusieurs) se fait dans une boîte, sur bornes à levier WAGO 221 : une pour la phase, une pour
+          // le neutre, une pour la terre, dans chaque boîte — de 2, 3 ou 5 entrées selon le nombre de câbles qui arrivent dans la boîte
+          // (221-412 / 221-413 / 221-415 ; au-delà de 5 câbles, on chaîne des 221-415).
+          const segsBoites = segmentsPourCircuit(b, points, niveau, origineCalcul);
+          const idsBoites = [
+            ...boitesExistantes.map(x => `boite-${x.id}`),
+            ...(nbEtoile === 0 && lumieres.length > 1 ? ["boite"] : []),
+          ];
+          const wagos: Record<"2" | "3" | "5", number> = { "2": 0, "3": 0, "5": 0 };
+          idsBoites.forEach(idB => {
+            const k = Math.max(2, segsBoites.filter(sg => sg.aId === idB || sg.bId === idB).length);
+            if (k <= 2) wagos["2"] += 3; else if (k === 3) wagos["3"] += 3; else wagos["5"] += 3 * Math.ceil((k - 1) / 4);
+          });
+          const LIB_WAGO = { "2": "Borne WAGO 221-412 (2 conducteurs)", "3": "Borne WAGO 221-413 (3 conducteurs)", "5": "Borne WAGO 221-415 (5 conducteurs)" } as const;
+          (["2", "3", "5"] as const).forEach(t => {
+            if (wagos[t] <= 0) return;
+            const code = `wago_221_${t}`;
+            noterCircuit(niveau, b, nomCircuit(b), code, LIB_WAGO[t], wagos[t], "u");
+            if (mode === "circuit") ajouter(`${code}@c${niveau.id}:${b.id}`, code, LIB_WAGO[t], nomCircuit(b), wagos[t], "u");
+            else ajouter(`${code}@${niveau.id}`, code, LIB_WAGO[t], pseudoCommun(niveau.nom || niveau.type), wagos[t], "u");
+          });
         }
       }
 

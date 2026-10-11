@@ -76,7 +76,7 @@ export default function VueAppareilBranchement({ vue, onClose }: { vue: VueAppar
       const h = Math.max(g.length, d.length, 1) * 14 + 26;
       const cy = y + h / 2;
       els.push(<rect key={`ep-r${k}`} x={XC - 62} y={cy - 15} width={124} height={30} rx={8} fill="#f5f5f4" stroke="#44403c" strokeWidth={1.6} strokeDasharray="5 3" />);
-      els.push(<text key={`ep-n${k}`} x={XC} y={cy + 4} fontSize={10.5} fontWeight={700} textAnchor="middle" fill="#1c1917">{`domino · ${ep.titre}`.slice(0, 24)}</text>);
+      els.push(<text key={`ep-n${k}`} x={XC} y={cy + 4} fontSize={10.5} fontWeight={700} textAnchor="middle" fill="#1c1917">{`Wago · ${ep.titre}`.slice(0, 24)}</text>);
       const trace = (liste: Cond[], gauche: boolean, kk: string) => liste.forEach((c, i) => {
         const yi = cy + (i - (liste.length - 1) / 2) * 14;
         const x0 = gauche ? X_G + 168 : W - X_G - 168;

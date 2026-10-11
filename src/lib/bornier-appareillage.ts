@@ -93,7 +93,7 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
   const mecanismes: Mecanisme[] = [];
   const lier = (mecanisme: string, borne: string, cs: Cond[]) => cs.forEach(c => raccords.push({ mecanisme, borne, conducteur: c }));
   const episser = (titre: string, aide: string, cs: Cond[]) => { if (cs.length > 0) epissures.push({ titre, aide, conducteurs: cs }); };
-  const TERRE_NEUTRE_BOITE = "Reliés entre eux dans la boîte d'encastrement (domino / Wago) — ne se raccordent jamais au mécanisme.";
+  const TERRE_NEUTRE_BOITE = "Reliés entre eux dans la boîte d'encastrement (borne à levier Wago 221) — ne se raccordent jamais au mécanisme.";
 
   const vue = (genre: NoeudSchema["genre"]): VueAppareil => ({ id: e.id, titre: noeud.titre, sous: noeud.sous, genre, cables, mecanismes, raccords, epissures, notes });
 
@@ -107,10 +107,10 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
   }
   // ── Boîte de dérivation ──────────────────────────────────────────────────────────────────────────
   if (noeud.genre === "boite") {
-    episser("Phase", "Tous les fils de phase reliés ensemble (domino).", role("phase"));
-    episser("Neutre", "Tous les neutres reliés ensemble (domino).", role("neutre"));
-    episser("Terre", "Toutes les terres reliées ensemble (domino).", role("terre"));
-    notes.push("Aucun mécanisme : uniquement des dominos. Chaque départ vers une lampe ou une commande reprend phase + neutre + terre.");
+    episser("Phase", "Tous les fils de phase reliés ensemble (Wago 221).", role("phase"));
+    episser("Neutre", "Tous les neutres reliés ensemble (Wago 221).", role("neutre"));
+    episser("Terre", "Toutes les terres reliées ensemble (Wago 221).", role("terre"));
+    notes.push("Aucun mécanisme : uniquement des bornes à levier Wago 221 (une pour la phase, une pour le neutre, une pour la terre). Chaque départ vers une lampe ou une commande reprend phase + neutre + terre.");
     return vue("boite");
   }
   if (!app) {
@@ -130,16 +130,41 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
       notes.push("Le luminaire est commandé : sa borne L reçoit le fil de RETOUR (violet), jamais la phase permanente.");
     } else lier("l", "L", role("phase"));
     lier("l", "N", role("neutre")); lier("l", "PE", role("terre"));
-    if (role("neutre").length > 1) notes.push("Le neutre continue vers d'autres appareils : relier les neutres entre eux au domino avec celui du luminaire.");
+    if (role("neutre").length > 1) notes.push("Le neutre continue vers d'autres appareils : relier les neutres entre eux dans la Wago avec celui du luminaire.");
     if (sansFil.length > 0) notes.push("Une commande domotique (sans fil) agit sur ce luminaire : aucun fil de retour ni de navette.");
     return vue("lampe");
   }
 
   if (!estCommande(app.type)) {
-    // Prise ou autre point de dérivation en parallèle : phase, neutre, terre sur les mêmes bornes quel que soit le câble.
-    mecanismes.push({ id: "a", titre: "Appareil", bornes: [{ id: "L", libelle: "L" }, { id: "N", libelle: "N" }, { id: "PE", libelle: "PE" }] });
+    const t = app.type;
+    // Prise RJ45 : 8 fils d'un câble cat.6 sur le connecteur, ordre T568B (norme TIA/EIA-568-B) — repères exacts sur le connecteur (voir sa notice).
+    if (t === "rj45") {
+      const fils = ["blanc-orange", "orange", "blanc-vert", "bleu", "blanc-bleu", "vert", "blanc-marron", "marron"];
+      mecanismes.push({ id: "r", titre: "Prise RJ45 (T568B)", bornes: fils.map((c, i) => ({ id: `p${i + 1}`, libelle: String(i + 1), aide: c })) });
+      notes.push("Câble de communication (pas de phase / neutre / terre) : les 8 fils vont sur les 8 contacts du connecteur dans l'ordre T568B ci-contre. Même ordre aux DEUX extrémités du câble.");
+      return vue("autre");
+    }
+    // Prise TV : câble coaxial, pas de fils de puissance.
+    if (t === "prise_tv") {
+      mecanismes.push({ id: "tv", titre: "Prise TV (coaxial)", bornes: [{ id: "ame", libelle: "Âme", aide: "fil central" }, { id: "tresse", libelle: "Tresse", aide: "blindage, sous le collier" }] });
+      notes.push("Coaxial : l'âme centrale sur la borne centrale, la tresse (blindage) serrée sous le collier de masse — ne jamais les mettre en contact.");
+      return vue("autre");
+    }
+    // Moteur de volet roulant : alimenté PAR l'interrupteur de volet (3 positions ou poussoir double : 3 bornes sans vis, d'après les fiches Odace S520207 / S520208).
+    if (t === "volet_roulant") {
+      mecanismes.push({ id: "v", titre: "Moteur de volet roulant", bornes: [{ id: "L", libelle: "Montée / descente", aide: "phases venant de l'interrupteur de volet" }, { id: "N", libelle: "N" }, { id: "PE", libelle: "PE" }] });
+      lier("v", "L", role("phase")); lier("v", "N", role("neutre")); lier("v", "PE", role("terre"));
+      notes.push("Le moteur a deux phases (montée et descente) qui passent par l'interrupteur de volet roulant (commun + montée + descente) ; neutre et terre vont directement au moteur. Repères des fils : voir la notice du moteur.");
+      return vue("autre");
+    }
+    const estPrise = t === "prise" || t === "prise_commandee" || t === "prise_dediee" || t === "prise_exterieure";
+    mecanismes.push({
+      id: "a", titre: estPrise ? "Prise 2P+T" : "Raccordement de l'appareil",
+      bornes: [{ id: "L", libelle: "L", aide: estPrise ? "phase" : undefined }, { id: "N", libelle: "N", aide: estPrise ? "neutre" : undefined }, { id: "PE", libelle: "PE", aide: "terre" }],
+    });
     lier("a", "L", role("phase")); lier("a", "N", role("neutre")); lier("a", "PE", role("terre"));
-    notes.push("Dérivation en parallèle : le câble d'arrivée et le câble de départ se raccordent sur les MÊMES bornes.");
+    if (estPrise) notes.push("Prise 2P+T (ex. Odace) : 2 connexions rapides PAR PÔLE — le câble d'arrivée et celui de départ se raccordent chacun sur la borne L, sur la borne N, et la terre au contact de terre de la prise. Pas de pontage nécessaire.");
+    else notes.push("Appareil à alimentation directe : phase, neutre et terre sur son bornier (repères L / N / ⏚ de l'appareil, voir sa notice) ; sortie de câble ou prise spécialisée selon l'appareil.");
     return vue("autre");
   }
 

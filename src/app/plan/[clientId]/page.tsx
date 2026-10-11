@@ -8499,31 +8499,40 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                           className="btn-ghost !p-0.5 shrink-0 !text-red-500" title="Supprimer ce circuit">
                           <Trash2 size={12} />
                         </button>
-                        <div className="basis-full flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-[34px] -mt-0.5">
-                          <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); setPlacingBoiteLabel(labelStockage); setMode("select"); setPlacementType(null); }}
-                            className="text-left text-[10px] font-semibold text-volt-600 inline-flex items-center gap-1"
-                            title="Clique ensuite sur le plan à l'endroit voulu pour poser la boîte (avec dominos)">
-                            <Plus size={11} /> Ajouter une boîte de dérivation
-                          </button>
-                          <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); basculerVerrouCircuit(labelStockage); }}
-                            className={`text-left text-[10px] font-semibold inline-flex items-center gap-1 ${estVerrouille(labelStockage) ? "text-red-600" : "text-ink-500"}`}
-                            title={estVerrouille(labelStockage) ? "Circuit verrouillé : cheminement, boîtes, coudes et pose protégés. Clique pour déverrouiller." : "Verrouiller ce circuit : plus de modification de cheminement par erreur"}>
-                            {estVerrouille(labelStockage) ? <Lock size={11} /> : <Unlock size={11} />} {estVerrouille(labelStockage) ? "Verrouillé" : "Verrouiller"}
-                          </button>
-                          {b && (
-                            <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); setPlacingBoiteLabel(null); setPoseParties({ label: b.label, pose: "apparent", premier: null, fixe: true }); setMode("select"); setPlacementType(null); }}
-                              className="text-left text-[10px] font-semibold text-volt-600 inline-flex items-center gap-1"
-                              title="Choisir une ou plusieurs parties du circuit (avec ou sans coude) et dire si elles sont apparentes ou encastrées">
-                              <Route size={11} /> Pose par parties
-                            </button>
-                          )}
-                          {b && (
-                            <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); setSchemaCircuitId(b.id); }}
-                              className="text-left text-[10px] font-semibold text-volt-600 inline-flex items-center gap-1"
-                              title="Schéma technique : du tableau à chaque appareillage, tous les fils">
-                              <Network size={11} /> Montrer le schéma technique
-                            </button>
-                          )}
+                        <div className="basis-full flex flex-wrap items-center gap-1 pl-[34px] -mt-0.5">
+                          {(() => {
+                            const cls = "w-6 h-6 inline-flex items-center justify-center rounded-md border border-ink-200 bg-white text-ink-600 hover:bg-volt-50 hover:text-volt-600 hover:border-volt-300";
+                            const verr = estVerrouille(labelStockage);
+                            return (
+                              <>
+                                <button type="button" className={cls} aria-label="Poser une boîte de dérivation"
+                                  onClick={e => { e.preventDefault(); e.stopPropagation(); setPlacingBoiteLabel(labelStockage); setMode("select"); setPlacementType(null); }}
+                                  title="Boîte de dérivation (Wago) : clique ensuite sur le plan, sur le tronçon où la poser">
+                                  <Box size={14} />
+                                </button>
+                                {b && (
+                                  <button type="button" className={cls} aria-label="Pose par parties : apparent ou encastré"
+                                    onClick={e => { e.preventDefault(); e.stopPropagation(); setPlacingBoiteLabel(null); setPoseParties({ label: b.label, pose: "apparent", premier: null, fixe: true }); setMode("select"); setPlacementType(null); }}
+                                    title="Apparent / encastré « de ici à ici » : choisis une ou plusieurs parties du circuit (avec ou sans coude)">
+                                    <SplitSquareHorizontal size={14} />
+                                  </button>
+                                )}
+                                {b && (
+                                  <button type="button" className={cls} aria-label="Schéma technique du circuit"
+                                    onClick={e => { e.preventDefault(); e.stopPropagation(); setSchemaCircuitId(b.id); }}
+                                    title="Schéma technique : du tableau à chaque appareillage, tous les fils">
+                                    <Network size={14} />
+                                  </button>
+                                )}
+                                <button type="button" aria-label={verr ? "Déverrouiller le circuit" : "Verrouiller le circuit"}
+                                  className={`w-6 h-6 inline-flex items-center justify-center rounded-md border ${verr ? "border-red-300 bg-red-50 text-red-600" : "border-ink-200 bg-white text-ink-500 hover:bg-ink-50"}`}
+                                  onClick={e => { e.preventDefault(); e.stopPropagation(); basculerVerrouCircuit(labelStockage); }}
+                                  title={verr ? "Circuit verrouillé (cheminement, boîtes, coudes, pose protégés) — clique pour déverrouiller" : "Verrouiller ce circuit : plus de modification de cheminement par erreur"}>
+                                  {verr ? <Lock size={14} /> : <Unlock size={14} />}
+                                </button>
+                              </>
+                            );
+                          })()}
                         </div>
                       </label>
                     );

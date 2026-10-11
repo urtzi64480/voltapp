@@ -627,7 +627,7 @@ export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
           details: [
             `Boîte de dérivation à hauteur de gaine (${(lctx.hauteurGaine * 100).toFixed(0)} cm) : point où se séparent les départs ${eclairage ? `vers les commandes et les points lumineux (${pluriel(lampesBoite, "lampe", "lampes")} sur ce circuit)` : `vers les appareils du circuit (${pluriel(points.length, "appareil", "appareils")})`}.`,
             ...(bx.nom ? [] : ["Boîte non nommée sur le plan : sa position est calculée au centre des lampes du circuit (à ajuster en posant une boîte nommée dans le plan)."]),
-            "Dérivation : tout câble qui se sépare en plusieurs se raccorde ICI, sur dominos / bornes à levier (un domino pour la phase, un pour le neutre, un pour la terre). Jamais d'épissure dans le vide, dans un mur ou sous une moulure.",
+            "Dérivation : tout câble qui se sépare en plusieurs se raccorde ICI, sur bornes à levier WAGO 221 (une pour la phase, une pour le neutre, une pour la terre ; 2, 3 ou 5 entrées selon le nombre de câbles). Jamais d'épissure dans le vide, dans un mur ou sous une moulure.",
             ...(piece ? [] : ["Cette boîte tombe hors des pièces : la déplacer dans une pièce (glisser le repère carré sur le plan) pour qu'elle reste accessible."]),
             "Boîte étanche à l'air si posée en volume chauffé ; bornes de raccordement rapide, phase / neutre / terre repérés. Toujours accessible (jamais noyée dans le plâtre ni le béton).",
           ],
