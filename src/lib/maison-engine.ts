@@ -620,8 +620,10 @@ export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[
     const boitesNiveau = toutesBoitesNiveau(niveau);
     if (ordreManuel.some(t => boitesNiveau.has(t))) {
       const manuel = breaker.manuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === breaker.manuelId) : undefined;
-      const marche = segmentsDepuisMarche(tableauPos, ordreManuel, points, boitesNiveau, !manuel?.nonRelieTableau);
-      return insererBoitesSurTroncons(marche, toutes.filter(b => !!b.surSegment && !ordreManuel.includes(b.id)));
+      // Une boîte déjà posée SUR le câblage de ce circuit en fait partie : la cliquer = repartir d'elle (elle reste insérée sur son tronçon).
+      const surCircuit = new Set(toutes.filter(b => !!b.surSegment).map(b => b.id));
+      const marche = segmentsDepuisMarche(tableauPos, ordreManuel, points, boitesNiveau, !manuel?.nonRelieTableau, surCircuit);
+      return insererBoitesSurTroncons(marche, toutes.filter(b => !!b.surSegment));
     }
   }
   const base = segmentsDeBase(breaker, points, niveau, tableauPos, toutes.filter(b => !b.surSegment));
@@ -670,11 +672,12 @@ export function toutesBoitesNiveau(niveau: Niveau): Map<number, Point> {
 
 /**
  * Tracé d'un cheminement dessiné à la main = une MARCHE : tableau → 1er clic → 2e clic… Une boîte déjà visitée, cliquée de nouveau,
- * signifie « on repart de cette boîte » : aucun câble depuis le point précédent, le clic suivant part de la boîte.
+ * signifie « on repart de cette boîte » : aucun câble depuis le point précédent, le clic suivant part de la boîte. Idem pour une boîte déjà posée
+ * sur le câblage du circuit (dejaSurCircuit) : la 1re fois aussi, on repart d'elle.
  * Les appareillages du circuit non cliqués suivent, par proximité, à partir du dernier point.
  */
 export function segmentsDepuisMarche(
-  depart: Point, ordre: number[], points: AppareillagePlace[], boites: Map<number, Point>, relieAuTableau: boolean,
+  depart: Point, ordre: number[], points: AppareillagePlace[], boites: Map<number, Point>, relieAuTableau: boolean, dejaSurCircuit: Set<number> = new Set(),
 ): SegmentCircuit[] {
   const appareils = new Map(points.map(a => [a.id, { x: a.x, y: a.y }] as const));
   const segments: SegmentCircuit[] = [];
@@ -688,7 +691,7 @@ export function segmentsDepuisMarche(
     const estBoite = boites.has(t);
     const pt = estBoite ? boites.get(t)! : appareils.get(t);
     if (!pt || (!estBoite && vus.has(t))) return;
-    aller(estBoite ? `boite-${t}` : String(t), pt, estBoite && vus.has(t));
+    aller(estBoite ? `boite-${t}` : String(t), pt, estBoite && (vus.has(t) || dejaSurCircuit.has(t)));
     vus.add(t);
   });
   const restants = points.filter(a => !vus.has(a.id)).map(a => ({ id: String(a.id), point: { x: a.x, y: a.y } }));

@@ -6837,7 +6837,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   : undefined;
                 const relieAuTableau = !manuelDuCircuit?.nonRelieTableau;
                 const boitesNiv = toutesBoitesNiveau(niveauActif);
-                const marche = segmentsDepuisMarche(origineCircuits(niveauActif)!, cheminementDessin.ordre.filter(t => boitesNiv.has(t) || membres.some(m => m.id === t)), membres, boitesNiv, relieAuTableau);
+                const marche = segmentsDepuisMarche(origineCircuits(niveauActif)!, cheminementDessin.ordre.filter(t => boitesNiv.has(t) || membres.some(m => m.id === t)), membres, boitesNiv, relieAuTableau, new Set((niveauActif.boitesDerivation?.[cheminementDessin.breaker.label] ?? []).filter(b => !!b.surSegment).map(b => b.id)));
                 const d = marche.map(sg => { const a = toScreen(sg.aPoint), b = toScreen(sg.bPoint); return `M ${a.x.toFixed(1)} ${a.y.toFixed(1)} L ${b.x.toFixed(1)} ${b.y.toFixed(1)}`; }).join(" ");
                 return (
                   <>
@@ -8302,7 +8302,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             {cheminementDessin && (
               <DraggablePanel corner="tc" dark
                 className="bg-ink-900 text-volt-400 text-xs font-semibold p-3 rounded-lg shadow-lg flex items-center gap-3 flex-wrap justify-center max-w-[92vw]">
-                <span>Cheminement « {nomAffiche(cheminementDessin.breaker)} » : clique ses appareillages dans l'ordre voulu ({cheminementDessin.ordre.length} placé{cheminementDessin.ordre.length > 1 ? "s" : ""}). Tu peux passer par une boîte de dérivation (même d'un autre circuit) ; reclique une boîte déjà passée pour REPARTIR d'elle.</span>
+                <span>Cheminement « {nomAffiche(cheminementDessin.breaker)} » : clique ses appareillages dans l'ordre voulu ({cheminementDessin.ordre.length} placé{cheminementDessin.ordre.length > 1 ? "s" : ""}). Clique une boîte de ce circuit puis l'appareillage à relier : il part de la boîte. Une boîte d'un autre circuit se traverse (le câble y passe) ; reclique une boîte déjà passée pour REPARTIR d'elle.</span>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button onClick={() => setCheminementDessin(cd => cd ? { ...cd, ordre: cd.ordre.slice(0, -1) } : cd)} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">↶ Retirer le dernier</button>
                   <button onClick={terminerDessinCheminement} className="btn-volt !text-[11px] !px-2 !py-1"><Save size={11} /> Terminer</button>
