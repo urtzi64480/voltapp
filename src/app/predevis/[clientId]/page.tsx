@@ -13,7 +13,12 @@ import {
   multiplicateurPourArticle, estSousCategorieAppareillage, estPieceReelle, estPieceTableau, optionAvecOffre, prixCompagnonAuMetre,
   ResultatPreDevis, BesoinApparie, OptionArticle, ChoixLigne, POSTE_MAIN_OEUVRE, POSTE_CABLAGE,
 } from "@/lib/predevis-engine";
-import { attacherFournisseurs, libelleOffreMarque, marqueOffre, normTexte, offrePrincipale, offresTriees, prixVenteOffre } from "@/lib/fournisseurs";
+import {
+  attacherFournisseurs, libelleOffreMarque, marqueOffre, normTexte, offrePrincipale, offresTriees, prixVenteOffre,
+  chargerOffres, libelleOffre, marquesDe, miroirPrestation, normaliserDrafts, nouvelleOffreDraft, offresDe, synchroniserOffres, OffreDraft, OffreNormalisee,
+} from "@/lib/fournisseurs";
+import { BobineField, FournisseursEditor, longueurValide } from "@/components/catalogue/EditeurArticle";
+import { UNITES } from "@/lib/utils";
 import { colonnesFournisseur, colonnesImage } from "@/lib/devis-lignes";
 import ProduitPicker from "@/components/devis/ProduitPicker";
 import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
@@ -140,65 +145,124 @@ function AjoutCatalogueRapide({ besoin, prestations, onCree, onFermer }: {
 }) {
   const voisin = prestations.find(p => aSousCategorie(p, besoin.sousCategorie));
   const [nom, setNom] = useState(besoin.label);
+  const [description, setDescription] = useState("");
   const [unite, setUnite] = useState<string>(besoin.unite === "m" ? "ml" : besoin.unite === "heure" ? "heure" : "u");
   const [branche, setBranche] = useState<"materiau" | "service">(besoin.unite === "heure" ? "service" : "materiau");
-  const [prixVente, setPrixVente] = useState("");
-  const [prixAchat, setPrixAchat] = useState("");
-  const [marque, setMarque] = useState("");
-  const [longueur, setLongueur] = useState("");
   const [categorie, setCategorie] = useState(voisin?.categorie ?? "");
+  const [nouvelleCat, setNouvelleCat] = useState(false);
+  const [gamme, setGamme] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [prixService, setPrixService] = useState("");
+  const [offres, setOffres] = useState<OffreDraft[]>(() => [nouvelleOffreDraft(true)]);
+  const [enBobine, setEnBobine] = useState(false);
+  const [longueur, setLongueur] = useState("");
+  const [flags, setFlags] = useState({ marqueOk: true, imageOk: true });
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState("");
   const categories = Array.from(new Set(prestations.map(p => p.categorie).filter(Boolean))).sort((a, b) => a.localeCompare(b, "fr"));
+  const marquesConnues = Array.from(new Set(prestations.flatMap(p => marquesDe(p)))).sort((a, b) => a.localeCompare(b, "fr"));
+  const fournisseursConnus = Array.from(new Set(prestations.flatMap(p => (p.fournisseurs ?? []).map(libelleOffre)))).sort();
+  useEffect(() => { chargerOffres().then(r => setFlags({ marqueOk: r.marqueOk, imageOk: r.imageOk })).catch(() => {}); }, []);
 
   async function creer() {
-    const pv = parseFloat(prixVente.replace(",", "."));
     if (!nom.trim()) { setErreur("Donne un nom à l'article."); return; }
-    if (isNaN(pv) || pv < 0) { setErreur("Le prix de vente HT est obligatoire."); return; }
-    const pa = prixAchat.trim() === "" ? null : parseFloat(prixAchat.replace(",", "."));
-    if (pa != null && isNaN(pa)) { setErreur("Prix d'achat invalide."); return; }
-    const lg = longueur.trim() === "" ? null : parseFloat(longueur.replace(",", "."));
-    if (lg != null && (isNaN(lg) || lg <= 0)) { setErreur("Longueur de bobine invalide."); return; }
+    const estMateriau = branche === "materiau";
+    let prixVente = 0, prixAchat: number | null = null, liens: string[] = [], marque: string | null = null;
+    let offresN: OffreNormalisee[] = [];
+    if (estMateriau) {
+      offresN = normaliserDrafts(offres);
+      const principale = offresN.find(o => o.principal);
+      if (!principale || principale.prix_vente == null || principale.prix_vente < 0) { setErreur("Le prix de vente HT de l'offre principale est obligatoire."); return; }
+      if (principale.prix_achat != null && principale.prix_vente < principale.prix_achat
+        && !confirm(`Le prix de vente (${principale.prix_vente.toFixed(2)} €) est inférieur au prix d'achat TTC (${principale.prix_achat.toFixed(2)} €) : tu vends à perte. Enregistrer quand même ?`)) return;
+      const m = miroirPrestation(offresN, principale.prix_vente);
+      prixVente = m.prix_unitaire; prixAchat = m.prix_achat; liens = m.liens_fournisseurs; marque = m.marque ?? null;
+    } else {
+      prixVente = parseFloat(prixService.replace(",", "."));
+      if (isNaN(prixVente) || prixVente < 0) { setErreur("Le prix unitaire est obligatoire."); return; }
+    }
+    const lg = estMateriau ? longueurValide(enBobine, longueur) : null;
+    if (estMateriau && enBobine && lg == null) { setErreur("Indique une longueur de bobine supérieure à 0, ou décoche « Vendu en bobine »."); return; }
     setEnCours(true); setErreur("");
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) { setErreur("Session expirée : reconnecte-toi."); setEnCours(false); return; }
     const { data, error } = await supabase.from("prestations").insert({
-      user_id: session.user.id, nom: nom.trim(), description: null, prix_unitaire: pv, prix_achat: pa, unite,
-      type_branche: branche, categorie: categorie.trim() || "Autre", actif: true, sous_categorie: besoin.sousCategorie || null,
-      marque: marque.trim() || null, liens_fournisseurs: [], image_url: null, gamme: null, longueur_unitaire: unite === "ml" ? lg : null,
+      user_id: session.user.id, nom: nom.trim(), description: description.trim() || null, prix_unitaire: prixVente, prix_achat: prixAchat, unite,
+      type_branche: branche, categorie: categorie.trim() || "Divers", actif: true, sous_categorie: besoin.sousCategorie || null,
+      marque, liens_fournisseurs: liens, image_url: estMateriau ? (imageUrl.trim() || null) : null, gamme: gamme || null, longueur_unitaire: lg,
     }).select().single();
+    if (error || !data) { setErreur("Erreur : " + (error?.message ?? "création impossible")); setEnCours(false); return; }
+    let fournisseurs: any[] = [];
+    if (estMateriau && offresN.length > 0) {
+      const err = await synchroniserOffres(session.user.id, data.id, offresN);
+      if (err) alert("Article créé, mais fournisseurs non enregistrés : " + err);
+      else fournisseurs = await offresDe(data.id);
+    }
     setEnCours(false);
-    if (error || !data) { setErreur("Erreur : " + (error?.message ?? "création impossible")); return; }
-    onCree({ ...(data as Prestation), fournisseurs: [] });
+    onCree({ ...(data as Prestation), fournisseurs } as Prestation);
   }
 
   return (
     <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-3" onClick={onFermer}>
-      <div className="card card-inner w-full max-w-md flex flex-col gap-2.5" onClick={e => e.stopPropagation()}>
+      <div className="card card-inner w-full max-w-3xl max-h-[92vh] overflow-y-auto flex flex-col gap-3" onClick={e => e.stopPropagation()}>
         <div>
-          <p className="text-sm font-bold text-ink-900">Ajouter au catalogue</p>
-          <p className="text-xs text-ink-400">Besoin : {besoin.label} · l'article est créé puis sélectionné ici, tu restes sur le pré-devis.</p>
+          <p className="text-base font-bold text-ink-900">Ajouter au catalogue</p>
+          <p className="text-xs text-ink-400">Besoin du pré-devis : <strong>{besoin.label}</strong>{besoin.sousCategorie ? <> · sous-catégorie <code>{besoin.sousCategorie}</code> (reprise automatiquement)</> : null}. Même formulaire que le catalogue : l'article est créé puis sélectionné ici, tu restes sur le pré-devis.</p>
         </div>
-        <input className="input !text-sm" placeholder="Nom de l'article" value={nom} onChange={e => setNom(e.target.value)} autoFocus />
-        <div className="grid grid-cols-2 gap-2">
-          <input className="input !text-sm" inputMode="decimal" placeholder="Prix de vente HT €" value={prixVente} onChange={e => setPrixVente(e.target.value)} />
-          <input className="input !text-sm" inputMode="decimal" placeholder="Prix d'achat TTC € (facultatif)" value={prixAchat} onChange={e => setPrixAchat(e.target.value)} />
-          <select className="input !text-sm" value={unite} onChange={e => setUnite(e.target.value)}>
-            {["u", "ml", "m2", "heure", "forfait"].map(u => <option key={u} value={u}>{u}</option>)}
-          </select>
-          <select className="input !text-sm" value={branche} onChange={e => setBranche(e.target.value as "materiau" | "service")}>
-            <option value="materiau">Matériau</option>
-            <option value="service">Service</option>
-          </select>
-          <input className="input !text-sm" placeholder="Marque (facultatif)" value={marque} onChange={e => setMarque(e.target.value)} />
-          <input className="input !text-sm" list="cats-ajout-rapide" placeholder="Catégorie" value={categorie} onChange={e => setCategorie(e.target.value)} />
-          <datalist id="cats-ajout-rapide">{categories.map(c => <option key={c} value={c} />)}</datalist>
-          {unite === "ml" && <input className="input !text-sm col-span-2" inputMode="decimal" placeholder="Longueur d'une bobine en m (vide = vendu au mètre)" value={longueur} onChange={e => setLongueur(e.target.value)} />}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="md:col-span-2"><label className="label">Nom *</label>
+            <input className="input" value={nom} onChange={e => setNom(e.target.value)} autoFocus /></div>
+          <div className="md:col-span-2"><label className="label">Description (optionnel)</label>
+            <input className="input" value={description} onChange={e => setDescription(e.target.value)} /></div>
+          <div><label className="label">Branche AE</label>
+            <select className="input" value={branche} onChange={e => setBranche(e.target.value as "materiau" | "service")}>
+              <option value="service">Service (main d'œuvre)</option>
+              <option value="materiau">Matériau (achat/revente)</option>
+            </select></div>
+          <div><label className="label">Unité</label>
+            <select className="input" value={unite} onChange={e => setUnite(e.target.value)}>
+              {UNITES.map(u => <option key={u} value={u}>{u}</option>)}
+            </select></div>
+          <div><label className="label">Catégorie</label>
+            {categories.length > 0 && !nouvelleCat ? (
+              <div className="flex gap-2">
+                <select className="input flex-1" value={categorie} onChange={e => setCategorie(e.target.value)}>
+                  <option value="">— Choisir —</option>
+                  {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <button type="button" onClick={() => { setNouvelleCat(true); setCategorie(""); }} className="btn-ghost !px-3 text-xs">Nouvelle</button>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <input className="input flex-1" placeholder="Nom de la catégorie" value={categorie} onChange={e => setCategorie(e.target.value)} />
+                {categories.length > 0 && <button type="button" onClick={() => setNouvelleCat(false)} className="btn-ghost !px-3 text-xs">Existante</button>}
+              </div>
+            )}</div>
+          <div><label className="label">Gamme (pré-devis)</label>
+            <select className="input" value={gamme} onChange={e => setGamme(e.target.value)}>
+              <option value="">— Aucune —</option>
+              <option value="entree">Entrée de gamme</option>
+              <option value="moyenne">Moyenne gamme</option>
+              <option value="haut">Haut de gamme</option>
+            </select></div>
+          {branche === "materiau" && <BobineField actif={enBobine} setActif={setEnBobine} longueur={longueur} setLongueur={setLongueur} />}
+          {branche === "service" ? (
+            <div><label className="label">Prix unitaire HT (€) *</label>
+              <input className="input" type="number" step="0.5" placeholder="0.00" value={prixService} onChange={e => setPrixService(e.target.value)} /></div>
+          ) : (
+            <FournisseursEditor offres={offres} setOffres={setOffres} fournisseursConnus={fournisseursConnus} marquesConnues={marquesConnues}
+              marqueOk={flags.marqueOk} imageOk={flags.imageOk} imageProduit={imageUrl || null} />
+          )}
+          {branche === "materiau" && (
+            <div className="md:col-span-2"><label className="label">Image du produit (URL)</label>
+              <input className="input" placeholder="https://…/image-produit.jpg" value={imageUrl} onChange={e => setImageUrl(e.target.value)} />
+              {imageUrl && <img src={imageUrl} alt="" className="mt-2 h-16 object-contain rounded-lg border border-ink-100 p-1 bg-white" />}</div>
+          )}
         </div>
-        {erreur && <p className="text-xs text-red-600">{erreur}</p>}
-        <div className="flex justify-end gap-2">
-          <button className="btn-ghost !text-xs" onClick={onFermer}>Annuler</button>
-          <button className="btn-volt !text-xs disabled:opacity-40" disabled={enCours} onClick={creer}>{enCours ? "Création…" : "Ajouter et utiliser"}</button>
+        {erreur && <p className="text-sm text-red-600 font-medium">{erreur}</p>}
+        <div className="flex gap-3">
+          <button className="btn-ghost flex-1 justify-center" onClick={onFermer}>Annuler</button>
+          <button className="btn-volt flex-1 justify-center disabled:opacity-40" disabled={enCours} onClick={creer}>{enCours ? "Création…" : "Ajouter au catalogue et utiliser"}</button>
         </div>
       </div>
     </div>
