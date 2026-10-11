@@ -10,7 +10,6 @@ import { distance, ouverturesEffectivesMur, pointDansPolygone } from "@/lib/mais
 import { decalerContour, epaisseurTotaleM, parametresMur3D } from "@/lib/murs";
 
 const RAYON_LIAISON = 0.45;  // m — deux lignes de câbles de murs voisins (mitoyens, angles, cloisons) à moins de cela sont reliées
-const PORTEE_ANCRE = 0.4;    // m — un point est « sur un mur » s'il est à moins de cela de la ligne des câbles du mur ; sinon la liaison part tout droit de ce point
 const EPS = 1e-6;
 
 interface Mur { p: Point; q: Point; piece: number; i: number }
@@ -108,15 +107,16 @@ function construire(pieces: Piece[]): Reseau | null {
   return { murs, noeuds, voisins, ligneDe };
 }
 
-/** Mur le plus proche d'un point : on privilégie les murs de la pièce qui contient le point. */
+/** Mur dans l'épaisseur duquel se trouve le point (entre la face hors-tout et la face finie) : projection sur sa ligne de câbles ; null = point hors mur. */
 function murProche(r: Reseau, pieces: Piece[], pt: Point): { mur: number; pt: Point; t: number } | null {
-  const dans = pieces.map(pc => pointDansPolygone(pt, pc.contour));
   let best = -1, note = Infinity, bp: Point = pt, bt = 0;
   for (let i = 0; i < r.murs.length; i++) {
-    const m = r.murs[i], pr = projeter(pt, m.p, m.q);
-    if (pr.d > PORTEE_ANCRE) continue;
-    const n = pr.d + (dans[m.piece] ? 0 : 0.6);
-    if (n < note) { note = n; best = i; bp = pr.pt; bt = pr.t; }
+    const m = r.murs[i], pc = pieces[m.piece];
+    const a0 = pc.contour[m.i], b0 = pc.contour[(m.i + 1) % pc.contour.length];
+    const dContour = projeter(pt, a0, b0).d;
+    if (dContour > epaisseurTotaleM(pc, m.i) + 0.03) continue;           // hors de l'épaisseur de ce mur
+    const pr = projeter(pt, m.p, m.q);
+    if (pr.d < note) { note = pr.d; best = i; bp = pr.pt; bt = pr.t; }
   }
   return best >= 0 ? { mur: best, pt: bp, t: bt } : null;
 }
