@@ -5,8 +5,12 @@
 // interrupteur simple, détecteur, va-et-vient (2 points), 3 points et plus (avec permutateurs), télérupteur.
 // Sous-composants définis hors du composant principal (pas de remontage à chaque rendu).
 import type { TypeSchema } from "@/lib/suivi-realisation";
+import { COULEUR_FIL } from "@/lib/couleurs-fils";
 
-const COUL = { phase: "#dc2626", n1: "#111827", n2: "#ea580c", retour: "#7c3aed", neutre: "#2563eb", terre: "#16a34a", trait: "#44403c", fond: "#ffffff" };
+// Couleurs des fils : MÊMES que le plan, la 3D et le schéma technique (lib/couleurs-fils.ts).
+// n1 / n2 = les deux navettes (toutes deux orange, distinguées par leur repère) ; terre = vert + jaune en pointillés.
+const COUL = { phase: COULEUR_FIL.phase, n1: COULEUR_FIL.navette, n2: COULEUR_FIL.navette, retour: COULEUR_FIL.retour, neutre: COULEUR_FIL.neutre,
+  terre: COULEUR_FIL.terreVert, terreJaune: COULEUR_FIL.terreJaune, trait: "#44403c", fond: "#ffffff" };
 const L_BOITE = 96;
 const PAS = 150;
 
@@ -22,6 +26,14 @@ const BORNES: Record<TypeMeca, { g: Borne[]; d: Borne[]; nom: string }> = {
 
 function Fil({ pts, couleur, pointille }: { pts: [number, number][]; couleur: string; pointille?: boolean }) {
   return <polyline points={pts.map(p => p.join(",")).join(" ")} fill="none" stroke={couleur} strokeWidth={2.4} strokeLinejoin="round" strokeDasharray={pointille ? "6 4" : undefined} />;
+}
+
+function FilTerre({ pts }: { pts: [number, number][] }) {
+  const d = pts.map(p => p.join(",")).join(" ");
+  return (<g>
+    <polyline points={d} fill="none" stroke={COUL.terre} strokeWidth={2.4} strokeLinejoin="round" />
+    <polyline points={d} fill="none" stroke={COUL.terreJaune} strokeWidth={2.4} strokeLinejoin="round" strokeDasharray="6 6" />
+  </g>);
 }
 
 function Etiquette({ x, y, children, couleur, ancre = "middle" }: { x: number; y: number; children: string; couleur: string; ancre?: "start" | "middle" | "end" }) {
@@ -70,11 +82,12 @@ function SchemaChaine({ type, nbPermutateurs }: { type: "simple" | "detecteur" |
   const detecteur = type === "detecteur";
 
   return (
-    <svg viewBox={`0 0 ${largeur} 176`} width={largeur} height={176} role="img" aria-label="Schéma de câblage" style={{ maxWidth: "none" }}>
+    <svg viewBox={`0 0 ${largeur} 184`} width={largeur} height={184} role="img" aria-label="Schéma de câblage" style={{ maxWidth: "none" }}>
       {/* neutre + terre : relayés sous les mécanismes */}
-      <Fil pts={[[x0 + lSource / 2, 95], [x0 + lSource / 2, 140], [xLampe, 140], [xLampe, 99]]} couleur={COUL.neutre} pointille />
-      <Etiquette x={(x0 + xLampe) / 2} y={156} couleur={COUL.neutre}>
-        {detecteur ? "Neutre (bleu) : aussi sur le détecteur · terre (vert/jaune) : relayée vers la lampe" : "Neutre (bleu) + terre (vert/jaune) : relayés dans les boîtes, jamais sur les mécanismes"}
+      <Fil pts={[[x0 + lSource / 2 - 5, 95], [x0 + lSource / 2 - 5, 138], [xLampe - 5, 138], [xLampe - 5, 99]]} couleur={COUL.neutre} pointille />
+      <FilTerre pts={[[x0 + lSource / 2 + 5, 95], [x0 + lSource / 2 + 5, 148], [xLampe + 5, 148], [xLampe + 5, 99]]} />
+      <Etiquette x={Math.max((x0 + xLampe) / 2, 150)} y={166} couleur={COUL.neutre}>
+        {detecteur ? "Neutre (bleu) aussi sur le détecteur · terre relayée vers la lampe" : "Neutre (bleu) + terre (vert/jaune) : relayés dans les boîtes, jamais sur les mécanismes"}
       </Etiquette>
 
       {/* phase : source → première borne(s) */}
@@ -125,7 +138,7 @@ function SchemaTelerupteur({ nbBoutons }: { nbBoutons: number }) {
   const yMilieu = yBp(0) + ((n - 1) * pasY) / 2 + 22;  // milieu du groupe de boutons
   const xBus1 = 96, xBp = 130, lBp = 92, xBus2 = 262, xTele = 318, lTele = 128;
   const hTele = 110, yTele = yMilieu - hTele / 2;
-  const largeur = xTele + lTele + 150;
+  const largeur = xTele + lTele + 200;
 
   return (
     <svg viewBox={`0 0 ${largeur} ${hauteur}`} width={largeur} height={hauteur} role="img" aria-label="Schéma de câblage télérupteur" style={{ maxWidth: "none" }}>
@@ -134,15 +147,15 @@ function SchemaTelerupteur({ nbBoutons }: { nbBoutons: number }) {
       <Fil pts={[[xBus1, yBp(0) + 22], [xBus1, yBp(n - 1) + 22]]} couleur={COUL.phase} />
       <Etiquette x={14} y={yBp(0) + 14} couleur={COUL.phase} ancre="start">Phase</Etiquette>
       {/* bus de commande */}
-      <Fil pts={[[xBus2, yBp(0) + 22], [xBus2, yBp(n - 1) + 22]]} couleur={COUL.n1} />
-      <Fil pts={[[xBus2, yMilieu - 22], [xTele, yMilieu - 22]]} couleur={COUL.n1} />
+      <Fil pts={[[xBus2, yBp(0) + 22], [xBus2, yBp(n - 1) + 22]]} couleur={COUL.retour} />
+      <Fil pts={[[xBus2, yMilieu - 22], [xTele, yMilieu - 22]]} couleur={COUL.retour} />
 
       {Array.from({ length: n }, (_, i) => {
         const y = yBp(i) + 22;
         return (
           <g key={i}>
             <Fil pts={[[xBus1, y], [xBp, y]]} couleur={COUL.phase} />
-            <Fil pts={[[xBp + lBp, y], [xBus2, y]]} couleur={COUL.n1} />
+            <Fil pts={[[xBp + lBp, y], [xBus2, y]]} couleur={COUL.retour} />
             <rect x={xBp} y={yBp(i)} width={lBp} height={44} rx={8} fill={COUL.fond} stroke={COUL.trait} strokeWidth={1.6} />
             <text x={xBp + lBp / 2} y={yBp(i) + 17} fontSize={10} fontWeight={700} fill="#1c1917" textAnchor="middle">{`Bouton ${i + 1}`}</text>
             <circle cx={xBp} cy={y} r={4.5} fill="#1c1917" />
@@ -152,12 +165,12 @@ function SchemaTelerupteur({ nbBoutons }: { nbBoutons: number }) {
           </g>
         );
       })}
-      <Etiquette x={(xBp + lBp + xBus2) / 2} y={yBp(0) + 10} couleur={COUL.n1}>boutons en parallèle</Etiquette>
+      <Etiquette x={(xBp + lBp + xBus2) / 2} y={yBp(0) + 10} couleur={COUL.retour}>boutons en parallèle</Etiquette>
 
       {/* télérupteur */}
       <rect x={xTele} y={yTele} width={lTele} height={hTele} rx={8} fill="#f5f5f4" stroke={COUL.trait} strokeWidth={1.6} />
       <text x={xTele + lTele / 2} y={yTele + 16} fontSize={10} fontWeight={700} fill="#1c1917" textAnchor="middle">Télérupteur (tableau)</text>
-      {[{ y: yMilieu - 22, t: "A1", g: true, c: COUL.n1, l: "commande (boutons)" }, { y: yMilieu + 22, t: "A2", g: true, c: COUL.neutre, l: "neutre" }].map(b => (
+      {[{ y: yMilieu - 22, t: "A1", g: true, c: COUL.retour, l: "commande (boutons)" }, { y: yMilieu + 22, t: "A2", g: true, c: COUL.neutre, l: "neutre" }].map(b => (
         <g key={b.t}>
           <circle cx={xTele} cy={b.y} r={4.5} fill="#1c1917" />
           <text x={xTele + 9} y={b.y + 3.5} fontSize={9.5} fontWeight={700} fill="#1c1917">{b.t}</text>
@@ -165,7 +178,7 @@ function SchemaTelerupteur({ nbBoutons }: { nbBoutons: number }) {
       ))}
       <Fil pts={[[xTele - 40, yMilieu + 22], [xTele, yMilieu + 22]]} couleur={COUL.neutre} />
       <Etiquette x={xTele - 42} y={yMilieu + 18} couleur={COUL.neutre} ancre="end">Neutre</Etiquette>
-      {[{ y: yMilieu - 22, t: "1", c: COUL.phase, l: "Phase du circuit" }, { y: yMilieu + 22, t: "2", c: COUL.retour, l: "vers les lampes" }].map(b => (
+      {[{ y: yMilieu - 22, t: "1", c: COUL.phase, l: "Phase du circuit" }, { y: yMilieu + 22, t: "2", c: COUL.phase, l: "phase commutée → lampes" }].map(b => (
         <g key={b.t}>
           <circle cx={xTele + lTele} cy={b.y} r={4.5} fill="#1c1917" />
           <text x={xTele + lTele - 9} y={b.y + 3.5} fontSize={9.5} fontWeight={700} fill="#1c1917" textAnchor="end">{b.t}</text>
@@ -179,13 +192,14 @@ function SchemaTelerupteur({ nbBoutons }: { nbBoutons: number }) {
 
 export function LegendeSchema({ type }: { type: TypeSchema }) {
   const items = type === "telerupteur"
-    ? [["Phase", COUL.phase], ["Commande (boutons → A1)", COUL.n1], ["Neutre", COUL.neutre], ["Phase commutée", COUL.retour]]
-    : [["Phase", COUL.phase], ["Navette 1", COUL.n1], ["Navette 2", COUL.n2], ["Retour", COUL.retour], ["Neutre / terre", COUL.neutre]];
+    ? [["Phase (circuit + commutée)", COUL.phase], ["Retour de commande (boutons → A1)", COUL.retour], ["Neutre", COUL.neutre]]
+    : [["Phase", COUL.phase], ["Navettes (1 et 2)", COUL.n1], ["Retour", COUL.retour], ["Neutre", COUL.neutre]];
   return (
     <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[11px] text-ink-600">
       {items.map(([t, c]) => (
         <span key={t} className="inline-flex items-center gap-1.5"><span className="inline-block w-3 h-1.5 rounded-sm" style={{ background: c }} />{t}</span>
       ))}
+      <span className="inline-flex items-center gap-1.5"><span className="inline-block w-3 h-1.5 rounded-sm" style={{ background: `repeating-linear-gradient(90deg, ${COUL.terre} 0 3px, ${COUL.terreJaune} 3px 6px)` }} />Terre</span>
     </div>
   );
 }

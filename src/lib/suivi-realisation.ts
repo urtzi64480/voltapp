@@ -271,8 +271,9 @@ function modeDe(filaires: AppareillagePlace[], domotiques: AppareillagePlace[]):
 
 const COMMUN = "COM (borne commune)";
 const REGLES_FILS =
-  "Couleurs (NF C 15-100) : neutre = bleu clair, terre = vert/jaune, phase et fils de commande (retour, navettes) = toute autre couleur " +
-  "(en pratique marron, noir, rouge). Repérer chaque fil de retour/navette au marqueur ou au ruban dès la pose.";
+  "Couleurs VoltApp (plan, schémas, 3D) : phase = rouge, neutre = bleu clair, terre = vert/jaune, retour = violet foncé, navettes = orange. " +
+  "NF C 15-100 : neutre bleu clair et terre vert/jaune sont imposés ; pour les autres fils, reprendre ces couleurs si le câble le permet, sinon repérer " +
+  "chaque fil de retour/navette au marqueur ou au ruban dès la pose.";
 
 function nomLampes(ctx: Contexte, lampes: AppareillagePlace[]): string {
   return lampes.map(l => libelleLong(ctx, l)).join(", ");
@@ -390,8 +391,7 @@ function construireGuide(ctx: Contexte, g: GroupeCommande, mode: ModeCommande, i
       "Neutre et terre des points lumineux : en direct depuis la boîte de dérivation / le tableau (ils ne passent pas par les boutons).",
     );
     attention.push(
-      "Le tracé généré chaîne les boutons puis rejoint la lampe comme pour un va-et-vient : sur le chantier, la lampe est alimentée par la SORTIE du télérupteur et les boutons n'ont qu'un rôle de commande (2 fils + terre). " +
-      "Vérifier ce cheminement à l'implantation — le plan le dessine de façon schématique.",
+      "Le plan suit ce câblage : la lampe est alimentée directement (phase commutée par le télérupteur, neutre, terre) et les boutons forment une ligne de commande tirée depuis le tableau : phase + un fil de RETOUR (violet) par télérupteur + terre. Un télérupteur DOUBLE a donc 2 retours dans le même câble.",
       "Ne jamais utiliser un interrupteur ordinaire à la place d'un bouton poussoir (il maintiendrait la bobine alimentée).",
       REGLES_FILS,
     );
@@ -442,7 +442,7 @@ function construireGuide(ctx: Contexte, g: GroupeCommande, mode: ModeCommande, i
       etapes.push(
         "Couper le disjoncteur du circuit au tableau et vérifier l'absence de tension (VAT).",
         `Premier va-et-vient (côté alimentation) : phase sur la borne COMMUN (venant de ${provenance}) — jamais sur L1 ou L2.`,
-        `Tirer DEUX fils de navette (de couleurs différentes, repérés) du premier va-et-vient jusqu'${p > 0 ? "au premier permutateur, puis de permutateur en permutateur jusqu'" : ""}au dernier va-et-vient : navette 1 sur L1, navette 2 sur L2.`,
+        `Tirer DEUX fils de navette (orange, repérés 1 et 2) du premier va-et-vient jusqu'${p > 0 ? "au premier permutateur, puis de permutateur en permutateur jusqu'" : ""}au dernier va-et-vient : navette 1 sur L1, navette 2 sur L2.`,
         ...(p > 0 ? [
           `Permutateurs (${p}) : les deux navettes qui arrivent se raccordent aux deux bornes d'un même côté, les deux navettes qui repartent aux deux bornes de l'autre côté. Aucune phase, aucun retour sur un permutateur.`,
         ] : []),
@@ -455,7 +455,8 @@ function construireGuide(ctx: Contexte, g: GroupeCommande, mode: ModeCommande, i
         "ERREUR n°1 : phase ou retour branché sur L1/L2 au lieu de la borne commune → la lampe ne répond que dans certaines positions. Phase et retour vont TOUJOURS sur la borne commune (COM).",
         "ERREUR n°2 : une seule navette tirée, ou les deux navettes raccordées à la même borne → la lampe ne s'éteint plus ou ne s'allume que d'un côté. Il faut DEUX fils distincts, un sur L1 et un sur L2 à chaque extrémité.",
         "Intervertir les deux navettes (navette 1 sur L1 d'un côté et sur L2 de l'autre, pour les DEUX fils) fonctionne aussi : cela inverse seulement la position « allumé » des interrupteurs. Garder le même repérage aux deux bouts évite surtout de se tromper.",
-        "Le neutre ne passe jamais par un va-et-vient. Si la lampe ne reçoit son neutre QUE par le chemin des commandes (pas de boîte de dérivation), il doit transiter par les câbles entre commandes : prévoir alors du 4G1,5 là où le pré-devis compte du 3G1,5.",
+        "Le neutre ne se raccorde jamais à un va-et-vient mais il TRANSITE par les boîtes des commandes pour rejoindre la lampe : le câble entre deux va-et-vient est donc un 4G1,5 (neutre + 2 navettes + terre), comme au plan. Pour des va-et-vient DOUBLES, chaque voie a ses 2 navettes (6 conducteurs).",
+        "Lampe alimentée en bout de chaîne (câble qui part de la lampe) : la phase monte au premier va-et-vient, le retour redescend ; le câble entre va-et-vient porte alors 2 navettes + le retour + la terre, sans neutre.",
         REGLES_FILS,
       );
     }
