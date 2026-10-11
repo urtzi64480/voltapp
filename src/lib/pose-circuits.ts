@@ -14,6 +14,7 @@ import {
   AppareillagePlace, LiaisonWaypoint, Niveau, PoseTroncon, SegmentCircuit, cleSegmentLiaison, origineCircuits,
 } from "@/lib/maison-types";
 import { ResultatGeneration, segmentsPourCircuit } from "@/lib/maison-engine";
+import { coudesSegment } from "@/lib/routage-circuits";
 import { hauteurCourseSection } from "@/lib/chemin-3d";
 import { hauteurAppareilM } from "@/lib/murs";
 import type { Breaker } from "@/lib/electrical-constants";
@@ -87,7 +88,7 @@ export function appareillagesEnPoseApparente(
     segmentsCircuit.forEach(seg => {
       if (seg.type === "domotique") return; // liaison sans fil : aucune goulotte
       const cle = cleSegmentLiaison(seg.aId, seg.bId);
-      const coudes = niveau.liaisonWaypoints?.[cle] ?? [];
+      const coudes = coudesSegment(niveau, seg);
       const poses = posesTroncons(niveau, cle, coudes);
       const hauteurs = hauteursTroncons(niveau, cle, coudes);
       const entrees = coudes.map(c => ({ point: c.point, hauteurCm: c.hauteur }));

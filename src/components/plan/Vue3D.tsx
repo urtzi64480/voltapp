@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
+import { coudesSegment } from "@/lib/routage-circuits";
 import { natureLiaison, CONDUCTEURS, COULEUR_FIL, couleurConducteur } from "@/lib/couleurs-fils";
 import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, battantsFenetre, nbVantauxBaie, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, estLumiere, estLumierePlafond, estSpot, HAUTEUR_PERSONNE_M, ENTRAXE_POSTE_M, hauteurCommunePlaqueCm, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
@@ -1027,7 +1028,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
             return;
           }
           const cle = cleSegmentLiaison(seg.aId, seg.bId);
-          const coudes = niveau.liaisonWaypoints?.[cle] ?? [];
+          const coudes = coudesSegment(niveau, seg);
           const depart = ancre3D(seg.aId, seg.aPoint, decalageTableau);
           const arrivee = ancre3D(seg.bId, seg.bPoint, decalageTableau);
           // Tracé : chaque section court à plat à UNE hauteur (réglée, sinon celle du coude, sinon la gaine par défaut),

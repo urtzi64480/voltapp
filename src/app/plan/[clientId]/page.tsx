@@ -55,6 +55,7 @@ import Vue3DMaison from "@/components/plan/Vue3DMaison";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, genererCircuitsManuelsSeuls, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
 import { verifierEclairageManuel } from "@/lib/controle-eclairage";
+import { coudesSegment } from "@/lib/routage-circuits";
 import { natureLiaison, geometrieCable, couleurDominante, COULEUR_FIL, LEGENDE_FILS, LIBELLE_NATURE } from "@/lib/couleurs-fils";
 
 const PX_PER_M = 60;
@@ -462,7 +463,8 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       const ctxL = creerContexteLongueurs(n);
       const hAncreL = hauteurAncreFn(ctxL);
       segments.forEach(seg => {
-        const cheminM = cheminSegment(seg, n.liaisonWaypoints);
+        const coudesAuto = coudesSegment(n, seg);
+        const cheminM = [seg.aPoint, ...coudesAuto.map(w => w.point), seg.bPoint];
         const chemin = cheminM.map(toPx);
         // Fils aux couleurs normalisées (lib/couleurs-fils.ts) ; la couleur du circuit ne sert qu'au liseré sous les fils.
         const nature = natureLiaison(seg);
@@ -470,7 +472,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
         if (showCircuits) {
           // Sections apparentes : bande grise (moulure) sous le tracé — repérables à l'impression.
           const cleImp = cleSegmentLiaison(seg.aId, seg.bId);
-          const posesImp = posesTroncons(n, cleImp, n.liaisonWaypoints?.[cleImp] ?? []);
+          const posesImp = posesTroncons(n, cleImp, coudesAuto);
           for (let j = 0; j < chemin.length - 1; j++) {
             if (posesImp[j] !== "apparent") continue;
             s += `<line x1="${chemin[j].x.toFixed(1)}" y1="${chemin[j].y.toFixed(1)}" x2="${chemin[j + 1].x.toFixed(1)}" y2="${chemin[j + 1].y.toFixed(1)}" stroke="#d6d3d1" stroke-width="4" stroke-linecap="round"/>`;
@@ -514,7 +516,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
         // coché, même si showCircuits est décoché (dans ce cas, sans le tracé coloré).
         if (showHauteurs) {
           const cle = cleSegmentLiaison(seg.aId, seg.bId);
-          const coudes = n.liaisonWaypoints?.[cle] ?? [];
+          const coudes = coudesAuto;
           coudes.forEach(c => {
             if (c.hauteur == null && !c.poseType) return;
             const pC = toPx(c.point);
@@ -3948,10 +3950,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // apresIndex = position dans la liste existante des coudes après laquelle insérer
   // (0 = avant le premier coude existant, longueur actuelle = après le dernier).
-  const ajouterWaypoint = (cle: string, apresIndex: number, point: Point): number => {
+  const ajouterWaypoint = (cle: string, apresIndex: number, point: Point, coudesAffiches: LiaisonWaypoint[] = []): number => {
     const id = uidMaison();
     updateNiveauActif(n => {
-      const existants = n.liaisonWaypoints?.[cle] ?? [];
+      // Sans coude manuel, on part des coudes du routage automatique (ids négatifs) : ils deviennent des coudes réels.
+      const manuels = n.liaisonWaypoints?.[cle] ?? [];
+      const existants = manuels.length > 0 ? manuels : coudesAffiches.map(w => (w.id < 0 ? { ...w, id: uidMaison() } : w));
       // Couper une section en deux : les deux moitiés gardent sa pose ET sa hauteur (le nouveau coude porte celles
       // de la moitié qui y aboutit ; l'autre moitié garde ce que porte son coude / la fin de liaison).
       const poseCoupee = posesTroncons(n, cle, existants)[apresIndex];
@@ -5170,7 +5174,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       segments.forEach(seg => {
         const sectionsLg = showLongueurs && seg.type !== "domotique" ? tracerLiaison(ctxLg, breaker, segments, seg, hAncreLg).sections : null;
         const cle = cleSegmentLiaison(seg.aId, seg.bId);
-        const coudes = waypointsNiveau?.[cle] ?? [];
+        const coudes = coudesSegment(niveauActif, seg);
         // Liaison (navette) entre deux va-et-vient : couleur du circuit assombrie,
         // pour rester rattachée au circuit tout en se distinguant du reste du tracé.
         const estDomotique = seg.type === "domotique";
@@ -5250,7 +5254,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   const m = toMeters(e.clientX - rect.left, e.clientY - rect.top);
                   // Appui + glisser sur un tracé = nouveau point que l'on tire aussitôt : on déforme le circuit
                   // d'un seul geste. (Un simple clic sans bouger ajoute juste le point.)
-                  const nouveauId = ajouterWaypoint(cle, j, m);
+                  const nouveauId = ajouterWaypoint(cle, j, m, coudes);
                   setSelectedWaypoint({ cle, waypointId: nouveauId });
                   setSelectedTroncon(null); setSelectedPieceId(null); setSelectedAppareillageId(null);
                   setSelectedTableau(false); setSelectedBoite(null); setSelectedMeubleId(null);
@@ -5301,7 +5305,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           });
         }
         coudes.forEach(c => {
-          if (visuel) return;
+          if (visuel || c.id < 0) return; // coudes du routage automatique : pas de poignée tant qu'ils ne sont pas modifiés
           const cPx = toScreen(c.point);
           const estSel = selectedWaypoint?.cle === cle && selectedWaypoint?.waypointId === c.id;
           elements.push(

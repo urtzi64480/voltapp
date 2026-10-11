@@ -27,6 +27,7 @@ import {
 import type { Breaker } from "@/lib/electrical-constants";
 import { segmentsPourCircuit } from "@/lib/maison-engine";
 import { construireChemin3D, hauteurCourseSection, hauteurGaineNiveau, Jambe3D } from "@/lib/chemin-3d";
+import { coudesSegment } from "@/lib/routage-circuits";
 import { hauteurDefautLiaison, hauteursTroncons, posesTroncons } from "@/lib/pose-circuits";
 import { hauteurAppareilM } from "@/lib/murs";
 
@@ -71,7 +72,7 @@ export function tracerLiaison(
 ): TraceLiaison {
   const niveau = ctx.niveau;
   const cle = cleSegmentLiaison(seg.aId, seg.bId);
-  const coudes = niveau.liaisonWaypoints?.[cle] ?? [];
+  const coudes = coudesSegment(niveau, seg);
   const poses = posesTroncons(niveau, cle, coudes);
   const hauteurs = hauteursTroncons(niveau, cle, coudes);
   const hDefaut = hauteurDefautLiaison(breaker, segments, hauteurAncre, ctx.hauteurGaine)(seg);
