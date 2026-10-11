@@ -58,7 +58,7 @@ import Vue3DMaison from "@/components/plan/Vue3DMaison";
 import { toutesBoitesNiveau, segmentsDepuisMarche } from "@/lib/maison-engine";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, genererCircuitsManuelsSeuls, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur, BREAKER_TYPES, effectiveSection } from "@/lib/electrical-constants";
-import { verifierEclairageManuel, fermetureCircuitLumiere } from "@/lib/controle-eclairage";
+import { verifierEclairageManuel, fermetureCircuitLumiere, commandesPartagees } from "@/lib/controle-eclairage";
 import { coudesSegment } from "@/lib/routage-circuits";
 import { natureLiaison, conducteursSegment, geometrieCable, couleurDominante, COULEUR_FIL, LEGENDE_FILS, LIBELLE_NATURE } from "@/lib/couleurs-fils";
 
@@ -1547,7 +1547,8 @@ function CircuitLumiereForm({ niveau, onValidate, onCancel }: {
   const ajoutees = lampes.filter(id => !choisies.has(id));
   const parId = new Map(tous.map(a => [a.id, a]));
   const nomDe = (a: AppareillagePlace) => `${labelAppareillagePlace(a)} (${pieceDe.get(a.id) ?? "?"})`;
-  const membres = new Set<number>([...lampes, ...commandes]);
+  const partagees = commandesPartagees(tous, commandes, new Set(lampes));   // double va-et-vient dont l'autre voie sert un autre circuit : il y reste
+  const membres = new Set<number>([...lampes, ...commandes.filter(id => !partagees.has(id))]);
   const bilan = lampes.length > 0 ? verifierEclairageManuel(tous, membres, nomDe) : null;
   const autreCircuit = (id: number) => { const m = parId.get(id)?.circuitManuelId; return m != null ? (niveau.circuitsManuels ?? []).find(c => c.id === m && c.nom) : undefined; };
   const bascule = (ids: number[], on: boolean) => setChoisies(s => { const n = new Set(s); ids.forEach(id => (on ? n.add(id) : n.delete(id))); return n; });
@@ -1567,7 +1568,7 @@ function CircuitLumiereForm({ niveau, onValidate, onCancel }: {
             <input type="color" title="Couleur du circuit" className="w-10 h-9 rounded-lg border border-ink-200 cursor-pointer p-0" value={couleur || "#78716c"} onChange={e => setCouleur(e.target.value)} />
           </div>
           <div>
-            <label className="label">Points lumineux ({choisies.size} choisi{choisies.size > 1 ? "s" : ""}{ajoutees.length > 0 ? ` + ${ajoutees.length} ajouté${ajoutees.length > 1 ? "s" : ""} car commandé${ajoutees.length > 1 ? "s" : ""} par la même commande` : ""})</label>
+            <label className="label">Points lumineux ({choisies.size} choisi{choisies.size > 1 ? "s" : ""}{ajoutees.length > 0 ? ` + ${ajoutees.length} ajouté${ajoutees.length > 1 ? "s" : ""} (même voie de commande)` : ""})</label>
             <div className="flex flex-col gap-2 max-h-60 overflow-y-auto border border-ink-100 rounded-lg p-1.5">
               {lampesParPiece.length === 0 && <p className="text-xs text-ink-400 px-1 py-1">Aucun point lumineux sur ce niveau.</p>}
               {lampesParPiece.map(g => {
@@ -1584,7 +1585,7 @@ function CircuitLumiereForm({ niveau, onValidate, onCancel }: {
                         <input type="checkbox" checked={choisies.has(l.id) || ajoutees.includes(l.id)} disabled={ajoutees.includes(l.id)} onChange={() => bascule([l.id], !choisies.has(l.id))} />
                         <AppareillageSymbol type={l.type} size={14} />
                         <span className="text-ink-700 truncate flex-1">{l.nom || labelAppareillagePlace(l)}</span>
-                        {ajoutees.includes(l.id) && <span className="text-[10px] text-sky-600 shrink-0">ajouté (même commande)</span>}
+                        {ajoutees.includes(l.id) && <span className="text-[10px] text-sky-600 shrink-0">ajouté (même voie)</span>}
                         {autreCircuit(l.id) && <span className="text-[10px] text-amber-600 shrink-0 whitespace-nowrap">sur « {autreCircuit(l.id)!.nom} »</span>}
                       </label>
                     ))}
@@ -1601,8 +1602,9 @@ function CircuitLumiereForm({ niveau, onValidate, onCancel }: {
                 {commandes.map(id => { const c = parId.get(id)!; return (
                   <div key={id} className="flex items-center gap-2 px-1.5 py-0.5 text-xs">
                     <AppareillageSymbol type={c.type} size={14} />
-                    <span className="text-ink-700 truncate flex-1">{nomDe(c)} → {lumieresCommandees(c).map(i => parId.get(i)).filter((l): l is AppareillagePlace => !!l).map(l => l.nom || labelAppareillagePlace(l)).join(", ") || "—"}</span>
-                    {autreCircuit(id) && <span className="text-[10px] text-amber-600 shrink-0 whitespace-nowrap">déplacé depuis « {autreCircuit(id)!.nom} »</span>}
+                    <span className="text-ink-700 truncate flex-1">{nomDe(c)} → {[c.commandePourIds ?? [], c.commandePourIds2 ?? []].map((voie, v) => { const ls = voie.filter(i => lampes.includes(i)).map(i => parId.get(i)).filter((l): l is AppareillagePlace => !!l).map(l => l.nom || labelAppareillagePlace(l)); return ls.length ? `${estCommandeDouble(c.type) ? `voie ${v === 0 ? "A" : "B"} : ` : ""}${ls.join(", ")}` : ""; }).filter(Boolean).join(" · ") || "—"}</span>
+                    {partagees.has(id) ? <span className="text-[10px] text-sky-600 shrink-0 whitespace-nowrap">reste sur « {(niveau.circuitsManuels ?? []).find(m => m.id === partagees.get(id))?.nom ?? "autre circuit"} » (son autre voie)</span>
+                      : autreCircuit(id) && <span className="text-[10px] text-amber-600 shrink-0 whitespace-nowrap">déplacé depuis « {autreCircuit(id)!.nom} »</span>}
                   </div>
                 ); })}
               </div>

@@ -17,7 +17,7 @@ import {
 import {
   Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone, BoiteDerivation,
   CircuitManuel, familleCircuitManuelAppareillage, couleurCircuit, USAGE_DEDIE_DEFAUT,
-  estCommande, baseCommande, commandeCetteLumiere, estLumiere, lumieresCommandees,
+  estCommande, estCommandeDouble, baseCommande, commandeCetteLumiere, estLumiere, lumieresCommandees,
   SegmentCircuit, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage, ordonnerAncresParProximite,
 } from "./maison-types";
 import { appareillagesParPieceReelle } from "./piece-reelle";
@@ -275,9 +275,12 @@ function repartirLumieres<T extends Item>(lumItems: T[], tousItems: Item[], max:
   const trouver = (i: number): number => { let r = i; while (parent.get(r) !== r) r = parent.get(r)!; parent.set(i, r); return r; };
   lumItems.forEach(l => parent.set(l.base.id, l.base.id));
   const idsLum = new Set(lumItems.map(l => l.base.id));
+  // Une VOIE ne peut pas basculer deux circuits ; les deux voies d'un double va-et-vient, elles, peuvent alimenter deux circuits différents.
   tousItems.forEach(c => {
-    const cibles = lumieresCommandees(c.base).filter(id => idsLum.has(id));
-    for (let k = 1; k < cibles.length; k++) parent.set(trouver(cibles[k]), trouver(cibles[0]));
+    [c.base.commandePourIds ?? [], c.base.commandePourIds2 ?? []].forEach(voie => {
+      const cibles = voie.filter(id => idsLum.has(id));
+      for (let k = 1; k < cibles.length; k++) parent.set(trouver(cibles[k]), trouver(cibles[0]));
+    });
   });
   const compParRacine = new Map<number, T[]>();
   lumItems.forEach(l => { const r = trouver(l.base.id); (compParRacine.get(r) ?? compParRacine.set(r, []).get(r)!).push(l); });
@@ -990,11 +993,15 @@ export function controlerCircuits(resultat: ResultatGeneration): BilanControle {
         message: `${nom(t)} — ${t.niveau.nom} : ne commande aucun point lumineux.` });
       return;
     }
-    const circuits = new Set(cibles.map(id => parId.get(id)!.a.circuitId).filter(c => c != null));
-    if (circuits.size > 1) {
-      problemes.push({ code: "commande_multi_circuits", gravite: "erreur", niveauId: t.niveau.id, appareilIds: [t.a.id, ...cibles],
-        message: `${nom(t)} — ${t.niveau.nom} : commande des lampes de ${circuits.size} circuits différents (impossible à câbler : mets-les dans le même circuit).` });
-    }
+    // Par VOIE : les deux voies d'un double va-et-vient peuvent alimenter deux circuits différents, mais pas les lampes d'une même voie.
+    [t.a.commandePourIds ?? [], t.a.commandePourIds2 ?? []].forEach((voie, v) => {
+      const ids = voie.filter(id => parId.has(id) && estLumiere(parId.get(id)!.a.type));
+      const circuits = new Set(ids.map(id => parId.get(id)!.a.circuitId).filter(c => c != null));
+      if (circuits.size > 1) {
+        problemes.push({ code: "commande_multi_circuits", gravite: "erreur", niveauId: t.niveau.id, appareilIds: [t.a.id, ...ids],
+          message: `${nom(t)} — ${t.niveau.nom} : ${estCommandeDouble(t.a.type) ? `la voie ${v === 0 ? "A" : "B"} commande` : "commande"} des lampes de ${circuits.size} circuits différents (impossible à câbler : mets-les dans le même circuit).` });
+      }
+    });
   });
 
   // Une commande rangée dans un AUTRE circuit que celui de sa lampe n'est pas câblée avec elle : ni l'aller, ni le retour, ni les

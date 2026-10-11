@@ -42,7 +42,10 @@ export function verifierEclairageManuel(
     const filaires = cmds.filter(c => !c.domotique);
     // Une commande SANS circuit manuel est rattachée d'office au circuit de sa lampe à la génération (rattacherRetoursLampe) ; seule une
     // commande rangée dans UN AUTRE circuit manuel reste à l'écart — c'est elle qui fait disparaître le retour et les navettes du tracé.
-    const absentes = filaires.filter(c => !membreIds.has(c.id) && c.circuitManuelId != null);
+    // Un double va-et-vient rangé dans un AUTRE circuit parce qu'il y commande des lampes (son autre voie) reste valable : pour ce circuit-ci,
+    // c'est une commande d'un autre circuit (source externe), pas un oubli.
+    const sertAutreCircuit = (c: AppareillagePlace) => c.circuitManuelId != null && appareils.some(l => estLumiere(l.type) && l.circuitManuelId === c.circuitManuelId && !membreIds.has(l.id) && commandeCetteLumiere(c, l.id));
+    const absentes = filaires.filter(c => !membreIds.has(c.id) && c.circuitManuelId != null && !sertAutreCircuit(c));
     if (absentes.length > 0) {
       bloquants.push({ code: "commande_hors_circuit", appareilIds: [lampe.id, ...absentes.map(c => c.id)], ajouter: absentes.map(c => c.id),
         message: `${nomDe(lampe)} : ${absentes.map(nomDe).join(", ")} ${absentes.length > 1 ? "la commandent" : "la commande"} mais ${absentes.length > 1 ? "ne sont pas" : "n'est pas"} dans le circuit : le retour${absentes.length > 1 ? " et les navettes ne seraient pas tracés" : " ne serait pas tracé"}.` });
@@ -55,12 +58,17 @@ export function verifierEclairageManuel(
   });
 
   appareils.filter(a => membreIds.has(a.id) && estCommande(a.type) && !a.domotique).forEach(cmd => {
-    const cibles = lumieresCommandees(cmd).map(id => parId.get(id)).filter((l): l is AppareillagePlace => !!l && estLumiere(l.type));
-    if (cibles.length === 0) {
+    // Par VOIE : un double va-et-vient peut alimenter deux circuits (une voie chacun). Seules les voies qui touchent une lampe de CE circuit
+    // comptent ; les lampes de l'autre voie restent sur leur circuit.
+    const voies = [cmd.commandePourIds ?? [], cmd.commandePourIds2 ?? []].map(v => v.map(id => parId.get(id)).filter((l): l is AppareillagePlace => !!l && estLumiere(l.type)));
+    const concernees = voies.filter(v => v.some(l => membreIds.has(l.id)));
+    const cibles = (concernees.length > 0 ? concernees : voies).flat();
+    if (concernees.length === 0 && voies.every(v => v.length === 0)) {
       bloquants.push({ code: "commande_sans_lampe", appareilIds: [cmd.id], ajouter: [],
         message: `${nomDe(cmd)} : ne commande aucun point lumineux, donc aucun retour. Relie-la à sa lampe ou retire-la du circuit.` });
       return;
     }
+    if (concernees.length === 0) return;   // aucune de ses voies ne touche ce circuit : commande d'un autre circuit, rien à exiger ici
     const absentes = cibles.filter(l => !membreIds.has(l.id));
     if (absentes.length > 0) {
       bloquants.push({ code: "lampe_commandee_hors_circuit", appareilIds: [cmd.id, ...absentes.map(l => l.id)], ajouter: absentes.map(l => l.id),
@@ -83,14 +91,29 @@ export function fermetureCircuitLumiere(appareils: AppareillagePlace[], lampeIds
   const lampes = new Set<number>(Array.from(lampeIds).filter(id => { const a = parId.get(id); return !!a && estLumiere(a.type); }));
   const commandes = new Set<number>();
   const toutesCommandes = appareils.filter(a => estCommande(a.type));
+  // PAR VOIE : une commande qui pilote une lampe choisie rejoint le circuit, ainsi que les lampes de CETTE voie seulement (elles sont câblées
+  // sur le même retour). L'autre voie d'un double va-et-vient peut alimenter un autre circuit : ses lampes ne sont JAMAIS ajoutées.
   for (let change = true; change;) {
     change = false;
     toutesCommandes.forEach(c => {
-      const cibles = lumieresCommandees(c);
-      if (!cibles.some(id => lampes.has(id))) return;
-      if (!commandes.has(c.id)) { commandes.add(c.id); change = true; }
-      cibles.forEach(id => { const l = parId.get(id); if (l && estLumiere(l.type) && !lampes.has(id)) { lampes.add(id); change = true; } });
+      [c.commandePourIds ?? [], c.commandePourIds2 ?? []].forEach(voie => {
+        const cibles = voie.filter(id => { const l = parId.get(id); return !!l && estLumiere(l.type); });
+        if (!cibles.some(id => lampes.has(id))) return;
+        if (!commandes.has(c.id)) { commandes.add(c.id); change = true; }
+        cibles.forEach(id => { if (!lampes.has(id)) { lampes.add(id); change = true; } });
+      });
     });
   }
   return { lampes: Array.from(lampes), commandes: Array.from(commandes) };
+}
+
+/** Commandes trouvées par fermetureCircuitLumiere qui servent DÉJÀ un autre circuit manuel (une voie y alimente des lampes) : elles y restent. */
+export function commandesPartagees(appareils: AppareillagePlace[], commandeIds: number[], lampeIds: Set<number>): Map<number, number> {
+  const res = new Map<number, number>();
+  commandeIds.forEach(id => {
+    const c = appareils.find(a => a.id === id);
+    if (!c || c.circuitManuelId == null) return;
+    if (appareils.some(l => estLumiere(l.type) && l.circuitManuelId === c.circuitManuelId && !lampeIds.has(l.id) && commandeCetteLumiere(c, l.id))) res.set(id, c.circuitManuelId);
+  });
+  return res;
 }
