@@ -2091,6 +2091,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [afficherSansCircuit, setAfficherSansCircuit] = useState(true);
 
   const [resultat, setResultat] = useState<ResultatGeneration | null>(null);
+  // Les circuits générés sont enregistrés AVEC le plan (maison_config.circuitsGeneres) : on les retrouve tels quels à la réouverture.
+  const resultatRef = useRef<ResultatGeneration | null>(null);
+  resultatRef.current = resultat;
+  const configPlan = (nv: Niveau[]): string => {
+    const r = resultatRef.current;
+    return JSON.stringify(r && r.breakers.length > 0 ? { niveaux: nv, circuitsGeneres: { breakers: r.breakers, alertes: r.alertes } } : { niveaux: nv });
+  };
   const [showCircuits, setShowCircuits] = useState(false);
   // Cotes d'implantation : par défaut aucune (plan propre) ; l'appareillage sélectionné affiche
   // toujours les siennes ; ce bouton affiche une cote par appareillage mural (lisibilité filtrée).
@@ -2190,6 +2197,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           const premier = [...niveauxFinal].sort((a, b) => a.ordre - b.ordre)[0];
           setNiveaux(niveauxFinal);
           setNiveauActifId(premier.id);
+          const cg = parsed.circuitsGeneres;
+          if (cg && Array.isArray(cg.breakers) && cg.breakers.length > 0) {
+            setResultat({ maison: { niveaux: niveauxFinal }, breakers: cg.breakers, alertes: Array.isArray(cg.alertes) ? cg.alertes : [] });
+            setShowCircuits(true);
+            setCircuitsVisibles(new Set(cg.breakers.map((b: Breaker) => b.id)));
+          }
           setLoading(false);
           if (corrections > 0 || orphelines.length > 0 || nbMurs > 0) {
             modifierProjet(projet.id, { maison_config: JSON.stringify({ niveaux: niveauxFinal }) });
@@ -2243,6 +2256,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setCircuitsVisibles(new Set(res.breakers.map(b => b.id)));
     return res;
   };
+
+  // Les circuits MANUELS existent toujours, sans passer par « Générer » : dès qu'il n'y a pas de circuits calculés (ouverture d'un plan
+  // ancien, modification du plan qui invalide les circuits automatiques, annulation…), on les recalcule seuls et tout de suite.
+  useEffect(() => {
+    if (loading || resultat) return;
+    const aDesManuels = niveaux.some(n => (n.circuitsManuels ?? []).some(m => n.pieces.some(p => p.appareillages.some(a => a.circuitManuelId === m.id))));
+    if (aDesManuels) recalculerCircuits(niveaux);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, resultat, niveaux]);
 
   useEffect(() => {
     if (dragMode.kind === "none") return;
@@ -4591,7 +4613,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const handleSave = useCallback(async () => {
     setSaving(true);
-    await modifierProjet(projet.id, { maison_config: JSON.stringify({ niveaux }) });
+    await modifierProjet(projet.id, { maison_config: configPlan(niveaux) });
     setSaving(false); setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }, [niveaux, projet.id]);
@@ -4614,7 +4636,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [autoSaveMsg, setAutoSaveMsg] = useState<string | null>(null);
 
   const sauvegardeAuto = useCallback(async (etat: Niveau[]) => {
-    const ok = await modifierProjet(projet.id, { maison_config: JSON.stringify({ niveaux: etat }) });
+    const ok = await modifierProjet(projet.id, { maison_config: configPlan(etat) });
     setAutoSaveMsg(ok ? "Sauvegarde auto ✓" : "Sauvegarde auto impossible");
     setTimeout(() => setAutoSaveMsg(null), 2500);
   }, [projet.id]);
@@ -4697,7 +4719,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // liste, SANS exclure personne (une nouvelle génération les recrée). Les circuits manuels gardent leur définition (ils
   // repassent « à générer »). reinitialiser = remet aussi à zéro les circuits manuels et les exclusions de tout le plan.
   // Ctrl+Z annule.
-  const effacerCircuitsGeneres = (filtre: (b: Breaker) => boolean, reinitialiser = false) => {
+  const effacerCircuitsGeneres = (filtre: (b: Breaker) => boolean, reinitialiser = false, portee: "tous" | number = reinitialiser ? "tous" : -1) => {
     if (!resultat) return;
     const ids = new Set(resultat.breakers.filter(filtre).map(b => b.id));
     if (ids.size === 0 && !reinitialiser) return;
@@ -4710,19 +4732,28 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       labelsEfface.forEach(l => { delete reste[l]; });
       return reste;
     };
-    const strip = (n: Niveau): Niveau => ({
-      ...n,
-      nomsCircuits: sansNoms(n),
-      ...(reinitialiser ? { circuitsManuels: [], appareillagesExclus: [] } : {}),
-      pieces: n.pieces.map(p => ({
-        ...p,
-        appareillages: p.appareillages.map(a => {
-          const efface = a.circuitId != null && ids.has(a.circuitId);
-          if (!efface && !(reinitialiser && a.circuitManuelId != null)) return a;
-          return { ...a, ...(efface ? { circuitId: undefined } : {}), ...(reinitialiser ? { circuitManuelId: undefined } : {}) };
-        }),
-      })),
-    });
+    // Un circuit manuel effacé disparaît vraiment (définition + rattachements) : il ne reste pas « à générer ». « Tous » / « un niveau »
+    // vident aussi les manuels du périmètre, même sans appareillage.
+    const manuelsEfface = new Set(resultat.breakers.filter(b => ids.has(b.id) && b.manuelId != null).map(b => b.manuelId as number));
+    const strip = (n: Niveau): Niveau => {
+      const viderManuels = reinitialiser || portee === "tous" || portee === n.id;
+      const manuelsRetires = new Set((n.circuitsManuels ?? []).filter(m => viderManuels || manuelsEfface.has(m.id)).map(m => m.id));
+      return {
+        ...n,
+        nomsCircuits: sansNoms(n),
+        ...(manuelsRetires.size > 0 ? { circuitsManuels: (n.circuitsManuels ?? []).filter(m => !manuelsRetires.has(m.id)) } : {}),
+        ...(reinitialiser ? { appareillagesExclus: [] } : {}),
+        pieces: n.pieces.map(p => ({
+          ...p,
+          appareillages: p.appareillages.map(a => {
+            const efface = a.circuitId != null && ids.has(a.circuitId);
+            const manuelRetire = a.circuitManuelId != null && manuelsRetires.has(a.circuitManuelId);
+            if (!efface && !manuelRetire) return a;
+            return { ...a, ...(efface ? { circuitId: undefined } : {}), ...(manuelRetire ? { circuitManuelId: undefined } : {}) };
+          }),
+        })),
+      };
+    };
     setNiveaux(nvs => nvs.map(strip));
     if (reste.length === 0) { setResultat(null); setShowCircuits(false); }
     else setResultat({ ...resultat, breakers: reste, maison: { niveaux: resultat.maison.niveaux.map(strip) } });
@@ -5702,14 +5733,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               <>
                 <div className="fixed inset-0 z-30" onClick={() => setMenuEffacerOuvert(false)} />
                 <div className="absolute left-0 top-full mt-1 z-40 w-80 card p-2 flex flex-col gap-0.5 shadow-lg">
-                  <button className="btn-ghost !text-xs !justify-start" onClick={() => effacerCircuitsGeneres(() => true)}>
-                    🗑 Tous les circuits générés ({resultat.breakers.length})
+                  <button className="btn-ghost !text-xs !justify-start" onClick={() => effacerCircuitsGeneres(() => true, false, "tous")}>
+                    🗑 Tous les circuits ({resultat.breakers.length})
                   </button>
                   {niveauActif && (() => {
                     const nb = resultat.breakers.filter(b => b.niveauId === niveauActif.id).length;
                     return (
                       <button className="btn-ghost !text-xs !justify-start disabled:opacity-40" disabled={nb === 0}
-                        onClick={() => effacerCircuitsGeneres(b => b.niveauId === niveauActif.id)}>
+                        onClick={() => effacerCircuitsGeneres(b => b.niveauId === niveauActif.id, false, niveauActif.id)}>
                         🗑 Ceux de « {niveauActif.nom || NIVEAU_TYPES[niveauActif.type]} » ({nb})
                       </button>
                     );
@@ -8255,7 +8286,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                           onClick={e => e.stopPropagation()}
                           onChange={e => b ? renommerCircuit(b, e.target.value) : renommerCircuitManuelDirect(manuel!.id, e.target.value)} />
                         {lg !== null && <span className="font-mono text-ink-400 shrink-0" title={lgDetail ? `${lgDetail.horizontale.toFixed(2)} m à l'horizontale + ${lgDetail.verticale.toFixed(2)} m de montées / descentes` : undefined}>{lg.toFixed(1)}m</span>}
-                        {!b && <span className="text-[9px] text-ink-400 shrink-0 italic whitespace-nowrap">à générer</span>}
+                        {!b && <span className="text-[9px] text-ink-400 shrink-0 italic whitespace-nowrap">vide</span>}
                         {manuel?.nonRelieTableau && <span className="text-[9px] text-sky-600 shrink-0" title="Circuit déjà existant, non relié au tableau">🔗✕</span>}
                         {b && CIRCUITS[b.circuit]?.category !== "lumiere" && (
                           <button onClick={e => { e.preventDefault(); e.stopPropagation(); demarrerDessinCheminement(b); }}
