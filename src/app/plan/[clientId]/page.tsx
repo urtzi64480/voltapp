@@ -57,7 +57,7 @@ import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import Vue3DMaison from "@/components/plan/Vue3DMaison";
 import { toutesBoitesNiveau, segmentsDepuisMarche } from "@/lib/maison-engine";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, genererCircuitsManuelsSeuls, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
-import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
+import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur, BREAKER_TYPES, effectiveSection } from "@/lib/electrical-constants";
 import { verifierEclairageManuel } from "@/lib/controle-eclairage";
 import { coudesSegment } from "@/lib/routage-circuits";
 import { natureLiaison, conducteursSegment, geometrieCable, couleurDominante, COULEUR_FIL, LEGENDE_FILS, LIBELLE_NATURE } from "@/lib/couleurs-fils";
@@ -2036,6 +2036,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [placingPointArrivee, setPlacingPointArrivee] = useState(false);
   // Boîte de dérivation à poser : label du circuit visé, puis un clic sur le plan la place exactement là.
   const [placingBoiteLabel, setPlacingBoiteLabel] = useState<string | null>(null);
+  // Tableau tel qu'il est enregistré dans le module Tableau (section / calibre réglés là-bas) : relu à chaque ouverture d'un schéma technique.
+  const [tableauPourSchema, setTableauPourSchema] = useState<BreakerRow[] | null>(null);
   // Pose par parties : on choisit une partie du circuit (clic de départ puis clic de fin, n'importe où sur le tracé) et sa pose.
   const [poseParties, setPoseParties] = useState<{ label: string | null; pose: "apparent" | "encastre"; premier: Point | null; fixe?: boolean } | null>(null);
   const [placingMeuble, setPlacingMeuble] = useState(false);
@@ -2132,6 +2134,22 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [alerteEclairage, setAlerteEclairage] = useState(false);
   const fmtSectionTxt = (v: string) => v.replace(".", ",");
   const [schemaCircuitId, setSchemaCircuitId] = useState<number | null>(null);
+  useEffect(() => {
+    if (schemaCircuitId == null) { setTableauPourSchema(null); return; }
+    let annule = false;
+    supabase.from("projets").select("tableau_config, tableaux_annexes").eq("id", projet.id).single().then(({ data: c }) => {
+      if (annule) return;
+      const idAnnexe = niveaux.find(n => n.id === niveauActifId)?.tableauId;
+      let rows: BreakerRow[] = [];
+      try {
+        if (idAnnexe && idAnnexe !== TABLEAU_PRINCIPAL) rows = lireAnnexes((c as any)?.tableaux_annexes).find(a => a.id === idAnnexe)?.rows ?? [];
+        else if (c?.tableau_config) { const parsed = JSON.parse(c.tableau_config); if (Array.isArray(parsed)) rows = parsed; }
+      } catch {}
+      setTableauPourSchema(rows);
+    });
+    return () => { annule = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schemaCircuitId]);
   // Ids de breakers actuellement affichés sur le plan (sous-ensemble de resultat.breakers) —
   // permet d'isoler un ou plusieurs circuits à l'écran pour vérifier leur tracé avant de les
   // retoucher à la main. Réinitialisé à "tous visibles" à chaque nouvelle génération
@@ -8464,12 +8482,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               const points = tous.map(t => t.a).filter(a => a.circuitId === b.id);
               const segs = segmentsPourCircuit(b, points, niveauActif, origine);
               const nomsCircuits = new Map<number, string>(circuitsNiveauActif.map(x => [x.id, nomAffiche(x)] as const));
+              // Section et calibre : ceux du TABLEAU enregistré (module Tableau) s'il contient ce circuit, sinon ceux du plan.
+              const labelTableau = b.manuelId != null ? b.label : (niveauActif.nomsCircuits?.[b.label] ?? b.label);
+              const dansTableau = (tableauPourSchema ?? []).flatMap(r => r.slots).find(x => x && x.label === labelTableau && !BREAKER_TYPES[x.type]?.isDiff) ?? null;
+              const section = dansTableau ? effectiveSection(dansTableau) : (b.customSection ?? CIRCUITS[b.circuit]?.section ?? "1.5");
+              const amperesAffiches = dansTableau ? dansTableau.amperes : b.amperes;
               const schema = construireSchemaTechnique({
-                circuitId: b.id, libelleTableau: `${b.amperes} A · ${nomAffiche(b)}`, points, tous, segments: segs,
+                circuitId: b.id, libelleTableau: `${dansTableau ? dansTableau.amperes : b.amperes} A · ${nomAffiche(b)}`, points, tous, segments: segs,
                 boites: Object.values(niveauActif.boitesDerivation ?? {}).flat(), libelle: labelAppareillagePlace,
                 nomCircuit: id => (id != null ? nomsCircuits.get(id) : undefined) ?? "sans circuit",
               });
-              const section = b.customSection ?? CIRCUITS[b.circuit]?.section ?? "1.5";
               const ctx = creerContexteLongueurs(niveauActif);
               const hAncre = hauteurAncreFn(ctx);
               const longueurs: Record<string, number> = {};
@@ -8479,7 +8501,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               });
               return (
                 <SchemaTechniqueCircuit titre={nomAffiche(b)} couleurCircuit={colorMap.get(b.id) ?? "#666666"}
-                  descriptionTableau={`Disjoncteur ${b.amperes} A · câble ${fmtSectionTxt(section)} mm² · ${points.length} appareillage${points.length > 1 ? "s" : ""}`}
+                  descriptionTableau={`Disjoncteur ${amperesAffiches} A · câble ${fmtSectionTxt(section)} mm²${dansTableau ? " (tableau)" : " (plan)"} · ${points.length} appareillage${points.length > 1 ? "s" : ""}`}
                   section={section} segments={schema.segments} noeuds={schema.noeuds} avertissements={schema.avertissements}
                   vueAppareil={id => construireVueAppareil({ id, segments: schema.segments, noeuds: schema.noeuds, section, voieExterne: schema.voieExterne,
                     appareil: i => tous.find(t => String(t.a.id) === String(i))?.a })}
