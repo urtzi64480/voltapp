@@ -1325,10 +1325,10 @@ export function construireBranchesCircuitEclairage(
       // Aucune commande « en série » : alimentation directe (lampe seule, ou commandée par télérupteur / domotique).
       poser({ aId: ancre.id, aPoint: ancre.point, bId: String(l.id), bPoint: pl });
     } else {
-      // Va-et-vient d'un côté, interrupteurs simples + détecteurs de l'autre : deux BRANCHES indépendantes depuis l'ancre, qui se
+      // Va-et-vient, interrupteurs simples et détecteurs : des BRANCHES indépendantes depuis l'ancre (pas de chaîne qui ressemble à une série), qui se
       // rejoignent à la lampe (montage en parallèle : le détecteur reste alimenté en permanence, l'interrupteur force l'allumage).
       // Mélanger un détecteur dans la chaîne de navettes d'un va-et-vient n'aurait aucun sens électrique.
-      const branches = [chaine.filter(estVV), chaine.filter(c => !estVV(c))].filter(b => b.length > 0);
+      const branches = [chaine.filter(estVV), chaine.filter(c => !estVV(c) && !estDetecteur(c)), chaine.filter(estDetecteur)].filter(b => b.length > 0);
       branches.forEach(branche => {
         let precedent: { id: string; point: Point } = ancre;
         let cPrec: AppareillagePlace | null = null;
