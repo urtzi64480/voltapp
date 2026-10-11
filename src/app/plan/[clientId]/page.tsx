@@ -5285,7 +5285,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       if (!breaker) return [];
       if (!points.some(a => estDansFiltre(a, filtreAffichage))) return [];
       const color = colorMap.get(circuitId) ?? "#666";
-      const segments = segmentsPourCircuit(breaker, points, niveauActif, tableauPos);
+      // Pendant le dessin du cheminement de CE circuit, le câble réel suit déjà l'ordre en cours de clic (et pas l'ancien tracé).
+      const niveauTrace = cheminementDessin && cheminementDessin.breaker.id === breaker.id
+        ? { ...niveauActif, ordresCircuits: { ...(niveauActif.ordresCircuits ?? {}), [breaker.label]: cheminementDessin.ordre } }
+        : niveauActif;
+      const segments = segmentsPourCircuit(breaker, points, niveauTrace, tableauPos);
       const elements: ReactNode[] = [];
       // Longueur RÉELLE de chaque section (horizontale + montée de départ, + descente finale pour la dernière).
       const ctxLg = creerContexteLongueurs(niveauActif);
