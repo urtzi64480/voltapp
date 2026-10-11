@@ -8700,7 +8700,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               const amperesAffiches = dansTableau ? dansTableau.amperes : b.amperes;
               const schema = construireSchemaTechnique({
                 circuitId: b.id, libelleTableau: `${dansTableau ? dansTableau.amperes : b.amperes} A · ${nomAffiche(b)}`, points, tous, segments: segs,
-                boites: Object.values(niveauActif.boitesDerivation ?? {}).flat(), libelle: labelAppareillagePlace,
+                boites: Object.values(niveauActif.boitesDerivation ?? {}).flat(), libelle: a => a.nom || labelAppareillagePlace(a),
                 nomCircuit: id => (id != null ? nomsCircuits.get(id) : undefined) ?? "sans circuit",
               });
               const ctx = creerContexteLongueurs(niveauActif);

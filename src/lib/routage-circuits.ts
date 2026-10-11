@@ -276,7 +276,16 @@ export function coudesSegment(niveau: Niveau, seg: SegmentCircuit): LiaisonWaypo
   if (manuels && manuels.length > 0) return manuels;
   if (seg.type === "domotique") return [];
   // Éclairage : par le plafond, au PLUS COURT (droite, ou plus court chemin qui reste dans le bâti) — pas de détour par les murs.
-  if (seg.plafond) return routeDansPieces(seg.aPoint, seg.bPoint, niveau.pieces).map((point, i) => ({ id: -(i + 1), point }));
+  if (seg.plafond) {
+    // Juste milieu : on suit les murs (parallèle, angles droits) tant que ça ne rallonge presque pas ; sinon plafond, au plus court.
+    const longueur = (pts: Point[]) => pts.reduce((t, q, i) => (i ? t + Math.hypot(q.x - pts[i - 1].x, q.y - pts[i - 1].y) : 0), 0);
+    const plafond = routeDansPieces(seg.aPoint, seg.bPoint, niveau.pieces);
+    const lPlafond = longueur([seg.aPoint, ...plafond, seg.bPoint]);
+    const murs = routeDansMurs(seg.aPoint, seg.bPoint, niveau.pieces);
+    if (murs && murs.length > 0 && longueur([seg.aPoint, ...murs.map(w => w.point), seg.bPoint]) <= lPlafond * 1.3 + 0.5)
+      return murs.map((w, i) => ({ id: -(i + 1), point: w.point, ...(w.hauteurMini != null ? { hauteurMini: w.hauteurMini } : {}) }));
+    return plafond.map((point, i) => ({ id: -(i + 1), point }));
+  }
   // 1) dans l'épaisseur des murs (câbles encastrés) ; 2) à défaut, parallèle aux murs dans les pièces ; 3) à défaut, tracé direct.
   const murs = routeDansMurs(seg.aPoint, seg.bPoint, niveau.pieces);
   if (murs) return murs.map((w, i) => ({ id: -(i + 1), point: w.point, ...(w.hauteurMini != null ? { hauteurMini: w.hauteurMini } : {}) }));
