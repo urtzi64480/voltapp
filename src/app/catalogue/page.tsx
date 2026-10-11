@@ -487,6 +487,7 @@ const SOUS_CATEGORIES_CONNUES: { code: string; label: string }[] = [
   { code: "retour_lampe", label: "Retour lampe (fil, lampe → 1er interrupteur)" },
   { code: "navette", label: "Navette (fil, entre deux va-et-vient)" },
   { code: "boite_derivation", label: "Boîte de dérivation" },
+  { code: "domino_derivation", label: "Domino / borne de dérivation (phase, neutre ou terre)" },
   { code: "boite_encastrement_1poste", label: "Boîte d'encastrement simple" },
   { code: "boite_encastrement_2postes", label: "Boîte d'encastrement double" },
   { code: "boite_encastrement_3postes", label: "Boîte d'encastrement triple" },

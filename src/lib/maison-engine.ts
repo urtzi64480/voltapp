@@ -622,7 +622,7 @@ export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[
     const commandes = points.filter(a => estCommande(a.type));
     const boites = niveau.boitesDerivation?.[breaker.label] ?? [];
     const liaisonsDirectes = niveau.liaisonsDirectesLumiere?.[breaker.label] ?? [];
-    return construireBranchesCircuitEclairage(tableauPos, boites, lumieres, commandes, liaisonsDirectes, relieAuTableau);
+    return construireBranchesCircuitEclairage(tableauPos, boites, lumieres, commandes, liaisonsDirectes, relieAuTableau, niveau.pieces);
   }
   const ordre = niveau.ordresCircuits?.[breaker.label];
   const sequence = ordre

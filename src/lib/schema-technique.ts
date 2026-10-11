@@ -31,9 +31,9 @@ export function construireSchemaTechnique(e: EntreeSchema): SchemaTechnique {
   const parId = new Map(e.tous.map(t => [t.a.id, t] as const));
   const noeuds: Record<string, NoeudSchema> = {
     tableau: { titre: "Tableau", sous: e.libelleTableau, genre: "tableau" },
-    boite: { titre: "Boîte de dérivation", genre: "boite" },
+    boite: { titre: "Boîte de dérivation", sous: "dominos phase / neutre / terre", genre: "boite" },
   };
-  e.boites.forEach(b => { noeuds[`boite-${b.id}`] = { titre: b.nom || "Boîte de dérivation", genre: "boite" }; });
+  e.boites.forEach(b => { noeuds[`boite-${b.id}`] = { titre: b.nom || "Boîte de dérivation", sous: "dominos phase / neutre / terre", genre: "boite" }; });
   const segments = e.segments.map(sg => ({ ...sg }));
   const avertissements: string[] = [];
   const voieExterne: Record<string, 0 | 1> = {};

@@ -14,7 +14,7 @@ import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle }
 import * as THREE from "three";
 import { coudesSegment } from "@/lib/routage-circuits";
 import { conducteursSegment, COULEUR_FIL, couleurConducteur } from "@/lib/couleurs-fils";
-import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, battantsFenetre, nbVantauxBaie, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, estLumiere, estLumierePlafond, estSpot, HAUTEUR_PERSONNE_M, ENTRAXE_POSTE_M, hauteurCommunePlaqueCm, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, pointBoiteImplicite, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, battantsFenetre, nbVantauxBaie, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, estLumiere, estLumierePlafond, estSpot, HAUTEUR_PERSONNE_M, ENTRAXE_POSTE_M, hauteurCommunePlaqueCm, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
 import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante, creerBaieVitree, idVantailBaie, creerPorteGarage, creerFenetreBattante } from "@/components/plan/PortesOuvrables";
@@ -1096,7 +1096,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
           if (boitesExistantes.length > 0) {
             boitesExistantes.forEach(b => dessinerBoite3D(b.point, `boite-${b.id}`));
           } else if (lumieres.length > 1) {
-            const centre = { x: lumieres.reduce((s, l) => s + l.x, 0) / lumieres.length, y: lumieres.reduce((s, l) => s + l.y, 0) / lumieres.length };
+            const centre = pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), niveau.pieces);
             dessinerBoite3D(centre, "boite");
           }
         }

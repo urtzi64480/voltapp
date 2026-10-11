@@ -28,7 +28,7 @@ import {
   CircuitManuel, FamilleCircuitManuel,
   nouveauNiveau, nouvellePiece, nouvelAppareillage, uidMaison, reamorcerCompteurId, dedupliquerIds,
   LiaisonWaypoint, cleSegmentLiaison,
-  cheminSegment, longueurBranchesEclairage, centroidePoints, assombrirCouleur, pointsOndulesEntre,
+  cheminSegment, longueurBranchesEclairage, centroidePoints, pointBoiteImplicite, assombrirCouleur, pointsOndulesEntre,
   BoiteDerivation, migrerBoitesDerivation,
   Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, nouvelleVoiture, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
   estCommande, estCommandeDouble, estLumiere, estCourantFaible, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM,
@@ -544,7 +544,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
         if (boitesExistantes.length > 0) {
           boitesExistantes.forEach(b => dessinerBoiteImprimee(b.point, b.nom));
         } else if (lumieres.length > 1) {
-          dessinerBoiteImprimee(centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y }))));
+          dessinerBoiteImprimee(pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), n.pieces));
         }
       }
     });
@@ -4532,7 +4532,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (breaker) {
       const lumieres = niveauActif.pieces.flatMap(p => p.appareillages)
         .filter(a => a.circuitId === breaker.id && (estLumiere(a.type)));
-      if (lumieres.length > 0) centre = centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y })));
+      if (lumieres.length > 0) centre = pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), niveauActif.pieces);
     }
     const existantes = niveauActif.boitesDerivation?.[label] ?? [];
     const decalage = existantes.length * 0.4;
@@ -5364,7 +5364,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         } else if (lumieres.length > 1) {
           // Boîte implicite (jamais nommée) — la première interaction la promeut
           // en vraie boîte nommée, voir onBoitePointerDown.
-          const boitePos = centroidePoints(lumieres.map(l => ({ x: l.x, y: l.y })));
+          const boitePos = pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), niveauActif?.pieces);
           const p = toScreen(boitePos);
           elements.push(
             <g key={`boite-${breaker.label}-implicite`} onPointerDown={e => onBoitePointerDown(breaker.label, null, boitePos, e)}

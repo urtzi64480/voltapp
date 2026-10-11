@@ -458,6 +458,12 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           if (mode === "circuit") ajouter(`boite_derivation@c${niveau.id}:${b.id}`, "boite_derivation", "Boîte de dérivation", nomCircuit(b), nbBoites, "u");
           else ajouter(`boite_derivation@${niveau.id}`, "boite_derivation", "Boîte de dérivation",
             pseudoCommun(niveau.nom || niveau.type), nbBoites, "u");
+          // Toute dérivation (un câble qui se sépare en plusieurs) se fait dans une boîte, sur dominos / bornes à levier : un pour la phase,
+          // un pour le neutre, un pour la terre, dans chaque boîte.
+          noterCircuit(niveau, b, nomCircuit(b), "domino_derivation", "Dominos de dérivation (phase, neutre, terre)", nbBoites * 3, "u");
+          if (mode === "circuit") ajouter(`domino_derivation@c${niveau.id}:${b.id}`, "domino_derivation", "Dominos de dérivation (phase, neutre, terre)", nomCircuit(b), nbBoites * 3, "u");
+          else ajouter(`domino_derivation@${niveau.id}`, "domino_derivation", "Dominos de dérivation (phase, neutre, terre)",
+            pseudoCommun(niveau.nom || niveau.type), nbBoites * 3, "u");
         }
       }
 

@@ -1145,6 +1145,24 @@ export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoin
   // Nombre de mécanismes indépendants qui traversent ce câble (va-et-vient / télérupteur DOUBLES : 2 voies). Absent = 1.
   voies?: number; }
 
+/**
+ * Emplacement de la boîte de dérivation IMPLICITE d'un circuit d'éclairage (celle que le plan crée quand aucune boîte n'est posée) :
+ * le centre des lampes — mais jamais dans le vide. Sur un plan en L ou à plusieurs pièces, le centre peut tomber hors du bâti ou dans
+ * une cour : on pose alors la boîte dans la pièce de la lampe la plus proche, à 30 cm de la lampe vers le centre (en restant dans la pièce).
+ */
+export function pointBoiteImplicite(points: Point[], pieces?: Piece[]): Point {
+  const c = centroidePoints(points);
+  if (!pieces || pieces.length === 0 || points.length === 0) return c;
+  if (pieces.some(p => pointDansPolygone(c, p.contour))) return c;
+  const proche = points.reduce((m, p) => (distance(p, c) < distance(m, c) ? p : m), points[0]);
+  const piece = pieces.find(p => pointDansPolygone(proche, p.contour));
+  if (!piece) return proche;
+  const d = distance(proche, c);
+  const t = d > 0 ? Math.min(0.3, d) / d : 0;
+  const decale = { x: proche.x + (c.x - proche.x) * t, y: proche.y + (c.y - proche.y) * t };
+  return pointDansPolygone(decale, piece.contour) ? decale : proche;
+}
+
 export function centroidePoints(points: Point[]): Point {
   if (points.length === 0) return { x: 0, y: 0 };
   return {
@@ -1175,7 +1193,7 @@ export function centroidePoints(points: Point[]): Point {
 // marqué (type: "domotique") pour être tracé sous forme d'onde plutôt qu'un trait plein.
 export function construireBranchesCircuitEclairage(
   depart: Point, boites: BoiteDerivation[], lumieres: AppareillagePlace[], commandes: AppareillagePlace[],
-  liaisonsDirectes: [number, number][] = [], relieAuTableau: boolean = true,
+  liaisonsDirectes: [number, number][] = [], relieAuTableau: boolean = true, pieces?: Piece[],
 ): SegmentCircuit[] {
   const segments: SegmentCircuit[] = [];
   const idsLumieres = new Set(lumieres.map(l => l.id));
@@ -1312,7 +1330,7 @@ export function construireBranchesCircuitEclairage(
       if (lumieresLibres.length <= 1) {
         lumieresLibres.forEach(l => raccorderLampe(l, { id: "tableau", point: depart }));
       } else {
-        const centre = centroidePoints(lumieresLibres.map(l => ({ x: l.x, y: l.y })));
+        const centre = pointBoiteImplicite(lumieresLibres.map(l => ({ x: l.x, y: l.y })), pieces);
         segments.push({ aId: "tableau", aPoint: depart, bId: "boite", bPoint: centre });
         lumieresLibres.forEach(l => raccorderLampe(l, { id: "boite", point: centre }));
       }
@@ -1320,7 +1338,7 @@ export function construireBranchesCircuitEclairage(
       // Non relié au tableau : les lampes libres se maillent quand même entre elles via
       // une boîte implicite, mais aucun segment ne part vers l'extérieur (déjà alimenté
       // par l'installation existante). Avec 0 ou 1 lampe libre : rien à tracer.
-      const centre = centroidePoints(lumieresLibres.map(l => ({ x: l.x, y: l.y })));
+      const centre = pointBoiteImplicite(lumieresLibres.map(l => ({ x: l.x, y: l.y })), pieces);
       lumieresLibres.forEach(l => raccorderLampe(l, { id: "boite", point: centre }));
     }
   } else {
