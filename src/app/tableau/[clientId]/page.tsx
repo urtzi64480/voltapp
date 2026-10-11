@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
@@ -1394,6 +1394,19 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setTimeout(() => setSaved(false), 2000);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, stock, actifId, annexes, clientId, projet.id]);
+
+  // Sauvegarde automatique : 1,5 s après la dernière modification (rangées, disjoncteurs, calibres, sections, annexes…). Le plan, le schéma
+  // technique et le pré-devis relisent ce tableau enregistré : plus besoin de penser à « Sauvegarder ».
+  const dernierSauveRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (loading) return;
+    const instantane = JSON.stringify({ p: rowsDe(TABLEAU_PRINCIPAL), a: annexes.map(x => ({ id: x.id, nom: x.nom, rows: rowsDe(x.id) })) });
+    if (dernierSauveRef.current === null) { dernierSauveRef.current = instantane; return; }   // état chargé : point de départ
+    if (instantane === dernierSauveRef.current) return;
+    const t = setTimeout(() => { dernierSauveRef.current = instantane; void handleSave(); }, 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, stock, annexes, actifId, loading]);
 
   const basculerTableau = (id: string) => {
     if (id === actifId) return;
