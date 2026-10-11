@@ -2332,7 +2332,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Tracés enregistrés avant le routage « dans les murs » (coudes obliques / décrochements) : remis au propre UNE fois par niveau,
   // pose et hauteurs conservées, circuits verrouillés épargnés (voir reconformerTracesNiveau).
   useEffect(() => {
-    if (loading || !resultat || niveaux.every(n => n.tracesMurs === 2)) return;
+    if (loading || !resultat || niveaux.every(n => n.tracesMurs === 3)) return;
     setNiveaux(nvs => nvs.map(n => reconformerTracesNiveau(n, resultat)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, resultat, niveaux]);

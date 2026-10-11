@@ -15,6 +15,7 @@ import {
 } from "@/lib/maison-types";
 import { ResultatGeneration, segmentsPourCircuit } from "@/lib/maison-engine";
 import { coudesSegment } from "@/lib/routage-circuits";
+import { portesSurTrace } from "@/lib/routage-murs";
 import { hauteurCourseSection } from "@/lib/chemin-3d";
 import { hauteurAppareilM } from "@/lib/murs";
 import type { Breaker } from "@/lib/electrical-constants";
@@ -289,8 +290,8 @@ function tracePropre(pts: Point[], murs: number[]): boolean {
 }
 
 export function reconformerTracesNiveau(niveau: Niveau, resultat: ResultatGeneration | null): Niveau {
-  if (niveau.tracesMurs === 2) return niveau;
-  let n: Niveau = { ...niveau, tracesMurs: 2 };
+  if (niveau.tracesMurs === 3) return niveau;
+  let n: Niveau = { ...niveau, tracesMurs: 3 };
   const origine = origineCircuits(niveau);
   if (!resultat || !origine) return n;
   const murs = anglesMurs(niveau);
@@ -305,11 +306,18 @@ export function reconformerTracesNiveau(niveau: Niveau, resultat: ResultatGenera
       const cle = cleSegmentLiaison(seg.aId, seg.bId);
       if ((n.liaisonWaypoints?.[cle] ?? []).length === 0) return;
       const ancien = polyDe(n, seg);
-      if (tracePropre(ancien.pts, murs)) return;
-      // nouveau tracé : le routage automatique (sans coudes figés)
-      const { [cle]: _retire, ...reste } = n.liaisonWaypoints ?? {};
-      const sans: Niveau = { ...n, liaisonWaypoints: reste };
-      const coudes = coudesSegment(sans, seg);
+      let coudes: LiaisonWaypoint[];
+      if (tracePropre(ancien.pts, murs)) {
+        // géométrie correcte : on ne change que les passages de portes / fenêtres (hauteur mini), s'il y en a
+        if (ancien.meta.some(m => m?.hauteurMini != null)) return;
+        const avecPortes = portesSurTrace(ancien.pts, n.pieces);
+        if (!avecPortes) return;
+        coudes = avecPortes.map((w, i) => ({ id: -(i + 1), point: w.point, ...(w.hauteurMini != null ? { hauteurMini: w.hauteurMini } : {}) }));
+      } else {
+        // nouveau tracé : le routage automatique (sans coudes figés)
+        const { [cle]: _retire, ...reste } = n.liaisonWaypoints ?? {};
+        coudes = coudesSegment({ ...n, liaisonWaypoints: reste }, seg);
+      }
       const pts = [seg.aPoint, ...coudes.map(c => c.point), seg.bPoint];
       const sectionAncienne = (m: Point) => plusProchePoly(ancien, m).k;
       const poses: PoseTroncon[] = [], hauts: (number | undefined)[] = [];

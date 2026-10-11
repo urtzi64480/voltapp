@@ -136,7 +136,7 @@ export interface PointRoute { point: Point; hauteurMini?: number }
 
 const MARGE_PORTE = 0.1;      // m — le câble passe au-dessus de la porte avec 10 cm de jeu de chaque côté
 const LINTEAU_CM = 10;        // cm — au-dessus du haut de l'ouverture
-const HAUTEUR_PORTE_DEFAUT: Record<string, number> = { porte: 204, porte_coulissante: 204, porte_garage: 210, baie_vitree: 215, ouverture: 210 };
+const HAUTEUR_PORTE_DEFAUT: Record<string, number> = { porte: 204, porte_coulissante: 204, porte_garage: 210, baie_vitree: 215, ouverture: 210, fenetre: 120 };
 
 /** Découpe les tronçons qui longent un mur en croisant une porte : le câble y monte au-dessus du linteau (section à hauteur mini). */
 function contournerPortes(r: Reseau, pieces: Piece[], poly: Point[]): PointRoute[] {
@@ -154,12 +154,12 @@ function contournerPortes(r: Reseau, pieces: Piece[], poly: Point[]): PointRoute
         const sOf = (pt: Point) => (pt.x - m.p.x) * ux + (pt.y - m.p.y) * uy;
         const sp = sOf(p), sq = sOf(q);
         const pc = pieces[m.piece], a0 = pc.contour[m.i], b0 = pc.contour[(m.i + 1) % pc.contour.length];
-        ouverturesEffectivesMur(pieces, pc, m.i).filter(o => o.type !== "fenetre").forEach(o => {
+        ouverturesEffectivesMur(pieces, pc, m.i).forEach(o => {
           const sc = sOf({ x: a0.x + (b0.x - a0.x) * o.position, y: a0.y + (b0.y - a0.y) * o.position });
           const demi = o.largeur / 200 + MARGE_PORTE;
           const lo = Math.max(Math.min(sp, sq), sc - demi), hi = Math.min(Math.max(sp, sq), sc + demi);
           if (hi - lo < 0.02) return;
-          const haut = (o.allege ?? 0) + (o.hauteur && o.hauteur > 0 ? o.hauteur : HAUTEUR_PORTE_DEFAUT[o.type] ?? 204);
+          const haut = (o.allege ?? (o.type === "fenetre" ? 90 : 0)) + (o.hauteur && o.hauteur > 0 ? o.hauteur : HAUTEUR_PORTE_DEFAUT[o.type] ?? 204);
           const f = (sv: number) => (sq === sp ? 0 : (sv - sp) / (sq - sp));
           coupures.push({ f0: Math.min(f(lo), f(hi)), f1: Math.max(f(lo), f(hi)), mini: haut + LINTEAU_CM });
         });
@@ -239,3 +239,12 @@ function calculer(r: Reseau, pieces: Piece[], a: Point, b: Point): PointRoute[] 
 
 /** Le réseau de murs existe-t-il pour ces pièces ? (sert aux tests) */
 export const reseauMurs = (n: Niveau): boolean => !!(caches.get(n.pieces) ?? construire(n.pieces));
+
+/** Points intérieurs d'un tracé EXISTANT après découpe des passages de portes / fenêtres (hauteur mini au-dessus) ; null si rien à changer. */
+export function portesSurTrace(poly: Point[], pieces: Piece[]): PointRoute[] | null {
+  let r = caches.get(pieces);
+  if (r === undefined) { try { r = construire(pieces); } catch { r = null; } caches.set(pieces, r); }
+  if (!r || poly.length < 2) return null;
+  const res = contournerPortes(r, pieces, poly);
+  return res.some(p => p.hauteurMini != null) ? res.slice(1, -1) : null;
+}

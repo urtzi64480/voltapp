@@ -556,8 +556,8 @@ export interface Niveau {
   liaisonsDirectesLumiere?: Record<string, [number, number][]>;
   // Circuits VERROUILLÉS (labels, même clé que boitesDerivation / ordresCircuits) : leur cheminement (tracé, boîtes, coudes, pose, liaisons) est protégé contre toute modification par erreur.
   circuitsVerrouilles?: string[];
-  // 2 = les tracés déjà enregistrés ont été remis dans les murs (lib/pose-circuits.ts : reconformerTracesNiveau) ; absent = à faire une fois.
-  tracesMurs?: 2;
+  // 3 = tracés remis dans les murs ET passages de portes / fenêtres traités (2 = sans les passages)  (lib/pose-circuits.ts : reconformerTracesNiveau) ; absent = à faire une fois.
+  tracesMurs?: 2 | 3;
   hauteurPlafond?: number; // mètres — pour la vue 3D (2.5 par défaut)
   // Orientation du bâtiment : angle (degrés, sens horaire) entre le HAUT du plan et le Nord géographique.
   // 0 = le Nord est en haut du plan. Valeur commune à tous les niveaux (réglée depuis le plan, voir page du plan) ;
