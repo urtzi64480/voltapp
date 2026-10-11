@@ -22,7 +22,13 @@ import {
   suiviDepuisConfig, progressionElements, progressionPlan, clesDuCircuit, cochesOrphelines,
   SuiviPlan, CircuitSuivi, ElementSuivi, GuideCommande, CategorieElement, Progression,
 } from "@/lib/suivi-realisation";
-import { Coches, lireCoches, appliquerCoches, retirerCoches, relireCoches } from "@/lib/suivi-persistance";
+import {
+  Coches, Minutes, InfosChantier, SuiviStocke, lireSuivi, modifierSuivi, relireSuivi, retirerCoches, formaterMinutes,
+  definirChantier, definirTemps,
+} from "@/lib/suivi-persistance";
+import { calculerBilan, HeuresDevis } from "@/lib/suivi-bilan";
+import { CarteChantier, CarteBilan, SaisieTemps, DevisResume } from "@/components/plan/SuiviChantier";
+import { modifierProjet } from "@/lib/projets";
 import { cn } from "@/lib/utils";
 
 const SQL_MIGRATION =
@@ -198,8 +204,9 @@ function CarteGuide({ g, ouvert, onToggleOuvert }: { g: GuideCommande; ouvert: b
   );
 }
 
-function CarteCircuit({ c, coches, ouvert, onToggleOuvert, onToggle, onToggleGroupe, onReinitialiser }: {
+function CarteCircuit({ c, coches, ouvert, onToggleOuvert, onToggle, onToggleGroupe, onReinitialiser, minutes, chiffreMin, onTemps }: {
   c: CircuitSuivi; coches: Coches; ouvert: boolean; onToggleOuvert: () => void;
+  minutes: number; chiffreMin?: number; onTemps: (min: number) => void;
   onToggle: (cle: string) => void; onToggleGroupe: (cles: string[], fait: boolean) => void; onReinitialiser: () => void;
 }) {
   const [guidesOuverts, setGuidesOuverts] = useState<Set<string>>(new Set());
@@ -227,6 +234,7 @@ function CarteCircuit({ c, coches, ouvert, onToggleOuvert, onToggle, onToggleGro
             <span className="font-semibold text-ink-900 break-words">{c.nom}</span>
             {termine && <span className="badge bg-emerald-100 text-emerald-700">Terminé</span>}
             {nbProblemes > 0 && <span className="badge bg-amber-100 text-amber-800">⚠ {nbProblemes}</span>}
+            {minutes > 0 && <span className="badge bg-ink-100 text-ink-700">⏱ {formaterMinutes(minutes)}</span>}
           </span>
           <span className="block text-xs text-ink-500 mt-0.5">{c.niveauNom} · {c.resume.join(" · ")}</span>
           <span className="block mt-2"><BarreProgression p={p} /></span>
@@ -236,7 +244,8 @@ function CarteCircuit({ c, coches, ouvert, onToggleOuvert, onToggle, onToggleGro
 
       {ouvert && (
         <div className="px-4 pb-4 border-t border-ink-100">
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-4">
+          <div className="mt-4"><SaisieTemps minutes={minutes} chiffreMin={chiffreMin} onChange={onTemps} /></div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-3">
             {c.caracteristiques.map(k => (
               <div key={k.libelle} className={cn("rounded-xl px-3 py-2 border", k.alerte ? "bg-red-50 border-red-200" : "bg-ink-50 border-ink-100")}>
                 <p className="text-[10px] uppercase tracking-wide font-semibold text-ink-400">{k.libelle}</p>
@@ -328,17 +337,25 @@ function CarteCircuit({ c, coches, ouvert, onToggleOuvert, onToggle, onToggleGro
 export default function SuiviPage() {
   const params = useParams();
   const clientId = params.clientId as string;
-  const { projets, projet, loading, changerProjet } = useProjets(clientId);
+  const { projets, projet, loading, changerProjet, recharger } = useProjets(clientId);
   if (loading) return <Shell><div className="flex items-center justify-center h-64 text-ink-400">Chargement…</div></Shell>;
   if (!projet) return <Shell><div className="p-8 text-center text-ink-500">Impossible de charger le projet de ce client.</div></Shell>;
-  return <Suivi key={projet.id} clientId={clientId} projet={projet} projets={projets} onSelect={changerProjet} />;
+  return <Suivi key={projet.id} clientId={clientId} projet={projet} projets={projets} onSelect={changerProjet} onRecharger={() => void recharger(projet.id)} />;
 }
 
 type Calcul = { vide: true } | { erreur: string } | { suivi: SuiviPlan };
 
-function Suivi({ clientId, projet, projets, onSelect }: { clientId: string; projet: Projet; projets: Projet[]; onSelect: (id: string) => void }) {
+function Suivi({ clientId, projet, projets, onSelect, onRecharger }: { clientId: string; projet: Projet; projets: Projet[]; onSelect: (id: string) => void; onRecharger: () => void }) {
   const [client, setClient] = useState<Client | null>(null);
-  const [coches, setCoches] = useState<Coches>(() => lireCoches(projet.suivi_realisation));
+  const [coches, setCoches] = useState<Coches>(() => lireSuivi(projet.suivi_realisation).coches);
+  const [chantier, setChantier] = useState<InfosChantier>(() => lireSuivi(projet.suivi_realisation).chantier);
+  const [temps, setTemps] = useState<Minutes>(() => lireSuivi(projet.suivi_realisation).temps);
+  const [tempsPostes, setTempsPostes] = useState<Minutes>(() => lireSuivi(projet.suivi_realisation).tempsPostes);
+  const [nomChantier, setNomChantier] = useState(projet.nom);
+  const [devisListe, setDevisListe] = useState<DevisResume[]>([]);
+  const [heuresDevis, setHeuresDevis] = useState<HeuresDevis[] | null>(null);
+  const [devisChargement, setDevisChargement] = useState(false);
+  const [devisErreur, setDevisErreur] = useState<string | null>(null);
   const [colonneAbsente, setColonneAbsente] = useState<boolean>(!("suivi_realisation" in projet));
   const [erreur, setErreur] = useState<string | null>(null);
   const [niveauFiltre, setNiveauFiltre] = useState<number | "tous">("tous");
@@ -355,6 +372,36 @@ function Suivi({ clientId, projet, projets, onSelect }: { clientId: string; proj
   useEffect(() => {
     supabase.from("clients").select("*").eq("id", clientId).single().then(({ data }) => { if (data) setClient(data as Client); });
   }, [clientId]);
+
+  // Devis du client (pour lier le chantier à son devis).
+  useEffect(() => {
+    supabase.from("devis").select("id, numero, objet, statut, date_emission").eq("client_id", clientId).order("created_at", { ascending: false })
+      .then(({ data }) => setDevisListe((data ?? []) as DevisResume[]));
+  }, [clientId]);
+
+  // Heures de main d'œuvre chiffrées dans le devis choisi (lignes en heures, par poste). Jamais bloquant : en cas d'échec, simple message.
+  useEffect(() => {
+    const id = chantier.devis_id;
+    if (!id) { setHeuresDevis(null); setDevisErreur(null); return; }
+    let annule = false;
+    setDevisChargement(true); setDevisErreur(null);
+    (async () => {
+      let res = await supabase.from("devis_lignes").select("poste, quantite, prix_unitaire, unite").eq("devis_id", id);
+      if (res.error && /poste/i.test(res.error.message)) {
+        res = await supabase.from("devis_lignes").select("quantite, prix_unitaire, unite").eq("devis_id", id) as typeof res;
+      }
+      if (annule) return;
+      if (res.error) { setHeuresDevis(null); setDevisErreur(`Lignes du devis illisibles : ${res.error.message}`); }
+      else {
+        const lignes = (res.data ?? []) as unknown as { poste?: string | null; quantite: number; prix_unitaire: number; unite?: string | null }[];
+        setHeuresDevis(lignes
+          .filter(l => /^(heure|heures|h)$/i.test((l.unite ?? "").trim()))
+          .map(l => ({ poste: l.poste ?? null, heures: Number(l.quantite) || 0, montant: (Number(l.quantite) || 0) * (Number(l.prix_unitaire) || 0) })));
+      }
+      setDevisChargement(false);
+    })();
+    return () => { annule = true; };
+  }, [chantier.devis_id]);
 
   // Circuits recalculés depuis le plan enregistré — mêmes migrations que l'éditeur de plan, dans le même ordre.
   const calcul: Calcul = useMemo(() => {
@@ -378,40 +425,81 @@ function Suivi({ clientId, projet, projets, onSelect }: { clientId: string; proj
     setErreur(colonne ? null : `Enregistrement impossible : ${message}`);
   }, []);
 
-  // Coche / décoche : mise à jour immédiate à l'écran, puis écriture en file (une à la fois) qui relit la base avant d'écrire.
-  const modifier = useCallback((cles: string[], fait: boolean) => {
-    if (cles.length === 0) return;
-    const dateIso = new Date().toISOString();
-    setCoches(prev => {
-      const n = { ...prev };
-      cles.forEach(k => { if (fait) { if (!n[k]) n[k] = dateIso; } else delete n[k]; });
-      return n;
-    });
+  // Applique un état relu en base (coches, chantier, temps) — seulement quand plus aucune écriture n'est en attente.
+  const appliquerRelu = useCallback((r: SuiviStocke) => {
+    setCoches(r.coches); setChantier(r.chantier); setTemps(r.temps); setTempsPostes(r.tempsPostes);
+  }, []);
+
+  // Toute modification (coche, temps, validation…) : mise à jour immédiate à l'écran, puis écriture en file (une à la fois)
+  // qui relit la base avant d'écrire — deux appareils ne s'écrasent pas.
+  const enregistrer = useCallback((optimiste: () => void, ecrire: () => ReturnType<typeof modifierSuivi>) => {
+    optimiste();
     pendingRef.current += 1;
     fileRef.current = fileRef.current.then(async () => {
-      const res = await appliquerCoches(projet.id, cles, fait, dateIso);
+      const res = await ecrire();
       pendingRef.current -= 1;
       if (res.ok) {
         setErreur(null);
-        if (pendingRef.current === 0) setCoches(res.coches);
+        if (pendingRef.current === 0) appliquerRelu(res.suivi);
       } else {
         signalerEchec(res.message, res.colonneAbsente);
-        const relu = await relireCoches(projet.id);
-        if (relu && pendingRef.current === 0) setCoches(relu);
-        else if (!relu && pendingRef.current === 0) setCoches(lireCoches(projet.suivi_realisation));
+        const relu = await relireSuivi(projet.id);
+        if (pendingRef.current === 0) appliquerRelu(relu ?? lireSuivi(projet.suivi_realisation));
       }
     });
-  }, [projet.id, projet.suivi_realisation, signalerEchec]);
+  }, [projet.id, projet.suivi_realisation, signalerEchec, appliquerRelu]);
+
+  const modifier = useCallback((cles: string[], fait: boolean) => {
+    if (cles.length === 0) return;
+    const dateIso = new Date().toISOString();
+    enregistrer(
+      () => setCoches(prev => {
+        const n = { ...prev };
+        cles.forEach(k => { if (fait) { if (!n[k]) n[k] = dateIso; } else delete n[k]; });
+        return n;
+      }),
+      () => modifierSuivi(projet.id, st => {
+        cles.forEach(k => { if (fait) { if (!st.coches[k]) st.coches[k] = dateIso; } else delete st.coches[k]; });
+      }),
+    );
+  }, [projet.id, enregistrer]);
 
   const basculer = useCallback((cle: string) => modifier([cle], !coches[cle]), [modifier, coches]);
+
+  const changerTemps = useCallback((cible: "temps" | "tempsPostes", cle: string, minutes: number) => {
+    const setter = cible === "temps" ? setTemps : setTempsPostes;
+    enregistrer(
+      () => setter(prev => { const n = { ...prev }; if (minutes > 0) n[cle] = Math.round(minutes); else delete n[cle]; return n; }),
+      () => definirTemps(projet.id, cible, cle, minutes),
+    );
+  }, [projet.id, enregistrer]);
+
+  const changerChantier = useCallback((patch: InfosChantier) => {
+    enregistrer(
+      () => setChantier(prev => {
+        const n = { ...prev, ...patch };
+        if (!n.valide_le) delete n.valide_le;
+        if (!n.devis_id) delete n.devis_id;
+        return n;
+      }),
+      () => definirChantier(projet.id, patch),
+    );
+  }, [projet.id, enregistrer]);
+
+  const renommer = useCallback(async (nom: string) => {
+    setNomChantier(nom);
+    const ok = await modifierProjet(projet.id, { nom });
+    if (!ok) { setNomChantier(projet.nom); setErreur("Le nom du chantier n'a pas pu être enregistré."); return; }
+    onRecharger();
+  }, [projet.id, projet.nom, onRecharger]);
 
   const actualiser = useCallback(async () => {
     if (pendingRef.current > 0) return;
     setEnCours(true);
-    const relu = await relireCoches(projet.id);
-    if (relu && pendingRef.current === 0) setCoches(relu);
+    const relu = await relireSuivi(projet.id);
+    if (relu && pendingRef.current === 0) appliquerRelu(relu);
     setEnCours(false);
-  }, [projet.id]);
+  }, [projet.id, appliquerRelu]);
 
   // Retour sur l'onglet (ex. après avoir coché depuis un autre appareil) : coches relues.
   useEffect(() => {
@@ -434,6 +522,10 @@ function Suivi({ clientId, projet, projets, onSelect }: { clientId: string; proj
   };
 
   const global = suivi ? progressionPlan(suivi, coches) : { fait: 0, total: 0, pct: 0 };
+  const bilan = useMemo(
+    () => calculerBilan(suivi?.circuits ?? [], chantier.devis_id ? heuresDevis : null, temps, tempsPostes),
+    [suivi, chantier.devis_id, heuresDevis, temps, tempsPostes],
+  );
   const niveaux = useMemo(() => {
     const m = new Map<number, string>();
     suivi?.circuits.forEach(c => { if (!m.has(c.niveauId)) m.set(c.niveauId, c.niveauNom); });
@@ -466,7 +558,7 @@ function Suivi({ clientId, projet, projets, onSelect }: { clientId: string; proj
     <Shell>
       <div className="p-4 md:p-8 max-w-4xl mx-auto">
         <Link href="/plan" className="inline-flex items-center gap-1.5 text-xs font-semibold text-ink-500 hover:text-ink-800 mb-3">
-          <ArrowLeft size={13} /> Plans de circuits
+          <ArrowLeft size={13} /> Plans interventions
         </Link>
         <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
           <div className="min-w-0">
@@ -519,10 +611,15 @@ function Suivi({ clientId, projet, projets, onSelect }: { clientId: string; proj
 
         {suivi && (
           <>
+            <CarteChantier
+              nom={nomChantier} chantier={chantier} devisListe={devisListe} pctAvancement={global.pct}
+              onRenommer={nom => void renommer(nom)} onChangerChantier={changerChantier}
+            />
+
             <div className="card card-inner mb-4">
               <div className="flex flex-wrap items-baseline justify-between gap-2 mb-2">
                 <p className="font-semibold text-ink-900">Avancement du chantier</p>
-                <p className="text-xs text-ink-500">{suivi.circuits.length} circuit{suivi.circuits.length > 1 ? "s" : ""} · {global.total} étapes à cocher</p>
+                <p className="text-xs text-ink-500">{suivi.circuits.length} circuit{suivi.circuits.length > 1 ? "s" : ""} · {global.total} étapes à cocher{bilan.totalPasseMin > 0 ? ` · ⏱ ${formaterMinutes(bilan.totalPasseMin)} passées` : ""}</p>
               </div>
               <BarreProgression p={global} grande />
               <p className="flex gap-1.5 text-[11px] text-ink-400 mt-3 leading-relaxed">
@@ -530,6 +627,11 @@ function Suivi({ clientId, projet, projets, onSelect }: { clientId: string; proj
                 <span>Les circuits sont recalculés à partir du plan enregistré. Si tu modifies le plan, rouvre cette page : les coches des éléments inchangés sont conservées, un circuit dont la composition change repasse « à faire » (une coche fausse serait plus dangereuse qu'une coche perdue).</span>
               </p>
             </div>
+
+            <CarteBilan
+              bilan={bilan} devisChoisi={!!chantier.devis_id} chargement={devisChargement} erreur={devisErreur}
+              tempsPostes={tempsPostes} onTempsPoste={(poste, m) => changerTemps("tempsPostes", poste, m)}
+            />
 
             {nbAnomalies > 0 && (
               <div className="card mb-4 overflow-hidden border-amber-300">
@@ -596,6 +698,7 @@ function Suivi({ clientId, projet, projets, onSelect }: { clientId: string; proj
                   key={c.cle} c={c} coches={coches} ouvert={ouverts.has(c.cle)}
                   onToggleOuvert={() => setOuverts(s => { const n = new Set(s); if (n.has(c.cle)) n.delete(c.cle); else n.add(c.cle); return n; })}
                   onToggle={basculer} onToggleGroupe={modifier} onReinitialiser={() => setAReinitialiser(c)}
+                  minutes={temps[c.cle] ?? 0} chiffreMin={bilan.chiffreParCircuit[c.cle]} onTemps={m => changerTemps("temps", c.cle, m)}
                 />
               ))}
             </div>

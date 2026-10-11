@@ -302,6 +302,9 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [loading, setLoading] = useState(true);
   const [choix, setChoix] = useState<Record<string, EtatChoix>>({});
   const [mainOeuvreHeures, setMainOeuvreHeures] = useState("0");
+  // Heures de main d'œuvre PAR POSTE (nom du poste → heures, optionnel). Chaque poste renseigné donne une ligne de main
+  // d'œuvre rattachée à ce poste dans le devis : c'est ce temps chiffré que le suivi de réalisation compare au temps passé.
+  const [heuresPostes, setHeuresPostes] = useState<Record<string, string>>({});
   const [mainOeuvreIndex, setMainOeuvreIndex] = useState(0);
   const [fraisGenerauxPct, setFraisGenerauxPct] = useState("0");
   const [deplacementEur, setDeplacementEur] = useState("0");
@@ -394,6 +397,8 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setChoixAgrege(memeMode && brouillon?.choixAgrege ? brouillon.choixAgrege : {});
     if (brouillon) {
       if (brouillon.mainOeuvreHeures != null) setMainOeuvreHeures(brouillon.mainOeuvreHeures);
+      // Les postes (pièces / circuits) dépendent du mode : les heures par poste ne se reprennent que dans le même mode.
+      setHeuresPostes(memeMode && brouillon.heuresPostes && typeof brouillon.heuresPostes === "object" ? brouillon.heuresPostes : {});
       if (brouillon.mainOeuvreIndex != null) setMainOeuvreIndex(brouillon.mainOeuvreIndex);
       if (brouillon.fraisGenerauxPct != null) setFraisGenerauxPct(brouillon.fraisGenerauxPct);
       if (brouillon.deplacementEur != null) setDeplacementEur(brouillon.deplacementEur);
@@ -464,7 +469,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
-    const contenu = JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
+    const contenu = JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, heuresPostes, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
     await modifierProjet(projet.id, { predevis_config: contenu });
     setSavingDraft(false);
     setDraftSaved(true);
@@ -542,7 +547,13 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     return (besoin.unite === "m" ? Math.ceil(besoin.quantite) : besoin.quantite) * prix;
   }
 
-  const heures = parseFloat(mainOeuvreHeures) || 0;
+  const heuresGenerales = parseFloat(mainOeuvreHeures) || 0;
+  // Heures par poste : seulement les postes encore présents dans le devis (pièce décochée = poste retiré).
+  const heuresParPoste: [string, number][] = Object.keys(parPieceFiltre)
+    .map(poste => [poste, parseFloat((heuresPostes[poste] ?? "").replace(",", ".")) || 0] as [string, number])
+    .filter(([, h]) => h > 0);
+  const totalHeuresPostes = heuresParPoste.reduce((s, [, h]) => s + h, 0);
+  const heures = heuresGenerales + totalHeuresPostes;
   const tauxHoraire = optionsMainOeuvre[mainOeuvreIndex]?.prix_unitaire ?? profil?.taux_horaire ?? 0;
   const totalMainOeuvre = heures * tauxHoraire;
 
@@ -593,10 +604,18 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
       const lignesFinales: Omit<DevisLigne, "devis_id" | "ordre">[] = [...lignesConsommables];
 
-      if (heures > 0) {
-        const optMO = optionsMainOeuvre[mainOeuvreIndex];
+      const optMO = optionsMainOeuvre[mainOeuvreIndex];
+      // Main d'œuvre rattachée à chaque poste renseigné (comparée au temps passé dans le suivi de réalisation)…
+      heuresParPoste.forEach(([poste, h]) => {
         lignesFinales.push({
-          nom: optMO?.nom ?? "Main d'œuvre", quantite: heures, prix_unitaire: tauxHoraire, unite: "heure",
+          nom: optMO?.nom ?? "Main d'œuvre", quantite: h, prix_unitaire: tauxHoraire, unite: "heure",
+          type_branche: "service", prestation_id: optMO?.prestation_id, poste,
+        });
+      });
+      // … et main d'œuvre générale (non rattachée à un poste).
+      if (heuresGenerales > 0) {
+        lignesFinales.push({
+          nom: optMO?.nom ?? "Main d'œuvre", quantite: heuresGenerales, prix_unitaire: tauxHoraire, unite: "heure",
           type_branche: "service", prestation_id: optMO?.prestation_id, poste: POSTE_MAIN_OEUVRE,
         });
       }
@@ -854,7 +873,16 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
           .sort(([a], [b]) => a.localeCompare(b))
           .map(([piece, besoins]) => (
           <div key={piece} className="card card-inner mb-4">
-            <h2 className="font-semibold text-ink-800 mb-3">{piece}</h2>
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <h2 className="font-semibold text-ink-800 min-w-0 break-words">{piece}</h2>
+              <label className="flex items-center gap-1.5 shrink-0 text-xs text-ink-500" title="Temps de main d'œuvre chiffré pour ce poste (facultatif) — comparé au temps passé dans le suivi de réalisation">
+                <span className="hidden sm:inline">Main d'œuvre</span>
+                <input className="input !py-1 !px-2 !w-16 text-right text-sm" type="number" inputMode="decimal" min="0" step="0.25" placeholder="0"
+                  value={heuresPostes[piece] ?? ""}
+                  onChange={e => setHeuresPostes(prev => ({ ...prev, [piece]: e.target.value }))} />
+                <span>h</span>
+              </label>
+            </div>
             <div className="flex flex-col gap-2">
               {besoins.map(b => (
                 <BesoinRow key={b.cle} besoin={b} etat={choix[b.cle] ?? etatParDefaut(b)}
@@ -890,9 +918,14 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
           <h2 className="font-semibold text-ink-800 mb-3">Main d'œuvre & frais</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="label">Main d'œuvre (heures)</label>
+              <label className="label">Main d'œuvre générale (heures)</label>
               <input className="input" type="number" min="0" step="0.5" value={mainOeuvreHeures}
                 onChange={e => setMainOeuvreHeures(e.target.value)} />
+              <p className="text-[11px] text-ink-400 mt-1">
+                {totalHeuresPostes > 0
+                  ? `+ ${totalHeuresPostes} h saisie${totalHeuresPostes > 1 ? "s" : ""} par poste ci-dessus (${heuresParPoste.length} poste${heuresParPoste.length > 1 ? "s" : ""}) = ${heures} h au total.`
+                  : "Heures non rattachées à un poste. Tu peux aussi saisir les heures poste par poste (champ « Main d'œuvre » de chaque carte) : elles s'ajoutent à celles-ci et servent à comparer ton estimation au temps réellement passé."}
+              </p>
             </div>
             <div>
               <label className="label">Tarif horaire</label>

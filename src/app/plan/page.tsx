@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
 import { suiviDepuisConfig, progressionPlan, Progression } from "@/lib/suivi-realisation";
-import { lireCoches } from "@/lib/suivi-persistance";
+import { lireSuivi } from "@/lib/suivi-persistance";
 import { qsProjet, supprimerProjet, viderDonneesHistoriques } from "@/lib/projets";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Shell from "@/components/layout/Shell";
@@ -76,12 +76,13 @@ interface PlanEntry {
   key: string; clientId: string; projetId: string | null; projetNom: string | null;
   client: Client; niveaux: Niveau[]; nbPieces: number;
   avancement: Progression | null; // suivi de réalisation (null = pas de suivi calculable)
+  valideLe: string | null;        // validation finale du chantier (AAAA-MM-JJ)
 }
 
 function calculerAvancement(p: Projet): Progression | null {
   try {
     const suivi = suiviDepuisConfig(p.maison_config);
-    return suivi ? progressionPlan(suivi, lireCoches(p.suivi_realisation)) : null;
+    return suivi ? progressionPlan(suivi, lireSuivi(p.suivi_realisation).coches) : null;
   } catch { return null; }
 }
 
@@ -120,12 +121,12 @@ export default function PlansPage() {
         if (ps.length === 0) {
           // Client pas encore repris dans un projet : plan historique (migré à l'ouverture).
           const plan = lirePlan((c as any).maison_config);
-          if (plan) entries.push({ key: c.id, clientId: c.id, projetId: null, projetNom: null, client: c, avancement: null, ...plan });
+          if (plan) entries.push({ key: c.id, clientId: c.id, projetId: null, projetNom: null, client: c, avancement: null, valideLe: null, ...plan });
           return;
         }
         ps.forEach(p => {
           const plan = lirePlan(p.maison_config);
-          if (plan) entries.push({ key: p.id, clientId: c.id, projetId: p.id, projetNom: ps.length > 1 ? p.nom : null, client: c, avancement: calculerAvancement(p), ...plan });
+          if (plan) entries.push({ key: p.id, clientId: c.id, projetId: p.id, projetNom: ps.length > 1 ? p.nom : null, client: c, avancement: calculerAvancement(p), valideLe: lireSuivi(p.suivi_realisation).chantier.valide_le ?? null, ...plan });
         });
       });
       setPlans(entries);
@@ -171,7 +172,7 @@ export default function PlansPage() {
       <div className="p-4 md:p-8 max-w-3xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="font-display text-3xl text-ink-900">Plans de circuits</h1>
+            <h1 className="font-display text-3xl text-ink-900">Plans interventions</h1>
             <p className="text-ink-500 text-sm mt-1">
               {plans.length} plan{plans.length > 1 ? "s" : ""} dessiné{plans.length > 1 ? "s" : ""}
             </p>
@@ -231,12 +232,17 @@ export default function PlansPage() {
                         return (
                           <div className="mt-3" title="Avancement de la réalisation du chantier">
                             <div className="flex items-center justify-between text-[11px] text-ink-500 mb-1">
-                              <span className="font-semibold">Réalisation chantier</span>
-                              <span className={fini ? "font-semibold text-emerald-700" : "tabular-nums"}>{fini ? "Terminé ✓" : `${av.fait}/${av.total} · ${av.pct}%`}</span>
+                              <span className="font-semibold truncate">Réalisation chantier{entry.projetNom ? ` · ${entry.projetNom}` : ""}</span>
+                              <span className={`shrink-0 ${fini ? "font-semibold text-emerald-700" : "tabular-nums"}`}>{fini ? "Terminé ✓" : `${av.fait}/${av.total} · ${av.pct}%`}</span>
                             </div>
                             <div className="h-2 rounded-full bg-ink-100 overflow-hidden">
                               <div className={`h-full rounded-full transition-all ${fini ? "bg-emerald-500" : "bg-volt-500"}`} style={{ width: `${av.pct}%` }} />
                             </div>
+                            {entry.valideLe && (
+                              <p className="text-[11px] text-emerald-700 font-medium mt-1">
+                                Chantier validé le {new Date(`${entry.valideLe}T12:00:00`).toLocaleDateString("fr-FR")}
+                              </p>
+                            )}
                           </div>
                         );
                       })()}

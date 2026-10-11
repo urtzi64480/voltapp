@@ -21,7 +21,7 @@ const NAV = [
   { href: "/factures",      label: "Factures",      icon: Receipt },
   { href: "/catalogue",     label: "Catalogue",     icon: BookOpen },
   { href: "/tableau",       label: "Tableaux",      icon: Zap },
-  { href: "/plan",          label: "Plan de circuits", icon: LayoutTemplate },
+  { href: "/plan",          label: "Plans interventions", icon: LayoutTemplate },
   { href: "/realisations",  label: "Réalisations",  icon: Camera },
   { href: "/crm",           label: "CRM",           icon: TrendingUp },
   { href: "/parametres",    label: "Paramètres",    icon: Settings },

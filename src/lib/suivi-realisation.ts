@@ -28,6 +28,7 @@ import {
   ProblemeCircuit,
 } from "@/lib/maison-engine";
 import { appareillagesParPieceReelle } from "@/lib/piece-reelle";
+import { PREFIXE_CIRCUIT } from "@/lib/predevis-engine";
 import { migrerModeleMurs } from "@/lib/murs";
 import { migrerBoitesDerivation, reamorcerCompteurId, dedupliquerIds } from "@/lib/maison-types";
 import { hauteurAppareilM } from "@/lib/murs";
@@ -90,6 +91,7 @@ export interface CircuitSuivi {
   nom: string;             // nom affiché (renommage éventuel)
   niveauId: number;
   niveauNom: string;
+  poste: string;           // nom du poste du pré-devis / devis en mode « par circuit » (pour comparer heures chiffrées et temps passé)
   couleur: string;
   icone: string;
   famille: string;         // « lumiere », « prise_16 »…
@@ -858,6 +860,7 @@ export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
       circuits.push({
         cle: `${niveau.id}|${b.circuit}|${idsMembres.slice().sort((x, y) => x - y).join(".")}`,
         label: b.label, nom, niveauId: niveau.id, niveauNom: niveau.nom || niveau.type,
+        poste: `${PREFIXE_CIRCUIT}${nom} (${niveau.nom || niveau.type})`,
         couleur: couleurs.get(b.id) ?? "#666", icone: spec.icon, famille: b.circuit, estEclairage: eclairage,
         caracteristiques, resume, elements, guides, alertes, problemes: [],
       });
