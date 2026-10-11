@@ -45,8 +45,10 @@ export function hauteurDefautLiaison(
   if (breaker.circuit === "lumiere") return () => hauteurGaine;
   const premier = premierAppareillageChaine(segments);
   if (premier == null) return () => hauteurGaine;
-  const hChaine = hauteurAncre(premier);
-  return seg => (estAncreAppareillage(seg.aId) && estAncreAppareillage(seg.bId)) ? hChaine : hauteurGaine;
+  // Entre deux appareillages, le câble court à plat à la hauteur du plus BAS des deux : une seule montée / descente (égale à l'écart
+  // de hauteur), et aucune quand ils sont à la même hauteur — ex. deux prises à 20 cm se relient à 20 cm, sans remonter au plafond
+  // ni à la hauteur d'une autre prise du circuit.
+  return seg => (estAncreAppareillage(seg.aId) && estAncreAppareillage(seg.bId)) ? Math.min(hauteurAncre(seg.aId), hauteurAncre(seg.bId)) : hauteurGaine;
 }
 
 // Pose de chacune des (coudes + 1) sections d'une liaison, dans l'ordre du tracé.

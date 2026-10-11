@@ -12,7 +12,7 @@
 //   - boîte de dérivation et point lumineux de plafond : hauteur de gaine ; autres appareillages : leur hauteur
 //     d'installation (saisie, sinon valeur par défaut du type — voir hauteurAppareilM) ;
 //   - course d'une section : hauteur réglée (section / coude) > hauteur de gaine, sauf prises-chaîne (voir
-//     hauteurDefautLiaison, pose-circuits.ts : les prises d'un circuit se relient à plat à la hauteur de la 1re).
+//     hauteurDefautLiaison, pose-circuits.ts : deux appareillages consécutifs se relient à plat à la hauteur du plus bas des deux).
 //
 // Hypothèses de modélisation (assumées, à lire avant de comparer à un relevé sur chantier) :
 //  - Mesure « face à face » sur le plan : le décrochement dans l'épaisseur du mur d'un câble encastré (couche 2 du
