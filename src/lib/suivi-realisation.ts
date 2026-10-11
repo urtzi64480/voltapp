@@ -28,6 +28,8 @@ import {
   ProblemeCircuit,
 } from "@/lib/maison-engine";
 import { appareillagesParPieceReelle } from "@/lib/piece-reelle";
+import { migrerModeleMurs } from "@/lib/murs";
+import { migrerBoitesDerivation, reamorcerCompteurId, dedupliquerIds } from "@/lib/maison-types";
 import { hauteurAppareilM } from "@/lib/murs";
 import { creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurJambe, longueurCircuit } from "@/lib/longueurs-circuits";
 
@@ -883,6 +885,19 @@ export function progressionElements(elements: ElementSuivi[], coches: Record<str
   let fait = 0, total = 0;
   elements.forEach(e => e.etapes.forEach(et => { total++; if (coches[et.cle]) fait++; }));
   return { fait, total, pct: total === 0 ? 0 : Math.round((fait / total) * 100) };
+}
+
+/** Calcule le suivi depuis `projets.maison_config` (JSON brut), avec les mêmes migrations que l'éditeur de plan, dans le même ordre.
+ *  null = pas de plan ; lève une exception si le JSON est illisible. */
+export function suiviDepuisConfig(raw: string | null | undefined): SuiviPlan | null {
+  if (!raw) return null;
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed?.niveaux) || parsed.niveaux.length === 0) return null;
+  const { niveaux: apresMurs } = migrerModeleMurs(parsed.niveaux);
+  migrerBoitesDerivation(apresMurs);
+  reamorcerCompteurId(apresMurs);
+  const { niveaux } = dedupliquerIds(apresMurs);
+  return construireSuivi(niveaux);
 }
 
 export function progressionPlan(suivi: SuiviPlan, coches: Record<string, string>): Progression {

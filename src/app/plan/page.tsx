@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
+import { suiviDepuisConfig, progressionPlan, Progression } from "@/lib/suivi-realisation";
+import { lireCoches } from "@/lib/suivi-persistance";
 import { qsProjet, supprimerProjet, viderDonneesHistoriques } from "@/lib/projets";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Shell from "@/components/layout/Shell";
@@ -73,6 +75,14 @@ function ClientPickerModal({ clients, planClientIds, onPick, onClose }: {
 interface PlanEntry {
   key: string; clientId: string; projetId: string | null; projetNom: string | null;
   client: Client; niveaux: Niveau[]; nbPieces: number;
+  avancement: Progression | null; // suivi de réalisation (null = pas de suivi calculable)
+}
+
+function calculerAvancement(p: Projet): Progression | null {
+  try {
+    const suivi = suiviDepuisConfig(p.maison_config);
+    return suivi ? progressionPlan(suivi, lireCoches(p.suivi_realisation)) : null;
+  } catch { return null; }
 }
 
 function lirePlan(raw: string | null | undefined): { niveaux: Niveau[]; nbPieces: number } | null {
@@ -110,12 +120,12 @@ export default function PlansPage() {
         if (ps.length === 0) {
           // Client pas encore repris dans un projet : plan historique (migré à l'ouverture).
           const plan = lirePlan((c as any).maison_config);
-          if (plan) entries.push({ key: c.id, clientId: c.id, projetId: null, projetNom: null, client: c, ...plan });
+          if (plan) entries.push({ key: c.id, clientId: c.id, projetId: null, projetNom: null, client: c, avancement: null, ...plan });
           return;
         }
         ps.forEach(p => {
           const plan = lirePlan(p.maison_config);
-          if (plan) entries.push({ key: p.id, clientId: c.id, projetId: p.id, projetNom: ps.length > 1 ? p.nom : null, client: c, ...plan });
+          if (plan) entries.push({ key: p.id, clientId: c.id, projetId: p.id, projetNom: ps.length > 1 ? p.nom : null, client: c, avancement: calculerAvancement(p), ...plan });
         });
       });
       setPlans(entries);
@@ -215,6 +225,21 @@ export default function PlansPage() {
                         {projetNom ? ` · ${projetNom}` : ""}
                         {client.ville ? ` · ${client.ville}` : ""}
                       </p>
+                      {entry.avancement && entry.avancement.total > 0 && (() => {
+                        const av = entry.avancement!;
+                        const fini = av.fait === av.total;
+                        return (
+                          <div className="mt-3" title="Avancement de la réalisation du chantier">
+                            <div className="flex items-center justify-between text-[11px] text-ink-500 mb-1">
+                              <span className="font-semibold">Réalisation chantier</span>
+                              <span className={fini ? "font-semibold text-emerald-700" : "tabular-nums"}>{fini ? "Terminé ✓" : `${av.fait}/${av.total} · ${av.pct}%`}</span>
+                            </div>
+                            <div className="h-2 rounded-full bg-ink-100 overflow-hidden">
+                              <div className={`h-full rounded-full transition-all ${fini ? "bg-emerald-500" : "bg-volt-500"}`} style={{ width: `${av.pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })()}
                       <div className="flex gap-2 mt-3">
                         <Link href={`/plan/${entry.clientId}${qsProjet(entry.projetId)}`} className="btn-volt !py-1.5 !text-xs">
                           <LayoutTemplate size={12} /> Ouvrir

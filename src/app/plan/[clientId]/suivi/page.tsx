@@ -18,10 +18,8 @@ import { useProjets, qsProjet } from "@/lib/projets";
 import Shell from "@/components/layout/Shell";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import SchemaCommande from "@/components/plan/SchemaCommande";
-import { migrerModeleMurs } from "@/lib/murs";
-import { migrerBoitesDerivation, reamorcerCompteurId, dedupliquerIds } from "@/lib/maison-types";
 import {
-  construireSuivi, progressionElements, progressionPlan, clesDuCircuit, cochesOrphelines,
+  suiviDepuisConfig, progressionElements, progressionPlan, clesDuCircuit, cochesOrphelines,
   SuiviPlan, CircuitSuivi, ElementSuivi, GuideCommande, CategorieElement, Progression,
 } from "@/lib/suivi-realisation";
 import { Coches, lireCoches, appliquerCoches, retirerCoches, relireCoches } from "@/lib/suivi-persistance";
@@ -205,12 +203,16 @@ function CarteCircuit({ c, coches, ouvert, onToggleOuvert, onToggle, onToggleGro
   onToggle: (cle: string) => void; onToggleGroupe: (cles: string[], fait: boolean) => void; onReinitialiser: () => void;
 }) {
   const [guidesOuverts, setGuidesOuverts] = useState<Set<string>>(new Set());
+  const [catOuvertes, setCatOuvertes] = useState<Set<string>>(new Set());
+  const [guidesGroupeOuvert, setGuidesGroupeOuvert] = useState(false);
   const p = progressionElements(c.elements, coches);
   const termine = p.total > 0 && p.fait === p.total;
   const nbProblemes = c.alertes.length + c.problemes.length;
 
   const basculerGuide = (id: string) => setGuidesOuverts(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const basculerCat = (cat: string) => setCatOuvertes(s => { const n = new Set(s); if (n.has(cat)) n.delete(cat); else n.add(cat); return n; });
   const voirGuide = (id: string) => {
+    setGuidesGroupeOuvert(true);
     setGuidesOuverts(s => new Set(s).add(id));
     window.setTimeout(() => document.getElementById(`guide-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
   };
@@ -264,29 +266,49 @@ function CarteCircuit({ c, coches, ouvert, onToggleOuvert, onToggle, onToggleGro
             const cles = els.flatMap(e => e.etapes.map(et => et.cle));
             const toutFait = cles.length > 0 && cles.every(k => coches[k]);
             const pc = progressionElements(els, coches);
+            const catOuverte = catOuvertes.has(cat);
+            const catFinie = pc.total > 0 && pc.fait === pc.total;
             return (
-              <div key={cat} className="mt-5">
-                <div className="flex items-center justify-between gap-3 mb-1">
-                  <p className="label !mb-0">{TITRES_CATEGORIE[cat]} <span className="text-ink-400 normal-case font-medium">· {pc.fait}/{pc.total}</span></p>
-                  {cles.length > 1 && (
-                    <button type="button" onClick={() => onToggleGroupe(cles, !toutFait)} className="text-xs font-semibold text-volt-700 hover:text-volt-800">
-                      {toutFait ? "Tout décocher" : "Tout cocher"}
-                    </button>
-                  )}
-                </div>
-                {els.map(e => <LigneElement key={e.id} e={e} coches={coches} onToggle={onToggle} onVoirGuide={voirGuide} />)}
+              <div key={cat} className={cn("mt-3 rounded-xl border overflow-hidden", catFinie ? "border-emerald-300" : "border-ink-200")}>
+                <button type="button" onClick={() => basculerCat(cat)} aria-expanded={catOuverte}
+                  className={cn("w-full flex items-center gap-3 px-3.5 py-3 text-left", catFinie ? "bg-emerald-50/60" : "bg-ink-50/60")}>
+                  {catOuverte ? <ChevronDown size={16} className="shrink-0 text-ink-500" /> : <ChevronRight size={16} className="shrink-0 text-ink-500" />}
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-semibold text-ink-900 break-words">{TITRES_CATEGORIE[cat]}</span>
+                    <span className="block mt-1.5"><BarreProgression p={pc} /></span>
+                  </span>
+                </button>
+                {catOuverte && (
+                  <div className="px-3.5 pb-2">
+                    {cles.length > 1 && (
+                      <div className="flex justify-end pt-2">
+                        <button type="button" onClick={() => onToggleGroupe(cles, !toutFait)} className="text-xs font-semibold text-volt-700 hover:text-volt-800">
+                          {toutFait ? "Tout décocher" : "Tout cocher"}
+                        </button>
+                      </div>
+                    )}
+                    {els.map(e => <LigneElement key={e.id} e={e} coches={coches} onToggle={onToggle} onVoirGuide={voirGuide} />)}
+                  </div>
+                )}
               </div>
             );
           })}
 
           {c.guides.length > 0 && (
-            <div className="mt-6">
-              <p className="label">Guides de câblage des commandes ({c.guides.length})</p>
-              <div className="space-y-2">
-                {c.guides.map(g => (
-                  <CarteGuide key={g.id} g={g} ouvert={guidesOuverts.has(g.id)} onToggleOuvert={() => basculerGuide(g.id)} />
-                ))}
-              </div>
+            <div className="mt-3 rounded-xl border border-ink-200 overflow-hidden">
+              <button type="button" onClick={() => setGuidesGroupeOuvert(o => !o)} aria-expanded={guidesGroupeOuvert}
+                className="w-full flex items-center gap-3 px-3.5 py-3 text-left bg-ink-50/60">
+                {guidesGroupeOuvert ? <ChevronDown size={16} className="shrink-0 text-ink-500" /> : <ChevronRight size={16} className="shrink-0 text-ink-500" />}
+                <span className="flex-1 text-sm font-semibold text-ink-900">Guides de câblage des commandes ({c.guides.length})</span>
+                <BookOpen size={15} className="shrink-0 text-ink-400" />
+              </button>
+              {guidesGroupeOuvert && (
+                <div className="p-3 space-y-2">
+                  {c.guides.map(g => (
+                    <CarteGuide key={g.id} g={g} ouvert={guidesOuverts.has(g.id)} onToggleOuvert={() => basculerGuide(g.id)} />
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -336,16 +358,9 @@ function Suivi({ clientId, projet, projets, onSelect }: { clientId: string; proj
 
   // Circuits recalculés depuis le plan enregistré — mêmes migrations que l'éditeur de plan, dans le même ordre.
   const calcul: Calcul = useMemo(() => {
-    const raw = projet.maison_config;
-    if (!raw) return { vide: true };
     try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed?.niveaux) || parsed.niveaux.length === 0) return { vide: true };
-      const { niveaux: apresMurs } = migrerModeleMurs(parsed.niveaux);
-      migrerBoitesDerivation(apresMurs);
-      reamorcerCompteurId(apresMurs);
-      const { niveaux } = dedupliquerIds(apresMurs);
-      return { suivi: construireSuivi(niveaux) };
+      const suivi = suiviDepuisConfig(projet.maison_config);
+      return suivi ? { suivi } : { vide: true };
     } catch (e) {
       return { erreur: e instanceof Error ? e.message : String(e) };
     }
