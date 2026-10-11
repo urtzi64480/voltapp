@@ -1129,7 +1129,10 @@ export function pointsOndulesEntre(a: Point, b: Point, amplitude = 0.06, longueu
 // reste du circuit. Ces fonctions construisent cette topologie (utilisées par le
 // rendu 2D et la vue 3D) au lieu de la simple chaîne par plus-proche-voisin.
 
-export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoint: Point; type?: "navette" | "domotique"; }
+// type : « navette » = fils entre deux va-et-vient ; « retour » = câble de la (dernière) commande vers la lampe (ou, pour une lampe
+// alimentée en bout de chaîne, de la lampe vers sa première commande) ; « domotique » = liaison sans fil ; absent = câble
+// d'alimentation / de circuit classique. Couleurs de fils : voir lib/couleurs-fils.ts.
+export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoint: Point; type?: "navette" | "retour" | "domotique"; }
 
 export function centroidePoints(points: Point[]): Point {
   if (points.length === 0) return { x: 0, y: 0 };
@@ -1200,7 +1203,8 @@ export function construireBranchesCircuitEclairage(
           ...(vaEtVient && precedent.id !== ancre.id ? { type: "navette" as const } : {}) });
         precedent = { id: String(c.id), point: pc };
       });
-      poser({ aId: precedent.id, aPoint: precedent.point, bId: String(l.id), bPoint: pl });
+      // Retour : de la dernière commande de la chaîne vers la lampe.
+      poser({ aId: precedent.id, aPoint: precedent.point, bId: String(l.id), bPoint: pl, type: "retour" });
     }
     // Commandes domotiques de cette lampe : liaison sans fil, tracée en onde depuis la lampe.
     commandes.filter(c => commandeCetteLumiere(c, l.id) && c.domotique).forEach(c => {
@@ -1321,13 +1325,13 @@ export function construireBranchesCircuitEclairage(
     const autres = commandes.filter(c => commandeCetteLumiere(c, l.id) && baseCommande(c.type) !== "va_et_vient");
     vaEtVient.forEach((c, i) => {
       const pc = { x: c.x, y: c.y };
-      if (i === 0) poser({ aId: String(l.id), aPoint: pl, bId: String(c.id), bPoint: pc, type: c.domotique ? "domotique" : undefined });
+      if (i === 0) poser({ aId: String(l.id), aPoint: pl, bId: String(c.id), bPoint: pc, type: c.domotique ? "domotique" : "retour" });
       else {
         const precedent = vaEtVient[i - 1];
         poser({ aId: String(precedent.id), aPoint: { x: precedent.x, y: precedent.y }, bId: String(c.id), bPoint: pc, type: c.domotique ? "domotique" : "navette" });
       }
     });
-    autres.forEach(c => poser({ aId: String(l.id), aPoint: pl, bId: String(c.id), bPoint: { x: c.x, y: c.y }, type: c.domotique ? "domotique" : undefined }));
+    autres.forEach(c => poser({ aId: String(l.id), aPoint: pl, bId: String(c.id), bPoint: { x: c.x, y: c.y }, type: c.domotique ? "domotique" : "retour" }));
   });
   return segments;
 }

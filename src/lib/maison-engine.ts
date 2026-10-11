@@ -810,7 +810,7 @@ export function genererGainesNiveaux(resultat: ResultatGeneration): TronconGaine
 // ─── CONTRÔLE « RIEN OUBLIÉ » ────────────────────────────────────────────────────────────────────────────────
 // Passe en revue TOUS les appareillages et circuits (générés ou saisis à la main) et remonte ce qui cloche, avec les ids
 // à surligner sur le plan. Ne modifie rien.
-export type CodeProbleme = "non_raccorde" | "commande_sans_lampe" | "lampe_sans_commande" | "va_et_vient_seul" | "commande_multi_circuits" | "depassement";
+export type CodeProbleme = "non_raccorde" | "commande_sans_lampe" | "lampe_sans_commande" | "va_et_vient_seul" | "commande_multi_circuits" | "commande_hors_circuit" | "depassement";
 export interface ProblemeCircuit { code: CodeProbleme; gravite: "erreur" | "avertissement"; message: string; niveauId: number; appareilIds: number[] }
 export interface BilanControle { problemes: ProblemeCircuit[]; total: number; raccordes: number }
 
@@ -845,6 +845,15 @@ export function controlerCircuits(resultat: ResultatGeneration): BilanControle {
       problemes.push({ code: "commande_multi_circuits", gravite: "erreur", niveauId: t.niveau.id, appareilIds: [t.a.id, ...cibles],
         message: `${nom(t)} — ${t.niveau.nom} : commande des lampes de ${circuits.size} circuits différents (impossible à câbler : mets-les dans le même circuit).` });
     }
+  });
+
+  // Une commande rangée dans un AUTRE circuit que celui de sa lampe n'est pas câblée avec elle : ni l'aller, ni le retour, ni les
+  // navettes ne sont tracés — la lampe semble « sans retour » sur le plan.
+  tous.filter(t => estLumiere(t.a.type) && !t.a.dejaExistant && t.a.circuitId != null).forEach(t => {
+    commandes.filter(c => commandeCetteLumiere(c.a, t.a.id) && c.a.circuitId != null && c.a.circuitId !== t.a.circuitId && !c.a.domotique).forEach(c => {
+      problemes.push({ code: "commande_hors_circuit", gravite: "erreur", niveauId: t.niveau.id, appareilIds: [c.a.id, t.a.id],
+        message: `${nom(c)} — ${c.niveau.nom} : commande ${nom(t)} mais n'est pas dans son circuit — le retour et les navettes ne sont pas tracés (mets la commande et la lampe dans le même circuit).` });
+    });
   });
 
   tous.filter(t => estLumiere(t.a.type) && !t.a.dejaExistant).forEach(t => {

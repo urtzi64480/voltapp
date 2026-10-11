@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import * as THREE from "three";
+import { natureLiaison, CONDUCTEURS, COULEUR_FIL, couleurConducteur } from "@/lib/couleurs-fils";
 import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, battantsFenetre, nbVantauxBaie, cleSegmentLiaison, assombrirCouleur, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, estLumiere, estLumierePlafond, estSpot, HAUTEUR_PERSONNE_M, ENTRAXE_POSTE_M, hauteurCommunePlaqueCm, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
@@ -1040,8 +1041,14 @@ const Vue3D = forwardRef<Vue3DHandle, {
             hauteurGaine: hauteurDefaut(seg),
             couche2,
           });
-          const teinte = seg.type === "navette" ? assombrirCouleur(color) : color;   // navette : couleur du circuit assombrie
-          const matCable = new THREE.MeshStandardMaterial({ color: teinte, emissive: teinte, emissiveIntensity: 0.45 });
+          // Fils aux couleurs normalisées (lib/couleurs-fils.ts), indépendantes de la couleur du circuit : un tube par conducteur.
+          const natureSeg = natureLiaison(seg);
+          const conducteurs3D = CONDUCTEURS[natureSeg].flatMap((cd, i, tab) => {
+            const decal = (i - (tab.length - 1) / 2) * 0.0085;
+            return cd.role === "terre"
+              ? [{ couleur: COULEUR_FIL.terreVert, decal: decal - 0.0028 }, { couleur: COULEUR_FIL.terreJaune, decal: decal + 0.0028 }]
+              : [{ couleur: couleurConducteur(cd.role), decal }];
+          }).map(c3 => ({ ...c3, mat: new THREE.MeshStandardMaterial({ color: c3.couleur, emissive: c3.couleur, emissiveIntensity: 0.4 }) }));
           // Moulure PVC 20 × 14 mm autour d'une section APPARENTE, translucide pour laisser voir le câble.
           const matMoulure = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 });
           jambes.forEach(jb => {
@@ -1054,13 +1061,19 @@ const Vue3D = forwardRef<Vue3DHandle, {
             }
             const longueur = p0.distanceTo(p1);
             if (longueur < 0.005) return;
-            const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, longueur, 8), matCable);
-            tube.position.copy(p0).add(p1).multiplyScalar(0.5);
-            tube.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), p1.clone().sub(p0).normalize());
-            scene.add(tube);
+            const axe = p1.clone().sub(p0).normalize();
+            // Perpendiculaire à la section (horizontale pour une montée, sinon dans le plan horizontal) pour écarter les fils.
+            const perp = Math.abs(axe.y) > 0.95 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(-axe.z, 0, axe.x).normalize();
+            const milieu = p0.clone().add(p1).multiplyScalar(0.5);
+            conducteurs3D.forEach(c3 => {
+              const t = new THREE.Mesh(new THREE.CylinderGeometry(0.0028, 0.0028, longueur, 6), c3.mat);
+              t.position.copy(milieu).addScaledVector(perp, c3.decal);
+              t.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), axe);
+              scene.add(t);
+            });
             if (jb.pose === "apparent" && longueur >= 0.02) {
               const moulure = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.014, longueur), matMoulure);
-              moulure.position.copy(tube.position);
+              moulure.position.copy(milieu);
               moulure.lookAt(p1);   // l'axe long de la boîte (z) suit la section
               scene.add(moulure);
             }

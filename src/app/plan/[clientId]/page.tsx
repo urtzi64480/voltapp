@@ -54,6 +54,8 @@ import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import Vue3DMaison from "@/components/plan/Vue3DMaison";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, genererCircuitsManuelsSeuls, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
+import { verifierEclairageManuel } from "@/lib/controle-eclairage";
+import { natureLiaison, geometrieCable, couleurDominante, COULEUR_FIL, LEGENDE_FILS, LIBELLE_NATURE } from "@/lib/couleurs-fils";
 
 const PX_PER_M = 60;
 const MIN_ZOOM = 0.25;
@@ -462,7 +464,9 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
       segments.forEach(seg => {
         const cheminM = cheminSegment(seg, n.liaisonWaypoints);
         const chemin = cheminM.map(toPx);
-        const couleurSegment = seg.type === "navette" ? assombrirCouleur(color) : color;
+        // Fils aux couleurs normalisées (lib/couleurs-fils.ts) ; la couleur du circuit ne sert qu'au liseré sous les fils.
+        const nature = natureLiaison(seg);
+        const couleurSegment = couleurDominante(nature);
         if (showCircuits) {
           // Sections apparentes : bande grise (moulure) sous le tracé — repérables à l'impression.
           const cleImp = cleSegmentLiaison(seg.aId, seg.bId);
@@ -472,7 +476,24 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
             s += `<line x1="${chemin[j].x.toFixed(1)}" y1="${chemin[j].y.toFixed(1)}" x2="${chemin[j + 1].x.toFixed(1)}" y2="${chemin[j + 1].y.toFixed(1)}" stroke="#d6d3d1" stroke-width="4" stroke-linecap="round"/>`;
           }
           const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
-          s += `<path d="${d}" fill="none" stroke="${couleurSegment}" stroke-width="1.6" stroke-linecap="round"/>`;
+          s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity="0.28"/>`;
+          if (seg.type !== "domotique") {
+            for (let j = 0; j < chemin.length - 1; j++) {
+              geometrieCable(chemin[j], chemin[j + 1], nature, 1.9).forEach(t => {
+                s += `<line x1="${t.x1.toFixed(1)}" y1="${t.y1.toFixed(1)}" x2="${t.x2.toFixed(1)}" y2="${t.y2.toFixed(1)}" stroke="${t.couleur}" stroke-width="1.5" stroke-linecap="round"/>`;
+                if (t.couleur2) s += `<line x1="${t.x1.toFixed(1)}" y1="${t.y1.toFixed(1)}" x2="${t.x2.toFixed(1)}" y2="${t.y2.toFixed(1)}" stroke="${t.couleur2}" stroke-width="1.5" stroke-dasharray="3 3"/>`;
+              });
+            }
+            if (nature !== "alimentation") {
+              let mj = 0, lmax = -1;
+              for (let j = 0; j < chemin.length - 1; j++) { const l = Math.hypot(chemin[j + 1].x - chemin[j].x, chemin[j + 1].y - chemin[j].y); if (l > lmax) { lmax = l; mj = j; } }
+              const dxp = chemin[mj + 1].x - chemin[mj].x, dyp = chemin[mj + 1].y - chemin[mj].y, lp = Math.hypot(dxp, dyp) || 1;
+              const px = chemin[mj].x + dxp * 0.42 - (dyp / lp) * 8, py = chemin[mj].y + dyp * 0.42 + (dxp / lp) * 8;
+              const txt = nature === "retour" ? "retour" : "navette", wP = txt.length * 4.2 + 7;
+              s += `<rect x="${(px - wP / 2).toFixed(1)}" y="${(py - 5).toFixed(1)}" width="${wP.toFixed(1)}" height="10" rx="5" fill="${couleurSegment}" stroke="#fff" stroke-width="0.8"/>`
+                + `<text x="${px.toFixed(1)}" y="${(py + 2.8).toFixed(1)}" font-size="7" font-weight="bold" text-anchor="middle" font-family="monospace" fill="#fff">${txt}</text>`;
+            }
+          }
           if (showLongueurs && seg.type !== "domotique") {
             const sectionsL = tracerLiaison(ctxL, breaker, segments, seg, hAncreL).sections;
             for (let j = 0; j < cheminM.length - 1; j++) {
@@ -696,7 +717,9 @@ function legendeCircuitsHtml(resultat: ResultatGeneration | null, niveau: Niveau
   const utilises = breakersDuNiveau(resultat.breakers, niveau)
     .map(b => ({ b, color: colorMap.get(b.id) ?? "#666" }));
   if (utilises.length === 0) return "";
-  return `<div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 6mm 6mm;font-size:8pt;font-family:monospace;">` +
+  const legendeFils = `<div style="display:flex;flex-wrap:wrap;gap:10px;margin:0 6mm 3mm;font-size:8pt;font-family:monospace;align-items:center;"><b>Fils :</b>` +
+    LEGENDE_FILS.map(f => `<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:16px;height:4px;border-radius:2px;display:inline-block;background:${f.terre ? `repeating-linear-gradient(90deg,${COULEUR_FIL.terreVert} 0 4px,${COULEUR_FIL.terreJaune} 4px 8px)` : f.couleur};"></span>${f.libelle}${f.terre ? " (jaune/vert)" : ""}</span>`).join("") + `<span style="color:#666;">· le liseré sous les fils et la couleur des appareillages = couleur du circuit</span></div>`;
+  return legendeFils + `<div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 6mm 6mm;font-size:8pt;font-family:monospace;">` +
     utilises.map(({ b, color }) => {
       let lgTxt = "";
       // Longueur calculée sur le niveau VIVANT (tableau/coudes/ordre de câblage actuels) plutôt
@@ -1514,6 +1537,16 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
     if (n.has(id)) n.delete(id); else n.add(id);
     return n;
   });
+  // Éclairage manuel : chaque lampe a sa commande (= son retour), chaque va-et-vient son second (= sa navette). BLOQUANT : tant que
+  // retours et navettes ne sont pas tous dans le circuit, il ne peut pas être enregistré.
+  const verifEclairage = (() => {
+    if (famille !== "lumiere" || membres.size === 0) return null;
+    const pieceDe = new Map<number, string>();
+    niveau.pieces.forEach(p => p.appareillages.forEach(a => pieceDe.set(a.id, p.nom || "Pièce")));
+    return verifierEclairageManuel(niveau.pieces.flatMap(p => p.appareillages), membres,
+      a => `${labelAppareillagePlace(a)} (${pieceDe.get(a.id) ?? "?"})`);
+  })();
+  const eclairageBloque = !!verifEclairage && verifEclairage.bloquants.length > 0;
   const nomValide = nom.trim() !== "";
 
   return (
@@ -1563,6 +1596,23 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
             const msg = messageDepassement(famille, tousAppareils.filter(({ a }) => membres.has(a.id)).map(({ a }) => a), nom.trim() || undefined);
             return msg ? <p className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-2">⚠ {msg}</p> : null;
           })()}
+          {verifEclairage && verifEclairage.bloquants.length > 0 && (
+            <div className="rounded-lg border-2 border-red-300 bg-red-50 px-3 py-2.5" role="alert">
+              <p className="text-xs font-bold text-red-800 mb-1.5">⛔ Retours / navettes manquants : impossible d&apos;enregistrer ce circuit d&apos;éclairage</p>
+              <ul className="space-y-1">
+                {verifEclairage.bloquants.map((pb, i) => <li key={i} className="text-xs text-red-800 leading-snug">• {pb.message}</li>)}
+              </ul>
+              {verifEclairage.aAjouter.length > 0 && (
+                <button type="button" className="btn-volt !text-xs !py-1.5 mt-2.5"
+                  onClick={() => setMembres(s => new Set([...s, ...verifEclairage.aAjouter]))}>
+                  Ajouter au circuit les {verifEclairage.aAjouter.length} élément{verifEclairage.aAjouter.length > 1 ? "s" : ""} manquant{verifEclairage.aAjouter.length > 1 ? "s" : ""}
+                </button>
+              )}
+            </div>
+          )}
+          {verifEclairage && verifEclairage.bloquants.length === 0 && (
+            <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-2">✓ Chaque lampe a sa commande (retour) et chaque va-et-vient son second (navette).</p>
+          )}
           <div>
             <label className="label">Appareillages sur ce circuit ({membres.size})</label>
             <div className="flex flex-col gap-0.5 max-h-56 overflow-y-auto border border-ink-100 rounded-lg p-1.5">
@@ -1582,7 +1632,8 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
           </div>
         </div>
         <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
-          <button disabled={!nomValide} onClick={() => onValidate(nom.trim(), famille, couleur || undefined, Array.from(membres), creerBoite, nonRelieTableau, relier)}
+          <button disabled={!nomValide || eclairageBloque} onClick={() => onValidate(nom.trim(), famille, couleur || undefined, Array.from(membres), creerBoite, nonRelieTableau, relier)}
+            title={eclairageBloque ? "Ajoute les commandes (retours) et va-et-vient (navettes) manquants pour pouvoir enregistrer" : undefined}
             className="btn-volt flex-1 disabled:opacity-40"><Save size={14} /> {existing ? "Enregistrer" : "Créer"}</button>
           {onDelete && <button onClick={onDelete} className="btn-danger !px-3"><Trash2 size={14} /></button>}
         </div>
@@ -2050,6 +2101,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [outilMain, setOutilMain] = useState(false);
   const [espaceEnfonce, setEspaceEnfonce] = useState(false);
   const [showLongueurs, setShowLongueurs] = useState(false);
+  // Fils : toujours aux couleurs normalisées (voir lib/couleurs-fils.ts). « Étiquettes » = pastilles « retour » / « navette » sur
+  // le tracé ; « retours & navettes seuls » = atténue le reste du câblage pour vérifier ces liaisons circuit par circuit.
+  const [showEtiquettesFils, setShowEtiquettesFils] = useState(true);
+  const [retoursSeuls, setRetoursSeuls] = useState(false);
+  const [teinteCircuit, setTeinteCircuit] = useState(true);
+  const [alerteEclairage, setAlerteEclairage] = useState(false);
   // Ids de breakers actuellement affichés sur le plan (sous-ensemble de resultat.breakers) —
   // permet d'isoler un ou plusieurs circuits à l'écran pour vérifier leur tracé avant de les
   // retoucher à la main. Réinitialisé à "tous visibles" à chaque nouvelle génération
@@ -4695,6 +4752,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const handlePousserVersTableau = async () => {
     if (!resultat || resultat.breakers.filter(b => !estCircuitSansDisjoncteur(b)).length === 0) return;
+    // Bloquant : un circuit d'éclairage manuel sans tous ses retours / navettes ne part pas au tableau.
+    if (eclairageManuelIncomplet.length > 0) { setAlerteEclairage(true); return; }
     setPushing(true);
     // Circuits manuels "déjà existants" (CircuitManuel.nonRelieTableau) : jamais poussés
     // au tableau — ils restent protégés par le disjoncteur déjà en place sur l'installation
@@ -4980,6 +5039,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   });
 
   // Contrôle sur le plan VIVANT (appareillages ajoutés ou supprimés depuis la dernière génération compris).
+  // Circuits d'éclairage MANUELS dont des retours / navettes manquent (bloquant : voir verifierEclairageManuel).
+  const eclairageManuelIncomplet = niveaux.flatMap(n => (n.circuitsManuels ?? []).filter(m => m.famille === "lumiere").flatMap(m => {
+    const apps = n.pieces.flatMap(p => p.appareillages);
+    const membres = new Set(apps.filter(a => a.circuitManuelId === m.id).map(a => a.id));
+    if (membres.size === 0) return [];
+    const pieceDe = new Map<number, string>();
+    n.pieces.forEach(p => p.appareillages.forEach(a => pieceDe.set(a.id, p.nom || "Pièce")));
+    const v = verifierEclairageManuel(apps, membres, a => `${labelAppareillagePlace(a)} (${pieceDe.get(a.id) ?? "?"})`);
+    return v.bloquants.length > 0 ? [{ niveauId: n.id, niveauNom: n.nom, manuel: m, messages: v.bloquants.map(b => b.message) }] : [];
+  }));
   const bilanControle = resultat ? controlerCircuits({ ...resultat, maison: { niveaux } }) : null;
   // Masquer un circuit (case de la palette « Circuits ») masque AUSSI les appareillages qui lui sont raccordés : il ne reste à
   // l'écran que ce qui n'est pas encore câblé — pratique pour suivre l'avancée. (Les appareillages sans circuit restent visibles,
@@ -5105,7 +5174,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         // Liaison (navette) entre deux va-et-vient : couleur du circuit assombrie,
         // pour rester rattachée au circuit tout en se distinguant du reste du tracé.
         const estDomotique = seg.type === "domotique";
-        const couleurSegment = seg.type === "navette" ? assombrirCouleur(color) : color;
+        // Fils aux couleurs normalisées, indépendantes de la couleur du circuit (qui ne teinte que les appareillages).
+        const nature = natureLiaison(seg);
+        const couleurSegment = couleurDominante(nature);
+        const opaciteSeg = retoursSeuls && nature === "alimentation" ? 0.22 : 1;
+        const ez = Math.max(0.8, Math.min(1.6, zoom));
         // Sous-chaîne du segment : point de départ, coudes existants, point d'arrivée.
         const sousChaine = [seg.aPoint, ...coudes.map(c => c.point), seg.bPoint];
         const posesSections = posesTroncons(niveauActif, cle, coudes);
@@ -5140,8 +5213,19 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             const dOnde = wavePts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
             elements.push(<polyline key={`${cle}-${j}`} points={dOnde} fill="none" stroke={couleurSegment} strokeWidth={1.8} opacity={0.85} />);
           } else {
-            elements.push(<line key={`${cle}-${j}-halo`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#fff" strokeWidth={apparente ? 5.2 : 4.4} strokeLinecap="round" opacity={0.7} />);
-            elements.push(<line key={`${cle}-${j}`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={couleurSegment} strokeWidth={apparente ? 3 : 2.4} strokeLinecap="round" />);
+            // Câble 3 conducteurs : un trait par fil (phase rouge, neutre bleu, terre jaune/vert, retour violet, navette orange).
+            const larg = (apparente ? 1.9 : 1.6) * ez, ecart = larg + 0.5 * ez;
+            const traits = geometrieCable(aPx, bPx, nature, ecart);
+            const largTotale = ecart * (traits.length - 1) + larg;
+            if (teinteCircuit) {
+              // Repère du circuit : liseré translucide dans la couleur choisie pour le circuit, sous les fils.
+              elements.push(<line key={`${cle}-${j}-teinte`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={color} strokeWidth={largTotale + 4.5 * ez} strokeLinecap="round" opacity={0.3 * opaciteSeg} />);
+            }
+            elements.push(<line key={`${cle}-${j}-halo`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#fff" strokeWidth={largTotale + 1.8 * ez} strokeLinecap="round" opacity={0.78 * opaciteSeg} />);
+            traits.forEach((t, k) => {
+              elements.push(<line key={`${cle}-${j}-f${k}`} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke={t.couleur} strokeWidth={larg} strokeLinecap="round" opacity={opaciteSeg} />);
+              if (t.couleur2) elements.push(<line key={`${cle}-${j}-f${k}b`} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke={t.couleur2} strokeWidth={larg} strokeDasharray={`${3 * ez} ${3 * ez}`} opacity={opaciteSeg} />);
+            });
           }
           if (visuel && sectionsLg) {
             elements.push(<EtiquetteLongueur key={`${cle}-${j}-lg`} aPx={aPx} bPx={bPx} texte={`${(sectionsLg[j] ?? distance(ptA, ptB)).toFixed(2)}m`} />);
@@ -5174,6 +5258,25 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 }} />
             );
           }
+        }
+        // Pastille « retour » / « navette » sur la section la plus longue : ces liaisons restent identifiables même quand
+        // elles longent ou recouvrent un autre câble.
+        if (visuel && showEtiquettesFils && !estDomotique && nature !== "alimentation") {
+          let meilleur = 0, lgMax = -1;
+          for (let j = 0; j < sousChaine.length - 1; j++) {
+            const l = Math.hypot(sousChaine[j + 1].x - sousChaine[j].x, sousChaine[j + 1].y - sousChaine[j].y);
+            if (l > lgMax) { lgMax = l; meilleur = j; }
+          }
+          const pA = toScreen(sousChaine[meilleur]), pB = toScreen(sousChaine[meilleur + 1]);
+          const dxs = pB.x - pA.x, dys = pB.y - pA.y, ls = Math.hypot(dxs, dys) || 1;
+          const px = pA.x + dxs * 0.42 - (dys / ls) * 9, py = pA.y + dys * 0.42 + (dxs / ls) * 9;
+          const texte = nature === "retour" ? "retour" : "navette";
+          const wPastille = texte.length * 4.6 + 8;
+          elements.push(
+            <g key={`${cle}-etiq`} style={{ pointerEvents: "none" }} opacity={opaciteSeg}>
+              <rect x={px - wPastille / 2} y={py - 6} width={wPastille} height={12} rx={6} fill={couleurSegment} stroke="#fff" strokeWidth={1} />
+              <text x={px} y={py + 3} textAnchor="middle" fontSize={8} fontWeight={700} fontFamily="monospace" fill="#fff">{texte}</text>
+            </g>);
         }
         // Extrémités du câble : il part du tableau et vient mourir DANS LE MUR, juste derrière l'appareillage
         // (pied sur l'axe du mur) — petit retour du point enregistré jusqu'à ce pied + pastille d'arrivée.
@@ -5630,6 +5733,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           </button>
           <button onClick={() => setShowLongueurs(s => !s)} disabled={!resultat || !showCircuits} className="btn-ghost !text-xs disabled:opacity-40">
             📏 Longueurs des circuits
+          </button>
+          <button onClick={() => setShowEtiquettesFils(v => !v)} disabled={!resultat || !showCircuits}
+            className={`btn-ghost !text-xs disabled:opacity-40 ${showEtiquettesFils ? "!bg-ink-100" : ""}`}
+            title="Pastilles « retour » (violet) et « navette » (orange) sur le tracé">
+            🏷 Étiquettes retours / navettes
+          </button>
+          <button onClick={() => setRetoursSeuls(v => !v)} disabled={!resultat || !showCircuits}
+            className={`btn-ghost !text-xs disabled:opacity-40 ${retoursSeuls ? "!bg-ink-900 !text-volt-400" : ""}`}
+            title="Atténue le câblage d'alimentation pour ne voir que les retours (violet) et les navettes (orange) — combine avec la liste des circuits pour les vérifier un par un">
+            ⇄ Retours &amp; navettes seuls
           </button>
           {niveauActif && niveauActif.pieces.length > 0 && (() => {
             const toutVerrouille = niveauActif.pieces.every(pc => pc.verrouillee);
@@ -8068,6 +8181,34 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     </button>
                   )}
                 </div>
+                <div className="mb-1.5 rounded-lg border border-ink-100 bg-ink-50/70 px-2 py-1.5">
+                  <p className="text-[10px] font-semibold text-ink-400 uppercase tracking-wide mb-1">Couleur des fils</p>
+                  <div className="flex flex-wrap gap-x-2.5 gap-y-1">
+                    {LEGENDE_FILS.map(f => (
+                      <span key={f.libelle} className="inline-flex items-center gap-1 text-[10px] text-ink-600">
+                        <span className="inline-block w-4 h-[4px] rounded-full"
+                          style={{ background: f.terre ? `repeating-linear-gradient(90deg, ${COULEUR_FIL.terreVert} 0 4px, ${COULEUR_FIL.terreJaune} 4px 8px)` : f.couleur }} />
+                        {f.libelle}
+                      </span>
+                    ))}
+                  </div>
+                  <label className="flex items-center gap-1.5 text-[10px] text-ink-500 mt-1.5 cursor-pointer" title="Liseré translucide dans la couleur du circuit sous les fils, pour distinguer les circuits entre eux">
+                    <input type="checkbox" checked={teinteCircuit} onChange={e => setTeinteCircuit(e.target.checked)} />
+                    Liseré de la couleur du circuit sous les fils
+                  </label>
+                </div>
+                {eclairageManuelIncomplet.length > 0 && (
+                  <div className="mb-1.5 rounded-lg border-2 border-red-300 bg-red-50 px-2 py-1.5" role="alert">
+                    <p className="text-[10px] font-bold text-red-800">⛔ Retours / navettes manquants ({eclairageManuelIncomplet.length} circuit{eclairageManuelIncomplet.length > 1 ? "s" : ""} manuel{eclairageManuelIncomplet.length > 1 ? "s" : ""})</p>
+                    {eclairageManuelIncomplet.map(item => (
+                      <div key={item.manuel.id} className="flex items-center justify-between gap-2 mt-1">
+                        <span className="text-[10px] text-red-800 truncate">{item.manuel.nom}{item.niveauId !== niveauActifId ? ` · ${item.niveauNom}` : ""}</span>
+                        <button type="button" className="text-[10px] font-semibold text-red-700 underline shrink-0"
+                          onClick={() => { if (item.niveauId !== niveauActifId) setNiveauActifId(item.niveauId); ouvrirEditionCircuitManuel(item.manuel); }}>Corriger</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <label className="flex items-center gap-1.5 text-[10px] text-ink-500 mb-1.5 cursor-pointer" title="Les appareillages d'un circuit masqué disparaissent aussi du plan : il ne reste que ce qui n'est pas encore câblé">
                   <input type="checkbox" checked={afficherSansCircuit} onChange={e => setAfficherSansCircuit(e.target.checked)} />
                   Afficher les appareillages sans circuit
@@ -8330,6 +8471,32 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           onValider={handleImprimer3D}
           onCancel={() => setShow3DPrintForm(false)}
         />
+      )}
+
+      {alerteEclairage && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-ink-900/70 backdrop-blur-sm p-4" role="alertdialog" aria-modal="true">
+          <div className="card w-full max-w-lg max-h-[85vh] flex flex-col border-2 border-red-300">
+            <div className="p-4 border-b border-red-200 bg-red-50 rounded-t-2xl">
+              <p className="font-bold text-red-800">⛔ Impossible de pousser vers le tableau</p>
+              <p className="text-xs text-red-700 mt-1">Des circuits d&apos;éclairage manuels n&apos;ont pas tous leurs retours et leurs navettes. Corrige-les, puis relance.</p>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1 space-y-3">
+              {eclairageManuelIncomplet.map(item => (
+                <div key={item.manuel.id}>
+                  <p className="text-sm font-semibold text-ink-900">{item.manuel.nom} <span className="text-xs font-normal text-ink-400">· {item.niveauNom}</span></p>
+                  <ul className="mt-1 space-y-1">{item.messages.map((m, i) => <li key={i} className="text-xs text-ink-700">• {m}</li>)}</ul>
+                  <button type="button" className="btn-ghost !text-xs !py-1 mt-1.5"
+                    onClick={() => { setAlerteEclairage(false); if (item.niveauId !== niveauActifId) setNiveauActifId(item.niveauId); ouvrirEditionCircuitManuel(item.manuel); }}>
+                    Corriger ce circuit
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="p-4 border-t border-ink-200 flex justify-end">
+              <button type="button" className="btn-volt" onClick={() => setAlerteEclairage(false)}>Compris</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {circuitManuelForm && niveauActif && (
