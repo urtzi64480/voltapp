@@ -2249,6 +2249,40 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   }, [projet.id]);
 
   const niveauActif = niveaux.find(n => n.id === niveauActifId) ?? null;
+  // ─── VERROUILLAGE DES CIRCUITS (un par un) ───────────────────────────────────────────────────────────
+  const verrous = new Set(niveauActif?.circuitsVerrouilles ?? []);
+  const estVerrouille = (label: string) => verrous.has(label);
+  const basculerVerrouCircuit = (label: string) => {
+    updateNiveauActif(n => {
+      const l = new Set(n.circuitsVerrouilles ?? []);
+      if (l.has(label)) l.delete(label); else l.add(label);
+      return { ...n, circuitsVerrouilles: Array.from(l) };
+    });
+    // Un cheminement en cours de dessin sur un circuit qu'on verrouille est abandonné.
+    setCheminementDessin(cd => (cd && cd.breaker.label === label ? null : cd));
+    setPoseParties(p => (p && p.label === label ? null : p));
+    setPlacingBoiteLabel(l => (l === label ? null : l));
+  };
+  /** true (et message) si ce circuit est verrouillé : l'action doit être abandonnée. */
+  const refuserVerrou = (label: string | null | undefined): boolean => {
+    if (label == null || !verrous.has(label)) return false;
+    setPlacementError(`🔒 « ${label} » est verrouillé — déverrouille-le (panneau Circuits) pour modifier son cheminement.`);
+    setTimeout(() => setPlacementError(null), 3000);
+    return true;
+  };
+  // Circuit verrouillé qui porte la liaison `cle` (coudes, poses et hauteurs sont rangés par liaison).
+  const labelVerrouilleDeCle = (cle: string): string | null => {
+    if (!niveauActif || !resultat || verrous.size === 0) return null;
+    const orig = origineCircuits(niveauActif);
+    if (!orig) return null;
+    for (const b of resultat.breakers) {
+      if (!verrous.has(b.label) || b.niveauId !== niveauActif.id) continue;
+      const pts = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
+      if (segmentsPourCircuit(b, pts, niveauActif, orig).some(sg => cleSegmentLiaison(sg.aId, sg.bId) === cle)) return b.label;
+    }
+    return null;
+  };
+  const refuserVerrouCle = (cle: string): boolean => refuserVerrou(labelVerrouilleDeCle(cle));
   // Escaliers : ceux qui partent de ce niveau (avec leur calcul) et ceux qui y arrivent (trémie à montrer / percer).
   const calculsEscaliers = useMemo(
     () => (niveauActif ? (niveauActif.escaliers ?? []).map(e => ({ e, calc: calculerEscalier(e, hauteurTotaleEscalierCm(e, niveauActif)) })) : []),
@@ -3794,6 +3828,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
   const supprimerCircuitManuel = (manuelId: number) => {
     const breaker = resultat?.breakers.find(b => b.manuelId === manuelId);
+    if (refuserVerrou(breaker?.label ?? niveauActif?.circuitsManuels?.find(m => m.id === manuelId)?.nom)) return;
     const membreIds = niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitManuelId === manuelId).map(a => a.id) ?? [];
     updateNiveauActif(n => ({
       ...n,
@@ -3813,6 +3848,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // deviennent non raccordés, librement réaffectables ensuite, plutôt que reformer aussitôt
   // le même circuit à la prochaine génération.
   const supprimerCircuit = (b: Breaker) => {
+    if (refuserVerrou(b.label)) return;
     if (b.manuelId != null) { supprimerCircuitManuel(b.manuelId); return; }
     if (!niveauActif) return;
     const membreIds = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id).map(a => a.id);
@@ -3922,6 +3958,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // ─── DESSIN DU CHEMINEMENT (clic sur les appareillages du circuit, dans l'ordre) ───────
   const demarrerDessinCheminement = (b: Breaker) => {
+    if (refuserVerrou(b.label)) return;
     setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setMode("select"); setDrawingPoints([]);
@@ -3975,6 +4012,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // ─── LIAISON DIRECTE ENTRE POINTS LUMINEUX (sans boîte de dérivation) ──────────────
   const demarrerLiaisonDirecteLumiere = (label: string) => {
+    if (refuserVerrou(label)) return;
     setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingPointArrivee(false); setPlacingMeuble(false);
     setMode("select"); setDrawingPoints([]); setCheminementDessin(null);
     setSelectedAppareillageId(null); setSelectedPieceId(null); setSelectedTableau(false); setSelectedMeubleId(null);
@@ -3985,6 +4023,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // circuit — purement une décision de routage du câblage, sans impact sur la composition
   // électrique du circuit : aucune régénération nécessaire.
   const toggleLiaisonDirecteLumiere = (label: string, id1: number, id2: number) => {
+    if (refuserVerrou(label)) return;
     const paire: [number, number] = id1 < id2 ? [id1, id2] : [id2, id1];
     updateNiveauActif(n => {
       const existantes = n.liaisonsDirectesLumiere?.[label] ?? [];
@@ -4027,6 +4066,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     return id;
   };
   const supprimerWaypoint = (cle: string, waypointId: number) => {
+    if (refuserVerrouCle(cle)) return;
     updateNiveauActif(n => ({
       ...n,
       liaisonWaypoints: { ...(n.liaisonWaypoints ?? {}), [cle]: (n.liaisonWaypoints?.[cle] ?? []).filter(w => w.id !== waypointId) },
@@ -4034,6 +4074,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setSelectedWaypoint(null);
   };
   const modifierHauteurWaypoint = (cle: string, waypointId: number, hauteur: number | undefined) => {
+    if (refuserVerrouCle(cle)) return;
     updateNiveauActif(n => ({
       ...n,
       liaisonWaypoints: {
@@ -4045,6 +4086,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Pose d'UNE section de circuit (index = rang dans la liaison, 0 = depuis le point de départ). Les sections
   // portent leur pose sur le coude où elles aboutissent ; la dernière (après le dernier coude) sur la liaison.
   const modifierPoseTroncon = (cle: string, index: number, poseType: "encastre" | "apparent") => {
+    if (refuserVerrouCle(cle)) return;
     updateNiveauActif(n => {
       const coudes = n.liaisonWaypoints?.[cle] ?? [];
       if (index < coudes.length) {
@@ -4055,6 +4097,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
   // Hauteur (cm) d'UNE section de circuit — vide = non réglée (hauteur du coude, sinon hauteur de gaine par défaut sous plafond).
   const modifierHauteurTroncon = (cle: string, index: number, hauteurCm: number | undefined) => {
+    if (refuserVerrouCle(cle)) return;
     updateNiveauActif(n => {
       const coudes = n.liaisonWaypoints?.[cle] ?? [];
       if (index < coudes.length) {
@@ -4068,6 +4111,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Mode de pose (encastré dans le mur / apparent en goulotte) du passage de gaine à ce
   // coude — affiché avec la hauteur sur l'impression technique (option "hauteurs d'implantation").
   const modifierPoseWaypoint = (cle: string, waypointId: number, poseType: "encastre" | "apparent") => {
+    if (refuserVerrouCle(cle)) return;
     updateNiveauActif(n => ({
       ...n,
       liaisonWaypoints: {
@@ -4222,6 +4266,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         return best;
       };
       const cible = circuitDe(m);
+      if (cible && refuserVerrou((cible as Breaker).label)) return;
       if (!poseParties.premier) {
         if (!cible) { setPlacementError("Clique sur le tracé d'un circuit (génère les circuits si rien n'est affiché)."); setTimeout(() => setPlacementError(null), 2400); return; }
         setPoseParties({ ...poseParties, premier: m, label: (cible as Breaker).label });
@@ -4241,6 +4286,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
     if (placingBoiteLabel != null) {
       const label = placingBoiteLabel;
+      if (refuserVerrou(label)) { setPlacingBoiteLabel(null); return; }
       const nouvelId = uidMaison();
       // Tronçon visé : le plus proche du clic parmi ceux du circuit ; la boîte est posée sur le tracé (projection du clic), A → boîte → B.
       let surSegment: { a: string; b: string } | undefined;
@@ -4620,6 +4666,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     let boiteId = boite?.id;
+    if (boiteId == null && refuserVerrou(label)) return;
     if (boiteId == null) {
       // Boîte implicite (jamais nommée) : la première interaction la "promeut" en vraie
       // boîte nommée, à sa position actuelle — pour qu'elle devienne déplaçable et
@@ -4643,13 +4690,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setSelectedPointArrivee(false);
     setSelectedMeubleId(null);
     setPanelResetTick(t => t + 1);
+    if (estVerrouille(label)) { setPlacementError(`🔒 « ${label} » est verrouillé : boîte non déplaçable.`); setTimeout(() => setPlacementError(null), 2500); return; }
     setDragMode({ kind: "boite", label, boiteId });
   };
   // Ajoute une nouvelle boîte de dérivation nommée à un circuit d'éclairage — proposée pour
   // tout circuit lumière, généré (label = breaker.label) ou manuel pas encore généré (label
   // = nom du CircuitManuel, qui deviendra son label naturel dès la première génération).
   const ajouterBoiteDerivation = (label: string) => {
-    if (!niveauActif) return;
+    if (!niveauActif || refuserVerrou(label)) return;
     const breaker = resultat?.breakers.find(b => b.label === label);
     let centre = origineCircuits(niveauActif) ?? { x: 0, y: 0 };
     if (breaker) {
@@ -4663,6 +4711,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     updateNiveauActif(n => ({ ...n, boitesDerivation: { ...(n.boitesDerivation ?? {}), [label]: [...existantes, nouvelle] } }));
   };
   const renommerBoiteDerivation = (label: string, boiteId: number, nom: string) => {
+    if (refuserVerrou(label)) return;
     updateNiveauActif(n => ({
       ...n,
       boitesDerivation: { ...(n.boitesDerivation ?? {}), [label]: (n.boitesDerivation?.[label] ?? []).map(b => b.id === boiteId ? { ...b, nom } : b) },
@@ -4671,6 +4720,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Position exacte (mètres) d'une boîte de dérivation — pour un placement au centimètre
   // près sans passer par le drag, même logique que modifierPositionExacte (appareillage).
   const modifierPositionBoite = (label: string, boiteId: number, x: number, y: number) => {
+    if (refuserVerrou(label)) return;
     if (Number.isNaN(x) || Number.isNaN(y)) return;
     updateNiveauActif(n => ({
       ...n,
@@ -4681,6 +4731,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }));
   };
   const supprimerBoiteDerivation = (label: string, boiteId: number) => {
+    if (refuserVerrou(label)) return;
     updateNiveauActif(n => ({
       ...n,
       boitesDerivation: { ...(n.boitesDerivation ?? {}), [label]: (n.boitesDerivation?.[label] ?? []).filter(b => b.id !== boiteId) },
@@ -4822,7 +4873,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Ctrl+Z annule.
   const effacerCircuitsGeneres = (filtre: (b: Breaker) => boolean, reinitialiser = false, portee: "tous" | number = reinitialiser ? "tous" : -1) => {
     if (!resultat) return;
-    const ids = new Set(resultat.breakers.filter(filtre).map(b => b.id));
+    const ids = new Set(resultat.breakers.filter(b => filtre(b) && !(verrous.has(b.label) && !reinitialiser)).map(b => b.id));
     if (ids.size === 0 && !reinitialiser) return;
     const reste = resultat.breakers.filter(b => !ids.has(b.id));
     // Effacer un circuit efface AUSSI son nom (renommage retenu par libellé) ; tout réinitialiser : plus aucun nom.
@@ -5395,6 +5446,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   const m = toMeters(e.clientX - rect.left, e.clientY - rect.top);
                   // Appui + glisser sur un tracé = nouveau point que l'on tire aussitôt : on déforme le circuit
                   // d'un seul geste. (Un simple clic sans bouger ajoute juste le point.)
+                  if (refuserVerrouCle(cle)) return;
                   const nouveauId = ajouterWaypoint(cle, j, m, coudes);
                   setSelectedWaypoint({ cle, waypointId: nouveauId });
                   setSelectedTroncon(null); setSelectedPieceId(null); setSelectedAppareillageId(null);
@@ -5465,6 +5517,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 setSelectedBoite(null);
                 setSelectedMeubleId(null);
                 setPanelResetTick(t => t + 1);
+                if (refuserVerrouCle(cle)) return;
                 setDragMode({ kind: "liaison", cle, waypointId: c.id });
               }}
               onDoubleClick={e => { e.stopPropagation(); supprimerWaypoint(cle, c.id); }}>
@@ -8451,6 +8504,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                             className="text-left text-[10px] font-semibold text-volt-600 inline-flex items-center gap-1"
                             title="Clique ensuite sur le plan à l'endroit voulu pour poser la boîte (avec dominos)">
                             <Plus size={11} /> Ajouter une boîte de dérivation
+                          </button>
+                          <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); basculerVerrouCircuit(labelStockage); }}
+                            className={`text-left text-[10px] font-semibold inline-flex items-center gap-1 ${estVerrouille(labelStockage) ? "text-red-600" : "text-ink-500"}`}
+                            title={estVerrouille(labelStockage) ? "Circuit verrouillé : cheminement, boîtes, coudes et pose protégés. Clique pour déverrouiller." : "Verrouiller ce circuit : plus de modification de cheminement par erreur"}>
+                            {estVerrouille(labelStockage) ? <Lock size={11} /> : <Unlock size={11} />} {estVerrouille(labelStockage) ? "Verrouillé" : "Verrouiller"}
                           </button>
                           {b && (
                             <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); setPlacingBoiteLabel(null); setPoseParties({ label: b.label, pose: "apparent", premier: null, fixe: true }); setMode("select"); setPlacementType(null); }}

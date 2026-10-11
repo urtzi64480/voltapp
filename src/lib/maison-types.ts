@@ -551,6 +551,8 @@ export interface Niveau {
   // demarrerLiaisonDirecteLumiere, page.tsx). Un point lumineux impliqué dans au moins une
   // paire sort de la topologie en étoile "boîte" habituelle : voir construireBranchesCircuitEclairage.
   liaisonsDirectesLumiere?: Record<string, [number, number][]>;
+  // Circuits VERROUILLÉS (labels, même clé que boitesDerivation / ordresCircuits) : leur cheminement (tracé, boîtes, coudes, pose, liaisons) est protégé contre toute modification par erreur.
+  circuitsVerrouilles?: string[];
   hauteurPlafond?: number; // mètres — pour la vue 3D (2.5 par défaut)
   // Orientation du bâtiment : angle (degrés, sens horaire) entre le HAUT du plan et le Nord géographique.
   // 0 = le Nord est en haut du plan. Valeur commune à tous les niveaux (réglée depuis le plan, voir page du plan) ;
