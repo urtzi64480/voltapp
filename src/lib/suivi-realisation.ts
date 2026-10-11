@@ -269,7 +269,7 @@ function modeDe(filaires: AppareillagePlace[], domotiques: AppareillagePlace[]):
 
 // ─── GUIDES DE CÂBLAGE ───────────────────────────────────────────────────────────────────────────────────────
 
-const COMMUN = "COM (borne commune)";
+const COMMUN = "L (borne commune)";
 const REGLES_FILS =
   "Couleurs VoltApp (plan, schémas, 3D) : phase = rouge, neutre = bleu clair, terre = vert/jaune, retour = violet foncé, navettes = orange. " +
   "NF C 15-100 : neutre bleu clair et terre vert/jaune sont imposés ; pour les autres fils, reprendre ces couleurs si le câble le permet, sinon repérer " +
@@ -337,13 +337,13 @@ function construireGuide(ctx: Contexte, g: GroupeCommande, mode: ModeCommande, i
     });
     etapes.push(
       "Couper le disjoncteur du circuit au tableau et vérifier l'absence de tension (VAT) avant toute intervention.",
-      `Amener la phase à la borne commune (COM) de l'interrupteur (arrivée depuis ${provenance}).`,
+      `Amener la phase à la borne commune (L) de l'interrupteur (arrivée depuis ${provenance}).`,
       `Raccorder le fil de retour sur l'autre borne de l'interrupteur, puis le tirer jusqu'à ${lampesRetour}.`,
       "Neutre (bleu) et terre (vert/jaune) : les relier entre eux dans la boîte d'encastrement par connecteur, sans les brancher sur le mécanisme, et les poursuivre vers la lampe.",
       "À la lampe (boîte DCL) : retour sur la borne phase du luminaire, neutre sur la borne neutre, terre sur la borne terre (luminaire classe I).",
     );
     attention.push(
-      "Marquage des bornes : il varie selon les marques. La borne COMMUN est repérée sur le mécanisme (« L » ou « COM » ou un symbole) — la repérer avant de câbler, jamais au hasard.",
+      "Marquage des bornes : il varie selon les marques. Sur la gamme Odace la borne COMMUNE est repérée « L » (les navettes sont « 1 » et « 2 »), mais le marquage varie selon les marques — la repérer avant de câbler, jamais au hasard.",
       "Interrupteur à voyant lumineux (ou témoin) : le neutre doit alors aussi arriver au mécanisme (borne N).",
     );
     attention.push(REGLES_FILS);
@@ -452,7 +452,7 @@ function construireGuide(ctx: Contexte, g: GroupeCommande, mode: ModeCommande, i
         `Test : à la mise sous tension, la lampe doit s'allumer et s'éteindre depuis ${total === 2 ? "chacun des 2 points" : `chacun des ${total} points, quel que soit l'état des autres`}.`,
       );
       attention.push(
-        "ERREUR n°1 : phase ou retour branché sur L1/L2 au lieu de la borne commune → la lampe ne répond que dans certaines positions. Phase et retour vont TOUJOURS sur la borne commune (COM).",
+        "ERREUR n°1 : phase ou retour branché sur 1/2 au lieu de la borne commune L → la lampe ne répond que dans certaines positions. Phase et retour vont TOUJOURS sur la borne commune (L).",
         "ERREUR n°2 : une seule navette tirée, ou les deux navettes raccordées à la même borne → la lampe ne s'éteint plus ou ne s'allume que d'un côté. Il faut DEUX fils distincts, un sur L1 et un sur L2 à chaque extrémité.",
         "Intervertir les deux navettes (navette 1 sur L1 d'un côté et sur L2 de l'autre, pour les DEUX fils) fonctionne aussi : cela inverse seulement la position « allumé » des interrupteurs. Garder le même repérage aux deux bouts évite surtout de se tromper.",
         "Le neutre ne se raccorde jamais à un va-et-vient mais il TRANSITE par les boîtes des commandes pour rejoindre la lampe : le câble entre deux va-et-vient est donc un 4G1,5 (neutre + 2 navettes + terre), comme au plan. Pour des va-et-vient DOUBLES, chaque voie a ses 2 navettes (6 conducteurs).",
@@ -761,10 +761,10 @@ export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
         if (eclairage) {
           if (seg.type === "commande") { role = "alim"; fonction = "Ligne de commande des boutons-poussoirs (télérupteur)"; lignes.push("Les boutons-poussoirs sont en parallèle : phase + un fil de retour par télérupteur + terre. Le télérupteur est au tableau, la lampe est alimentée directement."); roleLiaison = "commande"; }
           else if (kA === "tableau" && kB === "boite") { role = "depart"; fonction = "Départ : tableau → boîte de dérivation"; lignes.push("Câble d'alimentation du circuit : phase, neutre, terre."); }
-          else if (kA === "tableau" && kB === "commande") { role = "depart"; fonction = "Départ : tableau → commande (aller)"; lignes.push("La phase arrive à la borne COM de la commande ; neutre et terre poursuivent vers la lampe sans se raccorder au mécanisme."); }
+          else if (kA === "tableau" && kB === "commande") { role = "depart"; fonction = "Départ : tableau → commande (aller)"; lignes.push("La phase arrive à la borne L (commune) de la commande ; neutre et terre poursuivent vers la lampe sans se raccorder au mécanisme."); }
           else if (kA === "tableau" && kB === "lampe") { role = "depart"; fonction = "Départ : tableau → point lumineux"; lignes.push("Phase, neutre, terre jusqu'à la boîte DCL."); }
           else if (kA === "boite" && kB === "boite") { role = "boite"; fonction = "Liaison entre boîtes de dérivation"; lignes.push("Prolongement du câble d'alimentation : phase, neutre, terre."); }
-          else if (kA === "boite" && kB === "commande") { role = "alim"; fonction = "Alimentation de la commande (aller depuis la boîte)"; lignes.push("La phase part de la boîte vers la borne COM de la commande ; neutre et terre accompagnent le câble pour atteindre la lampe."); }
+          else if (kA === "boite" && kB === "commande") { role = "alim"; fonction = "Alimentation de la commande (aller depuis la boîte)"; lignes.push("La phase part de la boîte vers la borne L (commune) de la commande ; neutre et terre accompagnent le câble pour atteindre la lampe."); }
           else if (kA === "boite" && kB === "lampe") { role = "alim"; fonction = "Alimentation du point lumineux depuis la boîte"; lignes.push("Phase, neutre, terre jusqu'à la boîte DCL."); }
           else if (kA === "commande" && kB === "commande") {
             if (seg.type === "navette") { role = "navette"; fonction = "Navettes entre commandes"; lignes.push(`Fils de navette (deux par voie, repérés) : navette 1 sur L1, navette 2 sur L2 de chaque mécanisme${seg.neutre ? " ; le neutre de la lampe traverse ce câble" : " ; le retour de chaque voie repasse par ce câble jusqu'à la lampe"}.`); roleLiaison = "commande"; }

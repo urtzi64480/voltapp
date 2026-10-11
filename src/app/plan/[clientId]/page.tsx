@@ -2036,7 +2036,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Boîte de dérivation à poser : label du circuit visé, puis un clic sur le plan la place exactement là.
   const [placingBoiteLabel, setPlacingBoiteLabel] = useState<string | null>(null);
   // Pose par parties : on choisit une partie du circuit (clic de départ puis clic de fin, n'importe où sur le tracé) et sa pose.
-  const [poseParties, setPoseParties] = useState<{ label: string; pose: "apparent" | "encastre"; premier: Point | null } | null>(null);
+  const [poseParties, setPoseParties] = useState<{ label: string | null; pose: "apparent" | "encastre"; premier: Point | null; fixe?: boolean } | null>(null);
   const [placingMeuble, setPlacingMeuble] = useState(false);
   const [pendingCommande, setPendingCommande] = useState<{ item: AppareillagePlace; estNouveau: boolean } | null>(null);
   const [selectedAppareillageId, setSelectedAppareillageId] = useState<number | null>(null);
@@ -4184,7 +4184,30 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
 
     if (poseParties) {
-      if (!poseParties.premier) { setPoseParties({ ...poseParties, premier: m }); return; }
+      // Circuit visé : celui choisi dans la liste, sinon le circuit dont le tracé est le plus proche du clic (sans rien sélectionner avant).
+      const circuitDe = (pt: Point): Breaker | null => {
+        if (!niveauActif || !resultat) return null;
+        const orig = origineCircuits(niveauActif);
+        if (!orig) return null;
+        let best: Breaker | null = null, bd = Infinity;
+        resultat.breakers.filter(x => x.niveauId === niveauActif.id && (poseParties.label == null ? circuitsVisibles.has(x.id) : x.label === poseParties.label)).forEach(x => {
+          const pts = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === x.id);
+          segmentsPourCircuit(x, pts, niveauActif, orig).forEach(sg => {
+            if (sg.type === "domotique") return;
+            const dx = sg.bPoint.x - sg.aPoint.x, dy = sg.bPoint.y - sg.aPoint.y, l2 = dx * dx + dy * dy;
+            const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((pt.x - sg.aPoint.x) * dx + (pt.y - sg.aPoint.y) * dy) / l2));
+            const d = Math.hypot(pt.x - (sg.aPoint.x + t * dx), pt.y - (sg.aPoint.y + t * dy));
+            if (d < bd) { bd = d; best = x; }
+          });
+        });
+        return best;
+      };
+      const cible = circuitDe(m);
+      if (!poseParties.premier) {
+        if (!cible) { setPlacementError("Clique sur le tracé d'un circuit (génère les circuits si rien n'est affiché)."); setTimeout(() => setPlacementError(null), 2400); return; }
+        setPoseParties({ ...poseParties, premier: m, label: (cible as Breaker).label });
+        return;
+      }
       const bk = resultat?.breakers.find(x => x.label === poseParties.label);
       const orig = niveauActif ? origineCircuits(niveauActif) : null;
       if (bk && niveauActif && orig) {
@@ -4193,7 +4216,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const A = poseParties.premier, pose = poseParties.pose;
         updateNiveauActif(n => appliquerPoseEntre(n, segs, A, m, pose, uidMaison));
       }
-      setPoseParties({ ...poseParties, premier: null });   // reste armé : on peut enchaîner plusieurs parties
+      setPoseParties({ ...poseParties, premier: null, label: poseParties.fixe ? poseParties.label : null });   // reste armé : on enchaîne les parties
       return;
     }
 
@@ -5823,6 +5846,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               </>
             )}
           </div>
+          <button onClick={() => { setPlacingBoiteLabel(null); setMode("select"); setPlacementType(null); setPoseParties(p => p ? null : { label: null, pose: "apparent", premier: null }); }} disabled={!resultat || !showCircuits}
+            className={`btn-ghost !text-xs disabled:opacity-40 ${poseParties ? "!bg-ink-900 !text-volt-400" : ""}`}
+            title="Sur un circuit déjà dessiné : clique « de ici » puis « à ici », cette partie devient apparente (ou encastrée)">
+            <Route size={13} /> Apparent / encastré : de ici à ici
+          </button>
           <button onClick={() => setShowCircuits(s => !s)} disabled={!resultat} className="btn-ghost !text-xs disabled:opacity-40">
             {showCircuits ? <Eye size={13} /> : <EyeOff size={13} />} Afficher les circuits
           </button>
@@ -8235,7 +8263,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             )}
             {poseParties && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-lg flex items-center gap-3 flex-wrap justify-center max-w-[92vw]">
-                <span>Pose par parties — « {poseParties.label} » : {poseParties.premier ? "clique la FIN de la partie" : "clique le DÉBUT de la partie, n'importe où sur le tracé du circuit"}</span>
+                <span>Pose par parties{poseParties.label ? ` — « ${poseParties.label} »` : ""} : {poseParties.premier ? "clique la FIN de la partie" : "clique le DÉBUT de la partie, n'importe où sur un tracé de circuit"}</span>
                 <div className="flex items-center gap-1">
                   {(["apparent", "encastre"] as const).map(po => (
                     <button key={po} onClick={() => setPoseParties({ ...poseParties, pose: po })}
@@ -8389,7 +8417,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                             <Plus size={11} /> Ajouter une boîte de dérivation
                           </button>
                           {b && (
-                            <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); setPlacingBoiteLabel(null); setPoseParties({ label: b.label, pose: "apparent", premier: null }); setMode("select"); setPlacementType(null); }}
+                            <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); setPlacingBoiteLabel(null); setPoseParties({ label: b.label, pose: "apparent", premier: null, fixe: true }); setMode("select"); setPlacementType(null); }}
                               className="text-left text-[10px] font-semibold text-volt-600 inline-flex items-center gap-1"
                               title="Choisir une ou plusieurs parties du circuit (avec ou sans coude) et dire si elles sont apparentes ou encastrées">
                               <Route size={11} /> Pose par parties

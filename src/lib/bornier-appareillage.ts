@@ -6,7 +6,9 @@
 // technique, le plan et ce bornier ne peuvent donc pas se contredire.
 //
 // Règles (câblage français, appareillage 2 fils de commande) :
-//  · interrupteur / bouton-poussoir : phase → COM ; retour → S (sortie). Neutre et terre ne touchent jamais le mécanisme.
+//  · MARQUAGE = gamme Schneider Odace (les autres gammes sont voisines) : bornes « L » (commune), « 1 » et « 2 » — vérifié sur la doc Odace
+//    pour le simple, le va-et-vient et le poussoir ; double et détecteur : repères à contrôler sur le mécanisme.
+//  · interrupteur / bouton-poussoir : phase → L ; retour → 1 (sortie). Neutre et terre ne touchent jamais le mécanisme.
 //  · va-et-vient : COM = phase (premier) ou retour (dernier) ; L1 / L2 = les deux navettes. Entre deux : permutateur (E1 E2 / S1 S2).
 //  · plaque double : deux mécanismes indépendants (voie A / voie B), chacun avec sa lampe.
 //  · détecteur : L = phase, N = neutre, S = sortie vers la lampe.
@@ -168,8 +170,8 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
         lier(idM(v), "S1", nav(navAval, 1)); lier(idM(v), "S2", nav(navAval, 2));
         episser(titreVoie(v, "Retour (traverse)"), "Le fil de retour passe dans cette boîte sans se raccorder : relier les deux bouts entre eux.", retours);
       } else {
-        const com = { id: "COM", libelle: "COM", aide: "borne commune" };
-        mecanismes.push({ id: idM(v), titre: titreVoie(v, "Va-et-vient"), bornes: [com, { id: "L1", libelle: "L1" }, { id: "L2", libelle: "L2" }] });
+        const com = { id: "COM", libelle: "L", aide: "borne commune" };
+        mecanismes.push({ id: idM(v), titre: titreVoie(v, "Va-et-vient"), bornes: [com, { id: "L1", libelle: "1", aide: "navette" }, { id: "L2", libelle: "2", aide: "navette" }] });
         if (navAval.length > 0) {                   // PREMIER (côté alimentation) : navettes vers l'aval
           lier(idM(v), "L1", nav(navAval, 1)); lier(idM(v), "L2", nav(navAval, 2));
           lier(idM(v), "COM", phases);
@@ -179,13 +181,13 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
           lier(idM(v), "COM", retours);
         } else {                                    // seul : phase sur COM, retour sur L1
           lier(idM(v), "COM", phases); lier(idM(v), "L1", retours);
-          notes.push(`${titreVoie(v, "Va-et-vient")} sans autre commande dans le circuit : câblé en simple allumage (phase sur COM, retour sur L1, L2 inutilisée). Il manque l'autre va-et-vient.`);
+          notes.push(`${titreVoie(v, "Va-et-vient")} sans autre commande dans le circuit : câblé en simple allumage (phase sur L, retour sur 1, borne 2 inutilisée). Il manque l'autre va-et-vient.`);
         }
       }
     });
     if (double) notes.push("Plaque double : deux mécanismes INDÉPENDANTS (voie A et voie B), chacun commande sa lampe. Ne pas croiser les fils d'une voie sur l'autre.");
     if (role("phase").length > 0 && double && voies.every(v => raccords.some(r => r.mecanisme === idM(v) && r.borne === "COM" && r.conducteur.role === "phase"))) {
-      notes.push("La même phase alimente les deux COM : les relier par le pont (peigne) fourni, puis un seul fil de phase.");
+      notes.push("La même phase alimente les deux bornes L : les relier par le pont (peigne) fourni, puis un seul fil de phase.");
     }
     episser("Neutre", TERRE_NEUTRE_BOITE, role("neutre"));
     episser("Terre", TERRE_NEUTRE_BOITE, role("terre"));
@@ -195,11 +197,11 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
   if (base === "telerupteur") {
     voies.forEach(v => {
       const conc = ofVoie(v);
-      mecanismes.push({ id: idM(v), titre: titreVoie(v, "Bouton-poussoir"), bornes: [{ id: "COM", libelle: "COM", aide: "phase" }, { id: "S", libelle: "S", aide: "retour vers A1" }] });
+      mecanismes.push({ id: idM(v), titre: titreVoie(v, "Bouton-poussoir"), bornes: [{ id: "COM", libelle: "L", aide: "phase" }, { id: "S", libelle: "1", aide: "retour vers A1" }] });
       lier(idM(v), "COM", role("phase"));
       lier(idM(v), "S", role("retour", conc));
     });
-    notes.push("Bouton-poussoir (jamais un interrupteur à accrochage) : COM = phase, S = fil de retour qui rejoint la borne A1 du télérupteur au tableau. Les boutons sont en PARALLÈLE : le câble d'arrivée et celui de départ se raccordent sur les mêmes bornes.");
+    notes.push("Bouton-poussoir (jamais un interrupteur à accrochage) : L = phase, 1 = fil de retour qui rejoint la borne A1 du télérupteur au tableau. Les boutons sont en PARALLÈLE : le câble d'arrivée et celui de départ se raccordent sur les mêmes bornes.");
     if (double) notes.push("Plaque double : chaque bouton a son propre retour vers SON télérupteur (voie A → télérupteur A, voie B → télérupteur B).");
     notes.push("Bouton lumineux : prévoir en plus le neutre (borne N du bouton) — le neutre est présent dans la boîte.");
     episser("Terre", TERRE_NEUTRE_BOITE, role("terre"));
@@ -217,14 +219,14 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
   }
   const mecas = double ? ([0, 1] as const) : ([undefined] as const);
   if (double) {
-    mecanismes.push({ id: "m", titre: "Double interrupteur", bornes: [{ id: "COM", libelle: "COM", aide: "communs reliés par le pont" }, { id: "SA", libelle: "S voie A" }, { id: "SB", libelle: "S voie B" }] });
+    mecanismes.push({ id: "m", titre: "Double interrupteur", bornes: [{ id: "COM", libelle: "L", aide: "communs reliés par le pont" }, { id: "SA", libelle: "1 (voie A)" }, { id: "SB", libelle: "1 (voie B)" }] });
     lier("m", "COM", role("phase"));
     mecas.forEach(v => lier("m", v === 0 ? "SA" : "SB", role("retour", ofVoie(v))));
-    notes.push("Double interrupteur : les deux COM sont reliés par le pont fourni (une seule phase), et chaque sortie S part vers SA lampe (voie A / voie B).");
+    notes.push("Double interrupteur : les deux bornes L sont reliées par le pont fourni (une seule phase), et chaque sortie « 1 » part vers SA lampe (voie A / voie B).");
   } else {
-    mecanismes.push({ id: "m", titre: "Interrupteur", bornes: [{ id: "COM", libelle: "COM", aide: "phase" }, { id: "S", libelle: "S", aide: "retour" }] });
+    mecanismes.push({ id: "m", titre: "Interrupteur", bornes: [{ id: "COM", libelle: "L", aide: "phase" }, { id: "S", libelle: "1", aide: "retour" }] });
     lier("m", "COM", role("phase")); lier("m", "S", role("retour"));
-    if (cables.filter(c => c.cote === "aval" && c.conducteurs.some(x => x.role === "retour")).length > 1) notes.push("Plusieurs lampes commandées : tous les retours partent de la MÊME borne S.");
+    if (cables.filter(c => c.cote === "aval" && c.conducteurs.some(x => x.role === "retour")).length > 1) notes.push("Plusieurs lampes commandées : tous les retours partent de la MÊME borne 1.");
   }
   episser("Neutre", TERRE_NEUTRE_BOITE, role("neutre"));
   episser("Terre", TERRE_NEUTRE_BOITE, role("terre"));
