@@ -1243,6 +1243,8 @@ function DraggablePanel({ corner, className, dark, children }: {
   children: ReactNode;
 }) {
   const [offset, setOffset] = useState({ dx: 0, dy: 0 });
+  // Fenêtre réduite : seule la barre du haut reste visible (le contenu est masqué, pas détruit — saisies et défilement conservés).
+  const [reduit, setReduit] = useState(false);
   // minDy calculé UNE SEULE FOIS au moment où on attrape la poignée (pas à chaque
   // pointermove — relire le DOM et ré-enregistrer les écouteurs à chaque pixel déplacé
   // rendait le glisser-déposer saccadé, voire bloqué).
@@ -1298,10 +1300,15 @@ function DraggablePanel({ corner, className, dark, children }: {
     <div ref={panelRef} className={`absolute ${cornerClass} z-30`} style={{ transform }}>
       <div className={className} style={{ ...maxHeightStyle, cursor: "grab", touchAction: "none" }}
         onPointerDown={startDrag}>
-        <div className={`flex items-center justify-center h-4 -mx-3 -mt-3 mb-2 rounded-t-xl ${dark ? "bg-white/10 hover:bg-white/20" : "bg-ink-100 hover:bg-ink-200"}`}>
+        <div className={`relative flex items-center justify-center h-5 -mx-3 -mt-3 ${reduit ? "" : "mb-2"} rounded-t-xl ${reduit ? "rounded-b-xl" : ""} ${dark ? "bg-white/10 hover:bg-white/20" : "bg-ink-100 hover:bg-ink-200"}`}>
           <GripHorizontal size={12} className={dark ? "text-white/50" : "text-ink-400"} />
+          <button type="button" onClick={e => { e.stopPropagation(); setReduit(r => !r); }}
+            title={reduit ? "Agrandir la fenêtre" : "Réduire la fenêtre"}
+            className={`absolute right-1 top-0 h-5 px-1.5 inline-flex items-center gap-0.5 text-[10px] font-semibold ${dark ? "text-white/70 hover:text-white" : "text-ink-500 hover:text-ink-800"}`}>
+            {reduit ? <><ChevronDown size={12} /> Agrandir</> : <><ChevronUp size={12} /> Réduire</>}
+          </button>
         </div>
-        {children}
+        <div style={reduit ? { display: "none" } : undefined}>{children}</div>
       </div>
     </div>
   );
