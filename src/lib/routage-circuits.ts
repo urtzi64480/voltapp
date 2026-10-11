@@ -5,6 +5,7 @@
 // n'est pas entièrement dans l'emprise des pièces, on la remplace par le plus court chemin qui reste dans les pièces
 // (graphe de visibilité entre les sommets des pièces, décalés vers l'intérieur). Les coudes posés à la main restent prioritaires.
 import type { LiaisonWaypoint, Niveau, Piece, Point, SegmentCircuit } from "@/lib/maison-types";
+import { routeDansMurs } from "@/lib/routage-murs";
 import { cleSegmentLiaison, distance, pointDansPolygone } from "@/lib/maison-types";
 
 const TOLERANCE_MUR = 0.2;   // m — l'épaisseur de mur entre deux pièces voisines compte comme « dedans »
@@ -274,7 +275,9 @@ export function coudesSegment(niveau: Niveau, seg: SegmentCircuit): LiaisonWaypo
   const manuels = niveau.liaisonWaypoints?.[cleSegmentLiaison(seg.aId, seg.bId)];
   if (manuels && manuels.length > 0) return manuels;
   if (seg.type === "domotique") return [];
-  const ortho = routeOrthogonale(seg.aPoint, seg.bPoint, niveau.pieces);
-  const pts = ortho ?? routeDansPieces(seg.aPoint, seg.bPoint, niveau.pieces);
+  // 1) dans l'épaisseur des murs (câbles encastrés) ; 2) à défaut, parallèle aux murs dans les pièces ; 3) à défaut, tracé direct.
+  const pts = routeDansMurs(seg.aPoint, seg.bPoint, niveau.pieces)
+    ?? routeOrthogonale(seg.aPoint, seg.bPoint, niveau.pieces)
+    ?? routeDansPieces(seg.aPoint, seg.bPoint, niveau.pieces);
   return pts.map((point, i) => ({ id: -(i + 1), point }));
 }
