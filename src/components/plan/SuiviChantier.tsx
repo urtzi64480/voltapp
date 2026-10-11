@@ -90,7 +90,7 @@ export function CarteChantier({ nom, chantier, devisListe, pctAvancement, onReno
       )}
       {devisIntrouvable && <p className="mt-3 text-xs text-amber-800">Le devis lié n'existe plus : choisis-en un autre.</p>}
       <p className="text-[11px] text-ink-400 mt-3 leading-relaxed">
-        Le nom du chantier est le nom du projet. Un nouveau chantier chez le même client = un nouveau projet (sélecteur de projet de la page « Plan »), avec son propre plan, son suivi et son devis.
+        Le nom du chantier est le nom du projet. Un nouveau chantier chez le même client = un nouveau projet (bouton + à côté du sélecteur de projet, en haut de la page), avec son propre plan, son suivi et son devis.
       </p>
     </div>
   );

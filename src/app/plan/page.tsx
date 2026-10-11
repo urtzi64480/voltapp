@@ -5,11 +5,11 @@ import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
 import { suiviDepuisConfig, progressionPlan, Progression } from "@/lib/suivi-realisation";
 import { lireSuivi } from "@/lib/suivi-persistance";
-import { qsProjet, supprimerProjet, viderDonneesHistoriques } from "@/lib/projets";
+import { qsProjet, supprimerProjet, viderDonneesHistoriques, listerProjets, creerProjet } from "@/lib/projets";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { LayoutTemplate, ListChecks, Plus, Search, ChevronRight, X, Trash2 } from "lucide-react";
+import { LayoutTemplate, ListChecks, FilePlus2, Plus, Search, ChevronRight, X, Trash2 } from "lucide-react";
 
 interface Niveau { id: number; nom: string; type: string; pieces: { id: number }[]; }
 
@@ -60,12 +60,59 @@ function ClientPickerModal({ clients, planClientIds, onPick, onClose }: {
                     <p className="text-xs text-ink-400">{c.ville ?? ""}{hasPlan ? " · Plan existant" : " · Aucun plan"}</p>
                   </div>
                   {hasPlan
-                    ? <span className="text-[10px] font-semibold text-volt-600 bg-volt-100 px-2 py-0.5 rounded-full shrink-0">📐 Modifier</span>
+                    ? <span className="text-[10px] font-semibold text-volt-600 bg-volt-100 px-2 py-0.5 rounded-full shrink-0">📐 Plans · Nouveau</span>
                     : <ChevronRight size={14} className="text-ink-300 shrink-0" />}
                 </button>
               );
             })
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Nouveau plan (projet) pour un client qui en a déjà un : un client peut avoir autant de plans / chantiers que voulu.
+function NouveauPlanModal({ client, existants, onCreer, onClose }: {
+  client: Client; existants: PlanEntry[]; onCreer: (nom: string) => Promise<void>; onClose: () => void;
+}) {
+  const [nom, setNom] = useState("");
+  const [busy, setBusy] = useState(false);
+  const valider = async () => {
+    if (!nom.trim() || busy) return;
+    setBusy(true);
+    try { await onCreer(nom.trim()); } finally { setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={() => !busy && onClose()}>
+      <div className="card w-full max-w-md p-5" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-1">
+          <p className="font-semibold text-ink-900">Nouveau plan · {client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</p>
+          <button onClick={onClose} className="btn-ghost !px-2 !py-1 text-ink-400" aria-label="Fermer"><X size={16} /></button>
+        </div>
+        <p className="text-xs text-ink-400 mb-3">
+          Un plan = un logement ou un chantier, avec son propre plan de circuits, tableau, pré-devis, suivi de réalisation et devis.
+        </p>
+        {existants.length > 0 && (
+          <div className="mb-4">
+            <p className="label">Plans existants de ce client</p>
+            <div className="space-y-1.5">
+              {existants.map(e => (
+                <Link key={e.key} href={`/plan/${e.clientId}${qsProjet(e.projetId)}`}
+                  className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-ink-200 hover:border-volt-400 text-sm">
+                  <span className="truncate">{e.projetNom ?? "Logement principal"}</span>
+                  <span className="text-[10px] font-semibold text-volt-600 shrink-0">Modifier <ChevronRight size={11} className="inline" /></span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+        <label className="label" htmlFor="nouveau-plan-nom">Nom du nouveau plan / chantier</label>
+        <input id="nouveau-plan-nom" autoFocus className="input mb-4" placeholder="Extension garage, Appartement Bayonne…"
+          value={nom} maxLength={80} onChange={e => setNom(e.target.value)} onKeyDown={e => e.key === "Enter" && void valider()} />
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} disabled={busy} className="btn-ghost">Annuler</button>
+          <button onClick={() => void valider()} disabled={busy || !nom.trim()} className="btn-volt">{busy ? "…" : "Créer et ouvrir"}</button>
         </div>
       </div>
     </div>
@@ -105,6 +152,7 @@ export default function PlansPage() {
   const [showPicker, setShowPicker] = useState(false);
   const [aSupprimer, setASupprimer] = useState<PlanEntry | null>(null);
   const [suppEnCours, setSuppEnCours] = useState(false);
+  const [nouveauPour, setNouveauPour] = useState<Client | null>(null);
 
   const charger = () => {
     Promise.all([
@@ -151,9 +199,22 @@ export default function PlansPage() {
     } finally { setSuppEnCours(false); }
   };
 
+  // Client sans plan : on ouvre directement l'éditeur (le projet par défaut est créé à l'ouverture). Client qui a déjà un plan :
+  // on propose d'en créer un NOUVEAU (autre logement / autre chantier) ou d'ouvrir un existant.
   const handleCreate = (clientId: string) => {
     setShowPicker(false);
+    const client = clients.find(c => c.id === clientId);
+    if (client && plans.some(p => p.clientId === clientId)) { setNouveauPour(client); return; }
     router.push(`/plan/${clientId}`);
+  };
+
+  const creerNouveauPlan = async (nom: string) => {
+    if (!nouveauPour) return;
+    // listerProjets d'abord : il reprend un éventuel plan historique du client dans un projet, qui sinon serait masqué par le nouveau.
+    await listerProjets(nouveauPour.id);
+    const p = await creerProjet(nouveauPour.id, nom);
+    if (!p) { alert("La création du plan a échoué."); return; }
+    router.push(`/plan/${nouveauPour.id}${qsProjet(p.id)}`);
   };
 
   // Recherche insensible à la casse et aux accents, sur nom / prénom (dans les deux ordres),
@@ -246,10 +307,13 @@ export default function PlansPage() {
                           </div>
                         );
                       })()}
-                      <div className="flex gap-2 mt-3">
+                      <div className="flex flex-wrap gap-2 mt-3">
                         <Link href={`/plan/${entry.clientId}${qsProjet(entry.projetId)}`} className="btn-volt !py-1.5 !text-xs">
                           <LayoutTemplate size={12} /> Ouvrir
                         </Link>
+                        <button onClick={() => setNouveauPour(client)} className="btn-ghost !py-1.5 !text-xs" title="Créer un autre plan / chantier pour ce client">
+                          <FilePlus2 size={12} /> Nouveau plan
+                        </button>
                         <Link href={`/plan/${entry.clientId}/suivi${qsProjet(entry.projetId)}`} className="btn-ghost !py-1.5 !text-xs" title="Suivi de réalisation des circuits">
                           <ListChecks size={12} /> Suivi
                         </Link>
@@ -279,6 +343,11 @@ export default function PlansPage() {
         onCancel={() => setASupprimer(null)}
         loading={suppEnCours}
       />
+
+      {nouveauPour && (
+        <NouveauPlanModal client={nouveauPour} existants={plans.filter(p => p.clientId === nouveauPour.id)}
+          onCreer={creerNouveauPlan} onClose={() => setNouveauPour(null)} />
+      )}
 
       {showPicker && (
         <ClientPickerModal clients={clients} planClientIds={new Set(plans.map(p => p.clientId))} onPick={handleCreate} onClose={() => setShowPicker(false)} />

@@ -29,6 +29,7 @@ import {
 import { calculerBilan, HeuresDevis } from "@/lib/suivi-bilan";
 import { CarteChantier, CarteBilan, SaisieTemps, DevisResume } from "@/components/plan/SuiviChantier";
 import { modifierProjet } from "@/lib/projets";
+import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import { cn } from "@/lib/utils";
 
 const SQL_MIGRATION =
@@ -340,12 +341,12 @@ export default function SuiviPage() {
   const { projets, projet, loading, changerProjet, recharger } = useProjets(clientId);
   if (loading) return <Shell><div className="flex items-center justify-center h-64 text-ink-400">Chargement…</div></Shell>;
   if (!projet) return <Shell><div className="p-8 text-center text-ink-500">Impossible de charger le projet de ce client.</div></Shell>;
-  return <Suivi key={projet.id} clientId={clientId} projet={projet} projets={projets} onSelect={changerProjet} onRecharger={() => void recharger(projet.id)} />;
+  return <Suivi key={projet.id} clientId={clientId} projet={projet} projets={projets} onSelect={changerProjet} onChanged={async next => { await recharger(next); }} />;
 }
 
 type Calcul = { vide: true } | { erreur: string } | { suivi: SuiviPlan };
 
-function Suivi({ clientId, projet, projets, onSelect, onRecharger }: { clientId: string; projet: Projet; projets: Projet[]; onSelect: (id: string) => void; onRecharger: () => void }) {
+function Suivi({ clientId, projet, projets, onSelect, onChanged }: { clientId: string; projet: Projet; projets: Projet[]; onSelect: (id: string) => void; onChanged: (nextId: string | null) => Promise<void> | void }) {
   const [client, setClient] = useState<Client | null>(null);
   const [coches, setCoches] = useState<Coches>(() => lireSuivi(projet.suivi_realisation).coches);
   const [chantier, setChantier] = useState<InfosChantier>(() => lireSuivi(projet.suivi_realisation).chantier);
@@ -490,8 +491,8 @@ function Suivi({ clientId, projet, projets, onSelect, onRecharger }: { clientId:
     setNomChantier(nom);
     const ok = await modifierProjet(projet.id, { nom });
     if (!ok) { setNomChantier(projet.nom); setErreur("Le nom du chantier n'a pas pu être enregistré."); return; }
-    onRecharger();
-  }, [projet.id, projet.nom, onRecharger]);
+    await onChanged(projet.id);
+  }, [projet.id, projet.nom, onChanged]);
 
   const actualiser = useCallback(async () => {
     if (pendingRef.current > 0) return;
@@ -568,11 +569,7 @@ function Suivi({ clientId, projet, projets, onSelect, onRecharger }: { clientId:
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {projets.length > 1 && (
-              <select className="input !w-auto !py-2" value={projet.id} onChange={e => onSelect(e.target.value)} aria-label="Projet">
-                {projets.map(p => <option key={p.id} value={p.id}>{p.nom}</option>)}
-              </select>
-            )}
+            <ProjetSwitcher clientId={clientId} projets={projets} projetId={projet.id} onSelect={onSelect} onChanged={onChanged} />
             <button type="button" onClick={() => void actualiser()} className="btn-ghost !py-2" title="Relire les coches enregistrées">
               <RefreshCw size={14} className={enCours ? "animate-spin" : ""} /> Actualiser
             </button>
