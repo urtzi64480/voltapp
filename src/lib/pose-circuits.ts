@@ -15,7 +15,7 @@ import {
 } from "@/lib/maison-types";
 import { ResultatGeneration, segmentsPourCircuit } from "@/lib/maison-engine";
 import { coudesSegment } from "@/lib/routage-circuits";
-import { portesSurTrace } from "@/lib/routage-murs";
+import { deuxPointsSurMurs, portesSurTrace } from "@/lib/routage-murs";
 import { hauteurCourseSection } from "@/lib/chemin-3d";
 import { hauteurAppareilM } from "@/lib/murs";
 import type { Breaker } from "@/lib/electrical-constants";

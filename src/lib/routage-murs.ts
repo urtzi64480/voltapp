@@ -10,7 +10,7 @@ import { distance, ouverturesEffectivesMur, pointDansPolygone } from "@/lib/mais
 import { decalerContour, epaisseurTotaleM, parametresMur3D } from "@/lib/murs";
 
 const RAYON_LIAISON = 0.45;  // m — deux lignes de câbles de murs voisins (mitoyens, angles, cloisons) à moins de cela sont reliées
-const PORTEE_ANCRE = 1.2;    // m — un point plus loin que cela d'un mur n'est pas rattaché (le tracé direct prend le relais)
+const PORTEE_ANCRE = 0.4;    // m — un point est « sur un mur » s'il est à moins de cela de la ligne des câbles du mur ; sinon la liaison part tout droit de ce point
 const EPS = 1e-6;
 
 interface Mur { p: Point; q: Point; piece: number; i: number }
@@ -114,7 +114,7 @@ function murProche(r: Reseau, pieces: Piece[], pt: Point): { mur: number; pt: Po
   let best = -1, note = Infinity, bp: Point = pt, bt = 0;
   for (let i = 0; i < r.murs.length; i++) {
     const m = r.murs[i], pr = projeter(pt, m.p, m.q);
-    if (pr.d > PORTEE_ANCRE && !dans[m.piece]) continue;
+    if (pr.d > PORTEE_ANCRE) continue;
     const n = pr.d + (dans[m.piece] ? 0 : 0.6);
     if (n < note) { note = n; best = i; bp = pr.pt; bt = pr.t; }
   }
@@ -201,7 +201,8 @@ export function routeDansMurs(a: Point, b: Point, pieces: Piece[]): PointRoute[]
 
 function calculer(r: Reseau, pieces: Piece[], a: Point, b: Point): PointRoute[] | null {
   const pa = murProche(r, pieces, a), pb = murProche(r, pieces, b);
-  if (!pa || !pb) return null;
+  // Un des deux points n'est pas sur un mur (point lumineux, prise au milieu de la pièce…) : la liaison part TOUT DROIT du point donné.
+  if (!pa || !pb) return [];
   const N = r.noeuds.length, iA = N, iB = N + 1;
   const pts = [...r.noeuds, pa.pt, pb.pt];
   // accroche d'un point projeté sur un mur : lien vers les deux nœuds voisins du mur de part et d'autre
@@ -247,4 +248,11 @@ export function portesSurTrace(poly: Point[], pieces: Piece[]): PointRoute[] | n
   if (!r || poly.length < 2) return null;
   const res = contournerPortes(r, pieces, poly);
   return res.some(p => p.hauteurMini != null) ? res.slice(1, -1) : null;
+}
+
+/** Les deux extrémités sont-elles sur un mur (donc liaison tracée dans les murs) ? Sinon la liaison est une droite entre les deux points. */
+export function deuxPointsSurMurs(a: Point, b: Point, pieces: Piece[]): boolean {
+  let r = caches.get(pieces);
+  if (r === undefined) { try { r = construire(pieces); } catch { r = null; } caches.set(pieces, r); }
+  return !!r && !!murProche(r, pieces, a) && !!murProche(r, pieces, b);
 }
