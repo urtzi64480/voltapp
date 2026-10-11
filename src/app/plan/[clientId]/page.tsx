@@ -42,7 +42,7 @@ import {
 import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillageSymbolSvgString, PALETTE, labelAppareillage, labelAppareillagePlace, initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 import { cotesOuvertures, cotesExterieures, coteHorsTout } from "@/lib/cotes-archi";
 import { normaliserAngle } from "@/lib/soleil";
-import { posesTroncons, hauteursTroncons } from "@/lib/pose-circuits";
+import { posesTroncons, hauteursTroncons, appliquerPoseEntre } from "@/lib/pose-circuits";
 import { creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurCircuit } from "@/lib/longueurs-circuits";
 import { fusionnerPieces, voisinesFusionnables } from "@/lib/fusion-pieces";
 import { decalerNiveau } from "@/lib/deplacer-niveau";
@@ -2035,6 +2035,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [placingPointArrivee, setPlacingPointArrivee] = useState(false);
   // Boîte de dérivation à poser : label du circuit visé, puis un clic sur le plan la place exactement là.
   const [placingBoiteLabel, setPlacingBoiteLabel] = useState<string | null>(null);
+  // Pose par parties : on choisit une partie du circuit (clic de départ puis clic de fin, n'importe où sur le tracé) et sa pose.
+  const [poseParties, setPoseParties] = useState<{ label: string; pose: "apparent" | "encastre"; premier: Point | null } | null>(null);
   const [placingMeuble, setPlacingMeuble] = useState(false);
   const [pendingCommande, setPendingCommande] = useState<{ item: AppareillagePlace; estNouveau: boolean } | null>(null);
   const [selectedAppareillageId, setSelectedAppareillageId] = useState<number | null>(null);
@@ -2682,7 +2684,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setToolbarOuvert(o => {
       if (o) {
         setMode("select"); setDrawingPoints([]);
-        setPlacementType(null); setPlacingBoiteLabel(null); setPlacingTableau(false); setPlacingOuverture(null);
+        setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null);
         setPlacingPointArrivee(false); setSelectedPointArrivee(false); setPlacingMeuble(false);
         setCheminementDessin(null); setLiaisonLumiereMode(null);
       }
@@ -2711,7 +2713,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const reduireMenuHaut = (reduire: boolean) => {
     if (reduire) {
       setMode("select"); setDrawingPoints([]);
-      setPlacementType(null); setPlacingBoiteLabel(null); setPlacingTableau(false); setPlacingOuverture(null);
+      setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null);
       setPlacingPointArrivee(false); setSelectedPointArrivee(false); setPlacingMeuble(false);
       setCheminementDessin(null); setLiaisonLumiereMode(null);
     }
@@ -2819,7 +2821,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const nouvelleChaineMesure = () => { repereSeqRef.current.chaine += 1; };
   const entrerModeMesure = () => {
     if (mode === "mesure") { setMode("select"); return; }
-    setMode("mesure"); setDrawingPoints([]); setPlacementType(null); setPlacingBoiteLabel(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
+    setMode("mesure"); setDrawingPoints([]); setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
     setSelectedZoneId(null); setSelectedZoneOuv(null);
@@ -2985,7 +2987,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setMode("zone"); setZonePoints([]); setZoneEnAttente(null); setZoneCloisonSeule(cloisonSeule);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
     setSelectedZoneId(null); setSelectedZoneOuv(null);
-    setPlacementType(null); setPlacingBoiteLabel(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
+    setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null); setDrawingPoints([]);
   };
 
@@ -3081,7 +3083,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const entrerModeDessiner = () => {
     setMode("dessiner"); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
-    setPlacementType(null); setPlacingBoiteLabel(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
+    setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
   };
   const armerPlaque = (postes: PosteSpec[]) => {
@@ -3105,7 +3107,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
   };
   const armerPlacementPointArrivee = () => {
-    setPlacingPointArrivee(true); setMode("select"); setPlacementType(null); setPlacingBoiteLabel(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false); setDrawingPoints([]);
+    setPlacingPointArrivee(true); setMode("select"); setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false); setDrawingPoints([]);
     setLiaisonLumiereMode(null);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedPointArrivee(false); setSelectedMeubleId(null);
   };
@@ -3118,7 +3120,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // enchaîner plusieurs meubles sans rerouvrir le bouton — se désarme via son propre bouton
   // (toggle) ou en passant à un autre mode/outil.
   const armerPlacementMeuble = () => {
-    setPlacingMeuble(true); setMode("select"); setPlacementType(null); setPlacingBoiteLabel(null); setPlacingTableau(false); setPlacingOuverture(null); setDrawingPoints([]);
+    setPlacingMeuble(true); setMode("select"); setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setDrawingPoints([]);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
   };
@@ -3321,7 +3323,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
   const onPersonnePointerDown = (piece: Piece, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedPieceId(piece.id);
     setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
@@ -3359,7 +3361,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
   const onVoiturePointerDown = (piece: Piece, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedPieceId(piece.id);
     setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
@@ -3460,7 +3462,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // niveau bougent ensemble. Le décalage est toujours calculé depuis le niveau d'origine (annulation exacte).
   const demarrerDeplacementNiveau = () => {
     if (!niveauActif || vue3D) return;
-    setPlacementType(null); setPlacingBoiteLabel(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false); setPlacingPointArrivee(false);
+    setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false); setPlacingPointArrivee(false);
     setMode("select"); setEscalierMenuOpen(false); setOuvertureMenuOpen(false);
     deselectionnerAutres(); setSelectedEscalierId(null);
     departNiveauRef.current = niveauActif;
@@ -3488,7 +3490,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const onEscalierPointerDown = (esc: Escalier, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     deselectionnerAutres(); setSelectedEscalierId(esc.id); setPanelResetTick(t => t + 1);
     const rect = svgRef.current?.getBoundingClientRect();
@@ -3901,7 +3903,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // ─── DESSIN DU CHEMINEMENT (clic sur les appareillages du circuit, dans l'ordre) ───────
   const demarrerDessinCheminement = (b: Breaker) => {
-    setPlacementType(null); setPlacingBoiteLabel(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
+    setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setMode("select"); setDrawingPoints([]);
     setSelectedAppareillageId(null); setSelectedPieceId(null); setSelectedTableau(false); setSelectedMeubleId(null);
@@ -3954,7 +3956,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // ─── LIAISON DIRECTE ENTRE POINTS LUMINEUX (sans boîte de dérivation) ──────────────
   const demarrerLiaisonDirecteLumiere = (label: string) => {
-    setPlacementType(null); setPlacingBoiteLabel(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingPointArrivee(false); setPlacingMeuble(false);
+    setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingPointArrivee(false); setPlacingMeuble(false);
     setMode("select"); setDrawingPoints([]); setCheminementDessin(null);
     setSelectedAppareillageId(null); setSelectedPieceId(null); setSelectedTableau(false); setSelectedMeubleId(null);
     setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedWaypoint(null); setSelectedPointArrivee(false);
@@ -4181,6 +4183,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       return;
     }
 
+    if (poseParties) {
+      if (!poseParties.premier) { setPoseParties({ ...poseParties, premier: m }); return; }
+      const bk = resultat?.breakers.find(x => x.label === poseParties.label);
+      const orig = niveauActif ? origineCircuits(niveauActif) : null;
+      if (bk && niveauActif && orig) {
+        const pts = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === bk.id);
+        const segs = segmentsPourCircuit(bk, pts, niveauActif, orig);
+        const A = poseParties.premier, pose = poseParties.pose;
+        updateNiveauActif(n => appliquerPoseEntre(n, segs, A, m, pose, uidMaison));
+      }
+      setPoseParties({ ...poseParties, premier: null });   // reste armé : on peut enchaîner plusieurs parties
+      return;
+    }
+
     if (placingBoiteLabel != null) {
       const label = placingBoiteLabel;
       const nouvelId = uidMaison();
@@ -4345,7 +4361,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
 
   const onPieceDown = (piece: Piece, e: React.PointerEvent) => {
-    if (cheminementDessin || liaisonLumiereMode || mode === "dessiner" || mode === "cloison" || mode === "zone" || mode === "mesure" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingMeuble) return;
+    if (cheminementDessin || liaisonLumiereMode || mode === "dessiner" || mode === "cloison" || mode === "zone" || mode === "mesure" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) return;
     e.stopPropagation();
     // Ctrl (ou Cmd) + clic : sélectionne la pièce SOUS celle du dessus, à l'endroit cliqué (clics répétés = on descend, puis on boucle).
     if ((e.ctrlKey || e.metaKey) && niveauActif) {
@@ -4434,7 +4450,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       }
       return;
     }
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     // Maj / Ctrl (Cmd) + clic : ajoute / retire l'appareillage de la sélection multiple (pour les regrouper en plaque).
     if (e.shiftKey || e.ctrlKey || e.metaKey) {
@@ -4468,7 +4484,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const onMeublePointerDown = (piece: Piece, m: MeubleSimple, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedMeubleId(m.id);
     setSelectedAppareillageId(null);
@@ -4494,7 +4510,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // décalage actuel (m) par rapport au centre de la pièce — y compris quand la position affichée
   // vient du placement automatique, pour que l'étiquette ne « saute » pas au premier mouvement.
   const onNomPieceDown = (piece: Piece, offsetDepart: Point, e: React.PointerEvent) => {
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     if (piece.verrouillee) return;
     setDragMode({ kind: "nomPiece", pieceId: piece.id, startX: e.clientX, startY: e.clientY, startOffset: offsetDepart });
@@ -4506,7 +4522,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const onTableauPointerDown = (e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedTableau(true);
     setSelectedPieceId(null);
@@ -4521,7 +4537,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const onPointArriveePointerDown = (e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedPointArrivee(true);
     setSelectedPieceId(null);
@@ -4536,7 +4552,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const onOuverturePointerDown = (piece: Piece, o: Ouverture, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedOuvertureId(o.id);
     setSelectedPieceId(null);
@@ -4553,7 +4569,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const onBoitePointerDown = (label: string, boite: BoiteDerivation | null, positionActuelle: Point, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     let boiteId = boite?.id;
     if (boiteId == null) {
@@ -5999,7 +6015,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <svg
               ref={svgRef}
               className="w-full h-full block"
-              style={{ touchAction: "none", cursor: outilMain || espaceEnfonce ? "grab" : deplacementNiveau ? "move" : mode === "dessiner" || mode === "cloison" || mode === "zone" || mode === "mesure" || placementType || placingTableau || placingPointArrivee || placingBoiteLabel != null || placingMeuble ? "crosshair" : "grab" }}
+              style={{ touchAction: "none", cursor: outilMain || espaceEnfonce ? "grab" : deplacementNiveau ? "move" : mode === "dessiner" || mode === "cloison" || mode === "zone" || mode === "mesure" || placementType || placingTableau || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble ? "crosshair" : "grab" }}
               onPointerDown={onBackgroundPointerDown}
               // Outil cloison : le clic gauche est traité ICI, avant les pièces / appareillages / portes (un
               // appareillage posé sur le mur ne doit pas avaler le départ de la cloison).
@@ -6811,6 +6827,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 );
               })()}
 
+              {poseParties?.premier && (() => {
+                const pp = toScreen(poseParties.premier);
+                return <circle cx={pp.x} cy={pp.y} r={7} fill="#F59E0B" fillOpacity={0.35} stroke="#F59E0B" strokeWidth={2} style={{ pointerEvents: "none" }} />;
+              })()}
               {liaisonLumiereMode && niveauActif && (() => {
                 const points = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => estLumiere(a.type));
                 return points.map(a => {
@@ -8213,6 +8233,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 Clique pour poser un meuble (dedans ou dehors) : il se plaque contre le mur ou la cloison la plus proche, face à la pièce (Alt = libre) — reste armé
               </div>
             )}
+            {poseParties && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-lg flex items-center gap-3 flex-wrap justify-center max-w-[92vw]">
+                <span>Pose par parties — « {poseParties.label} » : {poseParties.premier ? "clique la FIN de la partie" : "clique le DÉBUT de la partie, n'importe où sur le tracé du circuit"}</span>
+                <div className="flex items-center gap-1">
+                  {(["apparent", "encastre"] as const).map(po => (
+                    <button key={po} onClick={() => setPoseParties({ ...poseParties, pose: po })}
+                      className={`btn-ghost !text-[11px] !px-2 !py-1 !border-white/30 ${poseParties.pose === po ? "!bg-volt-400 !text-ink-900" : "!text-white"}`}>
+                      {po === "apparent" ? "Apparent" : "Encastré"}
+                    </button>
+                  ))}
+                  <button onClick={() => setPoseParties(null)} className="btn-volt !text-[11px] !px-2 !py-1">Terminer</button>
+                </div>
+              </div>
+            )}
             {placingBoiteLabel != null && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-lg flex items-center gap-3">
                 Clique sur le tronçon du circuit où tu veux la boîte de dérivation (elle se place là où tu cliques)
@@ -8354,6 +8388,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                             title="Clique ensuite sur le plan à l'endroit voulu pour poser la boîte (avec dominos)">
                             <Plus size={11} /> Ajouter une boîte de dérivation
                           </button>
+                          {b && (
+                            <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); setPlacingBoiteLabel(null); setPoseParties({ label: b.label, pose: "apparent", premier: null }); setMode("select"); setPlacementType(null); }}
+                              className="text-left text-[10px] font-semibold text-volt-600 inline-flex items-center gap-1"
+                              title="Choisir une ou plusieurs parties du circuit (avec ou sans coude) et dire si elles sont apparentes ou encastrées">
+                              <Route size={11} /> Pose par parties
+                            </button>
+                          )}
                           {b && (
                             <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); setSchemaCircuitId(b.id); }}
                               className="text-left text-[10px] font-semibold text-volt-600 inline-flex items-center gap-1"
