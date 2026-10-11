@@ -538,7 +538,7 @@ export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
       segments.forEach(s => {
         [{ id: s.aId, p: s.aPoint }, { id: s.bId, p: s.bPoint }].forEach(({ id, p }) => {
           if (!(id === "boite" || id.startsWith("boite-")) || boites.has(id)) return;
-          const nommee = id.startsWith("boite-") ? (niveau.boitesDerivation?.[b.label] ?? []).find(x => `boite-${x.id}` === id) : undefined;
+          const nommee = id.startsWith("boite-") ? Object.values(niveau.boitesDerivation ?? {}).flat().find(x => `boite-${x.id}` === id) : undefined;
           boites.set(id, { point: p, nom: nommee?.nom?.trim() || undefined });
         });
       });

@@ -425,6 +425,9 @@ export interface BoiteDerivation {
   // Boîte posée SUR un tronçon du circuit (câble A → B devient A → boîte → B) : ids des deux extrémités du tronçon choisi.
   // Absente = boîte « en étoile » (les appareils les plus proches s'y raccordent).
   surSegment?: { a: string; b: string };
+  // Appareillages (ids) qui REPARTENT de cette boîte : un nouveau départ est tiré de la boîte vers eux (en chaîne, ou en étoile pour
+  // l'éclairage) au lieu de les alimenter par leur place d'origine dans le circuit.
+  departs?: number[];
 }
 
 /** Boîtes qui structurent le circuit en étoile (hors boîtes posées sur un tronçon). */

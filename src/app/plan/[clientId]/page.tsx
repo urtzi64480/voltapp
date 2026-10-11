@@ -55,6 +55,7 @@ import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece
 import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, aimanterEnFacade, estEnFacade, pieceLaPlusProche, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import Vue3DMaison from "@/components/plan/Vue3DMaison";
+import { toutesBoitesNiveau, segmentsDepuisMarche } from "@/lib/maison-engine";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, genererCircuitsManuelsSeuls, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
 import { verifierEclairageManuel } from "@/lib/controle-eclairage";
@@ -4591,6 +4592,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
 
   const onBoitePointerDown = (label: string, boite: BoiteDerivation | null, positionActuelle: Point, e: React.PointerEvent) => {
+    if (cheminementDessin && boite) {
+      // Cheminement dessiné à la main : une boîte (de CE circuit ou d'un autre) se clique comme un appareillage. Cliquée une 2e fois, on REPART de cette boîte.
+      e.stopPropagation();
+      setCheminementDessin(cd => cd ? { ...cd, ordre: [...cd.ordre, boite.id] } : cd);
+      return;
+    }
     if (cheminementDessin || liaisonLumiereMode) return;
     if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
@@ -6829,15 +6836,21 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   ? (niveauActif.circuitsManuels ?? []).find(m => m.id === cheminementDessin.breaker.manuelId)
                   : undefined;
                 const relieAuTableau = !manuelDuCircuit?.nonRelieTableau;
-                const placesPx = cheminementDessin.ordre
-                  .map(id => membres.find(m => m.id === id))
-                  .filter((m): m is AppareillagePlace => !!m)
-                  .map(a => toScreen({ x: a.x, y: a.y }));
-                const chemin = relieAuTableau ? [toScreen(origineCircuits(niveauActif)!), ...placesPx] : placesPx;
-                const d = chemin.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+                const boitesNiv = toutesBoitesNiveau(niveauActif);
+                const marche = segmentsDepuisMarche(origineCircuits(niveauActif)!, cheminementDessin.ordre.filter(t => boitesNiv.has(t) || membres.some(m => m.id === t)), membres, boitesNiv, relieAuTableau);
+                const d = marche.map(sg => { const a = toScreen(sg.aPoint), b = toScreen(sg.bPoint); return `M ${a.x.toFixed(1)} ${a.y.toFixed(1)} L ${b.x.toFixed(1)} ${b.y.toFixed(1)}`; }).join(" ");
                 return (
                   <>
-                    {chemin.length > 1 && <path d={d} fill="none" stroke="#F59E0B" strokeWidth={2.5} strokeDasharray="6,4" opacity={0.9} style={{ pointerEvents: "none" }} />}
+                    {marche.length > 0 && <path d={d} fill="none" stroke="#F59E0B" strokeWidth={2.5} strokeDasharray="6,4" opacity={0.9} style={{ pointerEvents: "none" }} />}
+                    {cheminementDessin.ordre.filter(t => boitesNiv.has(t)).map((t, i) => {
+                      const p = toScreen(boitesNiv.get(t)!);
+                      return (
+                        <g key={`chem-boite-${t}-${i}`} style={{ pointerEvents: "none" }}>
+                          <rect x={p.x - 9} y={p.y - 9} width={18} height={18} fill="#F59E0B" stroke="#1c1917" strokeWidth={1.5} />
+                          <text x={p.x} y={p.y + 3.5} textAnchor="middle" fontSize="9" fontWeight="800" fill="#1c1917">{cheminementDessin.ordre.indexOf(t) + 1}</text>
+                        </g>
+                      );
+                    })}
                     {membres.map(a => {
                       const p = toScreen({ x: a.x, y: a.y });
                       const idx = cheminementDessin.ordre.indexOf(a.id);
@@ -8289,8 +8302,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             {cheminementDessin && (
               <DraggablePanel corner="tc" dark
                 className="bg-ink-900 text-volt-400 text-xs font-semibold p-3 rounded-lg shadow-lg flex items-center gap-3 flex-wrap justify-center max-w-[92vw]">
-                <span>Cheminement « {nomAffiche(cheminementDessin.breaker)} » : clique ses appareillages dans l'ordre voulu ({cheminementDessin.ordre.length} placé{cheminementDessin.ordre.length > 1 ? "s" : ""})</span>
+                <span>Cheminement « {nomAffiche(cheminementDessin.breaker)} » : clique ses appareillages dans l'ordre voulu ({cheminementDessin.ordre.length} placé{cheminementDessin.ordre.length > 1 ? "s" : ""}). Tu peux passer par une boîte de dérivation (même d'un autre circuit) ; reclique une boîte déjà passée pour REPARTIR d'elle.</span>
                 <div className="flex items-center gap-1.5 shrink-0">
+                  <button onClick={() => setCheminementDessin(cd => cd ? { ...cd, ordre: cd.ordre.slice(0, -1) } : cd)} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">↶ Retirer le dernier</button>
                   <button onClick={terminerDessinCheminement} className="btn-volt !text-[11px] !px-2 !py-1"><Save size={11} /> Terminer</button>
                   <button onClick={reinitialiserDessinCheminement} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">Auto</button>
                   <button onClick={annulerDessinCheminement} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">Annuler</button>
@@ -8448,7 +8462,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               const nomsCircuits = new Map<number, string>(circuitsNiveauActif.map(x => [x.id, nomAffiche(x)] as const));
               const schema = construireSchemaTechnique({
                 circuitId: b.id, libelleTableau: `${b.amperes} A · ${nomAffiche(b)}`, points, tous, segments: segs,
-                boites: niveauActif.boitesDerivation?.[b.label] ?? [], libelle: labelAppareillagePlace,
+                boites: Object.values(niveauActif.boitesDerivation ?? {}).flat(), libelle: labelAppareillagePlace,
                 nomCircuit: id => (id != null ? nomsCircuits.get(id) : undefined) ?? "sans circuit",
               });
               const section = b.customSection ?? CIRCUITS[b.circuit]?.section ?? "1.5";

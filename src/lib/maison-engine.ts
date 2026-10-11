@@ -613,8 +613,90 @@ export function construireColorMap(resultat: ResultatGeneration, niveauxVivants?
 // manuels non-éclairage). Partagé par le rendu 2D et la vue 3D.
 export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[], niveau: Niveau, tableauPos: Point): SegmentCircuit[] {
   const toutes = niveau.boitesDerivation?.[breaker.label] ?? [];
+  // Cheminement dessiné à la main PASSANT PAR DES BOÎTES (de ce circuit ou d'un autre : plusieurs circuits peuvent traverser la même boîte,
+  // et on peut repartir d'une boîte quand on veut) : le tracé est exactement la marche cliquée.
+  const ordreManuel = niveau.ordresCircuits?.[breaker.label];
+  if (breaker.circuit !== "lumiere" && ordreManuel && ordreManuel.length > 0) {
+    const boitesNiveau = toutesBoitesNiveau(niveau);
+    if (ordreManuel.some(t => boitesNiveau.has(t))) {
+      const manuel = breaker.manuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === breaker.manuelId) : undefined;
+      const marche = segmentsDepuisMarche(tableauPos, ordreManuel, points, boitesNiveau, !manuel?.nonRelieTableau);
+      return insererBoitesSurTroncons(marche, toutes.filter(b => !!b.surSegment && !ordreManuel.includes(b.id)));
+    }
+  }
   const base = segmentsDeBase(breaker, points, niveau, tableauPos, toutes.filter(b => !b.surSegment));
-  return insererBoitesSurTroncons(base, toutes.filter(b => !!b.surSegment));
+  const avecBoites = insererBoitesSurTroncons(base, toutes.filter(b => !!b.surSegment));
+  return appliquerDepartsBoites(avecBoites, toutes, points, breaker.circuit === "lumiere");
+}
+
+// « Repartir de la boîte » : les appareillages choisis (BoiteDerivation.departs) sont détachés de leur place d'origine puis alimentés
+// depuis la boîte. Éclairage (étoile) : le câble d'alimentation de chaque lampe est simplement re-parti de la boîte. Autres circuits
+// (chaîne) : l'appareil est retiré de la chaîne (son précédent rejoint son suivant) et les appareils choisis forment une nouvelle
+// chaîne qui part de la boîte, du plus proche au plus loin.
+function appliquerDepartsBoites(segments: SegmentCircuit[], boites: BoiteDerivation[], points: AppareillagePlace[], eclairage: boolean): SegmentCircuit[] {
+  let res = [...segments];
+  const parId = new Map(points.map(a => [String(a.id), a]));
+  boites.forEach(bo => {
+    const idBoite = `boite-${bo.id}`;
+    const ids = (bo.departs ?? []).map(String).filter(id => parId.has(id));
+    if (ids.length === 0) return;
+    if (eclairage) {
+      ids.forEach(x => {
+        const i = res.findIndex(s => s.bId === x && !s.type && s.aId !== idBoite);
+        if (i >= 0) res[i] = { ...res[i], aId: idBoite, aPoint: bo.point };
+      });
+      return;
+    }
+    ids.forEach(x => {
+      const iIn = res.findIndex(s => s.bId === x), iOut = res.findIndex(s => s.aId === x);
+      const inc = iIn >= 0 ? res[iIn] : null, out = iOut >= 0 ? res[iOut] : null;
+      res = res.filter(s => s !== inc && s !== out);
+      if (inc && out && inc.aId !== out.bId) res.push({ ...inc, bId: out.bId, bPoint: out.bPoint });
+    });
+    const ancres = ids.map(id => ({ id, point: { x: parId.get(id)!.x, y: parId.get(id)!.y } }));
+    let prec = { id: idBoite, point: bo.point };
+    ordonnerAncresParProximite(bo.point, ancres).forEach(anc => {
+      res.push({ aId: prec.id, aPoint: prec.point, bId: anc.id, bPoint: anc.point });
+      prec = anc;
+    });
+  });
+  return res;
+}
+
+/** Toutes les boîtes de dérivation du niveau (tous circuits confondus), par id — ids uniques, jamais égaux à ceux d'un appareillage. */
+export function toutesBoitesNiveau(niveau: Niveau): Map<number, Point> {
+  return new Map(Object.values(niveau.boitesDerivation ?? {}).flat().map(b => [b.id, b.point] as const));
+}
+
+/**
+ * Tracé d'un cheminement dessiné à la main = une MARCHE : tableau → 1er clic → 2e clic… Une boîte déjà visitée, cliquée de nouveau,
+ * signifie « on repart de cette boîte » : aucun câble depuis le point précédent, le clic suivant part de la boîte.
+ * Les appareillages du circuit non cliqués suivent, par proximité, à partir du dernier point.
+ */
+export function segmentsDepuisMarche(
+  depart: Point, ordre: number[], points: AppareillagePlace[], boites: Map<number, Point>, relieAuTableau: boolean,
+): SegmentCircuit[] {
+  const appareils = new Map(points.map(a => [a.id, { x: a.x, y: a.y }] as const));
+  const segments: SegmentCircuit[] = [];
+  const vus = new Set<number>();
+  let cur: { id: string; point: Point } | null = relieAuTableau ? { id: "tableau", point: depart } : null;
+  const aller = (id: string, point: Point, saut: boolean) => {
+    if (cur && !saut && cur.id !== id) segments.push({ aId: cur.id, aPoint: cur.point, bId: id, bPoint: point });
+    cur = { id, point };
+  };
+  ordre.forEach(t => {
+    const estBoite = boites.has(t);
+    const pt = estBoite ? boites.get(t)! : appareils.get(t);
+    if (!pt || (!estBoite && vus.has(t))) return;
+    aller(estBoite ? `boite-${t}` : String(t), pt, estBoite && vus.has(t));
+    vus.add(t);
+  });
+  const restants = points.filter(a => !vus.has(a.id)).map(a => ({ id: String(a.id), point: { x: a.x, y: a.y } }));
+  if (restants.length > 0) {
+    const depuis: Point = cur ? (cur as { id: string; point: Point }).point : depart;
+    ordonnerAncresParProximite(depuis, restants).forEach(r => aller(r.id, r.point, false));
+  }
+  return segments;
 }
 
 // Boîtes posées sur un tronçon : le câble A → B devient A → boîte → B (mêmes fils des deux côtés — le câble traverse la boîte).
