@@ -17,7 +17,7 @@ import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, Hand, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
   GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt, Box,
-  Network, Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler, ShieldCheck,
+  Lightbulb, Network, Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler, ShieldCheck,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -58,7 +58,7 @@ import Vue3DMaison from "@/components/plan/Vue3DMaison";
 import { toutesBoitesNiveau, segmentsDepuisMarche } from "@/lib/maison-engine";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, genererCircuitsManuelsSeuls, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur, BREAKER_TYPES, effectiveSection } from "@/lib/electrical-constants";
-import { verifierEclairageManuel } from "@/lib/controle-eclairage";
+import { verifierEclairageManuel, fermetureCircuitLumiere } from "@/lib/controle-eclairage";
 import { coudesSegment } from "@/lib/routage-circuits";
 import { natureLiaison, conducteursSegment, geometrieCable, couleurDominante, COULEUR_FIL, LEGENDE_FILS, LIBELLE_NATURE } from "@/lib/couleurs-fils";
 
@@ -1527,6 +1527,110 @@ function estDansFiltre(a: Pick<AppareillagePlace, "type" | "usageDedie">, f: Fil
   }
 }
 
+// Outil « Générer un circuit de lumière » : on coche les POINTS LUMINEUX voulus ; les commandes qui les pilotent (interrupteurs, va-et-vient,
+// télérupteurs…) et les autres lampes qu'elles commandent sont ajoutées d'office, et tout le câblage (alimentation, retours, navettes) est
+// généré d'après ces liens commande ↔ lampe — sans rien relier à la main.
+function CircuitLumiereForm({ niveau, onValidate, onCancel }: {
+  niveau: Niveau;
+  onValidate: (nom: string, famille: FamilleCircuitManuel, couleur: string | undefined, membreIds: number[], creerBoite: boolean, nonRelieTableau: boolean, relier: boolean) => void;
+  onCancel: () => void;
+}) {
+  const [nom, setNom] = useState("");
+  const [couleur, setCouleur] = useState("");
+  const [creerBoite, setCreerBoite] = useState(false);
+  const [choisies, setChoisies] = useState<Set<number>>(new Set());
+  const tous = niveau.pieces.flatMap(p => p.appareillages);
+  const pieceDe = new Map<number, string>();
+  niveau.pieces.forEach(p => p.appareillages.forEach(a => pieceDe.set(a.id, p.nom || "Pièce")));
+  const lampesParPiece = niveau.pieces.map(p => ({ nom: p.nom || "Pièce", lampes: p.appareillages.filter(a => estLumiere(a.type)) })).filter(g => g.lampes.length > 0);
+  const { lampes, commandes } = fermetureCircuitLumiere(tous, choisies);
+  const ajoutees = lampes.filter(id => !choisies.has(id));
+  const parId = new Map(tous.map(a => [a.id, a]));
+  const nomDe = (a: AppareillagePlace) => `${labelAppareillagePlace(a)} (${pieceDe.get(a.id) ?? "?"})`;
+  const membres = new Set<number>([...lampes, ...commandes]);
+  const bilan = lampes.length > 0 ? verifierEclairageManuel(tous, membres, nomDe) : null;
+  const autreCircuit = (id: number) => { const m = parId.get(id)?.circuitManuelId; return m != null ? (niveau.circuitsManuels ?? []).find(c => c.id === m && c.nom) : undefined; };
+  const bascule = (ids: number[], on: boolean) => setChoisies(s => { const n = new Set(s); ids.forEach(id => (on ? n.add(id) : n.delete(id))); return n; });
+  const valide = nom.trim() !== "" && lampes.length > 0 && !(bilan && bilan.bloquants.length > 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+      <div className="card w-full max-w-lg max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-ink-200">
+          <p className="font-semibold text-ink-900">Générer un circuit de lumière</p>
+          <button onClick={onCancel} className="btn-ghost !px-2 !py-1 text-ink-400"><X size={16} /></button>
+        </div>
+        <div className="p-4 flex flex-col gap-3 overflow-y-auto flex-1">
+          <p className="text-xs text-ink-500">Coche les points lumineux de ce circuit. Les interrupteurs / va-et-vient qui les commandent sont ajoutés automatiquement, et le câblage (alimentation, retours, navettes) est tracé d'après eux.</p>
+          <div className="flex items-center gap-2">
+            <input autoFocus className="input flex-1" placeholder="Nom du circuit (ex : Lumière RDC)" value={nom} onChange={e => setNom(e.target.value)} />
+            <input type="color" title="Couleur du circuit" className="w-10 h-9 rounded-lg border border-ink-200 cursor-pointer p-0" value={couleur || "#78716c"} onChange={e => setCouleur(e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Points lumineux ({choisies.size} choisi{choisies.size > 1 ? "s" : ""}{ajoutees.length > 0 ? ` + ${ajoutees.length} ajouté${ajoutees.length > 1 ? "s" : ""} car commandé${ajoutees.length > 1 ? "s" : ""} par la même commande` : ""})</label>
+            <div className="flex flex-col gap-2 max-h-60 overflow-y-auto border border-ink-100 rounded-lg p-1.5">
+              {lampesParPiece.length === 0 && <p className="text-xs text-ink-400 px-1 py-1">Aucun point lumineux sur ce niveau.</p>}
+              {lampesParPiece.map(g => {
+                const ids = g.lampes.map(l => l.id);
+                const toutes = ids.every(id => choisies.has(id));
+                return (
+                  <div key={g.nom}>
+                    <div className="flex items-center justify-between px-1.5">
+                      <span className="text-[11px] font-semibold text-ink-600">{g.nom}</span>
+                      <button type="button" className="text-[10px] text-volt-600 underline" onClick={() => bascule(ids, !toutes)}>{toutes ? "Tout décocher" : "Tout cocher"}</button>
+                    </div>
+                    {g.lampes.map(l => (
+                      <label key={l.id} className="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-ink-50 cursor-pointer text-xs">
+                        <input type="checkbox" checked={choisies.has(l.id) || ajoutees.includes(l.id)} disabled={ajoutees.includes(l.id)} onChange={() => bascule([l.id], !choisies.has(l.id))} />
+                        <AppareillageSymbol type={l.type} size={14} />
+                        <span className="text-ink-700 truncate flex-1">{l.nom || labelAppareillagePlace(l)}</span>
+                        {ajoutees.includes(l.id) && <span className="text-[10px] text-sky-600 shrink-0">ajouté (même commande)</span>}
+                        {autreCircuit(l.id) && <span className="text-[10px] text-amber-600 shrink-0 whitespace-nowrap">sur « {autreCircuit(l.id)!.nom} »</span>}
+                      </label>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          {lampes.length > 0 && (
+            <div>
+              <label className="label">Commandes qui pilotent ces lampes ({commandes.length})</label>
+              <div className="flex flex-col gap-0.5 border border-ink-100 rounded-lg p-1.5">
+                {commandes.length === 0 && <p className="text-xs text-red-600 px-1 py-1">Aucune commande reliée à ces lampes.</p>}
+                {commandes.map(id => { const c = parId.get(id)!; return (
+                  <div key={id} className="flex items-center gap-2 px-1.5 py-0.5 text-xs">
+                    <AppareillageSymbol type={c.type} size={14} />
+                    <span className="text-ink-700 truncate flex-1">{nomDe(c)} → {lumieresCommandees(c).map(i => parId.get(i)).filter((l): l is AppareillagePlace => !!l).map(l => l.nom || labelAppareillagePlace(l)).join(", ") || "—"}</span>
+                    {autreCircuit(id) && <span className="text-[10px] text-amber-600 shrink-0 whitespace-nowrap">déplacé depuis « {autreCircuit(id)!.nom} »</span>}
+                  </div>
+                ); })}
+              </div>
+            </div>
+          )}
+          {bilan && bilan.bloquants.length > 0 && (
+            <div className="rounded-lg border-2 border-red-300 bg-red-50 px-3 py-2.5" role="alert">
+              <p className="text-xs font-bold text-red-800 mb-1.5">⛔ Câblage impossible tant que ces points ne sont pas réglés sur le plan</p>
+              <ul className="space-y-1">{bilan.bloquants.map((pb, i) => <li key={i} className="text-xs text-red-800 leading-snug">• {pb.message}</li>)}</ul>
+            </div>
+          )}
+          {bilan && bilan.bloquants.length === 0 && (
+            <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-2">✓ Chaque lampe a sa commande (retour) et chaque va-et-vient son second (navette) : le câblage sera généré complet.</p>
+          )}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={creerBoite} onChange={e => setCreerBoite(e.target.checked)} />
+            <span className="text-sm text-ink-700">Créer une boîte de dérivation pour ce circuit</span>
+          </label>
+        </div>
+        <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0">
+          <button disabled={!valide} onClick={() => onValidate(nom.trim(), "lumiere", couleur || undefined, Array.from(membres), creerBoite, false, false)}
+            className="btn-volt flex-1 disabled:opacity-40"><Save size={14} /> Générer le circuit et son câblage</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }: {
   niveau: Niveau;
   existing: CircuitManuel | null; // null = création, sinon édition de ce circuit
@@ -2068,6 +2172,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [circuitsManuelsOpen, setCircuitsManuelsOpen] = useState(false);
   // null = fermé ; { existing: null } = création ; { existing: <manuel> } = édition de ce circuit.
   const [circuitManuelForm, setCircuitManuelForm] = useState<{ existing: CircuitManuel | null } | null>(null);
+  const [circuitLumiereForm, setCircuitLumiereForm] = useState(false);
   // Circuit dont on est en train de dessiner le cheminement à la main (clic sur ses
   // appareillages, dans l'ordre) — null = pas de dessin en cours. ordre est l'état de
   // travail local, appliqué (appliquerOrdreCircuit) seulement à la validation.
@@ -8325,7 +8430,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 <p className="text-[11px] text-ink-400">
                   Crée un circuit de n'importe quel type (prises, éclairage, chauffage, appareil dédié…) et choisis toi-même ses appareillages — prioritaire sur la génération automatique. Clique sur un circuit existant pour le modifier.
                 </p>
-                <button onClick={ouvrirNouveauCircuitManuel} className="btn-volt !text-xs justify-center"><Plus size={13} /> Nouveau circuit manuel</button>
+                <button onClick={() => setCircuitLumiereForm(true)} className="btn-volt !text-xs justify-center"><Lightbulb size={13} /> Générer un circuit de lumière</button>
+                <button onClick={ouvrirNouveauCircuitManuel} className="btn-ghost !text-xs justify-center"><Plus size={13} /> Nouveau circuit manuel</button>
                 <div className="flex flex-col gap-1 pt-1">
                   {(niveauActif.circuitsManuels ?? []).length === 0 && (
                     <p className="text-[11px] text-ink-300 italic">Aucun circuit manuel sur ce niveau</p>
@@ -8825,6 +8931,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             </div>
           </div>
         </div>
+      )}
+
+      {circuitLumiereForm && niveauActif && (
+        <CircuitLumiereForm niveau={niveauActif} onCancel={() => setCircuitLumiereForm(false)}
+          onValidate={(...args) => { setCircuitLumiereForm(false); validerCircuitManuel(...args); }} />
       )}
 
       {circuitManuelForm && niveauActif && (

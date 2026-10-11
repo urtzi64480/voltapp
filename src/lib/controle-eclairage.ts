@@ -71,3 +71,26 @@ export function verifierEclairageManuel(
   const aAjouter = Array.from(new Set(bloquants.flatMap(p => p.ajouter)));
   return { bloquants, aAjouter };
 }
+
+/**
+ * Circuit d'éclairage « par les lampes » : à partir des points lumineux choisis, retrouve TOUT ce qui doit être sur le circuit pour que le câblage
+ * soit complet — les commandes (interrupteurs, va-et-vient, télérupteurs…) qui les pilotent, puis les autres lampes que ces commandes pilotent
+ * (un va-et-vient double commande deux lampes), jusqu'à ce que plus rien ne manque. Les commandes domotiques (sans fil) sont incluses pour mémoire
+ * mais n'ajoutent pas de lampe.
+ */
+export function fermetureCircuitLumiere(appareils: AppareillagePlace[], lampeIds: Iterable<number>): { lampes: number[]; commandes: number[] } {
+  const parId = new Map(appareils.map(a => [a.id, a]));
+  const lampes = new Set<number>(Array.from(lampeIds).filter(id => { const a = parId.get(id); return !!a && estLumiere(a.type); }));
+  const commandes = new Set<number>();
+  const toutesCommandes = appareils.filter(a => estCommande(a.type));
+  for (let change = true; change;) {
+    change = false;
+    toutesCommandes.forEach(c => {
+      const cibles = lumieresCommandees(c);
+      if (!cibles.some(id => lampes.has(id))) return;
+      if (!commandes.has(c.id)) { commandes.add(c.id); change = true; }
+      cibles.forEach(id => { const l = parId.get(id); if (l && estLumiere(l.type) && !lampes.has(id)) { lampes.add(id); change = true; } });
+    });
+  }
+  return { lampes: Array.from(lampes), commandes: Array.from(commandes) };
+}
