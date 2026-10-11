@@ -1165,13 +1165,14 @@ function QRModal({ clientId, projetId, clientName, onClose }: {
 
 // ─── DIN RAIL ROW ─────────────────────────────────────────────────────────────
 
-function DinRailRow({ row, globalOffset, selectedSlot, compliance, onClickSlot, onDeleteRow, onUpdateName }: {
+function DinRailRow({ row, globalOffset, selectedSlot, compliance, onClickSlot, onDeleteRow, onUpdateName, onMoveSlot }: {
   row: BreakerRow; globalOffset: number;
   selectedSlot: { rowId: number; slotIdx: number } | null;
   compliance: ReturnType<typeof checkNFC>;
   onClickSlot: (rowId: number, slotIdx: number) => void;
   onDeleteRow: (rowId: number) => void;
   onUpdateName: (rowId: number, name: string) => void;
+  onMoveSlot: (de: { rowId: number; slotIdx: number }, vers: { rowId: number; slotIdx: number }) => void;
 }) {
   const totalW = DIFF_W + 8 * SLOT_W + 9 * 4 + 40;
   const panelW = Math.max(totalW, 400);
@@ -1204,28 +1205,41 @@ function DinRailRow({ row, globalOffset, selectedSlot, compliance, onClickSlot, 
         ))}
         <SlotCell breaker={row.slots[0]} slotIdx={0} isDiffSlot issue={getIssue(row.slots[0])}
           isSelected={selectedSlot?.rowId === row.id && selectedSlot?.slotIdx === 0}
-          globalNum={globalOffset + 1} onClick={() => onClickSlot(row.id, 0)} />
+          globalNum={globalOffset + 1} onClick={() => onClickSlot(row.id, 0)} rowId={row.id} onMoveSlot={onMoveSlot} />
         {Array.from({ length: 8 }, (_, i) => i + 1).map(slotIdx => (
           <SlotCell key={slotIdx} breaker={row.slots[slotIdx]} slotIdx={slotIdx}
             issue={getIssue(row.slots[slotIdx])}
             isSelected={selectedSlot?.rowId === row.id && selectedSlot?.slotIdx === slotIdx}
-            globalNum={globalOffset + slotIdx + 1} onClick={() => onClickSlot(row.id, slotIdx)} />
+            globalNum={globalOffset + slotIdx + 1} onClick={() => onClickSlot(row.id, slotIdx)} rowId={row.id} onMoveSlot={onMoveSlot} />
         ))}
       </div>
     </div>
   );
 }
 
-function SlotCell({ breaker, slotIdx, isDiffSlot, issue, isSelected, globalNum, onClick }: {
+function SlotCell({ breaker, slotIdx, isDiffSlot, issue, isSelected, globalNum, onClick, rowId, onMoveSlot }: {
   breaker: Breaker | null; slotIdx: number; isDiffSlot?: boolean;
   issue: "error" | "warning" | null; isSelected: boolean;
   globalNum: number; onClick: () => void;
+  rowId: number; onMoveSlot: (de: { rowId: number; slotIdx: number }, vers: { rowId: number; slotIdx: number }) => void;
 }) {
+  const [survol, setSurvol] = useState(false);
   const w = isDiffSlot ? DIFF_W : SLOT_W;
   const label = breaker ? (breaker.label || (CIRCUITS[breaker.circuit]?.label ?? "")) : "";
   return (
-    <div onClick={onClick} style={{
-      position: "relative", zIndex: 1, cursor: "pointer", flexShrink: 0,
+    <div onClick={onClick}
+      draggable={!!breaker}
+      onDragStart={e => { e.dataTransfer.setData("text/plain", JSON.stringify({ rowId, slotIdx })); e.dataTransfer.effectAllowed = "move"; }}
+      onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (!survol) setSurvol(true); }}
+      onDragLeave={() => setSurvol(false)}
+      onDrop={e => {
+        e.preventDefault(); setSurvol(false);
+        try { const de = JSON.parse(e.dataTransfer.getData("text/plain")); if (de && typeof de.rowId === "number") onMoveSlot(de, { rowId, slotIdx }); } catch {}
+      }}
+      title={breaker ? "Glisser-déposer pour déplacer (sur un autre disjoncteur : les deux s'échangent)" : undefined}
+      style={{
+      position: "relative", zIndex: 1, cursor: breaker ? "grab" : "pointer", flexShrink: 0,
+      outline: survol ? "3px dashed #f59e0b" : "none", outlineOffset: 2, borderRadius: 4,
       transform: isSelected ? "translateY(-3px)" : "none", transition: "transform 0.1s",
       filter: issue === "error" ? "drop-shadow(0 0 6px rgba(239,68,68,0.6))"
             : issue === "warning" ? "drop-shadow(0 0 5px rgba(245,158,11,0.5))"
@@ -1453,6 +1467,24 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setEditBreaker(null); setSelectedSlot(null);
   };
 
+  // Glisser-déposer d'un disjoncteur : vers une case vide (il s'y déplace) ou sur un autre (les deux s'échangent) — dans la même rangée ou une autre.
+  const deplacerSlot = (de: { rowId: number; slotIdx: number }, vers: { rowId: number; slotIdx: number }) => {
+    if (de.rowId === vers.rowId && de.slotIdx === vers.slotIdx) return;
+    setRows(rs => {
+      const src = rs.find(r => r.id === de.rowId)?.slots[de.slotIdx] ?? null;
+      const dst = rs.find(r => r.id === vers.rowId)?.slots[vers.slotIdx] ?? null;
+      if (!src) return rs;
+      return rs.map(r => {
+        if (r.id !== de.rowId && r.id !== vers.rowId) return r;
+        const slots = [...r.slots];
+        if (r.id === de.rowId) slots[de.slotIdx] = dst;
+        if (r.id === vers.rowId) slots[vers.slotIdx] = src;
+        return { ...r, slots };
+      });
+    });
+    setSelectedSlot({ rowId: vers.rowId, slotIdx: vers.slotIdx });
+  };
+
   const getOffset = (ri: number) => rows.slice(0, ri).reduce((s, r) => s + safeBreakers(r.slots ?? []).length, 0);
 
   const scoreColor = compliance.score >= 85 ? "text-emerald-600 bg-emerald-50 border-emerald-200"
@@ -1543,7 +1575,7 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 {rows.map((row, ri) => (
                   <DinRailRow key={row.id} row={row} globalOffset={getOffset(ri)}
                     selectedSlot={selectedSlot} compliance={compliance}
-                    onClickSlot={handleClickSlot} onDeleteRow={deleteRow} onUpdateName={updateRowName} />
+                    onClickSlot={handleClickSlot} onDeleteRow={deleteRow} onUpdateName={updateRowName} onMoveSlot={deplacerSlot} />
                 ))}
               </div>
               <div className="mt-6">
