@@ -287,6 +287,7 @@ export interface LigneRecapCircuit { sousCategorie: string; label: string; quant
 export interface RecapCircuit {
   cle: string; nom: string; niveau: string;
   groupe: string;               // nom du poste en mode « par circuit » (sert à filtrer selon la sélection)
+  nbAppareils: number;          // appareillages présents sur le circuit (affichage du pré-devis uniquement)
   lignes: LigneRecapCircuit[];
 }
 export type ModePreDevis = "piece" | "circuit";
@@ -303,7 +304,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
     if (quantite <= 0) return;
     const cle = `${niveau.id}:${b.id}`;
     let r = recapParCircuit.get(cle);
-    if (!r) { r = { cle, nom: resoudreLabelCircuit(b, niveau), niveau: niveau.nom || niveau.type, groupe, lignes: [] }; recapParCircuit.set(cle, r); }
+    if (!r) { r = { cle, nom: resoudreLabelCircuit(b, niveau), niveau: niveau.nom || niveau.type, groupe, nbAppareils: niveau.pieces.reduce((n, pc) => n + pc.appareillages.filter(x => x.circuitId === b.id).length, 0), lignes: [] }; recapParCircuit.set(cle, r); }
     const l = r.lignes.find(x => x.sousCategorie === sousCategorie);
     if (l) l.quantite += quantite; else r.lignes.push({ sousCategorie, label, quantite, unite });
   };

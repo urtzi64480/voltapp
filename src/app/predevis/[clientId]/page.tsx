@@ -1024,7 +1024,14 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
           .map(([piece, besoins]) => (
           <div key={piece} className="card card-inner mb-4">
             <div className="flex items-center justify-between gap-3 mb-3">
-              <h2 className="font-semibold text-ink-800 min-w-0 break-words">{piece}</h2>
+              <h2 className="font-semibold text-ink-800 min-w-0 break-words">{piece}{(() => {
+                // Aide au chiffrage, AFFICHAGE SEUL (le nom du poste du devis reste `piece`) : longueur de câble du circuit + nombre d'appareils.
+                if (mode !== "circuit") return null;
+                const r = recapCircuits.find(x => x.groupe === piece);
+                if (!r) return null;
+                const m = r.lignes.filter(l => l.sousCategorie.startsWith("cablage_") || l.sousCategorie === "retour_lampe" || l.sousCategorie === "navette" || l.sousCategorie === "aller_commande" || l.sousCategorie === "cable_rj45" || l.sousCategorie === "cable_coax").reduce((a, l) => a + l.quantite, 0);
+                return <span className="ml-2 text-sm font-normal text-ink-500 whitespace-nowrap">({m.toFixed(1).replace(".", ",")} m · {r.nbAppareils} appareil{r.nbAppareils > 1 ? "s" : ""})</span>;
+              })()}</h2>
               <label className="flex items-center gap-1.5 shrink-0 text-xs text-ink-500" title="Temps de main d'œuvre chiffré pour ce poste (facultatif) — comparé au temps passé dans le suivi de réalisation">
                 <span className="hidden sm:inline">Main d'œuvre</span>
                 <input className="input !py-1 !px-2 !w-16 text-right text-sm" type="number" inputMode="decimal" min="0" step="0.25" placeholder="0"
