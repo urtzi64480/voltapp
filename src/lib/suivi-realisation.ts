@@ -123,7 +123,7 @@ export const LABEL_APPAREIL: Record<AppareillageType, string> = {
   four: "Four", plaque: "Plaque de cuisson", lave_linge: "Lave-linge", lave_vaisselle: "Lave-vaisselle", seche_linge: "Sèche-linge",
   chauffe_eau: "Chauffe-eau", chauffage: "Radiateur électrique", clim: "Climatisation", seche_serviette: "Sèche-serviette",
   congelateur: "Congélateur", irve: "Borne de recharge véhicule", piscine: "Piscine / pompe à chaleur", vmc: "VMC", alarme: "Alarme",
-  volet_roulant: "Volet roulant", rj45: "Prise RJ45", prise_tv: "Prise TV / antenne", prise_dediee: "Prise dédiée", prise_exterieure: "Prise extérieure (IP44)",
+  volet_roulant: "Volet roulant", rj45: "Prise RJ45", prise_tv: "Prise TV / antenne", prise_dediee: "Prise dédiée", prise_exterieure: "Prise extérieure (IP44)", prise_irve: "Prise renforcée IRVE",
   applique_exterieure: "Applique extérieure (IP44)", point_lumineux_exterieur: "Point lumineux extérieur (IP44)",
   interrupteur_exterieur: "Interrupteur extérieur (IP55)",
   detecteur_mouvement: "Détecteur de mouvement", detecteur_mouvement_exterieur: "Détecteur de mouvement extérieur (IP55)",
@@ -694,7 +694,7 @@ export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
           if (cibles.length < ciblesTout.length) alertesEl.push("Commande de points lumineux situés sur un autre niveau : ces liaisons ne sont pas tracées dans ce circuit.");
           if (base === "va_et_vient") badges.push("va-et-vient");
           if (a.domotique) details.push("Commande domotique : module radio/Wi-Fi, aucun fil de retour ni de navette vers la lampe.");
-        } else if (a.type === "prise" || a.type === "prise_commandee" || a.type === "prise_exterieure" || a.type === "prise_dediee") {
+        } else if (a.type === "prise" || a.type === "prise_commandee" || a.type === "prise_exterieure" || a.type === "prise_dediee" || a.type === "prise_irve") {
           const h = cm(a);
           badges.push(`${h} cm`);
           libPose = "Boîte + socle posés";
@@ -702,6 +702,7 @@ export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
           const usage = a.type === "prise_dediee" ? ` pour ${LABEL_APPAREIL[a.usageDedie ?? "four"].toLowerCase()}` : "";
           details.push(`${LABEL_APPAREIL[a.type]}${usage} à ${h} cm du sol : boîte d'encastrement, socle 2P+T (terre obligatoire), plaque de finition.`);
           if (plaque) details.push(plaque.detail);
+          if (a.type === "prise_irve") alertesEl.push("Prise renforcée IRVE : circuit dédié 32 A / 6 mm², différentiel 30 mA type A (ou F) avec protection contre les courants de défaut continu (6 mA DC), socle renforcé spécifique recharge de véhicule — jamais une prise ordinaire.");
           if (a.type === "prise_exterieure") alertesEl.push("Prise extérieure : socle étanche IP44 minimum, alimentée sous différentiel 30 mA.");
         } else if (a.type === "rj45" || a.type === "prise_tv") {
           const h = cm(a);

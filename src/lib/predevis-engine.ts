@@ -155,6 +155,7 @@ const LABEL_APPAREILLAGE: Record<string, string> = {
   rj45: "Prise RJ45 (communication)",
   prise_tv: "Prise TV / antenne (coaxiale)",
   prise_exterieure: "Prise extérieure (étanche IP44)",
+  prise_irve: "Prise renforcée IRVE",
   applique_exterieure: "Applique extérieure (étanche IP44)",
   point_lumineux_exterieur: "Point lumineux extérieur (étanche IP44)",
   interrupteur_exterieur: "Interrupteur extérieur (étanche IP55)",
@@ -207,7 +208,7 @@ function estCommandeType(t?: AppareillageType): boolean {
 
 // Le détecteur de mouvement intérieur (type interrupteur à détection) s'encastre comme un mécanisme : boîte + plaque.
 // L'appareillage extérieur (prise, interrupteur, détecteur, applique) est étanche et posé EN SAILLIE : ni boîte ni plaque.
-const TYPES_ENCASTRABLES: AppareillageType[] = ["prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur", "interrupteur_double", "va_et_vient_double", "telerupteur_double", "detecteur_mouvement", "rj45", "prise_tv", "prise_dediee"];
+const TYPES_ENCASTRABLES: AppareillageType[] = ["prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur", "interrupteur_double", "va_et_vient_double", "telerupteur_double", "detecteur_mouvement", "rj45", "prise_tv", "prise_dediee", "prise_irve"];
 
 const LABEL_POSTES = (n: number) => n === 1 ? "simple" : n === 2 ? "double" : n === 3 ? "triple" : "quadruple";
 

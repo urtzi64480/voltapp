@@ -41,6 +41,7 @@ export const CIRCUIT_DEDIE: Record<string, string> = {
 // lave-linge…) ; tout autre appareil dédié suit son propre type.
 export function cleCircuitDedie(a: Pick<AppareillagePlace, "type" | "usageDedie">): string | undefined {
   if (a.type === "prise_dediee") return CIRCUIT_DEDIE[a.usageDedie ?? USAGE_DEDIE_DEFAUT];
+  if (a.type === "prise_irve") return "irve";   // prise renforcée IRVE : son propre circuit IRVE (32 A / 6 mm², différentiel type A)
   return CIRCUIT_DEDIE[a.type];
 }
 
@@ -57,7 +58,7 @@ const LABEL_NON_RACCORDE: Record<string, string> = {
   interrupteur: "Interrupteur", va_et_vient: "Va-et-vient", telerupteur: "Télérupteur",
   interrupteur_double: "Double interrupteur", va_et_vient_double: "Double va-et-vient", telerupteur_double: "Double bouton poussoir",
   prise: "Prise", prise_commandee: "Prise commandée", volet_roulant: "Volet roulant",
-  prise_dediee: "Prise dédiée", prise_exterieure: "Prise extérieure", prise_tv: "Prise TV / antenne",
+  prise_dediee: "Prise dédiée", prise_exterieure: "Prise extérieure", prise_tv: "Prise TV / antenne", prise_irve: "Prise renforcée IRVE",
   point_lumineux: "Point lumineux", applique: "Applique", spot: "Spot", spot_etanche: "Spot étanche",
   applique_exterieure: "Applique extérieure", point_lumineux_exterieur: "Point lumineux extérieur",
   interrupteur_exterieur: "Interrupteur extérieur",

@@ -17,6 +17,8 @@ export type AppareillageType =
   | "irve" | "piscine" | "vmc" | "alarme"
   | "volet_roulant"
   | "rj45" | "prise_tv" | "prise_dediee" | "prise_exterieure"
+  // Prise renforcée IRVE (recharge de véhicule électrique) : prise spéciale, ni prise de courant ni sortie de câble — circuit « irve » dédié.
+  | "prise_irve"
   // Extérieur (étanche) : applique murale, point lumineux (sous avancée de toit / plafond de terrasse), interrupteur.
   | "applique_exterieure" | "point_lumineux_exterieur" | "interrupteur_exterieur"
   // Détecteurs de mouvement : commandent l'allumage de points lumineux (comme un interrupteur), à l'intérieur ou à l'extérieur (IP55).

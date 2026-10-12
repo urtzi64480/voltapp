@@ -6,6 +6,7 @@ export const PALETTE: { type: AppareillageType; label: string; categorie: string
   { type: "prise",           label: "Prise de courant",              categorie: "Prises" },
   { type: "prise_commandee", label: "Prise commandée",               categorie: "Prises" },
   { type: "prise_dediee",    label: "Prise dédiée (20 A / 32 A)",    categorie: "Prises" },
+  { type: "prise_irve",      label: "Prise renforcée IRVE",          categorie: "Prises" },
   { type: "rj45",           label: "Prise RJ45 (communication)",    categorie: "Prises" },
   { type: "prise_tv",       label: "Prise TV / antenne",            categorie: "Prises" },
   { type: "point_lumineux",  label: "Point lumineux (plafond)",      categorie: "Éclairage" },
@@ -63,7 +64,7 @@ const DEDIE_INITIALES: Record<string, string> = {
 // même logique que les symboles 2D mais réduite à 1-3 caractères.
 const INITIALES_BASE: Record<string, string> = {
   prise: "P", prise_commandee: "PC", point_lumineux: "PL", applique: "AP", spot: "SP", spot_etanche: "SE",
-  interrupteur: "I", va_et_vient: "VV", telerupteur: "BP", rj45: "RJ", prise_tv: "TV", prise_dediee: "PD", prise_exterieure: "PE",
+  interrupteur: "I", va_et_vient: "VV", telerupteur: "BP", rj45: "RJ", prise_tv: "TV", prise_dediee: "PD", prise_exterieure: "PE", prise_irve: "EV",
   interrupteur_double: "I2", va_et_vient_double: "VV2", telerupteur_double: "BP2",
   applique_exterieure: "AE", point_lumineux_exterieur: "PLE", interrupteur_exterieur: "IE",
   detecteur_mouvement: "DM", detecteur_mouvement_exterieur: "DME",
@@ -136,6 +137,12 @@ const SYMBOLES: Record<AppareillageType, DefSymbole> = {
   // initialesAppareillage).
   prise_dediee: { oriente: true, prims: [
     { k: "p", d: "M 5.5 19 A 6.5 6.5 0 0 1 18.5 19 Z", f: true }, L(12, 19, 12, 7.5), L(8.5, 7.5, 15.5, 7.5),
+  ] },
+  // Prise renforcée IRVE : demi-disque PLEIN entouré d'un second demi-cercle (prise renforcée) et repère « EV » — distincte d'une prise
+  // ordinaire, d'une prise dédiée et de la borne IRVE (cercle « EV »).
+  prise_irve: { oriente: true, prims: [
+    { k: "p", d: "M 5.5 19 A 6.5 6.5 0 0 1 18.5 19 Z", f: true }, { k: "p", d: "M 3 19 A 9 9 0 0 1 21 19 Z" },
+    L(12, 19, 12, 9), L(8.5, 9, 15.5, 9), { k: "t", x: 12, y: 5.4, s: 5.2, txt: "EV" },
   ] },
   // Prise extérieure (étanche IP44) : prise 2P+T dans un demi-cercle double (capot étanche), pour la
   // distinguer d'une prise intérieure ; reste sur le circuit « extérieur ».

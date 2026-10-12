@@ -171,6 +171,13 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
       notes.push("Le moteur a deux phases (montée et descente) qui passent par l'interrupteur de volet roulant (commun + montée + descente) ; neutre et terre vont directement au moteur. Repères des fils : voir la notice du moteur.");
       return vue("autre");
     }
+    // Prise renforcée IRVE : socle renforcé de recharge de véhicule, sur son circuit dédié (32 A / 6 mm²) — pas une prise 2P+T ordinaire.
+    if (t === "prise_irve") {
+      mecanismes.push({ id: "a", titre: "Prise renforcée IRVE", bornes: [{ id: "L", libelle: "L", aide: "phase" }, { id: "N", libelle: "N", aide: "neutre" }, { id: "PE", libelle: "PE", aide: "terre" }] });
+      lier("a", "L", role("phase")); lier("a", "N", role("neutre")); lier("a", "PE", role("terre"));
+      notes.push("Prise renforcée IRVE (recharge de véhicule électrique) : phase, neutre et terre sur les bornes du socle renforcé (repères L / N / ⏚, voir la notice du fabricant). Circuit dédié, câble 6 mm², aucune autre prise sur ce circuit.");
+      return vue("autre");
+    }
     const estPrise = t === "prise" || t === "prise_commandee" || t === "prise_dediee" || t === "prise_exterieure";
     mecanismes.push({
       id: "a", titre: estPrise ? "Prise 2P+T" : "Raccordement de l'appareil",
