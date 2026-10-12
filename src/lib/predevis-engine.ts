@@ -83,7 +83,7 @@ import { Prestation, Gamme, DevisLigne, PrestationFournisseur } from "@/types";
 import { nomAvecConditionnement } from "@/lib/utils";
 import { PREFIXE_A_COMPLETER } from "@/lib/devis-lignes";
 import { designationProduit, imageOffre, libelleOffre, offrePrincipale, offrePourFournisseur, prixVenteOffre } from "@/lib/fournisseurs";
-import { sousCategoriesDe, aSousCategorie} from "@/lib/sous-categories";
+import { sousCategoriesDe, aSousCategorie } from "@/lib/sous-categories";
 
 // ─── TYPES DE BESOIN ────────────────────────────────────────────────────────
 
@@ -738,7 +738,28 @@ function optionsPourBesoin(sousCategorie: string, prestations: Prestation[]): Op
     const optsFil = optionsPour(`fil_${section}`, prestations).map(o => ({ ...o, quantiteMultiplicateur: 3 }));
     return [...optsCable, ...optsFil];
   }
-  return optionsPour(sousCategorie, prestations);
+  const directes = optionsPour(sousCategorie, prestations);
+  if (directes.length > 0 || sousCategorie !== "prise_irve") return directes;
+  return optionsPriseIrveRepli(prestations);
+}
+
+// Repli « prise renforcée IRVE » : aucun article taggé prise_irve au catalogue. On propose alors, dans l'ordre,
+// les articles existants qui SONT visiblement une prise de recharge (nom/description : IRVE, Green'Up, renforcée,
+// recharge véhicule…) puis les sorties spécialisées (prise_specialisee). Le tag exact reste prioritaire ; ce repli
+// évite un « non identifié » alors que l'article existe sous une autre sous-catégorie.
+const RE_PRISE_IRVE = /\birve\b|green[\s'’-]?up|renforc|recharge|v[ée]hicule|\bev\b/i;
+const RE_EXCLU_IRVE = /^(disjoncteur|diff|cable|fil|gaine|moulure|borne|boite|plaque|cablage|tableau|goulotte)/;
+function optionsPriseIrveRepli(prestations: Prestation[]): OptionArticle[] {
+  const actifs = prestations.filter(p => p.actif !== false && p.type_branche !== "service");
+  const parNom = actifs.filter(p =>
+    RE_PRISE_IRVE.test(`${p.nom ?? ""} ${p.description ?? ""}`)
+    && !sousCategoriesDe(p).some(c => RE_EXCLU_IRVE.test(c))
+    && /prise|socle|irve|green/i.test(`${p.nom ?? ""} ${sousCategoriesDe(p).join(" ")}`));
+  if (parNom.length > 0) {
+    const opts = optionsPour("prise_irve", parNom.map(p => ({ ...p, sous_categorie: "prise_irve" })));
+    if (opts.length > 0) return opts;
+  }
+  return optionsPour("prise_specialisee", prestations);
 }
 
 export function apparierCatalogue(besoins: LigneBesoin[], prestations: Prestation[]): ResultatPreDevis {
