@@ -232,7 +232,9 @@ export default function ParametresPage() {
     setSaving(true);
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) { setSaving(false); return; }
-    const { id, created_at, updated_at, ...updateData } = profil as any;
+    const { id, created_at, updated_at, compteur_devis, compteur_facture, ...updateData } = profil as any;
+    void compteur_devis; void compteur_facture;   // jamais réécrits depuis cet écran : une copie périmée ferait reculer la numérotation
+    if (!Number.isFinite(updateData.taux_horaire)) delete updateData.taux_horaire;   // champ vidé : on garde la valeur enregistrée
     const { error } = await supabase.from("profil").update(updateData).eq("id", session.user.id);
     setSaving(false);
     if (echecSupabase(error, "Enregistrement du profil")) return;
@@ -715,7 +717,7 @@ export default function ParametresPage() {
                 <div>
                   <label className="label">Taux horaire (€/h)</label>
                   <input className="input" type="number" step="0.5"
-                    value={numVal("taux_horaire", 55)}
+                    value={Number.isFinite(numVal("taux_horaire", 55)) ? numVal("taux_horaire", 55) : ""}
                     onChange={e => set("taux_horaire", parseFloat(e.target.value))} />
                 </div>
               </div>
