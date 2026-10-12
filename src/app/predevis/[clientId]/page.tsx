@@ -24,7 +24,7 @@ import ProduitPicker from "@/components/devis/ProduitPicker";
 import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { ArrowLeft, AlertTriangle, Search, Sparkles, Save, Cable, RefreshCw } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Search, Sparkles, Save, Cable, RefreshCw, Euro } from "lucide-react";
 import { aSousCategorie, sousCategoriePrincipale} from "@/lib/sous-categories";
 import { fondModal } from "@/lib/fond-modal";
 
@@ -437,6 +437,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [prestations, setPrestations] = useState<Prestation[]>([]);
   const ajouterAuCatalogue = (p: Prestation) => setPrestations(prev => (prev.some(x => x.id === p.id) ? prev : [...prev, p]));
   const [profil, setProfil] = useState<any>(null);
+  const [rentabOuverte, setRentabOuverte] = useState(false); // panneau « rentabilité » (privé, jamais dans le devis)
   const [resultat, setResultat] = useState<ResultatPreDevis | null>(null);
   // Toutes les pièces du plan (nom + niveau), même celles sans aucun besoin — sert au contrôle « rien oublié ».
   const [piecesDuPlan, setPiecesDuPlan] = useState<{ nom: string; niveau: string }[]>([]);
@@ -715,6 +716,59 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const deplacement = parseFloat(deplacementEur) || 0;
   const totalGeneral = totalConsommablesApprox + totalMainOeuvre + fraisGeneraux + deplacement;
 
+  // Assemble les lignes du devis (consommables + main d'œuvre + frais + déplacement) : source unique, utilisée par la génération ET par l'aperçu de rentabilité.
+  function assemblerLignes() {
+    const tousLesBesoins = Object.values(parPieceFiltre).flat().filter(b => !estBobinable(b.sousCategorie));
+    const construireChoixLigne = (besoin: BesoinApparie, etat: EtatChoix): ChoixLigne => {
+    if (etat.mode === "exclu") return { besoin };
+    if (etat.mode === "option" || etat.mode === "autre") {
+      // Option avec le fournisseur choisi (prix de vente + prix d'achat de CE fournisseur).
+      const opt = optionEffective(besoin, etat, prestations);
+      return opt ? { besoin, optionCatalogue: opt } : { besoin, aCompleter: true };
+    }
+    const prix = parseFloat(etat.librePrix) || 0;
+    if (!etat.libreNom.trim() || prix <= 0) return { besoin, aCompleter: true };
+    return { besoin, libre: { nom: etat.libreNom, prixUnitaire: prix, unite: etat.libreUnite, typeBranche: etat.libreBranche } };
+    };
+    const choixLignes: ChoixLigne[] = [
+    ...tousLesBesoins.map(besoin => construireChoixLigne(besoin, choix[besoin.cle] ?? etatParDefaut(besoin))),
+    // Câbles/gaines/moulures : un seul choix par sous-catégorie sur le métrage total
+    // (toutes pièces confondues) — voir besoinsAgreges plus haut.
+    ...besoinsAgreges.map(besoin => construireChoixLigne(besoin, choixAgrege[besoin.cle] ?? etatParDefaut(besoin))),
+    ];
+
+    const lignesConsommables = genererLignesDevis(choixLignes, prestations);
+
+    const lignesFinales: Omit<DevisLigne, "devis_id" | "ordre">[] = [...lignesConsommables];
+
+    const optMO = optionsMainOeuvre[mainOeuvreIndex];
+    // Main d'œuvre rattachée à chaque poste renseigné (comparée au temps passé dans le suivi de réalisation)…
+    heuresParPoste.forEach(([poste, h]) => {
+    lignesFinales.push({
+    nom: optMO?.nom ?? "Main d'œuvre", quantite: h, prix_unitaire: tauxHoraire, unite: "heure",
+    type_branche: "service", prestation_id: optMO?.prestation_id, poste,
+    });
+    });
+    // … et main d'œuvre générale (non rattachée à un poste).
+    if (heuresGenerales > 0) {
+    lignesFinales.push({
+    nom: optMO?.nom ?? "Main d'œuvre", quantite: heuresGenerales, prix_unitaire: tauxHoraire, unite: "heure",
+    type_branche: "service", prestation_id: optMO?.prestation_id, poste: POSTE_MAIN_OEUVRE,
+    });
+    }
+
+    const sousTotal = lignesFinales.reduce((s, l) => s + l.quantite * l.prix_unitaire, 0);
+    const pctFrais = parseFloat(fraisGenerauxPct) || 0;
+    if (pctFrais > 0) {
+    lignesFinales.push({ nom: "Frais généraux", quantite: 1, prix_unitaire: Math.round(sousTotal * pctFrais / 100 * 100) / 100, unite: "forfait", type_branche: "service", poste: POSTE_MAIN_OEUVRE });
+    }
+    if (deplacement > 0) {
+    lignesFinales.push({ nom: "Déplacement", quantite: 1, prix_unitaire: deplacement, unite: "forfait", type_branche: "service", poste: POSTE_MAIN_OEUVRE });
+    }
+
+    return { lignesFinales, choixLignes };
+  }
+
   async function genererDevis() {
     if (!resultat || !client) return;
     setGenerating(true);
@@ -722,25 +776,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) { alert("Session expirée."); setGenerating(false); return; }
 
-      const tousLesBesoins = Object.values(parPieceFiltre).flat().filter(b => !estBobinable(b.sousCategorie));
-      const construireChoixLigne = (besoin: BesoinApparie, etat: EtatChoix): ChoixLigne => {
-        if (etat.mode === "exclu") return { besoin };
-        if (etat.mode === "option" || etat.mode === "autre") {
-          // Option avec le fournisseur choisi (prix de vente + prix d'achat de CE fournisseur).
-          const opt = optionEffective(besoin, etat, prestations);
-          return opt ? { besoin, optionCatalogue: opt } : { besoin, aCompleter: true };
-        }
-        const prix = parseFloat(etat.librePrix) || 0;
-        if (!etat.libreNom.trim() || prix <= 0) return { besoin, aCompleter: true };
-        return { besoin, libre: { nom: etat.libreNom, prixUnitaire: prix, unite: etat.libreUnite, typeBranche: etat.libreBranche } };
-      };
-      const choixLignes: ChoixLigne[] = [
-        ...tousLesBesoins.map(besoin => construireChoixLigne(besoin, choix[besoin.cle] ?? etatParDefaut(besoin))),
-        // Câbles/gaines/moulures : un seul choix par sous-catégorie sur le métrage total
-        // (toutes pièces confondues) — voir besoinsAgreges plus haut.
-        ...besoinsAgreges.map(besoin => construireChoixLigne(besoin, choixAgrege[besoin.cle] ?? etatParDefaut(besoin))),
-      ];
-
+      const { lignesFinales, choixLignes } = assemblerLignes();
       // Besoins ni exclus ni résolus : on prévient, puis ils deviennent des lignes « À compléter » à 0 €.
       const manquants = choixLignes.filter(c => c.aCompleter);
       if (manquants.length > 0) {
@@ -749,35 +785,6 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const ok = confirm(`${manquants.length} besoin(s) sans produit ni prix :\n${liste}${suite}\n\nIls seront ajoutés au devis en lignes « À compléter » à 0 € (le devis ne pourra pas être envoyé tant qu'elles restent). Générer quand même ?`);
         if (!ok) { setGenerating(false); return; }
       }
-      const lignesConsommables = genererLignesDevis(choixLignes, prestations);
-
-      const lignesFinales: Omit<DevisLigne, "devis_id" | "ordre">[] = [...lignesConsommables];
-
-      const optMO = optionsMainOeuvre[mainOeuvreIndex];
-      // Main d'œuvre rattachée à chaque poste renseigné (comparée au temps passé dans le suivi de réalisation)…
-      heuresParPoste.forEach(([poste, h]) => {
-        lignesFinales.push({
-          nom: optMO?.nom ?? "Main d'œuvre", quantite: h, prix_unitaire: tauxHoraire, unite: "heure",
-          type_branche: "service", prestation_id: optMO?.prestation_id, poste,
-        });
-      });
-      // … et main d'œuvre générale (non rattachée à un poste).
-      if (heuresGenerales > 0) {
-        lignesFinales.push({
-          nom: optMO?.nom ?? "Main d'œuvre", quantite: heuresGenerales, prix_unitaire: tauxHoraire, unite: "heure",
-          type_branche: "service", prestation_id: optMO?.prestation_id, poste: POSTE_MAIN_OEUVRE,
-        });
-      }
-
-      const sousTotal = lignesFinales.reduce((s, l) => s + l.quantite * l.prix_unitaire, 0);
-      const pctFrais = parseFloat(fraisGenerauxPct) || 0;
-      if (pctFrais > 0) {
-        lignesFinales.push({ nom: "Frais généraux", quantite: 1, prix_unitaire: Math.round(sousTotal * pctFrais / 100 * 100) / 100, unite: "forfait", type_branche: "service", poste: POSTE_MAIN_OEUVRE });
-      }
-      if (deplacement > 0) {
-        lignesFinales.push({ nom: "Déplacement", quantite: 1, prix_unitaire: deplacement, unite: "forfait", type_branche: "service", poste: POSTE_MAIN_OEUVRE });
-      }
-
       // Garde-fou : un devis sans aucune ligne (désignation) est un document invalide,
       // impossible à faire signer et faussant toute rentabilité en aval (CRM). On bloque
       // la génération AVANT de créer le moindre enregistrement en base plutôt que de
@@ -894,9 +901,60 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
               </p>
             )}
           </div>
+          <button type="button" onClick={() => setRentabOuverte(o => !o)} disabled={!resultat}
+            className={`btn-ghost !px-2.5 !py-2 hover:text-volt-600 ${rentabOuverte ? "text-volt-600" : "text-ink-400"}`} title="Rentabilité en temps réel (privé)">
+            <Euro size={16} />
+          </button>
           <ProjetSwitcher clientId={clientId} projets={projets} projetId={projet.id}
             avantChangement={sauvegarderBrouillon} onSelect={onSelect} onChanged={onChanged} compact />
         </div>
+
+        {/* Rentabilité en temps réel — mêmes formules que la page /devis/[id]/rentabilite, sur les lignes qui seraient générées. */}
+        {rentabOuverte && resultat && (() => {
+          let lignes: Omit<DevisLigne, "devis_id" | "ordre">[] = [];
+          try { lignes = assemblerLignes().lignesFinales; } catch { return null; }
+          const tauxCotisService = profil?.taux_cotisations_service ?? 21.2;
+          const tauxCotisMateriau = profil?.taux_cotisations_materiau ?? 12.3;
+          const tauxIrService = profil?.taux_ir_service ?? 0;
+          const tauxIrMateriau = profil?.taux_ir_materiau ?? 0;
+          let coutAchatTotal = 0, sansCout = 0;
+          lignes.forEach(l => {
+            const aFournisseur = !!l.fournisseur_id || l.prix_achat != null;
+            const pa: number | null = aFournisseur ? (l.prix_achat ?? null) : (l.prestation_id ? (prestations.find(x => x.id === l.prestation_id)?.prix_achat ?? null) : null);
+            const cout = pa && pa > 0 ? pa * l.quantite : 0;
+            coutAchatTotal += cout;
+            if (l.type_branche === "materiau" && cout === 0 && l.prix_unitaire > 0) sansCout++;
+          });
+          const totalService = lignes.filter(l => l.type_branche === "service").reduce((a, l) => a + arrondi2(l.quantite * l.prix_unitaire), 0);
+          const totalMateriau = lignes.filter(l => l.type_branche === "materiau").reduce((a, l) => a + arrondi2(l.quantite * l.prix_unitaire), 0);
+          const totalVente = arrondi2(totalService + totalMateriau);
+          const cotis = totalService * tauxCotisService / 100 + totalMateriau * tauxCotisMateriau / 100;
+          const ir = totalService * tauxIrService / 100 + totalMateriau * tauxIrMateriau / 100;
+          const netService = totalService - totalService * (tauxCotisService + tauxIrService) / 100;
+          const netMateriau = totalMateriau - totalMateriau * (tauxCotisMateriau + tauxIrMateriau) / 100 - coutAchatTotal;
+          const net = netService + netMateriau;
+          const pct = totalVente > 0 ? Math.round(net / totalVente * 1000) / 10 : 0;
+          const couleur = pct < 0 ? "text-red-600" : pct < 20 ? "text-amber-600" : "text-emerald-600";
+          return (
+            <div className="card card-inner mb-4 sticky top-2 z-20 shadow-md">
+              <div className="flex items-center gap-2 mb-2">
+                <Euro size={15} className="text-volt-600" />
+                <h2 className="font-semibold text-ink-800 text-sm flex-1">Rentabilité en temps réel <span className="text-xs font-normal text-ink-400">(privé — absent du devis)</span></h2>
+                <span className={`text-sm font-bold ${couleur}`}>{fmt(net)} ({pct.toString().replace(".", ",")} %)</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                <div className="bg-ink-50 rounded-lg p-2"><p className="text-ink-400">Vente HT</p><p className="font-bold text-ink-900 text-sm">{fmt(totalVente)}</p></div>
+                <div className="bg-red-50 border border-red-100 rounded-lg p-2"><p className="text-red-400">Achat matériel</p><p className="font-bold text-red-700 text-sm">− {fmt(coutAchatTotal)}</p></div>
+                <div className="bg-red-50 border border-red-100 rounded-lg p-2"><p className="text-red-400">Cotisations{ir > 0 ? " + IR" : ""}</p><p className="font-bold text-red-700 text-sm">− {fmt(cotis + ir)}</p></div>
+                <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2"><p className="text-ink-400">Marge nette</p><p className={`font-bold text-sm ${couleur}`}>{fmt(net)}</p></div>
+              </div>
+              <p className="text-xs text-ink-500 mt-2">Service {fmt(totalService)} → net {fmt(netService)} · Matériaux {fmt(totalMateriau)} → net {fmt(netMateriau)}</p>
+              {sansCout > 0 && (
+                <p className="text-xs text-amber-600 flex items-center gap-1.5 mt-1"><AlertTriangle size={12} className="shrink-0" /> {sansCout} ligne{sansCout > 1 ? "s" : ""} matériau sans prix d'achat connu (ligne libre, kit ou fiche incomplète) — marge probablement surestimée.</p>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Alerte : le tableau électrique entre-t-il dans le devis ? (posée à chaque ouverture tant qu'aucune réponse n'est enregistrée) */}
         {resultat && besoinsTableau.length > 0 && inclureTableau === null && (
