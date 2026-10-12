@@ -19,7 +19,7 @@ import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, Hand, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
   GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt, Box,
-  Lightbulb, Network, Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler, ShieldCheck, Camera,
+  Lightbulb, Network, Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, Magnet, Layers, Brush, Square, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler, ShieldCheck, Camera,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -273,9 +273,9 @@ function ReglageAimant({ pasCm, setPasCm, aimant, setAimant, murs, setMurs }: { 
   return (
     <div className="flex items-center gap-1">
       <button onClick={() => setAimant(!aimant)} className={`btn-ghost !px-2 !py-1 !text-xs ${aimant ? "!bg-ink-900 !text-volt-400" : ""}`}
-        title="Aimanter aux sommets des autres pièces (maintenir Alt pour désactiver momentanément)">Aimant</button>
+        title="Aimant : aimanter aux sommets des autres pièces (maintenir Alt pour désactiver momentanément)" aria-label="Aimant"><Magnet size={13} /></button>
       <button onClick={() => setMurs(!murs)} className={`btn-ghost !px-2 !py-1 !text-xs ${murs ? "!bg-ink-900 !text-volt-400" : ""}`}
-        title="Aligner automatiquement les segments créés ou déplacés sur les murs adjacents : horizontal/vertical, parallèle, perpendiculaire, prolongement (maintenir Alt pour désactiver momentanément)">Murs ∥</button>
+        title="Aligner automatiquement les segments créés ou déplacés sur les murs adjacents : horizontal/vertical, parallèle, perpendiculaire, prolongement (maintenir Alt pour désactiver momentanément)" aria-label="Alignement sur les murs"><span className="font-bold leading-none">∥</span></button>
       <select value={pasCm} onChange={e => setPasCm(Number(e.target.value))} title="Pas de placement"
         className="rounded-lg border border-ink-200 bg-white px-1 py-1 text-xs text-ink-900">
         <option value={1}>1 cm</option>
@@ -5981,16 +5981,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 <button onClick={() => zoomBtn(1)} className="btn-ghost !px-2 !py-1" title="Zoom avant"><ZoomIn size={14} /></button>
               </>
             )}
-            <button onClick={handleGenerer} className="btn-ghost !px-2 !py-1 !text-xs" title="Générer les circuits"><Sparkles size={13} /> Générer</button>
-            <button onClick={() => setShowCircuits(v => !v)} disabled={!resultat} className={`btn-ghost !px-2 !py-1 !text-xs disabled:opacity-40 ${resultat && showCircuits ? "!bg-ink-900 !text-volt-400" : ""}`} title="Afficher / masquer les circuits"><Eye size={13} /> Circuits</button>
-            <button onClick={() => setVue3D(v => !v)} className={`btn-ghost !px-2 !py-1 !text-xs ${vue3D ? "!bg-ink-900 !text-volt-400" : ""}`}>{vue3D ? "Vue 2D" : "Vue 3D"}</button>
+            <button onClick={handleGenerer} className="btn-ghost !px-2 !py-1 !text-xs" title="Générer les circuits" aria-label="Générer les circuits"><Sparkles size={13} /></button>
+            <button onClick={() => setShowCircuits(v => !v)} disabled={!resultat} className={`btn-ghost !px-2 !py-1 !text-xs disabled:opacity-40 ${resultat && showCircuits ? "!bg-ink-900 !text-volt-400" : ""}`} title="Afficher / masquer les circuits" aria-label="Afficher / masquer les circuits"><Eye size={13} /></button>
+            <button onClick={() => setVue3D(v => !v)} className={`btn-ghost !px-2 !py-1 !text-xs ${vue3D ? "!bg-ink-900 !text-volt-400" : ""}`}
+              title={vue3D ? "Revenir à la vue 2D" : "Passer en vue 3D"} aria-label={vue3D ? "Vue 2D" : "Vue 3D"}>{vue3D ? <Square size={13} /> : <Box size={13} />}</button>
             {vue3D && (
               <button onClick={() => setVue3DTous(v => !v)} className={`btn-ghost !px-2 !py-1 !text-xs ${vue3DTous ? "!bg-ink-900 !text-volt-400" : ""}`}
-                title="Voir tous les étages empilés en 3D (sols, murs, escaliers) — masquer / afficher chaque niveau">Tous les étages</button>
+                title="Tous les étages : voir tous les étages empilés en 3D (sols, murs, escaliers) — masquer / afficher chaque niveau" aria-label="Tous les étages"><Layers size={13} /></button>
             )}
             {!vue3D && (
               <button onClick={() => setMasquerEtiquettes(v => !v)} className={`btn-ghost !px-2 !py-1 !text-xs ${masquerEtiquettes ? "!bg-ink-900 !text-volt-400" : ""}`}
-                title={masquerEtiquettes ? "Noms et dimensions des pièces masqués (les cotes cochées restent affichées) — cliquer pour les réafficher" : "Plan épuré : masquer d'un coup les noms, surfaces et dimensions des pièces (les cotes cochées dans « Cotes » restent affichées)"}>Épuré</button>
+                title={masquerEtiquettes ? "Noms et dimensions des pièces masqués (les cotes cochées restent affichées) — cliquer pour les réafficher" : "Plan épuré : masquer d'un coup les noms, surfaces et dimensions des pièces (les cotes cochées dans « Cotes » restent affichées)"} aria-label="Plan épuré"><Brush size={13} /></button>
             )}
             <button onClick={() => setModeFocus(f => !f)} className={`btn-ghost !px-2 !py-1 ${modeFocus ? "!bg-ink-900 !text-volt-400" : ""}`}
               title={modeFocus ? "Quitter le plein écran (Échap)" : "Plein écran"}>
@@ -6008,8 +6009,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <button onClick={annuler} disabled={!peutAnnuler} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Annuler la dernière action (Ctrl+Z)"><Undo2 size={14} /></button>
             <button onClick={refaire} disabled={!peutRefaire} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Refaire (Ctrl+Y)"><Redo2 size={14} /></button>
             <span className="text-[11px] text-emerald-600 whitespace-nowrap inline-block lg:min-w-[8.5rem] text-right">{autoSaveMsg ?? ""}</span>
-            <button onClick={handleSave} disabled={saving} className={`btn-volt !px-3 !py-1 !text-xs min-w-[7.5rem] justify-center ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
-              <Save size={13} />{saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
+            <button onClick={handleSave} disabled={saving} title={saving ? "Sauvegarde en cours…" : saved ? "Sauvegardé !" : "Sauvegarder le plan"} aria-label="Sauvegarder"
+              className={`btn-volt !px-3 !py-1 !text-xs justify-center ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
+              <Save size={13} />{saving ? "…" : saved ? "✓" : ""}
             </button>
           </div>
         </div>
@@ -6038,20 +6040,21 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 {toolbarOuvert ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
               </button>
             )}
-            <button onClick={() => setVue3D(v => !v)} className={`btn-ghost ${vue3D ? "!bg-ink-900 !text-volt-400" : ""}`}>
-              {vue3D ? "Vue 2D" : "Vue 3D"}
+            <button onClick={() => setVue3D(v => !v)} className={`btn-ghost !px-2 !py-1.5 ${vue3D ? "!bg-ink-900 !text-volt-400" : ""}`}
+              title={vue3D ? "Revenir à la vue 2D" : "Passer en vue 3D"} aria-label={vue3D ? "Vue 2D" : "Vue 3D"}>
+              {vue3D ? <Square size={15} /> : <Box size={15} />}
             </button>
             {vue3D && (
-              <button onClick={() => setVue3DTous(v => !v)} className={`btn-ghost ${vue3DTous ? "!bg-ink-900 !text-volt-400" : ""}`}
-                title="Voir tous les étages empilés en 3D (sols, murs, escaliers) — masquer / afficher chaque niveau">Tous les étages</button>
+              <button onClick={() => setVue3DTous(v => !v)} className={`btn-ghost !px-2 !py-1.5 ${vue3DTous ? "!bg-ink-900 !text-volt-400" : ""}`}
+                title="Tous les étages : voir tous les étages empilés en 3D (sols, murs, escaliers) — masquer / afficher chaque niveau" aria-label="Tous les étages"><Layers size={13} /></button>
             )}
             {vue3D ? (
-              <button onClick={() => setShow3DPrintForm(true)} disabled={vue3DTous} title={vue3DTous ? "L'impression 3D se fait depuis la vue d'un seul niveau" : undefined}
-                className="btn-ghost disabled:opacity-40"><Printer size={15} /> Imprimer la vue 3D</button>
+              <button onClick={() => setShow3DPrintForm(true)} disabled={vue3DTous} title={vue3DTous ? "L'impression 3D se fait depuis la vue d'un seul niveau" : "Imprimer la vue 3D"}
+                aria-label="Imprimer la vue 3D" className="btn-ghost !px-2 !py-1.5 disabled:opacity-40"><Printer size={15} /></button>
             ) : (
-              <button onClick={() => setShowPrintForm(true)} className="btn-ghost"><Printer size={15} /> Imprimer</button>
+              <button onClick={() => setShowPrintForm(true)} className="btn-ghost !px-2 !py-1.5" title="Imprimer le plan" aria-label="Imprimer le plan"><Printer size={15} /></button>
             )}
-            <Link href={`/predevis/${clientId}${qsProjet(projet.id)}`} className="btn-ghost"><Receipt size={15} /> Pré-devis</Link>
+            <Link href={`/predevis/${clientId}${qsProjet(projet.id)}`} className="btn-ghost !px-2 !py-1.5" title="Pré-devis" aria-label="Pré-devis"><Receipt size={15} /></Link>
             <ReglageAimant pasCm={pasSnapCm} setPasCm={setPasSnapCm} aimant={aimantActif} setAimant={setAimantActif} murs={alignMurs} setMurs={setAlignMurs} />
             {niveauActif && niveauActif.pieces.length > 0 && (
               <select value={selectedPieceId ?? ""} onChange={e => { if (e.target.value !== "") selectionnerPiece(Number(e.target.value)); }}
@@ -6064,8 +6067,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <button onClick={annuler} disabled={!peutAnnuler} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Annuler la dernière action (Ctrl+Z)"><Undo2 size={14} /></button>
             <button onClick={refaire} disabled={!peutRefaire} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Refaire (Ctrl+Y)"><Redo2 size={14} /></button>
             <span className="text-[11px] text-emerald-600 whitespace-nowrap inline-block lg:min-w-[8.5rem] text-right">{autoSaveMsg ?? ""}</span>
-            <button onClick={handleSave} disabled={saving} className={`btn-volt min-w-[8.5rem] justify-center ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
-              <Save size={15} />{saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
+            <button onClick={handleSave} disabled={saving} title={saving ? "Sauvegarde en cours…" : saved ? "Sauvegardé !" : "Sauvegarder le plan"} aria-label="Sauvegarder"
+              className={`btn-volt justify-center ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
+              <Save size={15} />{saving ? "…" : saved ? "✓" : ""}
             </button>
           </div>
         </div>
