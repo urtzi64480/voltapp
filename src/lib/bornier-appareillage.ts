@@ -8,6 +8,7 @@
 // Règles (câblage français, appareillage 2 fils de commande) :
 //  · MARQUAGE = gamme Schneider Odace (les autres gammes sont voisines) : bornes « L » (commune), « 1 » et « 2 » — vérifié sur la doc Odace
 //    pour le simple, le va-et-vient et le poussoir ; double et détecteur : repères à contrôler sur le mécanisme.
+//  · FACE ARRIÈRE Odace simple / va-et-vient / poussoir (photo Schneider, réf. S9-204) : 3 bornes automatiques à 2 entrées (2 câbles par pôle) — « 1 » haut-gauche, « L » haut-droite, « 2 » bas-gauche ; bas-droite : 2 emplacements sans borne.
 //  · interrupteur / bouton-poussoir : phase → L ; retour → 1 (sortie). Neutre et terre ne touchent jamais le mécanisme.
 //  · va-et-vient : COM = phase (premier) ou retour (dernier) ; L1 / L2 = les deux navettes. Entre deux : permutateur (E1 E2 / S1 S2).
 //  · plaque double : deux mécanismes indépendants (voie A / voie B), chacun avec sa lampe.
@@ -21,7 +22,8 @@ import type { NoeudSchema } from "@/lib/schema-technique";
 export interface Cond { role: RoleConducteur; libelle: string; voie?: 0 | 1; cable: string }
 export interface CableVue { cle: string; cote: "amont" | "aval"; autre: string; description: string; conducteurs: Cond[] }
 export interface Borne { id: string; libelle: string; aide?: string }
-export interface Mecanisme { id: string; titre: string; bornes: Borne[] }
+// modele « odace-inter » : mécanisme Odace simple / va-et-vient / poussoir (S9-204) — vue arrière dessinée d'après le produit (voir VueAppareilBranchement).
+export interface Mecanisme { id: string; titre: string; bornes: Borne[]; modele?: "odace-inter" }
 export interface Raccord { mecanisme: string; borne: string; conducteur: Cond }
 export interface Epissure { titre: string; aide: string; conducteurs: Cond[] }
 export interface VueAppareil {
@@ -196,7 +198,7 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
         episser(titreVoie(v, "Retour (traverse)"), "Le fil de retour passe dans cette boîte sans se raccorder : relier les deux bouts entre eux.", retours);
       } else {
         const com = { id: "COM", libelle: "L", aide: "borne commune" };
-        mecanismes.push({ id: idM(v), titre: titreVoie(v, "Va-et-vient"), bornes: [com, { id: "L1", libelle: "1", aide: "navette" }, { id: "L2", libelle: "2", aide: "navette" }] });
+        mecanismes.push({ id: idM(v), titre: titreVoie(v, "Va-et-vient"), bornes: [com, { id: "L1", libelle: "1", aide: "navette" }, { id: "L2", libelle: "2", aide: "navette" }], ...(double ? {} : { modele: "odace-inter" as const }) });
         if (navAval.length > 0) {                   // PREMIER (côté alimentation) : navettes vers l'aval
           lier(idM(v), "L1", nav(navAval, 1)); lier(idM(v), "L2", nav(navAval, 2));
           lier(idM(v), "COM", phases);
@@ -222,7 +224,7 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
   if (base === "telerupteur") {
     voies.forEach(v => {
       const conc = ofVoie(v);
-      mecanismes.push({ id: idM(v), titre: titreVoie(v, "Bouton-poussoir"), bornes: [{ id: "COM", libelle: "L", aide: "phase" }, { id: "S", libelle: "1", aide: "retour vers A1" }] });
+      mecanismes.push({ id: idM(v), titre: titreVoie(v, "Bouton-poussoir"), bornes: [{ id: "COM", libelle: "L", aide: "phase" }, { id: "S", libelle: "1", aide: "retour vers A1" }], ...(double ? {} : { modele: "odace-inter" as const }) });
       lier(idM(v), "COM", role("phase"));
       lier(idM(v), "S", role("retour", conc));
     });
@@ -249,7 +251,7 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
     mecas.forEach(v => lier("m", v === 0 ? "SA" : "SB", role("retour", ofVoie(v))));
     notes.push("Double interrupteur : les deux bornes L sont reliées par le pont fourni (une seule phase), et chaque sortie « 1 » part vers SA lampe (voie A / voie B).");
   } else {
-    mecanismes.push({ id: "m", titre: "Interrupteur", bornes: [{ id: "COM", libelle: "L", aide: "phase" }, { id: "S", libelle: "1", aide: "retour" }] });
+    mecanismes.push({ id: "m", titre: "Interrupteur", bornes: [{ id: "COM", libelle: "L", aide: "phase" }, { id: "S", libelle: "1", aide: "retour" }], modele: "odace-inter" });
     lier("m", "COM", role("phase")); lier("m", "S", role("retour"));
     if (cables.filter(c => c.cote === "aval" && c.conducteurs.some(x => x.role === "retour")).length > 1) notes.push("Plusieurs lampes commandées : tous les retours partent de la MÊME borne 1.");
   }

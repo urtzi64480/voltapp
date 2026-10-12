@@ -44,6 +44,67 @@ export default function VueAppareilBranchement({ vue, onClose }: { vue: VueAppar
   };
 
   vue.mecanismes.forEach(m => {
+    if (m.modele === "odace-inter") {
+      // ── Face arrière réelle d'un mécanisme Odace (simple / va-et-vient / poussoir) ──────────────────────────────────────
+      // Trois bornes automatiques à DEUX entrées chacune (2 câbles par pôle) : « 1 » en haut à gauche, « L » (commun) en haut à droite,
+      // « 2 » en bas à gauche ; en bas à droite, deux emplacements sans borne. Un levier blanc libère chaque paire d'entrées. Les fils
+      // arrivent par le HAUT (1, L) ou par le BAS (2) et se piquent sans vis (dénudage 4 mm).
+      const HAUT = 20 + 11 * Math.max(1, vue.raccords.filter(r => r.mecanisme === m.id).length), BAS = 20 + 11 * Math.max(1, vue.raccords.filter(r => r.mecanisme === m.id).length), HC = 236, bx = XB + 8, bw = WB - 16, by = y + 12 + HAUT, bh = HC;
+      const hx: Record<string, number[]> = { "1": [bx + 34, bx + 64], L: [bx + bw - 64, bx + bw - 34], "2": [bx + 34, bx + 64] };
+      const hy = (lib: string) => (lib === "2" ? by + bh - 34 : by + 34);
+      const dessus = (lib: string) => lib !== "2";
+      type It = { c: Cond; lib: string; gauche: boolean; cible: number };
+      const items: It[] = [];
+      m.bornes.forEach(b => {
+        const cs = vue.raccords.filter(r => r.mecanisme === m.id && r.borne === b.id).map(r => r.conducteur);
+        cs.forEach((c, i) => items.push({ c, lib: b.libelle, gauche: cote(c) === "amont", cible: hx[b.libelle]?.[Math.min(i, 1)] ?? bx }));
+      });
+      const lanes = (haut: boolean, gauche: boolean) => {
+        const l = items.filter(t => dessus(t.lib) === haut && t.gauche === gauche);
+        // le fil dont la borne est la plus lointaine passe par la voie extérieure : aucun croisement avec les autres descentes
+        l.sort((a, b) => (gauche ? b.cible - a.cible : a.cible - b.cible));
+        return l;
+      };
+      els.push(<text key="od-t" x={XC} y={y + 14} fontSize={12} fontWeight={800} textAnchor="middle" fill="#1c1917">{m.titre} — vue arrière</text>);
+      els.push(<rect key="od-b" x={bx} y={by} width={bw} height={bh} rx={14} fill="#f5f5f4" stroke="#44403c" strokeWidth={2} />);
+      // leviers de libération
+      (["1", "L"] as const).forEach(lib => els.push(<rect key={`od-lv-${lib}`} x={hx[lib][0] - 12} y={by - 9} width={hx[lib][1] - hx[lib][0] + 24} height={11} rx={3} fill="#fff" stroke="#a8a29e" strokeWidth={1.4} />));
+      els.push(<rect key="od-lv-2" x={hx["2"][0] - 12} y={by + bh - 2} width={hx["2"][1] - hx["2"][0] + 24} height={11} rx={3} fill="#fff" stroke="#a8a29e" strokeWidth={1.4} />);
+      // entrées de câble (2 par borne) + emplacements sans borne
+      (["1", "L", "2"] as const).forEach(lib => hx[lib].forEach((x, i) => {
+        const occupe = items.some(t => t.lib === lib && t.cible === x);
+        els.push(<circle key={`od-h-${lib}-${i}`} cx={x} cy={hy(lib)} r={8.5} fill={occupe ? "#1c1917" : "#44403c"} stroke="#fff" strokeWidth={2} />);
+      }));
+      [bx + bw - 64, bx + bw - 34].forEach((x, i) => els.push(<circle key={`od-v-${i}`} cx={x} cy={by + bh - 34} r={8} fill="#e7e5e4" stroke="#a8a29e" strokeWidth={1.6} />));
+      // symbole du contact inverseur : L commun, bascule entre 1 et 2
+      const yp = by + bh / 2 + 4;
+      els.push(<g key="od-sym" stroke="#44403c" strokeWidth={1.6} fill="none">
+        <circle cx={bx + 30} cy={by + 78} r={10} fill="#fff" /><circle cx={bx + 30} cy={by + bh - 78} r={10} fill="#fff" /><circle cx={bx + bw - 30} cy={by + 78} r={10} fill="#fff" />
+        <polyline points={`${bx + bw - 40},${by + 78} ${bx + 92},${by + 78} ${bx + 92},${yp}`} />
+        <line x1={bx + 92} y1={yp} x2={bx + 44} y2={yp + 22} />
+        <line x1={bx + 30} y1={by + 88} x2={bx + 30} y2={yp - 22} /><line x1={bx + 30} y1={by + bh - 88} x2={bx + 30} y2={yp + 30} />
+        <circle cx={bx + 30} cy={yp - 22} r={2.5} fill="#fff" /><circle cx={bx + 44} cy={yp + 22} r={2.5} fill="#fff" /><circle cx={bx + 92} cy={yp} r={2.5} fill="#44403c" />
+      </g>);
+      els.push(<g key="od-lab" fontSize={11} fontWeight={800} fill="#1c1917" textAnchor="middle">
+        <text x={bx + 30} y={by + 82}>1</text><text x={bx + 30} y={by + bh - 74}>2</text><text x={bx + bw - 30} y={by + 82}>L</text>
+      </g>);
+      // fils
+      ([[true, true], [true, false], [false, true], [false, false]] as const).forEach(([haut, gauche]) => {
+        const decalage = gauche ? 0 : lanes(haut, true).length;   // voies distinctes à gauche et à droite : jamais deux fils superposés
+        lanes(haut, gauche).forEach((t, k0) => {
+          const k = k0 + decalage;
+          const yi = haut ? by - 20 - k * 11 : by + bh + 22 + k * 11;
+          const x0 = gauche ? X_G + 168 : W - X_G - 168;
+          const yh = hy(t.lib);
+          els.push(<Fil key={`od-f-${haut}-${gauche}-${k}`} c={t.c} pts={[[x0, yi], [t.cible, yi], [t.cible, yh]]} />);
+          els.push(<text key={`od-ft-${haut}-${gauche}-${k}`} x={gauche ? x0 - 6 : x0 + 6} y={yi + 3.5} fontSize={10.5} fontWeight={700} textAnchor={gauche ? "end" : "start"} fill={couleurTexte(t.c)}>{`${t.c.libelle} ${marque(t.c)}`}</text>);
+        });
+      });
+      const surcharge = ["1", "L", "2"].filter(lib => items.filter(t => t.lib === lib).length > 2);
+      if (surcharge.length > 0) els.push(<text key="od-warn" x={XC} y={by + bh + BAS + 40} fontSize={10} textAnchor="middle" fill="#b45309">{`Plus de 2 fils sur la borne ${surcharge.join(", ")} : relier l'excédent dans une borne Wago`}</text>);
+      y = by + bh + BAS + (surcharge.length > 0 ? 52 : 36);
+      return;
+    }
     const rows = m.bornes.map(b => {
       const rs = vue.raccords.filter(r => r.mecanisme === m.id && r.borne === b.id).map(r => r.conducteur);
       const g = rs.filter(c => cote(c) === "amont"), d = rs.filter(c => cote(c) === "aval");
