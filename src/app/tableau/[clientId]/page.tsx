@@ -13,10 +13,10 @@ import {
 } from "lucide-react";
 import {
   CommandeType, GroupeLumineux, PieceConfig, Breaker, BreakerRow,
-  BREAKER_TYPES, CIRCUITS, SECTIONS_CABLE, GAINES_IRL,
-  gaineRecommandee, cablesGroupe, cablesPrises, labelCommande,
-  DIFF_HIERARCHY, AMPERES, AMPERES_DIFFERENTIEL, getCategory, effectiveSection, uid, estAccessoireTableau,
-} from "@/lib/electrical-constants";
+  BREAKER_TYPES, CIRCUITS, SECTIONS_CABLE, gaineRecommandee, cablesGroupe, cablesPrises, labelCommande,
+  DIFF_HIERARCHY, AMPERES, AMPERES_DIFFERENTIEL, getCategory, effectiveSection, uid, estAccessoireTableau} from "@/lib/electrical-constants";
+
+
 import { fondModal } from "@/lib/fond-modal";
 
 // ─── CONSTANTES LOCALES (mise en page du tableau, propres à cette page) ────────
@@ -1431,7 +1431,6 @@ function SlotCell({ breaker, slotIdx, isDiffSlot, issue, isSelected, globalNum, 
   rowId: number; onMoveSlot: (de: { rowId: number; slotIdx: number }, vers: { rowId: number; slotIdx: number }) => void;
 }) {
   const [survol, setSurvol] = useState(false);
-  const w = isDiffSlot ? DIFF_W : SLOT_W;
   const label = breaker ? (breaker.label || (CIRCUITS[breaker.circuit]?.label ?? "")) : "";
   return (
     <div onClick={onClick}

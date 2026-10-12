@@ -4,19 +4,19 @@ import { supabase } from "@/lib/supabase";
 import { Prestation, PrestationFournisseur } from "@/types";
 import {
   attacherOffres, chargerOffres, draftsDepuisLegacy, draftsPourProduit, libelleOffre, libelleOffreMarque, marqueOffre, marquesDe,
-  miroirPrestation, normaliserDrafts, normTexte, nouvelleOffreDraft, nouvellePieceDraft, totalPiecesDrafts, offrePrincipale, offresDe, imageOffre, nomDepuisUrl, normaliserUrl,
-  offresTriees, offresVersNormalisees, prixVenteOffre, synchroniserOffres, rattacherParNom, OffreDraft, OffreNormalisee, PieceDraft,
-} from "@/lib/fournisseurs";
+  miroirPrestation, normaliserDrafts, normTexte, nouvelleOffreDraft, offrePrincipale, offresDe, imageOffre, nomDepuisUrl, normaliserUrl,
+  offresTriees, offresVersNormalisees, prixVenteOffre, synchroniserOffres, rattacherParNom, OffreDraft, OffreNormalisee} from "@/lib/fournisseurs";
+
 import { fmt, UNITES, cn, dateLocale, echecSupabase } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
-import { calcMarge, prixVenteFromMarge, URSSAF_MATERIAU_PCT, margeMiniUrssaf, prixVenteMiniUrssaf, gainNetUrssaf, MargeTag, MargeFields, FournisseursEditor, longueurValide, BobineField } from "@/components/catalogue/EditeurArticle";
+import { calcMarge, URSSAF_MATERIAU_PCT, margeMiniUrssaf, prixVenteMiniUrssaf, gainNetUrssaf, MargeTag, FournisseursEditor, longueurValide, BobineField } from "@/components/catalogue/EditeurArticle";
 import FusionDoublons from "@/components/catalogue/FusionDoublons";
 import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
 import { NOMENCLATURE_APPAREILLAGE } from "@/lib/predevis-engine";
 import {
   Plus, Trash2, Save, Pencil, X, ChevronDown, ChevronUp,
-  Link, Wrench, Package, Search, Download, Upload, AlertCircle,
-  CheckCircle2, TrendingUp, Gift, Layers, RefreshCw, ExternalLink, GitMerge, Link2
+  Wrench, Package, Search, Download, Upload, AlertCircle,
+  CheckCircle2, Layers, RefreshCw, ExternalLink, GitMerge, Link2
 } from "lucide-react";
 import { sousCategoriesDe, joindreSousCategories, normaliserSousCategories, libelleSousCategories } from "@/lib/sous-categories";
 

@@ -42,8 +42,13 @@ export default function PublicListeClient({ token }: { token: string }) {
 
   async function toggle(key: string) {
     const next = { ...checked, [key]: !checked[key] };
+    const precedent = checked;
     setChecked(next);
-    await supabase.rpc("update_devis_public_liste_checked", { p_token: token, p_checked: next });
+    const { error } = await supabase.rpc("update_devis_public_liste_checked", { p_token: token, p_checked: next });
+    if (error) {
+      console.error("Enregistrement de la liste :", error);
+      setChecked(precedent);
+    }
   }
 
   if (loading) {

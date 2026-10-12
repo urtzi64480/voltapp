@@ -15,7 +15,7 @@ import { fmt, cn } from "@/lib/utils";
 import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
 import { imageOffre, libelleOffre, libelleOffreMarque, marqueOffre, marquesDe, offresTriees, offrePourFournisseur, offrePrincipale, prixVenteOffre, fourchettePrix, margePct } from "@/lib/fournisseurs";
 import type { Prestation, PrestationFournisseur } from "@/types";
-import { sousCategoriesDe, aSousCategorie, sousCategoriePrincipale, libelleSousCategories } from "@/lib/sous-categories";
+import { sousCategoriesDe, aSousCategorie, libelleSousCategories } from "@/lib/sous-categories";
 
 export type PrestationPicker = Prestation & { kit_description?: string | null };
 

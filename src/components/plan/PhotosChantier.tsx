@@ -5,7 +5,7 @@
 // Les données sont dans Niveau.photosChantier ; l'envoi et le stockage sont gérés par la page du plan (voir lib/photos-chantier.ts).
 import { useRef, useState } from "react";
 import { X, Camera, Trash2, MapPin, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
-import type { PhotoChantier, Point } from "@/lib/maison-types";
+import type { PhotoChantier} from "@/lib/maison-types";
 import type { MurProche } from "@/lib/photos-chantier";
 import { fondModal } from "@/lib/fond-modal";
 

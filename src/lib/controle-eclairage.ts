@@ -10,7 +10,7 @@
 //
 // Module pur (ne dépend que des types du plan). Les commandes domotiques (sans fil) n'ont ni retour ni navette : elles comptent comme
 // commande mais ne sont jamais exigées dans le circuit.
-import { AppareillagePlace, baseCommande, commandeCetteLumiere, estCommande, estLumiere, lumieresCommandees } from "@/lib/maison-types";
+import { AppareillagePlace, baseCommande, commandeCetteLumiere, estCommande, estLumiere} from "@/lib/maison-types";
 
 export type CodeEclairage = "retour_manquant" | "commande_hors_circuit" | "commande_sans_lampe" | "lampe_commandee_hors_circuit" | "navette_manquante";
 

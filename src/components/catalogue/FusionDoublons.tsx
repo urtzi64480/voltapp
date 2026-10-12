@@ -17,7 +17,7 @@ import {
   detecterDoublons, fusionnerProduits, nomGenerique, produitDeReference, type GroupeDoublons,
 } from "@/lib/fusion-produits";
 import type { Prestation } from "@/types";
-import { sousCategoriesDe, aSousCategorie, sousCategoriePrincipale, libelleSousCategories } from "@/lib/sous-categories";
+import { libelleSousCategories } from "@/lib/sous-categories";
 
 type Produit = Prestation & { est_kit?: boolean };
 interface EtatGroupe { reference: string; nom: string; exclus: string[] }

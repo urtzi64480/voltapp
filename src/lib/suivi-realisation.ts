@@ -22,7 +22,7 @@ import {
   estCommande, estCommandeDouble, baseCommande, estLumiere, estLumierePlafond,
   commandeCetteLumiere, trouverPiece, cleSegmentLiaison, origineCircuits,
 } from "@/lib/maison-types";
-import { Breaker, CIRCUITS, MAX_PAR_CIRCUIT, effectiveSection, gaineRecommandee, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
+import { CIRCUITS, MAX_PAR_CIRCUIT, effectiveSection, gaineRecommandee, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
 import {
   genererCircuits, controlerCircuits, construireColorMap, breakersDuNiveau, segmentsPourCircuit,
   ProblemeCircuit,

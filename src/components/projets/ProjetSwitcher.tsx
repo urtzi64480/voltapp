@@ -52,7 +52,8 @@ export default function ProjetSwitcher({ clientId, projets, projetId, avantChang
         const p = await creerProjet(clientId, nom, adresse);
         if (p) await onChanged(p.id);
       } else if (courant) {
-        await modifierProjet(courant.id, { nom: nom.trim(), adresse: adresse.trim() || null });
+        const ok = await modifierProjet(courant.id, { nom: nom.trim(), adresse: adresse.trim() || null });
+        if (!ok) { alert("La modification du projet a échoué."); return; }
         await onChanged(courant.id);
       }
       setModal(null);

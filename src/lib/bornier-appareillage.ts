@@ -85,7 +85,6 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
   });
   // Câbles qui arrivent de l'AMONT d'abord.
   cables.sort((a, b) => (a.cote === b.cote ? 0 : a.cote === "amont" ? -1 : 1));
-  const segDe = new Map(e.segments.map(s => [cle(s), s] as const));
   const tous = cables.flatMap(c => c.conducteurs);
   const role = (r: RoleConducteur, f: (c: Cond) => boolean = () => true) => tous.filter(c => c.role === r && f(c));
   const ofVoie = (v: 0 | 1 | undefined) => (c: Cond) => c.voie === undefined || v === undefined || c.voie === v;
@@ -246,7 +245,6 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
     episser("Terre", TERRE_NEUTRE_BOITE, role("terre"));
     return vue("commande");
   }
-  const mecas = double ? ([0, 1] as const) : ([undefined] as const);
   if (double) {
     // Plaque double : DEUX mécanismes indépendants côte à côte (photo S9-214), chacun avec sa borne L, sa borne 1 et sa lampe.
     ([0, 1] as const).forEach(v => {

@@ -63,9 +63,9 @@
 //    spécialisée (sous_categorie "prise_specialisee").
 
 import {
-  Maison, Niveau, Piece, Point, AppareillagePlace, AppareillageType,
-  distance, trouverPiece, cleSegmentLiaison, cheminSegment, SegmentCircuit, origineCircuits,
-} from "./maison-types";
+  Maison, Niveau, Piece, AppareillagePlace, AppareillageType,
+  distance, SegmentCircuit, origineCircuits} from "./maison-types";
+
 import { nbConducteurs } from "./couleurs-fils";
 import {
   genererCircuits, segmentsPourCircuit, breakersDuNiveau, ResultatGeneration, cleCircuitDedie,
@@ -73,9 +73,9 @@ import {
 import { MAX_POSTES_PLAQUE, estCommande, estLumiere } from "./maison-types";
 import { appareillagesParPieceReelle } from "./piece-reelle";
 import {
-  Breaker as TableauBreaker, BreakerRow, BREAKER_TYPES, CIRCUITS,
-  effectiveSection, gaineRecommandee, uid, estCircuitSansDisjoncteur, estAccessoireTableau,
-} from "./electrical-constants";
+  Breaker as TableauBreaker, BreakerRow, BREAKER_TYPES, effectiveSection, gaineRecommandee, estCircuitSansDisjoncteur, estAccessoireTableau} from "./electrical-constants";
+
+
 import {
   creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurJambe, pieceDeJambe, indexPiecesAppareils,
 } from "./longueurs-circuits";
@@ -83,7 +83,7 @@ import { Prestation, Gamme, DevisLigne, PrestationFournisseur } from "@/types";
 import { nomAvecConditionnement } from "@/lib/utils";
 import { PREFIXE_A_COMPLETER } from "@/lib/devis-lignes";
 import { designationProduit, imageOffre, libelleOffre, offrePrincipale, offrePourFournisseur, prixVenteOffre } from "@/lib/fournisseurs";
-import { sousCategoriesDe, aSousCategorie, sousCategoriePrincipale, libelleSousCategories } from "@/lib/sous-categories";
+import { sousCategoriesDe, aSousCategorie} from "@/lib/sous-categories";
 
 // ─── TYPES DE BESOIN ────────────────────────────────────────────────────────
 

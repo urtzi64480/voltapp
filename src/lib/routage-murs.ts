@@ -6,7 +6,7 @@
 // mitoyens, départs de cloisons) et on cherche le plus court chemin dans ce réseau. Les points de départ et d'arrivée sont ramenés
 // sur le mur le plus proche par un tronçon perpendiculaire (la sortie vers la prise, ou la descente vers un point lumineux).
 import type { Niveau, Piece, Point } from "@/lib/maison-types";
-import { distance, ouverturesEffectivesMur, pointDansPolygone } from "@/lib/maison-types";
+import { distance, ouverturesEffectivesMur} from "@/lib/maison-types";
 import { decalerContour, epaisseurTotaleM, parametresMur3D } from "@/lib/murs";
 
 const RAYON_LIAISON = 0.45;  // m — deux lignes de câbles de murs voisins (mitoyens, angles, cloisons) à moins de cela sont reliées

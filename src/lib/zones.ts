@@ -7,9 +7,9 @@
 // Toutes les fonctions sont pures (rien n'est écrit sur le plan ici). Mètres pour les points, cm pour les épaisseurs.
 
 import {
-  Zone, TypeCoteZone, Point, Piece, Ouverture, OuvertureEffective, EPAISSEUR_CLOISON_ZONE_CM,
-  aireDuPolygone, pointDansPolygone, distance, distanceAuSegment, positionSurSegment, uidMaison,
-} from "@/lib/maison-types";
+  Zone, TypeCoteZone, Point, Piece, OuvertureEffective, EPAISSEUR_CLOISON_ZONE_CM,
+  aireDuPolygone, pointDansPolygone, distance, distanceAuSegment, positionSurSegment, uidMaison} from "@/lib/maison-types";
+
 import { decalerContour, aimanterSurFaceMur, contourUtile, faceInterieureM } from "@/lib/murs";
 import { AncrageMur, ancrageMurLePlusProche, aimanterEnFacade, pieceLaPlusProche, estEnFacade, estMural, TOLERANCE_MUR_M } from "@/lib/appareillage-mur";
 import { AppareillageType } from "@/lib/maison-types";

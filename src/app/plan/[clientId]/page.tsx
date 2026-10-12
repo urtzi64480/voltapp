@@ -23,25 +23,25 @@ import {
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
-  MurSpec, MUR_DEFAUT, PRESETS_MUR,
-  Ouverture, OuvertureType, UsagePorte, USAGES_PORTE, LABEL_USAGE_PORTE, nouvelleOuverture, hauteurOuvertureDefautCm, positionSurSegment, OuvertureEffective, ouverturesEffectivesMur,
+  MurSpec, MUR_DEFAUT, Ouverture, OuvertureType, UsagePorte, USAGES_PORTE, LABEL_USAGE_PORTE, nouvelleOuverture, hauteurOuvertureDefautCm, positionSurSegment, ouverturesEffectivesMur,
   NIVEAU_TYPES, estAnnexe, origineCircuits, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance,
   distanceAuSegment, positionnerADistanceDuSegment, pointDansPolygone, distanceAuMurLePlusProche,
   CircuitManuel, FamilleCircuitManuel,
   nouveauNiveau, nouvellePiece, nouvelAppareillage, uidMaison, reamorcerCompteurId, dedupliquerIds,
   LiaisonWaypoint, cleSegmentLiaison,
-  cheminSegment, longueurBranchesEclairage, centroidePoints, pointBoiteImplicite, assombrirCouleur, pointsOndulesEntre,
+  pointBoiteImplicite, pointsOndulesEntre,
   BoiteDerivation, migrerBoitesDerivation,
   Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, nouvelleVoiture, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
   estCommande, estCommandeDouble, estLumiere, estCourantFaible, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM,
-  Escalier, EscalierType, EscalierTournant, EXTERIEUR_PIECE_ID, PhotoChantier,
-} from "@/lib/maison-types";
+  Escalier, EscalierType, EscalierTournant, EXTERIEUR_PIECE_ID, PhotoChantier} from "@/lib/maison-types";
+
+
 import { pieceAutoDe } from "@/lib/piece-reelle";
 import {
   calculerEscalier, hauteurTotaleEscalierCm, escaliersEntrants as lireEscaliersEntrants, nouvelEscalier,
   LABEL_ESCALIER_TYPE, LABEL_STRUCTURE, LABEL_RAMPE, LABEL_MATERIAU, COULEUR_MATERIAU, DIAMETRE_HELICE_DEFAUT_CM, DIAMETRE_POTEAU_DEFAUT_CM,
 } from "@/lib/escaliers";
-import { AppareillageSymbol, AppareillageGlyphe, symboleEstOriente, appareillageSymbolSvgString, PALETTE, labelAppareillage, labelAppareillagePlace, initialesAppareillage } from "@/components/plan/AppareillageSymbols";
+import { AppareillageSymbol, AppareillageGlyphe, appareillageSymbolSvgString, PALETTE, labelAppareillage, labelAppareillagePlace, initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 import { cotesOuvertures, cotesExterieures, coteHorsTout } from "@/lib/cotes-archi";
 import { normaliserAngle } from "@/lib/soleil";
 import { posesTroncons, hauteursTroncons, appliquerPoseEntre, reconformerTracesNiveau } from "@/lib/pose-circuits";
@@ -51,10 +51,10 @@ import { decalerNiveau } from "@/lib/deplacer-niveau";
 import { migrerModeleMurs, aimanterSurFaceMur, aimanterTableauSurMur, preparerMurs, definirMitoyens, mitoyensDe, longueursUtilesCm, geometrieMurs, decoupeOuverture, faceInterieureM, epaisseurTotaleM, surfaceUtile, longueurUtileCm, mursDe, murDe, appliquerMurs, murAfterSuppressionSommet, normaleInterieure } from "@/lib/murs";
 import { accrocherSurContour, apercuCloison, appliquerCloison, OptionsCloison, PointAccroche } from "@/lib/cloisons";
 import type { CloisonZone } from "@/lib/zones";
-import { cotesParDefaut, resoudreMural, aimanterMeuble, ancrageMural, ancrageCloisonSurFace, nouvelleZone, validerTraceZone, surfaceZone, centreEtiquetteZone, cloisonsDeZone, quadCloison, decoupeOuvertureZone, longueurCote, nbCotes, segmentsZone, definirTypeCote, trouverCloisonZone, positionOuvertureValide } from "@/lib/zones";
-import { enCm, estRectangle, redimensionnerMur, redimensionnerMurUtile, reporterAppareillages } from "@/lib/dimensions-piece";
+import { cotesParDefaut, resoudreMural, aimanterMeuble, ancrageMural, ancrageCloisonSurFace, nouvelleZone, validerTraceZone, surfaceZone, centreEtiquetteZone, cloisonsDeZone, quadCloison, decoupeOuvertureZone, longueurCote, segmentsZone, definirTypeCote, trouverCloisonZone, positionOuvertureValide } from "@/lib/zones";
+import { enCm, estRectangle, redimensionnerMurUtile, reporterAppareillages } from "@/lib/dimensions-piece";
 import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece";
-import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, aimanterSurMur, aimanterEnFacade, estEnFacade, pieceLaPlusProche, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
+import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, pieceLaPlusProche, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import Vue3DMaison from "@/components/plan/Vue3DMaison";
 import { toutesBoitesNiveau, segmentsDepuisMarche } from "@/lib/maison-engine";
@@ -62,7 +62,7 @@ import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, integrer
 import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur, estAccessoireTableau, BREAKER_TYPES, effectiveSection } from "@/lib/electrical-constants";
 import { verifierEclairageManuel, fermetureCircuitLumiere, commandesPartagees } from "@/lib/controle-eclairage";
 import { coudesSegment } from "@/lib/routage-circuits";
-import { natureLiaison, conducteursSegment, geometrieCable, couleurDominante, COULEUR_FIL, LEGENDE_FILS, LIBELLE_NATURE } from "@/lib/couleurs-fils";
+import { natureLiaison, conducteursSegment, geometrieCable, couleurDominante, COULEUR_FIL, LEGENDE_FILS} from "@/lib/couleurs-fils";
 import { fondModal } from "@/lib/fond-modal";
 
 const PX_PER_M = 60;
@@ -522,7 +522,6 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
         // "Inclure les circuits", donc ces annotations s'affichent dès que showHauteurs est
         // coché, même si showCircuits est décoché (dans ce cas, sans le tracé coloré).
         if (showHauteurs) {
-          const cle = cleSegmentLiaison(seg.aId, seg.bId);
           const coudes = coudesAuto;
           coudes.forEach(c => {
             if (c.hauteur == null && !c.poseType) return;
@@ -5059,8 +5058,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const handleSave = useCallback(async () => {
     setSaving(true);
-    await modifierProjet(projet.id, { maison_config: configPlan(niveaux) });
-    setSaving(false); setSaved(true);
+    const ok = await modifierProjet(projet.id, { maison_config: configPlan(niveaux) });
+    setSaving(false);
+    if (!ok) { alert("Le plan n'a pas pu être enregistré. Vérifie ta connexion et réessaie."); return; }
+    setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }, [niveaux, projet.id]);
 
@@ -5352,7 +5353,6 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const selectedPiece = niveauActif?.pieces.find(p => p.id === selectedPieceId) ?? null;
 
-  const seuilAlignementM = ALIGN_THRESHOLD_PX / (PX_PER_M * zoom);
   let curseurSnap: (ResultatSnap & { align?: ResultatAlignMurs }) | null = null;
   if (mode === "dessiner" && cursorPx) curseurSnap = snapDessin(toMeters(cursorPx.x, cursorPx.y));
   const alignAffiche: ResultatAlignMurs | null = dragMode.kind === "vertex" ? alignSeg : mode === "dessiner" ? (curseurSnap?.align ?? null) : null;
@@ -5653,7 +5653,6 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     // sur ce niveau (cohérent avec le calcul de facturation, predevis-engine.ts
     // — origineCalcul), sinon le tableau directement.
     const tableauPos = origineCircuits(niveauActif)!;
-    const waypointsNiveau = niveauActif.liaisonWaypoints;
     const tousAppareils = niveauActif.pieces.flatMap(p => p.appareillages);
     const parCircuit = new Map<number, AppareillagePlace[]>();
     tousAppareils.forEach(a => {

@@ -329,7 +329,7 @@ export default function PlansPage() {
                     {ouvert && (
                       <div className="px-4 pb-4 border-t border-ink-100 pt-3 space-y-2.5">
                         {entrees.map(entry => {
-                          const { client, niveaux, nbPieces, projetNom } = entry;
+                          const { niveaux, nbPieces, projetNom } = entry;
               return (
                 <div key={entry.key} className="rounded-xl border border-ink-200 bg-white p-3.5 hover:border-volt-300 transition-colors">
                   <div className="flex items-start gap-3">

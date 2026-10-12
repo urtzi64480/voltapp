@@ -25,7 +25,7 @@ import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { ArrowLeft, AlertTriangle, Search, Sparkles, Save, Cable, RefreshCw } from "lucide-react";
-import { sousCategoriesDe, aSousCategorie, sousCategoriePrincipale, libelleSousCategories } from "@/lib/sous-categories";
+import { aSousCategorie, sousCategoriePrincipale} from "@/lib/sous-categories";
 import { fondModal } from "@/lib/fond-modal";
 
 const LABEL_GAMME: Record<string, string> = { entree: "Entrée de gamme", moyenne: "Moyenne gamme", haut: "Haut de gamme" };
@@ -618,8 +618,9 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
     const contenu = JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, heuresPostes, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
-    await modifierProjet(projet.id, { predevis_config: contenu });
+    const ok = await modifierProjet(projet.id, { predevis_config: contenu });
     setSavingDraft(false);
+    if (!ok) { alert("Le brouillon n'a pas pu être enregistré."); return; }
     setDraftSaved(true);
     setTimeout(() => setDraftSaved(false), 2000);
   }

@@ -244,12 +244,14 @@ export default function TableauxPage() {
   const handleReassign = async (entry: TableauEntry, newClientId: string | null) => {
     setReassign(null);
     // Vide le tableau de la source (projet ou, à défaut, fiche client historique).
-    const viderSource = async () => {
-      if (entry.projetId) await sauverTableau(entry.clientId, entry.projetId, null);
-      else await supabase.from("clients").update({ tableau_config: null }).eq("id", entry.clientId);
+    const viderSource = async (): Promise<boolean> => {
+      if (entry.projetId) return sauverTableau(entry.clientId, entry.projetId, null);
+      const { error } = await supabase.from("clients").update({ tableau_config: null }).eq("id", entry.clientId);
+      if (error) console.error("tableau: vidage du client impossible", error);
+      return !error;
     };
     if (!newClientId) {
-      await viderSource();
+      if (!(await viderSource())) alert("Le tableau n'a pas pu être retiré. Réessaie.");
       await charger();
       return;
     }
@@ -257,8 +259,12 @@ export default function TableauxPage() {
     // Le tableau arrive dans le premier projet du client cible (créé au besoin).
     const cible = (await listerProjets(newClientId))[0];
     if (!cible) { alert("Impossible de trouver le projet du client cible."); return; }
-    await sauverTableau(newClientId, cible.id, JSON.stringify(entry.rows));
-    await viderSource();
+    // Le tableau n'est retiré de la source QUE s'il est bien enregistré chez la cible (sinon il serait perdu).
+    if (!(await sauverTableau(newClientId, cible.id, JSON.stringify(entry.rows)))) {
+      alert("Le tableau n'a pas pu être déplacé : rien n'a été modifié.");
+      return;
+    }
+    if (!(await viderSource())) alert("Le tableau a été copié chez le client cible mais n'a pas pu être retiré de la source.");
     await charger();
   };
 

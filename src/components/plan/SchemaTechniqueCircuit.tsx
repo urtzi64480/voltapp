@@ -42,7 +42,6 @@ const court = (libelle: string) => ROLE_COURT[libelle]
 
 interface Place { id: string; x: number; y: number; h: number }
 /** Emplacement d'un câble sur le bord d'un nœud : décalage du centre de son faisceau par rapport au centre du nœud. */
-interface Fente { idx: number; decal: number }
 
 /** Hauteur du faisceau de traits d'un câble (distance entre le premier et le dernier fil). */
 const hFaisceau = (sg: SegmentCircuit) => (sg.type === "domotique" ? 0 : (conducteursSegment(sg).length - 1) * ECART);
