@@ -523,6 +523,8 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
 
   async function saveEdit() {
     if (!devis) return;
+    // Une signature saisie ici passerait le devis en « signé » : mêmes garde-fous que la signature en face à face.
+    if (sigData && bloqueSiACompleter()) return;
     setSaving(true);
     const dateV = new Date(); dateV.setDate(dateV.getDate() + validite);
 
