@@ -447,7 +447,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
       const minFn = MIN_PRISES_PIECE[piece.type] ?? MIN_PRISES_PIECE.autre;
       const minReq = minFn(aireDuPolygone(piece.contour));
       if (minReq > 0 && nbPrises < minReq) {
-        alertes.push(`"${piece.nom || piece.type}" (${niveau.nom}) : ${nbPrises} prise(s) placée(s), minimum NF C 15-100 recommandé ${minReq}.`);
+        alertes.push(`"${piece.nom || piece.type}" (${niveau.nom}) : ${nbPrises} prise(s) placée(s), minimum NF C 15-100 recommandé ${minReq}. Correction : ajoute ${minReq - nbPrises} prise(s) dans cette pièce (1 par tranche de 4 m² dans un grand séjour, 6 en cuisine dont 4 sur le plan de travail).`);
       }
 
       // Un chauffage sans puissance renseignée est regroupé sur la base d'une valeur par
@@ -456,7 +456,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
       // fois la puissance réelle connue. Prévient plutôt que de laisser un circuit
       // silencieusement mal dimensionné.
       apps.filter(a => a.type === "chauffage" && a.puissanceW == null).forEach(() => {
-        alertes.push(`"${piece.nom || piece.type}" (${niveau.nom}) : chauffage sans puissance renseignée — regroupement basé sur ${PUISSANCE_CHAUFFAGE_DEFAUT_W} W par défaut, à vérifier (calibre limité à 3500 W en 16A ou 4500 W en 20A, NF C 15-100 amdt A5).`);
+        alertes.push(`"${piece.nom || piece.type}" (${niveau.nom}) : chauffage sans puissance renseignée — regroupement basé sur ${PUISSANCE_CHAUFFAGE_DEFAUT_W} W par défaut, à vérifier (calibre limité à 3500 W en 16A ou 4500 W en 20A, NF C 15-100 amdt A5). Correction : sélectionne le radiateur et renseigne sa puissance (W) dans son panneau, puis régénère les circuits.`);
       });
     });
 
@@ -580,7 +580,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
       const membres = niveau.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === breaker.id);
       const oublies = membres.filter(a => !ordre.includes(a.id));
       if (oublies.length > 0) {
-        alertes.push(`"${label}" (${niveau.nom}) : cheminement redessiné incomplet — ${oublies.length} appareillage(s) non cliqué(s), resté(s) sur ce circuit en fin de tracé par proximité.`);
+        alertes.push(`"${label}" (${niveau.nom}) : cheminement redessiné incomplet — ${oublies.length} appareillage(s) non cliqué(s), resté(s) sur ce circuit en fin de tracé par proximité. Correction : repasse en mode cheminement et clique les appareillages manquants dans l'ordre du câble.`);
       }
     });
 
@@ -1029,7 +1029,7 @@ export function genererGainesNiveaux(resultat: ResultatGeneration): TronconGaine
 // Passe en revue TOUS les appareillages et circuits (générés ou saisis à la main) et remonte ce qui cloche, avec les ids
 // à surligner sur le plan. Ne modifie rien.
 export type CodeProbleme = "non_raccorde" | "commande_sans_lampe" | "lampe_sans_commande" | "va_et_vient_seul" | "commande_multi_circuits" | "commande_hors_circuit" | "depassement";
-export interface ProblemeCircuit { code: CodeProbleme; gravite: "erreur" | "avertissement"; message: string; niveauId: number; appareilIds: number[] }
+export interface ProblemeCircuit { code: CodeProbleme; gravite: "erreur" | "avertissement"; message: string; /** Modification proposée pour corriger. */ suggestion: string; niveauId: number; appareilIds: number[]; /** Dépassement : nombre d'appareils en trop. */ enTrop?: number }
 export interface BilanControle { problemes: ProblemeCircuit[]; total: number; raccordes: number }
 
 export function controlerCircuits(resultat: ResultatGeneration): BilanControle {
@@ -1048,14 +1048,16 @@ export function controlerCircuits(resultat: ResultatGeneration): BilanControle {
     total++;
     if (a.circuitId != null) raccordes++;
     else problemes.push({ code: "non_raccorde", gravite: "erreur", niveauId: niveau.id, appareilIds: [a.id],
-      message: `${nom(t)} — ${niveau.nom} : aucun circuit (oublié ou exclu).` });
+      message: `${nom(t)} — ${niveau.nom} : aucun circuit (oublié ou exclu).`,
+      suggestion: "Clique sur « Générer les circuits » pour le rattacher automatiquement, ou sélectionne-le et choisis son circuit. S'il est exclu volontairement, utilise « Réinclure »." });
   });
 
   commandes.forEach(t => {
     const cibles = lumieresCommandees(t.a).filter(id => parId.has(id) && estLumiere(parId.get(id)!.a.type));
     if (cibles.length === 0) {
       problemes.push({ code: "commande_sans_lampe", gravite: "erreur", niveauId: t.niveau.id, appareilIds: [t.a.id],
-        message: `${nom(t)} — ${t.niveau.nom} : ne commande aucun point lumineux.` });
+        message: `${nom(t)} — ${t.niveau.nom} : ne commande aucun point lumineux.`,
+        suggestion: "Sélectionne-la, clique « Commande : … — modifier » et coche le point lumineux qu'elle allume ; si elle est inutile, supprime-la." });
       return;
     }
     // Par VOIE : les deux voies d'un double va-et-vient peuvent alimenter deux circuits différents, mais pas les lampes d'une même voie.
@@ -1064,7 +1066,8 @@ export function controlerCircuits(resultat: ResultatGeneration): BilanControle {
       const circuits = new Set(ids.map(id => parId.get(id)!.a.circuitId).filter(c => c != null));
       if (circuits.size > 1) {
         problemes.push({ code: "commande_multi_circuits", gravite: "erreur", niveauId: t.niveau.id, appareilIds: [t.a.id, ...ids],
-          message: `${nom(t)} — ${t.niveau.nom} : ${estCommandeDouble(t.a.type) ? `la voie ${v === 0 ? "A" : "B"} commande` : "commande"} des lampes de ${circuits.size} circuits différents (impossible à câbler : mets-les dans le même circuit).` });
+          message: `${nom(t)} — ${t.niveau.nom} : ${estCommandeDouble(t.a.type) ? `la voie ${v === 0 ? "A" : "B"} commande` : "commande"} des lampes de ${circuits.size} circuits différents (impossible à câbler : mets-les dans le même circuit).`,
+          suggestion: "Mets toutes les lampes commandées par cette voie dans le même circuit d'éclairage (panneau Circuits), ou répartis-les sur deux commandes distinctes." });
       }
     });
   });
@@ -1074,7 +1077,8 @@ export function controlerCircuits(resultat: ResultatGeneration): BilanControle {
   tous.filter(t => estLumiere(t.a.type) && !t.a.dejaExistant && t.a.circuitId != null).forEach(t => {
     commandes.filter(c => commandeCetteLumiere(c.a, t.a.id) && c.a.circuitId != null && c.a.circuitId !== t.a.circuitId && !c.a.domotique).forEach(c => {
       problemes.push({ code: "commande_hors_circuit", gravite: "erreur", niveauId: t.niveau.id, appareilIds: [c.a.id, t.a.id],
-        message: `${nom(c)} — ${c.niveau.nom} : commande ${nom(t)} mais n'est pas dans son circuit — le retour et les navettes ne sont pas tracés (mets la commande et la lampe dans le même circuit).` });
+        message: `${nom(c)} — ${c.niveau.nom} : commande ${nom(t)} mais n'est pas dans son circuit — le retour et les navettes ne sont pas tracés (mets la commande et la lampe dans le même circuit).`,
+        suggestion: "Sélectionne la commande, choisis le circuit de la lampe dans le panneau (champ « Circuit »), puis régénère les circuits." });
     });
   });
 
@@ -1082,13 +1086,15 @@ export function controlerCircuits(resultat: ResultatGeneration): BilanControle {
     const cmds = commandes.filter(c => commandeCetteLumiere(c.a, t.a.id));
     if (cmds.length === 0) {
       problemes.push({ code: "lampe_sans_commande", gravite: "avertissement", niveauId: t.niveau.id, appareilIds: [t.a.id],
-        message: `${nom(t)} — ${t.niveau.nom} : aucune commande (interrupteur, va-et-vient, télérupteur ou détecteur) ne l'allume.` });
+        message: `${nom(t)} — ${t.niveau.nom} : aucune commande (interrupteur, va-et-vient, télérupteur ou détecteur) ne l'allume.`,
+        suggestion: "Place un interrupteur, un va-et-vient ou un détecteur à l'entrée de la pièce (entre 0,90 m et 1,30 m) et relie-le à ce point lumineux." });
       return;
     }
     const nbVaV = cmds.filter(c => baseCommande(c.a.type) === "va_et_vient").length;
     if (nbVaV === 1) {
       problemes.push({ code: "va_et_vient_seul", gravite: "erreur", niveauId: t.niveau.id, appareilIds: [t.a.id, ...cmds.map(c => c.a.id)],
-        message: `${nom(t)} — ${t.niveau.nom} : un seul va-et-vient (il en faut au moins 2, sinon un interrupteur simple).` });
+        message: `${nom(t)} — ${t.niveau.nom} : un seul va-et-vient (il en faut au moins 2, sinon un interrupteur simple).`,
+        suggestion: "Ajoute un second va-et-vient à l'autre accès de la pièce (la navette sera tracée), ou transforme cet appareil en interrupteur simple." });
     }
   });
 
@@ -1099,13 +1105,23 @@ export function controlerCircuits(resultat: ResultatGeneration): BilanControle {
     if (CIRCUITS[b.circuit]?.category === "lumiere") {
       const lampes = membres.filter(t => estLumiere(t.a.type));
       const max = MAX_PAR_CIRCUIT.lumiere ?? 8;
-      if (lampes.length > max) problemes.push({ code: "depassement", gravite: "erreur", niveauId, appareilIds: lampes.map(t => t.a.id),
-        message: `« ${b.label} » : ${lampes.length} points lumineux, maximum ${max} par circuit (NF C 15-100).` });
+      if (lampes.length > max) problemes.push({ code: "depassement", gravite: "erreur", niveauId, appareilIds: lampes.map(t => t.a.id), enTrop: lampes.length - max,
+        message: `« ${b.label} » : ${lampes.length} points lumineux, maximum ${max} par circuit (NF C 15-100).`,
+        suggestion: `Crée un second circuit d'éclairage et déplace-y ${lampes.length - max} point(s) lumineux (ou utilise « Supprimer les ${lampes.length - max} en trop » si certains sont superflus).` });
+    } else if (CIRCUITS[b.circuit]?.dedié && b.manuelId != null && !estCircuitSansDisjoncteur(b)) {
+      // Circuit spécialisé composé à la main : un seul appareil par circuit (les circuits générés automatiquement le respectent déjà).
+      const appareils = membres.filter(t => !estCommande(t.a.type));
+      if (appareils.length > 1) problemes.push({ code: "depassement", gravite: "erreur", niveauId, appareilIds: appareils.map(t => t.a.id), enTrop: appareils.length - 1,
+        message: `« ${b.label} » : ${appareils.length} appareils sur un circuit spécialisé « ${CIRCUITS[b.circuit].label} » — un seul appareil par circuit (NF C 15-100).`,
+        suggestion: `Garde un seul appareil dans ce circuit et crée un circuit dédié (20 A / 2,5 mm²) pour chacun des ${appareils.length - 1} autre(s).` });
     } else if (MAX_PAR_CIRCUIT[b.circuit] != null) {
       const max = MAX_PAR_CIRCUIT[b.circuit];
       const prises = membres.filter(t => !estCommande(t.a.type));
-      if (prises.length > max) problemes.push({ code: "depassement", gravite: "erreur", niveauId, appareilIds: prises.map(t => t.a.id),
-        message: `« ${b.label} » : ${prises.length} socles, maximum ${max} par circuit (NF C 15-100).` });
+      if (prises.length > max) problemes.push({ code: "depassement", gravite: "erreur", niveauId, appareilIds: prises.map(t => t.a.id), enTrop: prises.length - max,
+        message: `« ${b.label} » : ${prises.length} socles, maximum ${max} par circuit (NF C 15-100).`,
+        suggestion: b.circuit === "cuisine_prises" || b.circuit === "prise_20"
+          ? `Déplace ${prises.length - max} socle(s) sur un second circuit ${b.circuit === "cuisine_prises" ? "prises cuisine" : "20 A"}.`
+          : `Déplace ${prises.length - max} socle(s) sur un second circuit prises, ou passe ce circuit en 20 A / 2,5 mm² (12 socles maximum).` });
     }
   });
 

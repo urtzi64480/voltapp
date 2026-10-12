@@ -155,7 +155,7 @@ export const MAX_PAR_CIRCUIT: Record<string, number> = {
   garage: 8,
   cuisine_prises: 6,   // socles cuisine — Art. 771.314.2
   volets_roulants: 8,  // moteurs par circuit — pas de maximum normatif ; 8 pour répartir sur plusieurs circuits (conseil NF C 15-100)
-  prise_20: 6,
+  prise_20: 12,        // NF C 15-100 : 20 A / 2,5 mm² = 12 socles maximum (6 seulement pour le circuit dédié aux prises de cuisine)
 };
 
 // Minimums réglementaires de socles par pièce — NF C 15-100, quantitatif socles de prise.

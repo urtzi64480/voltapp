@@ -4009,7 +4009,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
     setPhotoEnvoi(null);
     if (ajoutees.length > 0) setNiveaux(nvs => nvs.map(n => n.id === niveauId ? { ...n, photosChantier: [...(n.photosChantier ?? []), ...ajoutees] } : n));
-    if (echecs > 0) { setPlacementError(`⚠ ${echecs} photo${echecs > 1 ? "s" : ""} non envoyée${echecs > 1 ? "s" : ""} (stockage indisponible ?)`); setTimeout(() => setPlacementError(null), 6000); }
+    if (echecs > 0) { setPlacementError(`⚠ ${echecs} photo${echecs > 1 ? "s" : ""} non envoyée${echecs > 1 ? "s" : ""} (stockage indisponible ?). 💡 Vérifie ta connexion et que le dossier de stockage « intervention-photos » accepte les envois, puis rajoute la photo.`); setTimeout(() => setPlacementError(null), 10000); }
   };
   const supprimerPhoto = async (id: number) => {
     const ph = niveauActif?.photosChantier?.find(x => x.id === id);
@@ -4197,6 +4197,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     else updateNiveauActif(n => ({ ...n, nomsCircuits: { ...(n.nomsCircuits ?? {}), [b.label]: nom } }));
   };
   const nomAffiche = (b: Breaker): string => niveauActif?.nomsCircuits?.[b.label] ?? b.label;
+  // Même chose pour un circuit d'un AUTRE niveau (appareillage commandant une lampe d'un autre étage, RJ45 d'un autre niveau…).
+  const nomCircuitGlobal = (b: Breaker): string => niveauActif?.nomsCircuits?.[b.label] ?? niveaux.map(n => n.nomsCircuits?.[b.label]).find(Boolean) ?? b.label;
+  const circuitDe = (a: AppareillagePlace): Breaker | undefined => (a.circuitId != null ? resultat?.breakers.find(x => x.id === a.circuitId) : undefined);
+  /** Isole un circuit sur le plan : affiche les circuits, ne garde que celui-ci, et bascule sur son niveau si besoin. */
+  const afficherCeCircuit = (b: Breaker) => {
+    if (b.niveauId != null && b.niveauId !== niveauActifId) setNiveauActifId(b.niveauId);
+    setShowCircuits(true);
+    setCircuitsVisibles(new Set([b.id]));
+  };
   // Variantes "directes" pour un circuit MANUEL pas encore généré (aucun Breaker n'existe
   // encore pour lui) — mêmes champs (CircuitManuel.nom / .couleur) que ci-dessus, appelées
   // depuis le panneau "Circuits" quand ce circuit n'a encore aucun appareillage raccordé.
@@ -5215,7 +5224,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
   };
 
-  const handlePousserVersTableau = async () => {
+  const pousserVersTableauInterne = async () => {
     if (!resultat || resultat.breakers.length === 0) return;
     // Bloquant : un circuit d'éclairage manuel sans tous ses retours / navettes ne part pas au tableau.
     if (eclairageManuelIncomplet.length > 0) { setAlerteEclairage(true); return; }
@@ -5276,7 +5285,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const annexesBase = lireAnnexes((c as any)?.tableaux_annexes);
 
     const resPrincipal = remplacerLotPlan(rowsPrincipal, groupes[TABLEAU_PRINCIPAL], rj45Groupes[TABLEAU_PRINCIPAL]);
-    await sauverTableau(clientId, projet.id, JSON.stringify(resPrincipal.rowsFinal));
+    if (!(await sauverTableau(clientId, projet.id, JSON.stringify(resPrincipal.rowsFinal)))) throw new Error("tableau principal non enregistré");
 
     let nbRangeesAnnexes = 0;
     let nbCircuitsAnnexes = 0;
@@ -5293,7 +5302,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         nbCircuitsAnnexes += (groupes[a.id] ?? []).length;
         return { ...base, rows: r.rowsFinal };
       });
-      await sauverAnnexes(projet.id, annexesFinales);
+      if (!(await sauverAnnexes(projet.id, annexesFinales))) throw new Error("tableaux annexes non enregistrés");
       setAnnexes(annexesFinales);
     }
 
@@ -5305,6 +5314,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       (rj45Pousses.some(b => !b.label.startsWith("Antenne TV")) ? ` ${rj45Pousses.filter(b => !b.label.startsWith("Antenne TV")).length} port(s) RJ45 dans le coffret de communication.` : ""),
     );
     setTimeout(() => setPushMsg(null), 5000);
+  };
+  // Enveloppe : une erreur réseau / base ne laisse jamais le bouton bloqué sur « en cours » ni un faux message de réussite.
+  const handlePousserVersTableau = async () => {
+    try { await pousserVersTableauInterne(); }
+    catch (e) {
+      console.error("plan: poussée vers le tableau impossible", e);
+      setPushing(false);
+      setPushMsg("⚠️ Le tableau n'a pas pu être mis à jour (enregistrement refusé). Ton plan est intact. 💡 Vérifie ta connexion puis clique à nouveau sur « Pousser vers le tableau ».");
+      setTimeout(() => setPushMsg(null), 10000);
+    }
   };
 
   const rect = svgRef.current?.getBoundingClientRect();
@@ -6322,10 +6341,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         className={`w-full text-left text-[11px] px-1.5 py-1 hover:bg-ink-50 ${pb.gravite === "erreur" ? "text-red-700" : "text-amber-700"}`}>
                         {pb.message}
                       </button>
+                      <p className="px-1.5 pb-1 text-[10.5px] text-ink-600 leading-snug">💡 {pb.suggestion}</p>
                       {(pb.code === "depassement" || pb.code === "non_raccorde" || pb.code === "commande_sans_lampe" || pb.code === "lampe_sans_commande") && (
                         <div className="flex gap-1 px-1.5 pb-1">
                           {pb.code === "depassement" ? (() => {
-                            const nbEnTrop = Number((pb.message.match(/: (\d+) /) ?? [])[1] ?? 0) - Number((pb.message.match(/maximum (\d+)/) ?? [])[1] ?? 0);
+                            const nbEnTrop = pb.enTrop ?? 0;
                             return nbEnTrop > 0 ? (
                               <button className="text-[10px] text-red-700 underline"
                                 onClick={() => { const ids = pb.appareilIds.slice(-nbEnTrop); if (window.confirm(`Supprimer les ${nbEnTrop} derniers appareillages de ce circuit (les plus récemment posés) ?`)) removerAppareillages(ids); }}>
@@ -7717,6 +7737,46 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     onChange={e => renommerAppareillage(selectedAppareillage.id, e.target.value)} />
                   <button onClick={() => removerAppareillage(selectedAppareillage.id)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
                 </div>
+                {(() => {
+                  // Circuit auquel est raccordé l'appareillage — pour N'IMPORTE QUEL type (prise, commande, lampe, RJ45, volet, prise dédiée…).
+                  const a = selectedAppareillage;
+                  const b = circuitDe(a);
+                  const lampesCommandees = estCommande(a.type)
+                    ? Array.from(new Set([...(a.commandePourIds ?? []), ...(a.commandePourIds2 ?? [])]))
+                        .map(id => niveaux.flatMap(n => n.pieces.flatMap(p => p.appareillages)).find(x => x.id === id))
+                        .map(l => (l ? circuitDe(l) : undefined)).filter((x): x is Breaker => !!x && x.id !== b?.id)
+                    : [];
+                  if (!b && lampesCommandees.length === 0) return null;
+                  const ligne = (bk: Breaker, role?: string) => {
+                    const couleur = colorMap.get(bk.id) ?? "#78716c";
+                    const nivNom = niveaux.find(n => n.id === bk.niveauId)?.nom;
+                    const sansDisj = estCircuitSansDisjoncteur(bk);
+                    return (
+                      <div key={bk.id} className="flex flex-col gap-1.5 rounded-lg border px-2 py-1.5" style={{ borderColor: couleur }}>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: couleur }} />
+                          <span className="font-semibold text-ink-900 text-xs truncate flex-1" title={nomCircuitGlobal(bk)}>{role ? `${role} : ` : ""}{nomCircuitGlobal(bk)}</span>
+                        </div>
+                        <p className="text-[11px] text-ink-500">
+                          {sansDisj ? "Courant faible — sans disjoncteur, port du coffret de communication" : `Disjoncteur ${bk.amperes} A · câble ${effectiveSection(bk).replace(".", ",")} mm²`}
+                          {nivNom && niveaux.length > 1 ? ` · ${nivNom}` : ""}
+                        </p>
+                        <div className="flex gap-1.5">
+                          <button onClick={() => afficherCeCircuit(bk)} className="btn-ghost !text-[11px] !px-2 !py-1 flex-1 justify-center"><Eye size={12} /> Afficher ce circuit</button>
+                          {circuitsNiveauActif.some(x => x.id === bk.id) && !sansDisj && (
+                            <button onClick={() => setSchemaCircuitId(bk.id)} className="btn-ghost !text-[11px] !px-2 !py-1 justify-center"><Network size={12} /> Schéma</button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  };
+                  return (
+                    <div className="flex flex-col gap-1.5">
+                      {b && ligne(b, estCommande(a.type) ? "Circuit" : undefined)}
+                      {lampesCommandees.map(l => ligne(l, "Commande"))}
+                    </div>
+                  );
+                })()}
                 {selectedAppareillage.type !== "volet_roulant" && (
                 <div className="flex items-center gap-2 text-xs text-ink-500">
                   <span className="shrink-0">Hauteur (cm)</span>
@@ -7811,6 +7871,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                             {TYPES_POSTE_PLAQUE.map(t => <option key={t} value={t}>{labelAppareillage(t)}</option>)}
                           </select>
                         </div>
+                        {circuitDe(po) && po.id !== selectedAppareillage.id && (
+                          <button onClick={() => setSelectedAppareillageId(po.id)} className="flex items-center gap-1.5 text-[11px] text-ink-500 text-left" title="Sélectionner ce poste pour voir son circuit">
+                            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: colorMap.get(po.circuitId!) ?? "#78716c" }} />
+                            <span className="truncate">{nomCircuitGlobal(circuitDe(po)!)}</span>
+                          </button>
+                        )}
                         {po.type === "prise_dediee" && (
                           <select className="input !py-1 !text-xs" value={po.usageDedie ?? USAGE_DEDIE_DEFAUT}
                             onChange={e => modifierUsageDedie(po.id, e.target.value as AppareillageType)}>
@@ -7982,9 +8048,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     onChange={e => modifierDejaExistant(selectedAppareillage.id, e.target.checked)} />
                   <span>🏚️ Déjà existant — ne pas facturer (sert quand même de point de départ pour le circuit)</span>
                 </label>
-                {selectedAppareillage.circuitId != null ? (
-                  <p className="text-xs text-ink-400">Circuit : {resultat?.breakers.find(b => b.id === selectedAppareillage.circuitId)?.label}</p>
-                ) : niveauActif?.appareillagesExclus?.includes(selectedAppareillage.id) ? (
+                {selectedAppareillage.circuitId != null ? null : niveauActif?.appareillagesExclus?.includes(selectedAppareillage.id) ? (
                   <div className="flex items-center justify-between gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
                     <span className="text-amber-700">Exclu de la génération automatique</span>
                     <button onClick={() => reinclureAppareillage(selectedAppareillage.id)} className="btn-ghost !text-[11px] !px-1.5 !py-0.5 shrink-0">Réinclure</button>

@@ -38,13 +38,22 @@ function safeBreakers(slots: (Breaker | null)[] | undefined): Breaker[] {
 
 // ─── NFC 15-100 CHECKER ───────────────────────────────────────────────────────
 
+// Chaque message du contrôle propose SA correction : un texte (`fix`) et, quand elle est sans ambiguïté, un bouton « Appliquer » (`action`)
+// qui transforme les rangées. Les corrections qui demandent un choix de l'électricien (répartir des circuits…) restent des conseils.
+type CorrectionNFC = { fix: string; action?: { label: string; run: (rs: BreakerRow[]) => BreakerRow[] } };
+type MessageNFC = { id: string; msg: string; rule: string } & CorrectionNFC;
+
+const sectionMiniPourCalibre = (a: number): string => (a <= 16 ? "1.5" : a <= 20 ? "2.5" : a <= 25 ? "4.0" : a <= 32 ? "6.0" : "10.0");
+const majAppareil = (id: number, patch: (b: Breaker) => Breaker) => (rs: BreakerRow[]): BreakerRow[] =>
+  rs.map(r => ({ ...r, slots: r.slots.map(b => (b && b.id === id ? patch(b) : b)) }));
+
 function checkNFC(rows: BreakerRow[]) {
-  const errors:   { id: string; msg: string; rule: string }[] = [];
-  const warnings: { id: string; msg: string; rule: string }[] = [];
-  const infos:    { id: string; msg: string; rule: string }[] = [];
+  const errors:   MessageNFC[] = [];
+  const warnings: MessageNFC[] = [];
+  const infos:    MessageNFC[] = [];
 
   if (!Array.isArray(rows) || rows.length === 0) {
-    infos.push({ id: "empty", msg: "Tableau vide — ajoutez des rangées pour commencer.", rule: "—" });
+    infos.push({ id: "empty", msg: "Tableau vide — ajoutez des rangées pour commencer.", rule: "—", fix: "Clique sur « Ajouter une rangée », ou génère les circuits dans le plan puis « Pousser vers le tableau »." });
     return { errors, warnings, infos, score: 100 };
   }
 
@@ -55,9 +64,14 @@ function checkNFC(rows: BreakerRow[]) {
   // ── ERREURS : sécurité électrique ──
 
   if (diffs.length === 0) {
-    errors.push({ id: "no-diff", msg: "Aucun différentiel 30mA détecté. Minimum 2 obligatoires.", rule: "Art. 531.2" });
+    errors.push({ id: "no-diff", msg: "Aucun différentiel 30mA détecté. Minimum 2 obligatoires.", rule: "Art. 531.2",
+      fix: "Mets un interrupteur différentiel 30 mA (type AC ou A) dans la première case de chaque rangée, et prévois-en au moins deux.",
+      action: { label: "Ajouter un différentiel type A 40 A en case 1 de chaque rangée", run: rs => rs.map(r => (r.kind !== "multimedia" && !r.slots[0]
+        ? { ...r, slots: r.slots.map((b, i) => (i === 0 ? { id: uid(), label: "", circuit: "general", amperes: 40, type: "diff-A", customSection: "10.0", pieces: [] } as Breaker : b)) } : r)) } });
   } else if (diffs.length === 1) {
-    errors.push({ id: "one-diff", msg: "Un seul différentiel détecté. Minimum 2 ID 30mA requis.", rule: "Art. 531.2" });
+    errors.push({ id: "one-diff", msg: "Un seul différentiel détecté. Minimum 2 ID 30mA requis.", rule: "Art. 531.2",
+      fix: "Ajoute un second différentiel 30 mA : crée une nouvelle rangée (« Ajouter une rangée ») et déplace-y une partie des circuits, ou pose-le en case 1 d'une rangée qui n'en a pas.",
+      action: { label: "Ajouter une rangée avec un différentiel type A 40 A", run: rs => [...rs, { id: uid(), name: `Rangée ${rs.filter(x => x.kind !== "multimedia").length + 1}`, slots: [{ id: uid(), label: "", circuit: "general", amperes: 40, type: "diff-A", customSection: "10.0", pieces: [] } as Breaker, ...Array(8).fill(null)] }] } });
   }
 
   rows.forEach(row => {
@@ -68,7 +82,8 @@ function checkNFC(rows: BreakerRow[]) {
     const breakers = safeBreakers(Array.isArray(row.slots) ? row.slots.slice(1) : []).filter(b => !estAccessoireTableau(b));
 
     if (breakers.length > 8) {
-      errors.push({ id: `max8-${row.id}`, msg: `Rangée "${row.name}" : plus de 8 circuits sous le différentiel.`, rule: "Art. 531.2.4" });
+      errors.push({ id: `max8-${row.id}`, msg: `Rangée "${row.name}" : plus de 8 circuits sous le différentiel.`, rule: "Art. 531.2.4",
+        fix: "Glisse les circuits en trop dans une nouvelle rangée, sous son propre différentiel 30 mA." });
     }
 
     // Calibre du différentiel vs charge réelle de la rangée — un ID doit couvrir la
@@ -86,6 +101,8 @@ function checkNFC(rows: BreakerRow[]) {
           id: `diffamp-${row.id}`,
           msg: `Rangée "${row.name}" : différentiel ${diff.amperes}A potentiellement sous-dimensionné pour les circuits protégés (charge estimée ≈ ${Math.ceil(charge)}A — chauffage compté à 100%, reste à 50%).`,
           rule: "Dimensionnement amont/aval",
+          fix: `Passe le différentiel à ${AMPERES_DIFFERENTIEL.find(a => a >= charge) ?? AMPERES_DIFFERENTIEL[AMPERES_DIFFERENTIEL.length - 1]} A, ou répartis les circuits de cette rangée sous deux différentiels.`,
+          action: { label: `Passer le différentiel à ${AMPERES_DIFFERENTIEL.find(a => a >= charge) ?? AMPERES_DIFFERENTIEL[AMPERES_DIFFERENTIEL.length - 1]} A`, run: majAppareil(diff.id, b => ({ ...b, amperes: AMPERES_DIFFERENTIEL.find(a => a >= charge) ?? AMPERES_DIFFERENTIEL[AMPERES_DIFFERENTIEL.length - 1] })) },
         });
       }
     }
@@ -96,18 +113,25 @@ function checkNFC(rows: BreakerRow[]) {
       const lbl = b.label || spec.label;
       const section = effectiveSection(b);
 
-      // Calibre > max du circuit → ERREUR
-      if (spec.ampMax && b.amperes > spec.ampMax) {
-        errors.push({ id: `amp-${b.id}`, msg: `"${lbl}" : ${b.amperes}A dépasse le max autorisé (${spec.ampMax}A).`, rule: "NFC §533" });
+      // Calibre > max du circuit → ERREUR (éclairage : 10 A ou 16 A admis avec du 1,5 mm² — la table CIRCUITS garde 10 A comme calibre par défaut).
+      const ampMaxAutorise = b.circuit === "lumiere" ? 16 : spec.ampMax;
+      if (ampMaxAutorise && b.amperes > ampMaxAutorise) {
+        errors.push({ id: `amp-${b.id}`, msg: `"${lbl}" : ${b.amperes}A dépasse le max autorisé (${ampMaxAutorise}A).`, rule: "NFC §533",
+          fix: `Ramène le disjoncteur à ${ampMaxAutorise} A au maximum, ou répartis ce circuit en deux.`,
+          action: { label: `Passer le calibre à ${ampMaxAutorise} A`, run: majAppareil(b.id, x => ({ ...x, amperes: ampMaxAutorise })) } });
       }
 
       // Absence différentiel → ERREUR
       if (!diff) {
-        errors.push({ id: `nodiff-${b.id}`, msg: `"${lbl}" : aucun différentiel en amont.`, rule: "Art. 531.2" });
+        errors.push({ id: `nodiff-${b.id}`, msg: `"${lbl}" : aucun différentiel en amont.`, rule: "Art. 531.2",
+          fix: "Place un différentiel 30 mA dans la première case de cette rangée (case de gauche).",
+          action: row.slots[0] ? undefined : { label: "Ajouter un différentiel type A 40 A en case 1", run: rs => rs.map(x => (x.id === row.id ? { ...x, slots: x.slots.map((c, i) => (i === 0 ? { id: uid(), label: "", circuit: "general", amperes: 40, type: "diff-A", customSection: "10.0", pieces: [] } as Breaker : c)) } : x)) } });
       } else if (spec.diffType) {
         const covType = BREAKER_TYPES[diff.type]?.diffType;
         if (covType && (DIFF_HIERARCHY[covType] ?? -1) < (DIFF_HIERARCHY[spec.diffType] ?? -1)) {
-          errors.push({ id: `difftype-${b.id}`, msg: `"${lbl}" : nécessite diff. Type ${spec.diffType}, protégé par Type ${covType}.`, rule: "NFC §531.2" });
+          errors.push({ id: `difftype-${b.id}`, msg: `"${lbl}" : nécessite diff. Type ${spec.diffType}, protégé par Type ${covType}.`, rule: "NFC §531.2",
+            fix: `Remplace le différentiel de cette rangée par un type ${spec.diffType} (ou supérieur), ou déplace ce circuit sous un différentiel adapté.`,
+            action: diff ? { label: `Passer le différentiel en type ${spec.diffType}`, run: majAppareil(diff.id, x => ({ ...x, type: `diff-${spec.diffType}` })) } : undefined });
         }
       }
 
@@ -125,6 +149,8 @@ function checkNFC(rows: BreakerRow[]) {
           id: `section-${b.id}`,
           msg: `"${lbl}" : section ${section}mm² insuffisante pour ${b.amperes}A (max recommandé ${maxAmpSection}A sur cette section).`,
           rule: "NFC §523",
+          fix: `Passe le câble de ce circuit en ${sectionMiniPourCalibre(b.amperes)} mm² (ou réduis le calibre à ${maxAmpSection} A).`,
+          action: { label: `Passer la section à ${sectionMiniPourCalibre(b.amperes)} mm²`, run: majAppareil(b.id, x => ({ ...x, customSection: sectionMiniPourCalibre(x.amperes) })) },
         });
       }
 
@@ -144,15 +170,8 @@ function checkNFC(rows: BreakerRow[]) {
           id: `calibremin-${b.id}`,
           msg: `"${lbl}" : calibre ${b.amperes}A insuffisant pour ce circuit (min recommandé ${minReq}A).`,
           rule: "NFC §533",
-        });
-      }
-
-      // Lumière > 10A
-      if (b.circuit === "lumiere" && b.amperes > 10) {
-        warnings.push({
-          id: `lum-amp-${b.id}`,
-          msg: `"${lbl}" : circuit lumière à ${b.amperes}A — NFC recommande 10A max sur 1.5mm².`,
-          rule: "NFC §533",
+          fix: `Monte le disjoncteur à ${minReq} A et vérifie la section du câble (${sectionMiniPourCalibre(minReq)} mm² minimum).`,
+          action: { label: `Passer le calibre à ${minReq} A`, run: majAppareil(b.id, x => ({ ...x, amperes: minReq, customSection: parseFloat(effectiveSection(x)) >= parseFloat(sectionMiniPourCalibre(minReq)) ? x.customSection : sectionMiniPourCalibre(minReq) })) },
         });
       }
 
@@ -164,13 +183,16 @@ function checkNFC(rows: BreakerRow[]) {
             id: `socles16-${b.id}`,
             msg: `"${lbl}" : ${totalPrises} socles détectés — max 8 par circuit 16A.`,
             rule: "Art. 771.314",
+            fix: "Crée un second circuit prises 16 A et répartis les socles, ou passe ce circuit en 20 A / 2,5 mm² (12 socles maximum).",
           });
         }
-        if ((b.circuit === "cuisine_prises" || b.circuit === "prise_20") && totalPrises > 6) {
+        const max20 = b.circuit === "cuisine_prises" ? 6 : 12;
+        if ((b.circuit === "cuisine_prises" || b.circuit === "prise_20") && totalPrises > max20) {
           warnings.push({
             id: `socles20-${b.id}`,
-            msg: `"${lbl}" : ${totalPrises} socles détectés — max 6 par circuit 20A cuisine.`,
+            msg: `"${lbl}" : ${totalPrises} socles détectés — max ${max20} par circuit 20A${b.circuit === "cuisine_prises" ? " cuisine" : ""}.`,
             rule: "Art. 771.314.2",
+            fix: `Crée un second circuit ${b.circuit === "cuisine_prises" ? "prises cuisine" : "20 A"} et répartis les socles (${max20} maximum par circuit).`,
           });
         }
       }
@@ -181,6 +203,7 @@ function checkNFC(rows: BreakerRow[]) {
           id: `dedie-${b.id}`,
           msg: `"${lbl}" : circuit dédié configuré sur ${b.pieces.length} pièces — vérifier si réellement dédié.`,
           rule: "Art. 771.314",
+          fix: "Un circuit spécialisé alimente un seul appareil : retire les pièces en trop de ce circuit et crée un circuit dédié pour chaque autre appareil.",
         });
       }
 
@@ -192,31 +215,53 @@ function checkNFC(rows: BreakerRow[]) {
             id: `lumpts-${b.id}`,
             msg: `"${lbl}" : ${totalPoints} points lumineux sur un seul circuit 10A — envisager un second circuit.`,
             rule: "Art. 771.312",
+            fix: "Crée un second circuit lumière et répartis-y les points lumineux (8 maximum par circuit).",
           });
         }
       }
     });
   });
 
+  // ── Réserve et rangées vides (NF C 15-100 : 20 % d'emplacements libres, jamais de rangée vide) ──
+  const rangees = rows.filter(r => r.kind !== "multimedia");
+  const nbRangeesVides = rangees.filter(r => safeBreakers(r.slots.slice(1)).length === 0).length;
+  if (nbRangeesVides > 0) {
+    warnings.push({ id: "rangee-vide", msg: `${nbRangeesVides} rangée${nbRangeesVides > 1 ? "s" : ""} sans aucun circuit — ne pas laisser de rangée vide.`, rule: "Guide NF C 15-100",
+      fix: "Équipe la rangée (disjoncteurs de réserve) ou supprime-la.",
+      action: { label: "Supprimer les rangées vides", run: rs => rs.filter(x => x.kind === "multimedia" || safeBreakers(x.slots.slice(1)).length > 0) } });
+  }
+  if (rangees.length > 0) {
+    const capacite = rangees.length * 8;
+    const utilises = rangees.reduce((n, r) => n + safeBreakers(r.slots.slice(1)).length, 0);
+    if ((capacite - utilises) / capacite < 0.2 && nbRangeesVides === 0) {
+      warnings.push({ id: "reserve", msg: `Réserve insuffisante : ${capacite - utilises} emplacement(s) libre(s) sur ${capacite} (moins de 20 %).`, rule: "Réserve 20 % du tableau",
+        fix: "Ajoute une rangée équipée de son différentiel pour garder 20 % d'emplacements libres (évolutions futures).",
+        action: { label: "Ajouter une rangée avec un différentiel type A 40 A", run: rs => [...rs, { id: uid(), name: `Rangée ${rs.filter(x => x.kind !== "multimedia").length + 1}`, slots: [{ id: uid(), label: "", circuit: "general", amperes: 40, type: "diff-A", customSection: "10.0", pieces: [] } as Breaker, ...Array(8).fill(null)] }] } });
+    }
+  }
+
   // ── INFOS : recommandations générales ──
 
   if (!allBreakers.some(b => b.circuit === "parafoudre")) {
-    infos.push({ id: "parafoudre", msg: "Parafoudre non détecté. Obligatoire NFC 15-100 (2024).", rule: "§443" });
+    infos.push({ id: "parafoudre", msg: "Parafoudre non détecté. Obligatoire NFC 15-100 (2024).", rule: "§443",
+      fix: "Ajoute un parafoudre type 2 dans une case libre de la 1re rangée (circuit « Parafoudre »), protégé par son disjoncteur de déconnexion.",
+      action: { label: "Ajouter un parafoudre dans la première case libre", run: rs => { let fait = false; return rs.map(r => { if (fait || r.kind === "multimedia") return r; const i = r.slots.findIndex((c, k) => k > 0 && !c); if (i < 0) return r; fait = true; return { ...r, slots: r.slots.map((c, k) => (k === i ? { id: uid(), label: "Parafoudre", circuit: "parafoudre", amperes: 20, type: "2P", customSection: "4.0", pieces: [] } as Breaker : c)) }; }); } } });
   }
 
   const specialTypes = ["plaque", "four", "lave_linge", "lave_vaisselle", "chauffe_eau"];
   const found = specialTypes.filter(t => allBreakers.some(b => b.circuit === t)).length;
   if (found < 4) {
-    infos.push({ id: "spec", msg: `${found} circuit(s) spécialisé(s) sur 5 recommandés.`, rule: "Art. 771.314.2" });
+    infos.push({ id: "spec", msg: `${found} circuit(s) spécialisé(s) sur 5 recommandés.`, rule: "Art. 771.314.2",
+      fix: `Ajoute un circuit dédié 20 A / 2,5 mm² (32 A / 6 mm² pour la plaque) pour : ${specialTypes.filter(t => !allBreakers.some(b => b.circuit === t)).map(t => CIRCUITS[t]?.label ?? t).join(", ")}.` });
   }
 
   if (!allBreakers.some(b => b.circuit === "lumiere")) {
-    infos.push({ id: "no-lumiere", msg: "Aucun circuit lumière détecté.", rule: "Art. 771.312" });
+    infos.push({ id: "no-lumiere", msg: "Aucun circuit lumière détecté.", rule: "Art. 771.312", fix: "Ajoute au moins un circuit lumière 10 A / 1,5 mm² (deux circuits si le logement dépasse 35 m²)." });
   }
 
   const hasPrises = allBreakers.some(b => ["prise_16","prise_20","cuisine_prises"].includes(b.circuit));
   if (!hasPrises) {
-    infos.push({ id: "no-prises", msg: "Aucun circuit prises détecté.", rule: "Art. 771.314" });
+    infos.push({ id: "no-prises", msg: "Aucun circuit prises détecté.", rule: "Art. 771.314", fix: "Ajoute un circuit prises 16 A / 1,5 mm² (ou 20 A / 2,5 mm²) avec son différentiel." });
   }
 
   const score = Math.max(0, Math.round(100 - errors.length * 15 - warnings.length * 5 - infos.length * 2));
@@ -727,7 +772,7 @@ function BreakerEditModal({ breaker, slotIndex, multimedia, compliance, onUpdate
 
 // ─── COMPLIANCE PANEL ─────────────────────────────────────────────────────────
 
-function CompliancePanel({ result, onClose }: { result: ReturnType<typeof checkNFC>; onClose: () => void }) {
+function CompliancePanel({ result, onClose, onApply }: { result: ReturnType<typeof checkNFC>; onClose: () => void; onApply: (run: (rs: BreakerRow[]) => BreakerRow[]) => void }) {
   const { errors, warnings, infos, score } = result;
   const scoreColor = score >= 85 ? "text-emerald-600" : score >= 60 ? "text-amber-500" : "text-red-600";
   const scoreBg    = score >= 85 ? "bg-emerald-50 border-emerald-200" : score >= 60 ? "bg-amber-50 border-amber-200" : "bg-red-50 border-red-200";
@@ -770,6 +815,12 @@ function CompliancePanel({ result, onClose }: { result: ReturnType<typeof checkN
                   <div>
                     <p className={`text-sm ${text}`}>{item.msg}</p>
                     <p className={`text-xs font-mono mt-1 ${sub}`}>NFC 15-100 — {item.rule}</p>
+                    <p className={`text-xs mt-1.5 ${text}`}>💡 <b>Correction :</b> {item.fix}</p>
+                    {item.action && (
+                      <button onClick={() => onApply(item.action!.run)} className="mt-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg bg-white border border-ink-300 text-ink-800 hover:bg-ink-50">
+                        ✓ {item.action.label}
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1554,16 +1605,23 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const rowsDe = (id: string): BreakerRow[] => (id === actifId ? rows : (stock[id] ?? []));
 
-  const handleSave = useCallback(async () => {
+  const [erreurSauvegarde, setErreurSauvegarde] = useState<string | null>(null);
+  const handleSave = useCallback(async (): Promise<boolean> => {
     setSaving(true);
-    await sauverTableau(clientId, projet.id, JSON.stringify(rowsDe(TABLEAU_PRINCIPAL)));
-    // Annexes : on ne réécrit la colonne que s'il y en a (ou s'il y en avait) — pas de
-    // colonne inutilement touchée pour un projet à tableau unique.
-    if (annexes.length > 0 || projet.tableaux_annexes) {
-      await sauverAnnexes(projet.id, annexes.map(a => ({ id: a.id, nom: a.nom, rows: rowsDe(a.id) })));
-    }
-    setSaving(false); setSaved(true);
+    let ok = false;
+    try {
+      ok = await sauverTableau(clientId, projet.id, JSON.stringify(rowsDe(TABLEAU_PRINCIPAL)));
+      // Annexes : on ne réécrit la colonne que s'il y en a (ou s'il y en avait) — pas de
+      // colonne inutilement touchée pour un projet à tableau unique.
+      if (ok && (annexes.length > 0 || projet.tableaux_annexes)) {
+        ok = await sauverAnnexes(projet.id, annexes.map(a => ({ id: a.id, nom: a.nom, rows: rowsDe(a.id) })));
+      }
+    } catch (e) { console.error("tableau: sauvegarde impossible", e); ok = false; }
+    setSaving(false);
+    if (!ok) { setSaved(false); setErreurSauvegarde("La sauvegarde du tableau a échoué : tes modifications sont toujours à l'écran mais ne sont pas enregistrées."); return false; }
+    setErreurSauvegarde(null); setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+    return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, stock, actifId, annexes, clientId, projet.id]);
 
@@ -1575,7 +1633,8 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const instantane = JSON.stringify({ p: rowsDe(TABLEAU_PRINCIPAL), a: annexes.map(x => ({ id: x.id, nom: x.nom, rows: rowsDe(x.id) })) });
     if (dernierSauveRef.current === null) { dernierSauveRef.current = instantane; return; }   // état chargé : point de départ
     if (instantane === dernierSauveRef.current) return;
-    const t = setTimeout(() => { dernierSauveRef.current = instantane; void handleSave(); }, 1500);
+    // Le « dernier état sauvé » n'avance QUE si la sauvegarde a réussi : sinon la suivante repart seule (au prochain changement) au lieu de croire que tout est enregistré.
+    const t = setTimeout(() => { void handleSave().then(ok => { if (ok) dernierSauveRef.current = instantane; }); }, 1500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, stock, annexes, actifId, loading]);
@@ -1673,7 +1732,7 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
               )}
             </div>
             <ProjetSwitcher clientId={clientId} projets={projets} projetId={projet.id}
-              avantChangement={handleSave} onSelect={onSelect} onChanged={onChanged} compact />
+              avantChangement={async () => { await handleSave(); }} onSelect={onSelect} onChanged={onChanged} compact />
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button onClick={() => setShowReport(true)}
@@ -1693,6 +1752,12 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
           </div>
         </div>
 
+        {erreurSauvegarde && (
+          <div className="flex items-center justify-between gap-3 px-4 md:px-6 py-2 bg-red-50 border-b border-red-200 text-xs text-red-800 shrink-0" role="alert">
+            <span>⚠️ {erreurSauvegarde} 💡 Vérifie ta connexion puis clique sur « Réessayer » (ne ferme pas la page avant).</span>
+            <button onClick={() => void handleSave()} className="btn-ghost !text-xs shrink-0">Réessayer</button>
+          </div>
+        )}
         <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 bg-ink-50 overflow-x-auto shrink-0">
           <button onClick={() => basculerTableau(TABLEAU_PRINCIPAL)}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
@@ -1781,7 +1846,7 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
           onRemove={() => removeSlot(editBreaker.rowId, editBreaker.slotIdx)}
         />
       )}
-      {showReport && <CompliancePanel result={compliance} onClose={() => setShowReport(false)} />}
+      {showReport && <CompliancePanel result={compliance} onClose={() => setShowReport(false)} onApply={run => setRows(rs => run(rs))} />}
       {showQR && <QRModal clientId={clientId} projetId={projet.id} clientName={client?.nom ?? ""} onClose={() => setShowQR(false)} />}
       {schemaBreaker && <CircuitSchema breaker={schemaBreaker.breaker} rowBreakers={schemaBreaker.rowBreakers} onClose={() => setSchemaBreaker(null)} />}
     </Shell>

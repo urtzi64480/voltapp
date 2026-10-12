@@ -259,7 +259,7 @@ function CarteCircuit({ c, coches, ouvert, onToggleOuvert, onToggle, onToggleGro
             <div className="mt-3 space-y-1.5">
               {c.problemes.map((pb, i) => (
                 <p key={`p${i}`} className={cn("flex gap-1.5 text-xs rounded-lg px-2.5 py-1.5 border", pb.gravite === "erreur" ? "text-red-800 bg-red-50 border-red-200" : "text-amber-800 bg-amber-50 border-amber-200")}>
-                  <AlertTriangle size={13} className="shrink-0 mt-0.5" /><span>{pb.message}</span>
+                  <AlertTriangle size={13} className="shrink-0 mt-0.5" /><span>{pb.message}<br /><span className="opacity-80">💡 {pb.suggestion}</span></span>
                 </p>
               ))}
               {c.alertes.map((a, i) => (
@@ -646,7 +646,7 @@ function Suivi({ clientId, projet, projets, onSelect, onChanged }: { clientId: s
                   <ul className="p-4 space-y-1.5">
                     {suivi.avertissements.map((a, i) => <li key={`v${i}`} className="text-xs text-amber-900">• {a}</li>)}
                     {suivi.problemesHorsCircuit.map((p, i) => (
-                      <li key={`p${i}`} className={cn("text-xs", p.gravite === "erreur" ? "text-red-800 font-medium" : "text-amber-900")}>• {p.message}</li>
+                      <li key={`p${i}`} className={cn("text-xs", p.gravite === "erreur" ? "text-red-800 font-medium" : "text-amber-900")}>• {p.message} <span className="font-normal opacity-80">— 💡 {p.suggestion}</span></li>
                     ))}
                     {suivi.alertesPlan.map((a, i) => <li key={`a${i}`} className="text-xs text-amber-900">• {a}</li>)}
                   </ul>

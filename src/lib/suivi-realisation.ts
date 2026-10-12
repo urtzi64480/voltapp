@@ -311,13 +311,13 @@ function construireGuide(ctx: Contexte, g: GroupeCommande, mode: ModeCommande, i
   if (g.horsTrace.length > 0) {
     alertes.push(
       `${pluriel(g.horsTrace.length, "commande n'est", "commandes ne sont")} pas tracée${g.horsTrace.length > 1 ? "s" : ""} dans ce circuit (autre niveau, ou tableau non placé) : ` +
-      `${g.horsTrace.map(c => libelleLong(ctx, c)).join(", ")}. Le câble qui la/les relie doit être tiré à la main et n'est pas dans les câbles listés.`,
+      `${g.horsTrace.map(c => libelleLong(ctx, c)).join(", ")}. Le câble qui la/les relie doit être tiré à la main et n'est pas dans les câbles listés. Correction : place la commande dans le même circuit et sur le même niveau que sa lampe (ou tire le câble à la main et note-le sur le chantier).`,
     );
   }
   if (g.sens === "lampe") {
     alertes.push(
       "Aucune alimentation amont tracée : le plan fait partir les commandes depuis le point lumineux (circuit sans boîte/tableau en amont). " +
-      "Vérifier sur place d'où arrive la phase avant de câbler.",
+      "Vérifier sur place d'où arrive la phase avant de câbler. Correction : dans le plan, pose une boîte de dérivation ou un point d'arrivée en amont de la lampe, puis régénère le circuit.",
     );
   }
 
@@ -325,7 +325,7 @@ function construireGuide(ctx: Contexte, g: GroupeCommande, mode: ModeCommande, i
     if (m > 1) {
       alertes.push(
         `${m} interrupteurs simples commandent le même point lumineux : câblés ainsi ils seraient en série (les deux doivent être fermés pour allumer). ` +
-        "S'il s'agit d'une commande depuis deux endroits, remplacer par des va-et-vient.",
+        "S'il s'agit d'une commande depuis deux endroits, remplacer par des va-et-vient. Correction : change ces interrupteurs en va-et-vient dans le plan (panneau de l'appareillage).",
       );
     }
     tous.forEach((c, i) => {
@@ -398,10 +398,10 @@ function construireGuide(ctx: Contexte, g: GroupeCommande, mode: ModeCommande, i
   } else if (mode === "va_et_vient") {
     const nbVV = tous.filter(c => baseCommande(c.type) === "va_et_vient").length;
     if (nbVV === 1) {
-      alertes.push("Un seul va-et-vient sur ce point lumineux : il en faut au moins deux (sinon, un interrupteur simple).");
+      alertes.push("Un seul va-et-vient sur ce point lumineux : il en faut au moins deux (sinon, un interrupteur simple). Correction : ajoute le second va-et-vient à l'autre accès, ou change celui-ci en interrupteur simple.");
     }
     if (tous.some(c => baseCommande(c.type) !== "va_et_vient")) {
-      alertes.push("Des commandes de nature différente (interrupteur simple, bouton…) sont mélangées avec des va-et-vient sur la même lampe : montage impossible tel quel.");
+      alertes.push("Des commandes de nature différente (interrupteur simple, bouton…) sont mélangées avec des va-et-vient sur la même lampe : montage impossible tel quel. Correction : utilise des va-et-vient pour toutes les commandes de cette lampe (ou un télérupteur avec des boutons-poussoirs).");
     }
     const p = Math.max(0, total - 2);
     g.chaine.forEach((c, i) => {
@@ -812,7 +812,7 @@ export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
       segments.forEach(s => { pointsMembresTraces.add(s.aId); pointsMembresTraces.add(s.bId); });
       if (origine) {
         points.filter(a => !pointsMembresTraces.has(String(a.id)) && !a.domotique).forEach(a => {
-          alertes.push(`${libelleLong(ctx, a)} n'est relié par aucun câble dans le tracé (circuit réduit à un seul élément ou tracé incomplet).`);
+          alertes.push(`${libelleLong(ctx, a)} n'est relié par aucun câble dans le tracé (circuit réduit à un seul élément ou tracé incomplet). Correction : régénère les circuits, ou complète le cheminement en cliquant cet appareillage à la suite des autres.`);
         });
       }
       const maxPar = MAX_PAR_CIRCUIT[b.circuit];
@@ -828,7 +828,7 @@ export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
         caracteristiques.push({
           libelle: eclairage ? "Points lumineux" : "Appareils sur le circuit", valeur: `${nbPoints} / ${maxPar} maximum`, alerte: depasse,
         });
-        if (depasse) alertes.push(`${nbPoints} ${eclairage ? "points lumineux" : "appareils"} sur ce circuit, maximum ${maxPar} (NF C 15-100).`);
+        if (depasse) alertes.push(`${nbPoints} ${eclairage ? "points lumineux" : "appareils"} sur ce circuit, maximum ${maxPar} (NF C 15-100). Correction : répartis-les sur un second circuit dans le plan, puis régénère.`);
       } else {
         caracteristiques.push({ libelle: "Appareils sur le circuit", valeur: String(nbPoints) });
       }
