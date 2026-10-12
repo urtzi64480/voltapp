@@ -9,9 +9,9 @@ import Shell from "@/components/layout/Shell";
 import { useProjets, qsProjet, modifierProjet, sauverTableau, sauverAnnexes, synchroniserAnnexes, lireAnnexes, nouvelIdAnnexe, TABLEAU_PRINCIPAL, TableauAnnexe } from "@/lib/projets";
 import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import SchemaTechniqueCircuit from "@/components/plan/SchemaTechniqueCircuit";
+import SchemaTechniqueCircuit, { libelleTroncon } from "@/components/plan/SchemaTechniqueCircuit";
 import PhotosChantier from "@/components/plan/PhotosChantier";
-import { BUCKET_PHOTOS, cheminPhoto, compresserImage, grouperPhotos, projeterSurCircuit } from "@/lib/photos-chantier";
+import { BUCKET_PHOTOS, cheminPhoto, compresserImage, grouperPhotos, projeterSurCircuit, tronconDePhoto } from "@/lib/photos-chantier";
 import { construireSchemaTechnique } from "@/lib/schema-technique";
 import { construireVueAppareil } from "@/lib/bornier-appareillage";
 import Link from "next/link";
@@ -3955,6 +3955,42 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
   };
   // ── Photos de chantier ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  // Schéma technique d'un circuit (nœuds, segments, section) : partagé par le schéma affiché et par le repérage des photos sur les tronçons.
+  const calculSchemaCircuit = (b: (typeof circuitsNiveauActif)[number]) => {
+    if (!niveauActif) return null;
+    const origine = origineCircuits(niveauActif);
+    if (!origine) return null;
+    const tous = niveauActif.pieces.flatMap(p => p.appareillages.map(a => ({ a, piece: p.nom || "Pièce" })));
+    const points = tous.map(t => t.a).filter(a => a.circuitId === b.id);
+    const segs = segmentsPourCircuit(b, points, niveauActif, origine);
+    const nomsCircuits = new Map<number, string>(circuitsNiveauActif.map(x => [x.id, nomAffiche(x)] as const));
+    // Section et calibre : ceux du TABLEAU enregistré (module Tableau) s'il contient ce circuit, sinon ceux du plan.
+    const labelTableau = b.manuelId != null ? b.label : (niveauActif.nomsCircuits?.[b.label] ?? b.label);
+    const dansTableau = (tableauPourSchema ?? []).flatMap(r => r.slots).find(x => x && x.label === labelTableau && !BREAKER_TYPES[x.type]?.isDiff) ?? null;
+    const section = dansTableau ? effectiveSection(dansTableau) : (b.customSection ?? CIRCUITS[b.circuit]?.section ?? "1.5");
+    const amperesAffiches = dansTableau ? dansTableau.amperes : b.amperes;
+    const schema = construireSchemaTechnique({
+      circuitId: b.id, libelleTableau: `${dansTableau ? dansTableau.amperes : b.amperes} A · ${nomAffiche(b)}`, points, tous, segments: segs,
+      boites: Object.values(niveauActif.boitesDerivation ?? {}).flat(), libelle: a => a.nom || labelAppareillagePlace(a),
+      nomCircuit: id => (id != null ? nomsCircuits.get(id) : undefined) ?? "sans circuit",
+    });
+    const ctx = creerContexteLongueurs(niveauActif);
+    const hAncre = hauteurAncreFn(ctx);
+    const longueurs: Record<string, number> = {};
+    segs.forEach(sg => {
+      if (sg.type === "domotique") return;
+      longueurs[`${sg.aId}->${sg.bId}`] = tracerLiaison(ctx, b, segs, sg, hAncre).sections.reduce((t, v) => t + v, 0);
+    });
+    return { points, tous, segs, schema, section, dansTableau, amperesAffiches, longueurs };
+  };
+  /** Tronçon et section où une photo a été prise (« Prise A → Prise B · 3G2,5 mm² »), d'après le schéma technique du circuit. */
+  const tronconPhotoTexte = (ph: PhotoChantier): string | undefined => {
+    if (!niveauActif) return undefined;
+    const bk = circuitsNiveauActif.find(x => x.label === ph.circuit);
+    const calc = bk ? calculSchemaCircuit(bk) : null;
+    const sg = calc ? tronconDePhoto(ph.point, calc.schema.segments, niveauActif) : null;
+    return calc && sg ? libelleTroncon(sg, calc.section, calc.schema.noeuds) : undefined;
+  };
   const urlPhoto = (chemin: string) => supabase.storage.from(BUCKET_PHOTOS).getPublicUrl(chemin).data.publicUrl;
   const envoyerPhotos = async (label: string, point: Point, fichiers: File[]) => {
     if (!niveauActif) return;
@@ -8805,29 +8841,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
             {schemaCircuitId != null && niveauActif && (() => {
               const b = circuitsNiveauActif.find(x => x.id === schemaCircuitId);
-              const origine = origineCircuits(niveauActif);
-              if (!b || !origine) return null;
-              const tous = niveauActif.pieces.flatMap(p => p.appareillages.map(a => ({ a, piece: p.nom || "Pièce" })));
-              const points = tous.map(t => t.a).filter(a => a.circuitId === b.id);
-              const segs = segmentsPourCircuit(b, points, niveauActif, origine);
-              const nomsCircuits = new Map<number, string>(circuitsNiveauActif.map(x => [x.id, nomAffiche(x)] as const));
-              // Section et calibre : ceux du TABLEAU enregistré (module Tableau) s'il contient ce circuit, sinon ceux du plan.
-              const labelTableau = b.manuelId != null ? b.label : (niveauActif.nomsCircuits?.[b.label] ?? b.label);
-              const dansTableau = (tableauPourSchema ?? []).flatMap(r => r.slots).find(x => x && x.label === labelTableau && !BREAKER_TYPES[x.type]?.isDiff) ?? null;
-              const section = dansTableau ? effectiveSection(dansTableau) : (b.customSection ?? CIRCUITS[b.circuit]?.section ?? "1.5");
-              const amperesAffiches = dansTableau ? dansTableau.amperes : b.amperes;
-              const schema = construireSchemaTechnique({
-                circuitId: b.id, libelleTableau: `${dansTableau ? dansTableau.amperes : b.amperes} A · ${nomAffiche(b)}`, points, tous, segments: segs,
-                boites: Object.values(niveauActif.boitesDerivation ?? {}).flat(), libelle: a => a.nom || labelAppareillagePlace(a),
-                nomCircuit: id => (id != null ? nomsCircuits.get(id) : undefined) ?? "sans circuit",
-              });
-              const ctx = creerContexteLongueurs(niveauActif);
-              const hAncre = hauteurAncreFn(ctx);
-              const longueurs: Record<string, number> = {};
-              segs.forEach(sg => {
-                if (sg.type === "domotique") return;
-                longueurs[`${sg.aId}->${sg.bId}`] = tracerLiaison(ctx, b, segs, sg, hAncre).sections.reduce((t, v) => t + v, 0);
-              });
+              const calc = calculSchemaCircuit(b!);
+              if (!b || !calc) return null;
+              const { points, tous, schema, section, dansTableau, amperesAffiches, longueurs } = calc;
               return (
                 <SchemaTechniqueCircuit titre={nomAffiche(b)} couleurCircuit={colorMap.get(b.id) ?? "#666666"}
                   descriptionTableau={`Disjoncteur ${amperesAffiches} A · câble ${fmtSectionTxt(section)} mm²${dansTableau ? " (tableau)" : " (plan)"} · ${points.length} appareillage${points.length > 1 ? "s" : ""}`}
@@ -8835,7 +8851,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   vueAppareil={id => construireVueAppareil({ id, segments: schema.segments, noeuds: schema.noeuds, section, voieExterne: schema.voieExterne,
                     appareil: i => tous.find(t => String(t.a.id) === String(i))?.a })}
                   longueurs={longueurs} onClose={() => setSchemaCircuitId(null)}
-                  photos={(niveauActif.photosChantier ?? []).filter(ph => ph.circuit === b.label).map(ph => ({ id: ph.id, url: urlPhoto(ph.chemin), legende: ph.legende }))}
+                  photos={(niveauActif.photosChantier ?? []).filter(ph => ph.circuit === b.label).flatMap(ph => {
+                    const sg = tronconDePhoto(ph.point, schema.segments, niveauActif);
+                    return sg ? [{ id: ph.id, url: urlPhoto(ph.chemin), legende: ph.legende, cle: `${sg.aId}->${sg.bId}`, troncon: libelleTroncon(sg, section, schema.noeuds) }] : [];
+                  })}
                   onPhoto={id => setPhotosModal({ label: b.label, ouvrirId: id })}
                   onPhotos={() => setPhotosModal({ label: b.label })} />
               );
@@ -9071,7 +9090,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const nomCircuitModal = circuitsPhotos.find(c => c.label === photosModal.label)?.nom ?? photosModal.label ?? "tous les circuits";
         return (
           <PhotosChantier key={`${photosModal.label}-${photosModal.ouvrirId ?? ""}`} titre={nomCircuitModal} photos={liste} circuits={circuitsPhotos} labelCircuit={photosModal.label} url={urlPhoto}
-            ouvrirId={photosModal.ouvrirId} enCours={photoEnvoi}
+            ouvrirId={photosModal.ouvrirId} enCours={photoEnvoi} troncon={tronconPhotoTexte}
             onClose={() => setPhotosModal(null)}
             onAjouter={photosModal.label != null ? (files => { setPlacingPhoto({ label: photosModal.label!, files }); setPhotosModal(null); setMode("select"); setPlacementType(null); }) : undefined}
             onSupprimer={supprimerPhoto}

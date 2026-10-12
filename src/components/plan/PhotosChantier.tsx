@@ -18,6 +18,8 @@ interface Props {
   /** Photo à ouvrir d'emblée (clic sur un repère du plan). */
   ouvrirId?: number;
   enCours?: string | null;
+  /** Tronçon et section du câble où la photo a été prise (« Prise A → Prise B · 3G2,5 mm² »). */
+  troncon?: (ph: PhotoChantier) => string | undefined;
   onClose: () => void;
   onAjouter?: (fichiers: File[]) => void;
   onSupprimer: (id: number) => void;
@@ -57,6 +59,7 @@ export default function PhotosChantier(p: Props) {
                   <button className="absolute right-2 top-1/2 -translate-y-1/2 bg-white/80 rounded-full p-1.5" aria-label="Suivante" onClick={() => setIdx(((idx as number) + 1) % p.photos.length)}><ChevronRight size={18} /></button>
                 </>)}
               </div>
+              {p.troncon?.(courante) && <p className="text-xs font-semibold text-ink-900 bg-volt-50 border border-volt-200 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5"><MapPin size={13} className="text-volt-600 shrink-0" />Câble : {p.troncon(courante)}</p>}
               <input className="input" placeholder="Légende (ex. : passage de gaine derrière le placard, avant doublage)" value={courante.legende ?? ""} onChange={e => p.onLegende(courante.id, e.target.value)} />
               <p className="text-[11px] text-ink-500">Prise le {dateFr(courante.date)} · position sur le plan : {courante.point.x.toFixed(2)} m, {courante.point.y.toFixed(2)} m · photo {(idx as number) + 1} / {p.photos.length}</p>
               {p.labelCircuit == null && nomCircuit(courante.circuit) == null && (

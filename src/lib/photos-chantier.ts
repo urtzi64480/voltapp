@@ -3,7 +3,7 @@
 // PHOTOS DE CHANTIER D'UN CIRCUIT. Une photo est rattachée à un circuit (son label) et à un POINT de son tracé : on photographie les câbles avant que les
 // plaquistes ne referment les cloisons, puis on retrouve la photo en cliquant sur le repère posé sur le plan. Les fichiers vont dans le stockage Supabase ;
 // le plan n'en garde que le chemin, la position, la date et une légende (Niveau.photosChantier).
-import type { AppareillagePlace, Niveau, PhotoChantier, Point } from "@/lib/maison-types";
+import type { AppareillagePlace, Niveau, PhotoChantier, Point, SegmentCircuit } from "@/lib/maison-types";
 import { origineCircuits } from "@/lib/maison-types";
 import type { Breaker } from "@/lib/electrical-constants";
 import { segmentsPourCircuit } from "@/lib/maison-engine";
@@ -58,4 +58,20 @@ export function grouperPhotos(photos: PhotoChantier[]): { circuit: string; point
     if (g) g.photos.push(ph); else groupes.push({ circuit: ph.circuit, point: ph.point, photos: [ph] });
   });
   return groupes;
+}
+
+/** Tronçon (liaison entre deux éléments du schéma) le plus proche d'une photo, mesuré sur le chemin réel du câble (coudes compris). */
+export function tronconDePhoto(p: Point, segments: SegmentCircuit[], niveau: Niveau): SegmentCircuit | null {
+  let meilleur = Infinity, res: SegmentCircuit | null = null;
+  segments.forEach(sg => {
+    if (sg.type === "domotique") return;
+    const chemin = [sg.aPoint, ...coudesSegment(niveau, sg).map(w => w.point), sg.bPoint];
+    for (let i = 0; i + 1 < chemin.length; i++) {
+      const a = chemin[i], b = chemin[i + 1], dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+      const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+      const d = Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+      if (d < meilleur) { meilleur = d; res = sg; }
+    }
+  });
+  return res;
 }

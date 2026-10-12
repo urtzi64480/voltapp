@@ -26,7 +26,7 @@ interface Props {
   /** Vue détaillée (bornes) d'un appareil du schéma — un clic sur l'appareil l'ouvre. */
   vueAppareil?: (id: string) => VueAppareil | null;
   /** Photos de chantier du circuit (miniatures cliquables) + ouverture de la galerie. */
-  photos?: { id: number; url: string; legende?: string }[];
+  photos?: { id: number; url: string; legende?: string; cle: string; troncon: string }[];
   onPhoto?: (id: number) => void;
   onPhotos?: () => void;
   onClose: () => void;
@@ -181,6 +181,13 @@ function Symbole({ genre, x, y, h, couleur }: { genre: GenreNoeud; x: number; y:
   return <rect x={x} y={y} width={LARG} height={h} rx={6} fill="#fff" stroke={couleur} strokeWidth={2.4} />;
 }
 
+/** « Prise salon → Prise cuisine · 3G2,5 mm² » : le tronçon d'un schéma, tel qu'affiché (même règle de section que le dessin). */
+export function libelleTroncon(seg: SegmentCircuit, section: string, noeuds: Record<string, NoeudSchema>): string {
+  const nom = (id: string) => noeuds[id]?.titre ?? id;
+  const n = conducteursSegment(seg).length;
+  return `${nom(seg.aId)} → ${nom(seg.bId)} · ${n}G${fmtSection(seg.type || seg.avecRetour ? "1.5" : section)} mm²`;
+}
+
 export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descriptionTableau, section, segments, noeuds, avertissements = [], longueurs, vueAppareil, photos = [], onPhoto, onPhotos, onClose }: Props) {
   const [detailId, setDetailId] = useState<string | null>(null);
   const detail = detailId && vueAppareil ? vueAppareil(detailId) : null;
@@ -223,6 +230,22 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
     // Étiquette posée au-dessus de la dernière portion horizontale, avec un halo blanc : jamais coupée par un fil voisin.
     const lx = Math.max(xt + 70, (xt + x2) / 2);
     const ly = yc2 - hb / 2 - 26;
+    const phs = photos.filter(ph => ph.cle === cle);
+    if (phs.length > 0) {
+      const TH = 34, vus = phs.slice(0, 3), x0 = lx - (vus.length * (TH + 4) - 4) / 2, y0 = ly - TH - 16;
+      etiquettes.push(
+        <g key={`ph-${idx}`}>
+          <line x1={lx} y1={y0 + TH} x2={lx} y2={ly - 12} stroke={couleurCircuit} strokeWidth={1} strokeDasharray="2 2" />
+          {vus.map((ph, i) => (
+            <g key={ph.id} style={{ cursor: "pointer" }} onClick={() => onPhoto?.(ph.id)}>
+              <title>{`Photo de chantier — ${ph.troncon}`}</title>
+              <image href={ph.url} x={x0 + i * (TH + 4)} y={y0} width={TH} height={TH} preserveAspectRatio="xMidYMid slice" />
+              <rect x={x0 + i * (TH + 4)} y={y0} width={TH} height={TH} fill="none" stroke={couleurCircuit} strokeWidth={2} rx={3} />
+            </g>
+          ))}
+          {phs.length > 3 && <text x={x0 + 3 * (TH + 4)} y={y0 + TH / 2 + 4} fontSize={11} fontWeight={700} fill="#1c1917">+{phs.length - 3}</text>}
+        </g>);
+    }
     etiquettes.push(
       <g key={`lab-${idx}`}>
         <text x={lx} y={ly} fontSize={11} fontWeight={700} fill="#1c1917" textAnchor="middle" style={HALO}>{descr}{lg != null ? ` · ${lg.toFixed(1).replace(".", ",")} m` : ""}</text>
@@ -289,11 +312,13 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
           </div>
         </div>
         {photos.length > 0 && (
-          <div className="flex gap-2 overflow-x-auto px-3 pt-2 pb-1">
+          <div className="flex gap-3 overflow-x-auto px-3 pt-2 pb-1">
             {photos.map(ph => (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img key={ph.id} src={ph.url} alt={ph.legende ?? "Photo de chantier"} title={ph.legende ?? "Photo de chantier"} loading="lazy"
-                className="h-14 w-14 shrink-0 rounded-lg object-cover border border-ink-200 cursor-pointer" onClick={() => onPhoto?.(ph.id)} />
+              <button key={ph.id} type="button" onClick={() => onPhoto?.(ph.id)} className="flex items-center gap-2 shrink-0 text-left rounded-lg border border-ink-200 pr-2 hover:bg-ink-50">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={ph.url} alt={ph.legende ?? "Photo de chantier"} loading="lazy" className="h-12 w-12 rounded-l-lg object-cover" />
+                <span className="text-[10px] leading-tight text-ink-700 max-w-[190px]"><b>{ph.troncon}</b>{ph.legende ? <><br />{ph.legende}</> : null}</span>
+              </button>
             ))}
           </div>
         )}
