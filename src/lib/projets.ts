@@ -98,11 +98,13 @@ export async function sauverAnnexes(projetId: string, annexes: TableauAnnexe[]) 
  * d'écrire, pour ne jamais écraser des rangées modifiées depuis l'éditeur de tableau.
  */
 export async function synchroniserAnnexes(projetId: string, voulues: { id: string; nom: string }[]): Promise<TableauAnnexe[]> {
-  const { data } = await supabase.from("projets").select("tableaux_annexes").eq("id", projetId).single();
+  const { data, error } = await supabase.from("projets").select("tableaux_annexes").eq("id", projetId).single();
   const enBase = lireAnnexes((data as any)?.tableaux_annexes);
   const liste: TableauAnnexe[] = voulues.map(v => ({
     id: v.id, nom: v.nom, rows: enBase.find(a => a.id === v.id)?.rows ?? [],
   }));
+  // Lecture impossible : on n'écrit PAS (sinon les rangées déjà en base seraient écrasées par des tableaux vides).
+  if (error) { console.error("projets: lecture des tableaux annexes impossible", error); return liste; }
   await sauverAnnexes(projetId, liste);
   return liste;
 }

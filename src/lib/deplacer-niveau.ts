@@ -29,6 +29,7 @@ export function decalerNiveau(n: Niveau, dx: number, dy: number): Niveau {
   if (n.tableauPos) res.tableauPos = pt(n.tableauPos);
   if (n.pointArriveeGaines) res.pointArriveeGaines = pt(n.pointArriveeGaines);
   if (n.escaliers) res.escaliers = n.escaliers.map(xy);
+  if (n.photosChantier) res.photosChantier = n.photosChantier.map(ph => ph.point ? { ...ph, point: pt(ph.point) } : ph);   // les photos de chantier suivent leur point du plan
   if (n.boitesDerivation) {
     res.boitesDerivation = Object.fromEntries(Object.entries(n.boitesDerivation).map(([label, liste]) => [
       label, Array.isArray(liste) ? liste.map(b => ({ ...b, point: pt(b.point) })) : liste,

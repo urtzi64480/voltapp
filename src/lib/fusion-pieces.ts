@@ -98,10 +98,10 @@ export function fusionnerPieces(A: Piece, B: Piece): ResultatFusion {
   restantes.forEach(e => sortantes.set(e.de, [...(sortantes.get(e.de) ?? []), e]));
   if ([...sortantes.values()].some(l => l.length !== 1)) return { ok: false, erreur: "La fusion donnerait un contour qui se touche lui-même : les pièces ne forment pas une seule forme simple." };
   const boucle: Arete[] = [];
-  let courant = restantes[0];
+  let courant: Arete | undefined = restantes[0];
   while (courant && boucle.length <= restantes.length) {
     boucle.push(courant);
-    courant = sortantes.get(courant.vers)![0];
+    courant = sortantes.get(courant.vers)?.[0];
     if (courant === boucle[0]) break;
   }
   if (boucle.length !== restantes.length) return { ok: false, erreur: "La fusion donnerait plusieurs contours (cour intérieure ou contact en deux endroits) : impossible de fusionner ces deux pièces." };
