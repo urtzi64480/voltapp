@@ -6236,6 +6236,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             onClick={() => (deplacementNiveau ? terminerDeplacementNiveau(false) : demarrerDeplacementNiveau())} actif={!!deplacementNiveau}><Move size={16} /></Outil>
           <Outil label="Circuits manuels" onClick={() => setCircuitsManuelsOpen(o => !o)} actif={circuitsManuelsOpen}><SlidersHorizontal size={16} /></Outil>
           <Outil label="Appareillages" onClick={() => setPaletteOpen(o => !o)} actif={paletteOpen} className="lg:hidden"><Plug size={16} /></Outil>
+          </div>
           {mode === "zone" && !zoneCloisonSeule && (
             <>
               <span className="text-[11px] text-ink-500 max-w-md">
@@ -6265,8 +6266,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             </>
           )}
 
-          </div>
-          <div className="flex items-center gap-1 p-1 rounded-2xl bg-ink-100/60 border border-ink-100">
+                    <div className="flex items-center gap-1 p-1 rounded-2xl bg-ink-100/60 border border-ink-100">
 
           <Outil label="Générer les circuits" primaire onClick={handleGenerer}><Sparkles size={16} /></Outil>
           <div className="relative">
