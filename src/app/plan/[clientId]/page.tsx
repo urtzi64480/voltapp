@@ -375,7 +375,7 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
   const W = wM * scale, H = hM * scale;
   const toPx = (p: Point) => ({ x: (p.x - minX) * scale, y: (p.y - minY) * scale });
 
-  const niveauResultatComplet = resultat?.maison.niveaux.find(rn => rn.id === n.id) ?? n;
+  const niveauResultatComplet = n;   // le niveau courant porte déjà les circuitId : la copie du résultat peut être plus ancienne que le plan
   const niveauResultat: Niveau = {
     ...niveauResultatComplet,
     pieces: piecesSelectionnees ? niveauResultatComplet.pieces.filter(p => piecesSelectionnees.has(p.id)) : niveauResultatComplet.pieces,
@@ -807,7 +807,7 @@ function imprimerPlan(
   [...niveaux].sort((a, b) => a.ordre - b.ordre).forEach(n => {
     const piecesFiltrees = piecesSelectionnees ? n.pieces.filter(p => piecesSelectionnees.has(p.id)) : n.pieces;
     if (piecesFiltrees.length === 0) return;
-    const niveauResultatComplet = resultat?.maison.niveaux.find(rn => rn.id === n.id) ?? n;
+    const niveauResultatComplet = n;
     const niveauResultat: Niveau = { ...niveauResultatComplet, pieces: niveauResultatComplet.pieces.filter(p => piecesFiltrees.some(pf => pf.id === p.id)) };
     html += `<h2>${escapeXml(n.nom || NIVEAU_TYPES[n.type])}</h2><div class="meta">${piecesFiltrees.length} pièce${piecesFiltrees.length > 1 ? "s" : ""}</div>`;
     html += rendreSVGImprimable(n, resultat, showCircuits, showHauteurs, showLongueurs, piecesSelectionnees, showCotes, showCotesPieces, showCotesExt, showCotesOuv);
@@ -2481,7 +2481,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setNiveaux(nvs => nvs.map(n => (n.id === niveauActifId ? fn(n) : n)));
   };
 
-  const invalidateResultat = () => { if (resultat) { setResultat(null); setShowCircuits(false); } };
+  // Une modification du plan NE fait PLUS disparaître les circuits générés (automatiques ou manuels) : ils restent affichés et on peut les
+  // montrer / masquer sans rien regénérer. On note seulement que le plan a bougé depuis la dernière génération : les circuits sont alors
+  // recalculés automatiquement avant « Pousser vers le tableau » (un appareillage ajouté entre-temps rejoint alors ses circuits).
+  const resultatPerimeRef = useRef(false);
+  const invalidateResultat = () => { if (resultat) resultatPerimeRef.current = true; };
 
   // Recalcule TOUT DE SUITE les circuits MANUELS après une édition — et uniquement eux : les circuits automatiques déjà générés
   // restent tels quels, et rien n'est généré tant que tu ne cliques pas sur « Générer » (qui reprendra les manuels tels quels).
@@ -5233,6 +5237,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const handleGenerer = () => {
     const res = genererCircuits({ niveaux });
+    resultatPerimeRef.current = false;
     setResultat(res);
     setNiveaux(res.maison.niveaux);
     setShowCircuits(true);
@@ -5319,6 +5324,21 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     // Bloquant : un circuit d'éclairage manuel sans tous ses retours / navettes ne part pas au tableau.
     if (eclairageManuelIncomplet.length > 0) { setAlerteEclairage(true); return; }
     setPushing(true);
+    // Le plan a changé depuis la dernière génération : on recalcule les circuits (comme un clic sur « Générer ») pour que TOUS les
+    // appareillages ajoutés ou déplacés entre-temps soient dans les circuits poussés. La visibilité choisie est conservée.
+    let resultat_ = resultat;
+    let recalcules = false;
+    if (resultatPerimeRef.current) {
+      const g = genererCircuits({ niveaux });
+      resultatPerimeRef.current = false;
+      recalcules = true;
+      const labelsVisibles = new Set(resultat.breakers.filter(b => circuitsVisibles.has(b.id)).map(b => b.label));
+      const labelsConnus = new Set(resultat.breakers.map(b => b.label));
+      resultat_ = g;
+      setResultat(g);
+      setNiveaux(g.maison.niveaux);
+      setCircuitsVisibles(new Set(g.breakers.filter(b => labelsVisibles.has(b.label) || !labelsConnus.has(b.label)).map(b => b.id)));
+    }
     // Circuits manuels "déjà existants" (CircuitManuel.nonRelieTableau) : jamais poussés
     // au tableau — ils restent protégés par le disjoncteur déjà en place sur l'installation
     // existante, hors de ce plan.
@@ -5326,9 +5346,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       niveaux.flatMap(n => (n.circuitsManuels ?? []).filter(m => m.nonRelieTableau).map(m => m.id)),
     );
     // Courant faible (RJ45) : jamais de disjoncteur au tableau.
-    const breakersAPousser = resultat.breakers.filter(b => !estCircuitSansDisjoncteur(b) && (b.manuelId == null || !idsManuelsNonRelies.has(b.manuelId)));
-    const nbExclus = resultat.breakers.filter(b => !estCircuitSansDisjoncteur(b)).length - breakersAPousser.length;
-    // Renommer un circuit automatique (Niveau.nomsCircuits) ne modifie jamais resultat.breakers
+    const breakersAPousser = resultat_.breakers.filter(b => !estCircuitSansDisjoncteur(b) && (b.manuelId == null || !idsManuelsNonRelies.has(b.manuelId)));
+    const nbExclus = resultat_.breakers.filter(b => !estCircuitSansDisjoncteur(b)).length - breakersAPousser.length;
+    // Renommer un circuit automatique (Niveau.nomsCircuits) ne modifie jamais resultat_.breakers
     // (label "naturel", utilisé comme clé stable par couleursCircuits/ordresCircuits) — on
     // résout donc le nom affiché ici, juste avant de pousser vers le tableau, en fusionnant
     // les nomsCircuits de tous les niveaux (le label naturel inclut déjà le nom du niveau,
@@ -5362,7 +5382,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       return { rowsFinal: integrerCoffretCommunication([...rowsConservees, ...remap], rj45), nbRangees: remap.length };
     };
     // Circuits RJ45 (sans disjoncteur) par tableau cible — leurs ports vont dans le coffret de communication de ce tableau.
-    const rj45Pousses = resultat.breakers.filter(b => estCircuitSansDisjoncteur(b)).map(b => ({ ...b, label: tousNomsCircuits[b.label] ?? b.label }));
+    const rj45Pousses = resultat_.breakers.filter(b => estCircuitSansDisjoncteur(b)).map(b => ({ ...b, label: tousNomsCircuits[b.label] ?? b.label }));
     const rj45Groupes: Record<string, Breaker[]> = { [TABLEAU_PRINCIPAL]: [] };
     annexes.forEach(a => { rj45Groupes[a.id] = []; });
     rj45Pousses.forEach(b => { rj45Groupes[cibleDuNiveau(b.niveauId)].push(b); });
@@ -5401,6 +5421,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       `${resPrincipal.nbRangees} rangée(s) et ${groupes[TABLEAU_PRINCIPAL].length} circuit(s) mis à jour dans le tableau principal.` +
       (annexes.length > 0 ? ` Annexes : ${nbRangeesAnnexes} rangée(s), ${nbCircuitsAnnexes} circuit(s).` : "") +
       (nbExclus > 0 ? ` ${nbExclus} circuit(s) déjà existant(s) non poussé(s).` : "")+
+      (recalcules ? " Circuits recalculés avant la poussée (le plan avait changé)." : "")+
       (rj45Pousses.some(b => !b.label.startsWith("Antenne TV")) ? ` ${rj45Pousses.filter(b => !b.label.startsWith("Antenne TV")).length} port(s) RJ45 dans le coffret de communication.` : ""),
     );
     setTimeout(() => setPushMsg(null), 5000);
@@ -5665,30 +5686,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   if (loading) return <Shell><div className="flex items-center justify-center h-64 text-ink-400">Chargement…</div></Shell>;
 
 
-  // Actions « circuits » (générer / afficher / point de départ manquant) : mêmes éléments en 2D (bandeau en haut à gauche)
-  // et en 3D (onglet « Vue » du bandeau de commandes). null = rien à proposer.
-  const blocCircuits: ReactNode = (() => {
-    if (!niveauActif || !niveauActif.pieces.some(pc => pc.appareillages.length > 0)) return null;
-    const origine = origineCircuits(niveauActif);
-    if (resultat && showCircuits && origine) return null;
-  return (
-      <>
-        {!resultat && (
-          <button onClick={handleGenerer} className="btn-volt !text-xs shadow-lg"><Sparkles size={13} /> Circuits non affichés — Générer les circuits</button>
-        )}
-        {resultat && !showCircuits && (
-          <button onClick={() => setShowCircuits(true)} className="btn-volt !text-xs shadow-lg"><Eye size={13} /> Afficher les circuits</button>
-        )}
-        {resultat && showCircuits && !origine && (
-          <div className="bg-amber-50 border border-amber-300 text-amber-800 text-xs rounded-lg px-3 py-2 shadow">
-            Aucun point de départ sur ce niveau : pose le <strong>tableau</strong> (⚡ Position tableau) ou le point d&apos;arrivée des gaines pour tracer les circuits.
-          </div>
-        )}
-      </>
-    );
-  })();
+  // Plus de bandeau « Circuits non affichés / Générer » : il apparaissait et disparaissait à chaque modification et faisait sauter l'écran.
+  // Les circuits générés restent affichés ; « Générer les circuits » et le bouton Circuits de la barre d'outils suffisent.
+  const blocCircuits: ReactNode = null;
 
-    // Point (écran) où le câble touche l'appareillage : milieu du bord du carré côté mur — exactement le carré dessiné par le
+  // Point (écran) où le câble touche l'appareillage : milieu du bord du carré côté mur — exactement le carré dessiné par le
   // rendu des appareillages (même ancrage, même demi-taille, même décalage de plaque). Hors mur : le point enregistré.
   const pointContactAppareil = (piece: Piece, a: AppareillagePlace, stocke: Point): Point => {
     if (!niveauActif || !estMural(a.type)) return stocke;
