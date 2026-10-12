@@ -715,6 +715,7 @@ export function reamorcerCompteurId(niveaux: Niveau[]): void {
     Object.values(n.liaisonWaypoints ?? {}).forEach(liste => liste.forEach(w => { max = Math.max(max, w.id); }));
     Object.values(n.boitesDerivation ?? {}).forEach(liste => liste.forEach(b => { max = Math.max(max, b.id); }));
     (n.escaliers ?? []).forEach(e => { max = Math.max(max, e.id); });
+    (n.photosChantier ?? []).forEach(ph => { max = Math.max(max, ph.id); }); // photos de chantier : même compteur (sinon une nouvelle photo pouvait reprendre l'id d'une photo existante)
   });
   if (max >= _uidM) _uidM = max;
 }
