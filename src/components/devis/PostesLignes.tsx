@@ -237,6 +237,8 @@ export default function PostesLignes({ lignes, setLignes, postes, setPostes, pre
   }
 
   function supprimerPoste(nom: string) {
+    const nb = lignes.filter(l => posteDe(l) === nom).length;
+    if (nb > 0 && !window.confirm(`Supprimer le poste « ${nom} » et ses ${nb} ligne${nb > 1 ? "s" : ""} ?`)) return;
     setLignes(prev => prev.filter(l => posteDe(l) !== nom));
     setPostes(prev => prev.filter(p => p !== nom));
   }
