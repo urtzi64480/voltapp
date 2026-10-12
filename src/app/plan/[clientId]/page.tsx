@@ -58,8 +58,8 @@ import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFace
 import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
 import Vue3DMaison from "@/components/plan/Vue3DMaison";
 import { toutesBoitesNiveau, segmentsDepuisMarche } from "@/lib/maison-engine";
-import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, genererCircuitsManuelsSeuls, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
-import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur, BREAKER_TYPES, effectiveSection } from "@/lib/electrical-constants";
+import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, integrerCoffretCommunication, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, genererCircuitsManuelsSeuls, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
+import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur, estAccessoireTableau, BREAKER_TYPES, effectiveSection } from "@/lib/electrical-constants";
 import { verifierEclairageManuel, fermetureCircuitLumiere, commandesPartagees } from "@/lib/controle-eclairage";
 import { coudesSegment } from "@/lib/routage-circuits";
 import { natureLiaison, conducteursSegment, geometrieCable, couleurDominante, COULEUR_FIL, LEGENDE_FILS, LIBELLE_NATURE } from "@/lib/couleurs-fils";
@@ -85,7 +85,7 @@ const CLOISON_SEUIL_PX = 12;
 // Types de circuit proposés pour un circuit manuel — tout CIRCUITS sauf les entrées qui ne
 // correspondent pas à un vrai circuit posé sur le plan (arrivée générale, parafoudre) et
 // l'ancienne clé "chauffage" (un seul radiateur, historique) remplacée par chauffage_16/20.
-const CIRCUIT_KEYS_MANUELS = Object.keys(CIRCUITS).filter(k => !["general", "parafoudre", "chauffage"].includes(k));
+const CIRCUIT_KEYS_MANUELS = Object.keys(CIRCUITS).filter(k => !["general", "parafoudre", "chauffage", "coupure_generale", "prise_modulaire"].includes(k));
 
 // Réglage de précision du plan (modifiable dans la barre d'outils) : pas de la grille au centimètre par défaut,
 // aimantation aux sommets des autres pièces désactivée par défaut, Alt = désactivation momentanée.
@@ -3966,7 +3966,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const nomsCircuits = new Map<number, string>(circuitsNiveauActif.map(x => [x.id, nomAffiche(x)] as const));
     // Section et calibre : ceux du TABLEAU enregistré (module Tableau) s'il contient ce circuit, sinon ceux du plan.
     const labelTableau = b.manuelId != null ? b.label : (niveauActif.nomsCircuits?.[b.label] ?? b.label);
-    const dansTableau = (tableauPourSchema ?? []).flatMap(r => r.slots).find(x => x && x.label === labelTableau && !BREAKER_TYPES[x.type]?.isDiff) ?? null;
+    const dansTableau = (tableauPourSchema ?? []).flatMap(r => r.slots).find(x => x && x.label === labelTableau && !BREAKER_TYPES[x.type]?.isDiff && !estAccessoireTableau(x)) ?? null;
     const section = dansTableau ? effectiveSection(dansTableau) : (b.customSection ?? CIRCUITS[b.circuit]?.section ?? "1.5");
     const amperesAffiches = dansTableau ? dansTableau.amperes : b.amperes;
     const schema = construireSchemaTechnique({
@@ -5216,7 +5216,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
 
   const handlePousserVersTableau = async () => {
-    if (!resultat || resultat.breakers.filter(b => !estCircuitSansDisjoncteur(b)).length === 0) return;
+    if (!resultat || resultat.breakers.length === 0) return;
     // Bloquant : un circuit d'éclairage manuel sans tous ses retours / navettes ne part pas au tableau.
     if (eclairageManuelIncomplet.length > 0) { setAlerteEclairage(true); return; }
     setPushing(true);
@@ -5253,13 +5253,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     // clic sur "Pousser" dupliquerait les rangées. Les rangées créées à la main dans l'éditeur
     // de tableau (sans ce tag) ne sont jamais touchées. Appliqué à TOUS les tableaux, même
     // sans nouveau circuit : un niveau rattaché à un autre tableau doit disparaître de l'ancien.
-    const remplacerLotPlan = (existantes: BreakerRow[], circuits: typeof breakersAvecNoms) => {
+    const remplacerLotPlan = (existantes: BreakerRow[], circuits: typeof breakersAvecNoms, rj45: Breaker[] = []) => {
       const rowsConservees = existantes.filter(r => r.origine !== "plan");
       const nouvelles = circuits.length > 0 ? assemblerTableau(circuits) : [];
       const offset = maxIdRows(rowsConservees) + 100000;
-      const remap = remapperIdsRows(nouvelles, offset).map((r, i) => ({ ...r, name: `Rangée ${rowsConservees.length + i + 1}` }));
-      return { rowsFinal: [...rowsConservees, ...remap], nbRangees: remap.length };
+      const nbDejaRangees = rowsConservees.filter(r => r.kind !== "multimedia").length;
+      const remap = remapperIdsRows(nouvelles, offset).map((r, i) => ({ ...r, name: `Rangée ${nbDejaRangees + i + 1}` }));
+      // Coffret de communication : un port RJ45 par prise RJ45 du plan (voir integrerCoffretCommunication).
+      return { rowsFinal: integrerCoffretCommunication([...rowsConservees, ...remap], rj45), nbRangees: remap.length };
     };
+    // Circuits RJ45 (sans disjoncteur) par tableau cible — leurs ports vont dans le coffret de communication de ce tableau.
+    const rj45Pousses = resultat.breakers.filter(b => estCircuitSansDisjoncteur(b)).map(b => ({ ...b, label: tousNomsCircuits[b.label] ?? b.label }));
+    const rj45Groupes: Record<string, Breaker[]> = { [TABLEAU_PRINCIPAL]: [] };
+    annexes.forEach(a => { rj45Groupes[a.id] = []; });
+    rj45Pousses.forEach(b => { rj45Groupes[cibleDuNiveau(b.niveauId)].push(b); });
 
     const { data: c } = await supabase.from("projets").select("tableau_config, tableaux_annexes").eq("id", projet.id).single();
     let rowsPrincipal: BreakerRow[] = [];
@@ -5268,7 +5275,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
     const annexesBase = lireAnnexes((c as any)?.tableaux_annexes);
 
-    const resPrincipal = remplacerLotPlan(rowsPrincipal, groupes[TABLEAU_PRINCIPAL]);
+    const resPrincipal = remplacerLotPlan(rowsPrincipal, groupes[TABLEAU_PRINCIPAL], rj45Groupes[TABLEAU_PRINCIPAL]);
     await sauverTableau(clientId, projet.id, JSON.stringify(resPrincipal.rowsFinal));
 
     let nbRangeesAnnexes = 0;
@@ -5281,7 +5288,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       annexesBase.forEach(a => parId.set(a.id, a));
       const annexesFinales = annexes.map(a => {
         const base = parId.get(a.id) ?? a;
-        const r = remplacerLotPlan(base.rows ?? [], groupes[a.id] ?? []);
+        const r = remplacerLotPlan(base.rows ?? [], groupes[a.id] ?? [], rj45Groupes[a.id] ?? []);
         nbRangeesAnnexes += r.nbRangees;
         nbCircuitsAnnexes += (groupes[a.id] ?? []).length;
         return { ...base, rows: r.rowsFinal };
@@ -5294,7 +5301,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setPushMsg(
       `${resPrincipal.nbRangees} rangée(s) et ${groupes[TABLEAU_PRINCIPAL].length} circuit(s) mis à jour dans le tableau principal.` +
       (annexes.length > 0 ? ` Annexes : ${nbRangeesAnnexes} rangée(s), ${nbCircuitsAnnexes} circuit(s).` : "") +
-      (nbExclus > 0 ? ` ${nbExclus} circuit(s) déjà existant(s) non poussé(s).` : ""),
+      (nbExclus > 0 ? ` ${nbExclus} circuit(s) déjà existant(s) non poussé(s).` : "")+
+      (rj45Pousses.some(b => !b.label.startsWith("Antenne TV")) ? ` ${rj45Pousses.filter(b => !b.label.startsWith("Antenne TV")).length} port(s) RJ45 dans le coffret de communication.` : ""),
     );
     setTimeout(() => setPushMsg(null), 5000);
   };

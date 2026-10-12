@@ -74,7 +74,7 @@ import { MAX_POSTES_PLAQUE, estCommande, estLumiere } from "./maison-types";
 import { appareillagesParPieceReelle } from "./piece-reelle";
 import {
   Breaker as TableauBreaker, BreakerRow, BREAKER_TYPES, CIRCUITS,
-  effectiveSection, gaineRecommandee, uid, estCircuitSansDisjoncteur,
+  effectiveSection, gaineRecommandee, uid, estCircuitSansDisjoncteur, estAccessoireTableau,
 } from "./electrical-constants";
 import {
   creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurJambe, pieceDeJambe, indexPiecesAppareils,
@@ -240,6 +240,9 @@ interface IndexTableau {
   disjoncteurs: TableauBreaker[]; // tout appareil qui n'est PAS un différentiel, où qu'il soit dans la rangée
   differentiels: TableauBreaker[]; // tout interrupteur différentiel (BREAKER_TYPES[type].isDiff), où qu'il soit
   nbRangees: number;               // rangées portant au moins un appareil (une goulotte de montage chacune)
+  sectionneurs: TableauBreaker[];  // coupures générales (interrupteurs-sectionneurs)
+  prisesModulaires: number;        // prises 16 A modulaires posées sur le rail
+  coffretCommunication: boolean;   // un coffret de communication (case annexe multimédia) existe dans le tableau
 }
 
 // Le tableau est lu SANS rien perdre : un appareil est un différentiel d'après son TYPE (diff-AC / diff-A / diff-F),
@@ -249,19 +252,24 @@ function indexerTableau(rows: BreakerRow[]): IndexTableau {
   const parLabel = new Map<string, TableauBreaker>();
   const disjoncteurs: TableauBreaker[] = [];
   const differentiels: TableauBreaker[] = [];
-  let nbRangees = 0;
+  const sectionneurs: TableauBreaker[] = [];
+  let prisesModulaires = 0, coffretCommunication = false, nbRangees = 0;
   rows.forEach(row => {
     let rangeeUtilisee = false;
+    if (row.kind === "multimedia") coffretCommunication = true;
     row.slots.forEach(b => {
       if (!b || typeof b.type !== "string") return;
       rangeeUtilisee = true;
+      // Appareils modulaires qui ne sont pas des disjoncteurs : chiffrés à part (jamais comme « disjoncteur 16A »). Les ports RJ45 du coffret
+      // ne s'ajoutent à rien : la prise RJ45 et son câble sont déjà chiffrés avec l'appareillage du plan.
+      if (estAccessoireTableau(b)) { if (b.type === "sect") sectionneurs.push(b); else if (b.type === "prise-mod") prisesModulaires++; return; }
       if (BREAKER_TYPES[b.type]?.isDiff) { differentiels.push(b); return; }
       disjoncteurs.push(b);
       if (b.label) parLabel.set(b.label, b);
     });
     if (rangeeUtilisee) nbRangees++;
   });
-  return { parLabel, disjoncteurs, differentiels, nbRangees };
+  return { parLabel, disjoncteurs, differentiels, nbRangees, sectionneurs, prisesModulaires, coffretCommunication };
 }
 
 // ─── PASSE 1 — BESOINS BRUTS (géométrie + tableau, sans catalogue) ─────────
@@ -598,6 +606,13 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
   parDifferentiel.forEach((nb, cle) => {
     ajouter(`differentiel_${cle}`, `differentiel_${cle}`, `Différentiel ${cle.replace("_", " ")}`, PSEUDO_TABLEAU, nb, "u");
   });
+
+  // Coupure générale (par calibre), prises 16 A modulaires et coffret de communication (case annexe multimédia).
+  const parSectionneur = new Map<number, number>();
+  indexTableau.sectionneurs.forEach(b => parSectionneur.set(b.amperes, (parSectionneur.get(b.amperes) ?? 0) + 1));
+  parSectionneur.forEach((nb, amperes) => ajouter(`interrupteur_sectionneur_${amperes}A`, `interrupteur_sectionneur_${amperes}A`, `Interrupteur-sectionneur ${amperes}A (coupure générale)`, PSEUDO_TABLEAU, nb, "u"));
+  ajouter("prise_modulaire_16A", "prise_modulaire_16A", "Prise de courant modulaire 16A 2P+T (rail DIN)", PSEUDO_TABLEAU, indexTableau.prisesModulaires, "u");
+  ajouter("coffret_communication", "coffret_communication", "Coffret de communication (grade 3, avec répartiteur RJ45)", PSEUDO_TABLEAU, indexTableau.coffretCommunication ? 1 : 0, "u");
 
   // Goulottes de montage du tableau : une par rangée équipée (principal + annexes), chiffrées avec les appareils.
   ajouter("goulotte_tableau", "goulotte_tableau", "Goulotte de montage du tableau (1 par rangée)", PSEUDO_TABLEAU, indexTableau.nbRangees, "u");

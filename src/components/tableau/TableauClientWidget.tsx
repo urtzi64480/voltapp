@@ -86,7 +86,7 @@ function parseAnnexes(raw: string | null | undefined): { nom: string; nbCircuits
     if (!Array.isArray(parsed)) return [];
     return parsed.map((t: any) => ({
       nom: typeof t?.nom === "string" && t.nom ? t.nom : "Tableau annexe",
-      nbCircuits: (Array.isArray(t?.rows) ? t.rows : []).flatMap((r: BreakerRow) => safeBreakers(r)).filter((b: Breaker) => !BREAKER_TYPES[b.type]?.isDiff).length,
+      nbCircuits: (Array.isArray(t?.rows) ? t.rows : []).flatMap((r: BreakerRow) => safeBreakers(r)).filter((b: Breaker) => !BREAKER_TYPES[b.type]?.isDiff && !["sect", "prise-mod", "rj45"].includes(b.type)).length,
     }));
   } catch { return []; }
 }
@@ -169,7 +169,7 @@ function CarteTableau({ clientId, projetId, projetNom, rows, annexes }: {
     : score >= 60 ? "text-amber-600 bg-amber-50 border-amber-200"
     : "text-red-600 bg-red-50 border-red-200";
 
-  const allBreakers = rows.flatMap(r => safeBreakers(r)).filter(b => !BREAKER_TYPES[b.type]?.isDiff);
+  const allBreakers = rows.flatMap(r => safeBreakers(r)).filter(b => !BREAKER_TYPES[b.type]?.isDiff && !["sect", "prise-mod", "rj45"].includes(b.type));
   const preview = allBreakers.slice(0, 10);
 
   return (

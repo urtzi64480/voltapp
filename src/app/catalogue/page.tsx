@@ -208,6 +208,9 @@ const SOUS_CATEGORIES_CONNUES: { code: string; label: string }[] = [
   { code: "disjoncteur_63A", label: "Disjoncteur 63A" },
   ...[25, 40, 63, 80, 100, 125].flatMap(cal =>
     (["AC", "A", "F"] as const).map(t => ({ code: `differentiel_${cal}A_${t}`, label: `Différentiel ${cal}A Type ${t}` }))),
+  ...[40, 63, 80, 100, 125].map(cal => ({ code: `interrupteur_sectionneur_${cal}A`, label: `Interrupteur-sectionneur ${cal}A (coupure générale)` })),
+  { code: "prise_modulaire_16A", label: "Prise de courant modulaire 16A 2P+T (rail DIN)" },
+  { code: "coffret_communication", label: "Coffret de communication (grade 3, avec répartiteur RJ45)" },
   { code: "goulotte_tableau", label: "Goulotte de montage du tableau (1 par rangée)" },
   // Appareillages (prise, interrupteurs simples/doubles, RJ45, points lumineux, variantes domotiques, sortie
   // spécialisée…) : dérivés du moteur pré-devis — voir NOMENCLATURE_APPAREILLAGE.

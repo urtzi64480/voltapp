@@ -15,7 +15,7 @@ import {
   CommandeType, GroupeLumineux, PieceConfig, Breaker, BreakerRow,
   BREAKER_TYPES, CIRCUITS, SECTIONS_CABLE, GAINES_IRL,
   gaineRecommandee, cablesGroupe, cablesPrises, labelCommande,
-  DIFF_HIERARCHY, AMPERES, AMPERES_DIFFERENTIEL, getCategory, effectiveSection, uid,
+  DIFF_HIERARCHY, AMPERES, AMPERES_DIFFERENTIEL, getCategory, effectiveSection, uid, estAccessoireTableau,
 } from "@/lib/electrical-constants";
 
 // ─── CONSTANTES LOCALES (mise en page du tableau, propres à cette page) ────────
@@ -26,6 +26,7 @@ const BREAKER_H = 130;
 
 const defaultGroupe = (): GroupeLumineux => ({ nbPoints: 1, typeCommande: "simple", nbCommandes: 1 });
 const defaultPiece = (): PieceConfig => ({ nom: "", groupes: [defaultGroupe()], nbPrises: 1 });
+const emptyCoffret = (): BreakerRow => ({ id: uid(), name: "Coffret de communication", slots: Array(8).fill(null), kind: "multimedia" });
 const emptyRow = (rowNum: number): BreakerRow => ({ id: uid(), name: `Rangée ${rowNum}`, slots: Array(9).fill(null) });
 
 function safeBreakers(slots: (Breaker | null)[] | undefined): Breaker[] {
@@ -47,7 +48,8 @@ function checkNFC(rows: BreakerRow[]) {
     return { errors, warnings, infos, score: 100 };
   }
 
-  const allBreakers = rows.flatMap(r => safeBreakers(r.slots));
+  // Coffret de communication et appareils modulaires (coupure générale, prises 16 A, ports RJ45) : hors contrôle des circuits.
+  const allBreakers = rows.filter(r => r.kind !== "multimedia").flatMap(r => safeBreakers(r.slots)).filter(b => !estAccessoireTableau(b));
   const diffs = allBreakers.filter(b => !!BREAKER_TYPES[b.type]?.isDiff);
 
   // ── ERREURS : sécurité électrique ──
@@ -59,10 +61,11 @@ function checkNFC(rows: BreakerRow[]) {
   }
 
   rows.forEach(row => {
+    if (row.kind === "multimedia") return;
     const rawDiff = Array.isArray(row.slots) ? row.slots[0] : null;
     const diff = (rawDiff != null && typeof rawDiff === "object" && typeof (rawDiff as any).type === "string")
       ? rawDiff as Breaker : null;
-    const breakers = safeBreakers(Array.isArray(row.slots) ? row.slots.slice(1) : []);
+    const breakers = safeBreakers(Array.isArray(row.slots) ? row.slots.slice(1) : []).filter(b => !estAccessoireTableau(b));
 
     if (breakers.length > 8) {
       errors.push({ id: `max8-${row.id}`, msg: `Rangée "${row.name}" : plus de 8 circuits sous le différentiel.`, rule: "Art. 531.2.4" });
@@ -222,6 +225,60 @@ function checkNFC(rows: BreakerRow[]) {
 
 // ─── LEGRAND SVG ──────────────────────────────────────────────────────────────
 
+// Appareils modulaires qui ne sont pas des disjoncteurs : coupure générale (interrupteur-sectionneur), prise 16 A modulaire, port RJ45.
+function AppareilModulaireSVG({ breaker, w, h, isSelected }: { breaker: Breaker; w: number; h: number; isSelected: boolean }) {
+  const corps = (fond: string) => (<>
+    <rect x="2" y="3" width={w - 3} height={h - 3} rx="5" fill="rgba(0,0,0,0.18)" />
+    <rect x="0.5" y="0.5" width={w - 1} height={h - 1} rx="5" fill={fond} stroke="#b8b8b4" strokeWidth="1" />
+    <rect x="0.5" y="0.5" width={w - 1} height="20" rx="5" fill="#c8c8c4" /><rect x="0.5" y="14" width={w - 1} height="6" fill="#c8c8c4" />
+    <rect x="0.5" y={h - 20} width={w - 1} height="20" rx="5" fill="#c8c8c4" /><rect x="0.5" y={h - 20} width={w - 1} height="6" fill="#c8c8c4" />
+  </>);
+  let contenu: JSX.Element;
+  if (breaker.type === "sect") {
+    // Interrupteur-sectionneur : large manette rouge/noire « I / 0 », calibre en bas.
+    contenu = (<>
+      {corps("#ebebea")}
+      <rect x={w / 2 - 15} y="26" width="30" height="52" rx="5" fill="#1a1a1a" />
+      <rect x={w / 2 - 12} y="29" width="24" height="26" rx="4" fill="#dc2626" />
+      <rect x={w / 2 - 12} y="57" width="24" height="18" rx="4" fill="#3f3f46" />
+      <text x={w / 2} y="47" textAnchor="middle" fontSize="12" fontWeight="900" fill="#fff" fontFamily="monospace">I</text>
+      <text x={w / 2} y="70" textAnchor="middle" fontSize="12" fontWeight="900" fill="#e5e5e5" fontFamily="monospace">0</text>
+      <rect x={w / 2 - 14} y="82" width="28" height="14" rx="2.5" fill="#f8f8f6" />
+      <text x={w / 2} y="92.5" textAnchor="middle" fontSize="8.5" fontWeight="900" fill="#1a1a1a" fontFamily="monospace">{breaker.amperes}A</text>
+      <text x={w / 2} y="108" textAnchor="middle" fontSize="6" fontWeight="700" fill="#555" fontFamily="monospace">COUPURE</text>
+      <text x={w / 2} y="115" textAnchor="middle" fontSize="6" fontWeight="700" fill="#555" fontFamily="monospace">GÉNÉRALE</text>
+    </>);
+  } else if (breaker.type === "prise-mod") {
+    // Prise de courant modulaire 2P+T : face blanche, deux alvéoles et ergot de terre.
+    contenu = (<>
+      {corps("#f2f2f0")}
+      <rect x="5" y="24" width={w - 10} height="62" rx="6" fill="#ffffff" stroke="#d4d4d0" />
+      <circle cx={w / 2} cy="55" r="17" fill="#f5f5f4" stroke="#c8c8c4" strokeWidth="1.5" />
+      <circle cx={w / 2 - 7} cy="55" r="2.6" fill="#3f3f46" /><circle cx={w / 2 + 7} cy="55" r="2.6" fill="#3f3f46" />
+      <rect x={w / 2 - 1.5} y="38.5" width="3" height="5" rx="1" fill="#6b7280" /><rect x={w / 2 - 1.5} y="66.5" width="3" height="5" rx="1" fill="#6b7280" />
+      <text x={w / 2} y="100" textAnchor="middle" fontSize="8.5" fontWeight="900" fill="#1a1a1a" fontFamily="monospace">16A</text>
+      <text x={w / 2} y="110" textAnchor="middle" fontSize="6" fontWeight="700" fill="#555" fontFamily="monospace">2P+T</text>
+    </>);
+  } else {
+    // Port RJ45 : jack bleu clair, huit contacts dorés.
+    contenu = (<>
+      {corps("#e0f2fe")}
+      <rect x="6" y="30" width={w - 12} height="46" rx="4" fill="#0f172a" />
+      <rect x="9" y="34" width={w - 18} height="32" rx="2" fill="#020617" />
+      {Array.from({ length: 8 }, (_, i) => <rect key={i} x={10 + i * ((w - 22) / 8)} y="48" width="2" height="14" fill="#facc15" />)}
+      <rect x={w / 2 - 6} y="26" width="12" height="6" rx="1.5" fill="#1e293b" />
+      <text x={w / 2} y="92" textAnchor="middle" fontSize="9" fontWeight="900" fill="#0c4a6e" fontFamily="monospace">RJ45</text>
+      <text x={w / 2} y="104" textAnchor="middle" fontSize="6" fontWeight="700" fill="#0369a1" fontFamily="monospace">CAT.6 STP</text>
+    </>);
+  }
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: "block" }}>
+      {contenu}
+      {isSelected && <rect x="0.5" y="0.5" width={w - 1} height={h - 1} rx="5" fill="none" stroke="#F59E0B" strokeWidth="2.5" />}
+    </svg>
+  );
+}
+
 function BreakerSVG({ breaker, isEmpty, isSelected, isDiffSlot }: {
   breaker: Breaker | null; isEmpty: boolean; isSelected: boolean; isDiffSlot?: boolean;
 }) {
@@ -239,6 +296,8 @@ function BreakerSVG({ breaker, isEmpty, isSelected, isDiffSlot }: {
       </svg>
     );
   }
+
+  if (breaker && estAccessoireTableau(breaker)) return <AppareilModulaireSVG breaker={breaker} w={w} h={h} isSelected={isSelected} />;
 
   return (
     <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: "block" }}>
@@ -323,8 +382,9 @@ function BreakerSVG({ breaker, isEmpty, isSelected, isDiffSlot }: {
 
 // ─── BREAKER EDIT MODAL ───────────────────────────────────────────────────────
 
-function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, onShowSchema, onRemove }: {
+function BreakerEditModal({ breaker, slotIndex, multimedia, compliance, onUpdate, onClose, onShowSchema, onRemove }: {
   breaker: Breaker;
+  multimedia?: boolean;
   slotIndex: number;
   compliance: ReturnType<typeof checkNFC>;
   onUpdate: (b: Breaker) => void;
@@ -333,6 +393,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
   onRemove: () => void;
 }) {
   const isDiff = !!BREAKER_TYPES[breaker.type]?.isDiff;
+  const accessoire = estAccessoireTableau(breaker);
   const spec = CIRCUITS[breaker.circuit];
   const category = getCategory(breaker.circuit);
   const section = effectiveSection(breaker);
@@ -380,6 +441,21 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
     });
   };
 
+  // Nature de l'appareil : disjoncteur, différentiel, ou appareil modulaire (coupure générale, prise 16 A, port RJ45 du coffret de communication).
+  const natureActuelle = isDiff ? "diff" : accessoire ? breaker.type : "disj";
+  const NATURES: { cle: string; libelle: string; icone: string }[] = multimedia
+    ? [{ cle: "rj45", libelle: "Port RJ45", icone: "🌐" }, { cle: "prise-mod", libelle: "Prise 16 A", icone: "🔌" }, { cle: "sect", libelle: "Coupure générale", icone: "⏻" }]
+    : [{ cle: "disj", libelle: "Disjoncteur", icone: "⚡" }, { cle: "diff", libelle: "Différentiel", icone: "🔲" }, { cle: "prise-mod", libelle: "Prise 16 A modulaire", icone: "🔌" }, { cle: "sect", libelle: "Coupure générale", icone: "⏻" }];
+  const changerNature = (cle: string) => {
+    if (cle === natureActuelle) return;
+    const base = { ...breaker, pieces: [] as PieceConfig[] };
+    if (cle === "disj") onUpdate({ ...base, type: "1P", circuit: "prise_16", amperes: 16, customSection: "1.5", label: breaker.label });
+    else if (cle === "diff") onUpdate({ ...base, type: "diff-AC", circuit: "general", amperes: 40, customSection: "10.0" });
+    else if (cle === "prise-mod") onUpdate({ ...base, type: "prise-mod", circuit: "prise_modulaire", amperes: 16, customSection: "1.5", label: breaker.label || "Prise de service" });
+    else if (cle === "sect") onUpdate({ ...base, type: "sect", circuit: "coupure_generale", amperes: 63, customSection: "10.0", label: breaker.label || "Coupure générale" });
+    else if (cle === "rj45") onUpdate({ ...base, type: "rj45", circuit: "communication", amperes: 0, customSection: undefined, label: breaker.label || "RJ45" });
+  };
+
   const sectionNum = parseFloat(section);
   const maxAmpSection =
     sectionNum <= 1.5 ? 16 :
@@ -398,13 +474,25 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
           <div className="flex items-center gap-2">
             <span className="text-xl">{isDiff ? "🔲" : (spec || CIRCUITS.autre).icon}</span>
             <span className="font-semibold text-ink-900">
-              {isDiff ? "Différentiel" : "Disjoncteur"} — emplacement {slotIndex + 1}
+              {isDiff ? "Différentiel" : accessoire ? (BREAKER_TYPES[breaker.type]?.desc.split(" — ")[0] ?? "Appareil modulaire") : "Disjoncteur"} — emplacement {slotIndex + 1}
             </span>
           </div>
           <button onClick={onClose} className="btn-ghost !px-2 !py-1 text-ink-400">✕</button>
         </div>
 
         <div className="p-4 flex flex-col gap-4 overflow-y-auto flex-1">
+          <div>
+            <label className="label">Nature de l&apos;appareil</label>
+            <div className="flex flex-wrap gap-2">
+              {NATURES.map(n => (
+                <button key={n.cle} onClick={() => changerNature(n.cle)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${natureActuelle === n.cle ? "bg-ink-900 text-volt-400 border-ink-700" : "bg-ink-50 text-ink-500 border-ink-200 hover:border-ink-400"}`}>
+                  {n.icone} {n.libelle}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div>
             <label className="label">Libellé (étiquette)</label>
             <input className="input" placeholder="Ex: Éclairage RDC, Prises séjour…"
@@ -442,7 +530,28 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
             </>
           )}
 
-          {!isDiff && (
+          {accessoire && (
+            <div className="flex flex-col gap-3">
+              {breaker.type === "sect" && (
+                <div>
+                  <label className="label">Calibre</label>
+                  <div className="flex flex-wrap gap-2">
+                    {[40, 63, 80, 100, 125].map(a => (
+                      <button key={a} onClick={() => onUpdate({ ...breaker, amperes: a })}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-mono font-bold border transition-all ${breaker.amperes === a ? "bg-ink-900 text-volt-400 border-ink-700" : "bg-ink-50 text-ink-500 border-ink-200 hover:border-ink-400"}`}>{a}A</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-700 font-mono leading-relaxed">
+                {breaker.type === "sect" && <>⏻ Interrupteur-sectionneur : coupe l&apos;ensemble de l&apos;installation en aval (coupure d&apos;urgence / mise hors tension pour intervention). Il ne protège pas contre les surintensités : il se place en tête de tableau, après le disjoncteur de branchement, et son calibre doit être au moins égal à celui de ce dernier.</>}
+                {breaker.type === "prise-mod" && <>🔌 Prise de courant 2P+T 16 A à fixer sur le rail DIN (alimentation d&apos;un coffret de communication, d&apos;un outil de maintenance…). Elle doit être alimentée par un circuit protégé 16 A / 1,5 mm² sous un différentiel 30 mA, et ne compte pas dans les 8 socles d&apos;un circuit prises.</>}
+                {breaker.type === "rj45" && <>🌐 Port du coffret de communication : un câble RJ45 cat. 6 STP arrive ici depuis une prise RJ45 du plan (un port par prise). Le libellé indique la pièce desservie.</>}
+              </div>
+            </div>
+          )}
+
+          {!isDiff && !accessoire && (
             <>
               <div>
                 <label className="label">Circuit</label>
@@ -604,7 +713,7 @@ function BreakerEditModal({ breaker, slotIndex, compliance, onUpdate, onClose, o
 
         <div className="flex gap-2 p-4 border-t border-ink-200 shrink-0 sticky bottom-0 bg-white">
           <button onClick={onClose} className="btn-primary flex-1"><Save size={14} /> Valider</button>
-          {!isDiff && (
+          {!isDiff && !accessoire && (
             <button onClick={() => { onClose(); onShowSchema(breaker); }} className="btn-ghost">
               <Zap size={14} /> Schéma
             </button>
@@ -1163,6 +1272,52 @@ function QRModal({ clientId, projetId, clientName, onClose }: {
   );
 }
 
+// ─── COFFRET DE COMMUNICATION (case annexe multimédia) ────────────────────────
+
+function CoffretCommunication({ row, selectedSlot, compliance, onClickSlot, onDeleteRow, onUpdateName, onMoveSlot, onAddLine }: {
+  row: BreakerRow;
+  selectedSlot: { rowId: number; slotIdx: number } | null;
+  compliance: ReturnType<typeof checkNFC>;
+  onClickSlot: (rowId: number, slotIdx: number) => void;
+  onDeleteRow: (rowId: number) => void;
+  onUpdateName: (rowId: number, name: string) => void;
+  onMoveSlot: (de: { rowId: number; slotIdx: number }, vers: { rowId: number; slotIdx: number }) => void;
+  onAddLine: (rowId: number) => void;
+}) {
+  const lignes: number[][] = [];
+  for (let i = 0; i < row.slots.length; i += 8) lignes.push(Array.from({ length: Math.min(8, row.slots.length - i) }, (_, k) => i + k));
+  const nbRj45 = row.slots.filter(b => b?.type === "rj45").length;
+  const nbPrises = row.slots.filter(b => b?.type === "prise-mod").length;
+  const panelW = 8 * SLOT_W + 9 * 4 + 40;
+  return (
+    <div style={{ background: "linear-gradient(170deg,#0f766e 0%,#134e4a 100%)", borderRadius: 14, padding: "20px 22px 10px", boxShadow: "0 8px 32px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.08)", border: "2px solid #115e59", display: "inline-block", verticalAlign: "top" }}>
+      <div style={{ background: "#042f2e", borderRadius: 7, padding: "6px 14px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <input value={row.name} onChange={e => onUpdateName(row.id, e.target.value)}
+          style={{ fontSize: 11, color: "#5eead4", fontFamily: "monospace", fontWeight: 700, letterSpacing: 1.5, background: "transparent", border: "none", outline: "none", textTransform: "uppercase", width: 230 }} />
+        <span style={{ fontSize: 10, color: "#99f6e4", fontFamily: "monospace", whiteSpace: "nowrap" }}>{nbRj45} RJ45{nbPrises > 0 ? ` · ${nbPrises} prise${nbPrises > 1 ? "s" : ""} 16A` : ""}</span>
+        <button onClick={() => onDeleteRow(row.id)} title="Supprimer le coffret" style={{ color: "#5eead4" }}><Trash2 size={14} /></button>
+      </div>
+      {lignes.map((idxs, li) => (
+        <div key={li} className="mb-10">
+          <div style={{ background: "linear-gradient(160deg,#e2e8f0 0%,#cbd5e1 60%,#94a3b8 100%)", borderRadius: 8, padding: "16px 16px 50px", width: panelW, display: "inline-flex", alignItems: "flex-start", gap: 4, boxShadow: "inset 0 2px 6px rgba(0,0,0,0.2), 0 4px 12px rgba(0,0,0,0.15)", border: "2px solid #94a3b8", position: "relative" as const }}>
+            <div style={{ position: "absolute", left: 12, right: 12, top: 16 + BREAKER_H * 0.40, height: 7, background: "linear-gradient(180deg,#b0b8c0,#6b7280,#9ca3af)", borderRadius: 1, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }} />
+            <div style={{ position: "absolute", left: 12, right: 12, top: 16 + BREAKER_H * 0.40 + 9, height: 3, background: "linear-gradient(180deg,#4b5563,#374151)" }} />
+            {idxs.map(slotIdx => (
+              <SlotCell key={slotIdx} breaker={row.slots[slotIdx]} slotIdx={slotIdx} issue={null}
+                isSelected={selectedSlot?.rowId === row.id && selectedSlot?.slotIdx === slotIdx}
+                globalNum={slotIdx + 1} onClick={() => onClickSlot(row.id, slotIdx)} rowId={row.id} onMoveSlot={onMoveSlot} />
+            ))}
+          </div>
+        </div>
+      ))}
+      <button onClick={() => onAddLine(row.id)} className="btn-ghost !text-xs" style={{ color: "#99f6e4", borderColor: "#115e59", marginBottom: 8 }}><Plus size={13} /> Ajouter une ligne de 8 emplacements</button>
+      <p style={{ fontSize: 10, color: "#99f6e4", fontFamily: "monospace", maxWidth: panelW, marginBottom: 6 }}>
+        Un port RJ45 par prise RJ45 du plan (rempli à chaque « Pousser vers le tableau »). Ajoute ici des prises 16 A modulaires pour alimenter box / switch, et une coupure générale si besoin.
+      </p>
+    </div>
+  );
+}
+
 // ─── DIN RAIL ROW ─────────────────────────────────────────────────────────────
 
 function DinRailRow({ row, globalOffset, selectedSlot, compliance, onClickSlot, onDeleteRow, onUpdateName, onMoveSlot }: {
@@ -1315,10 +1470,13 @@ export default function TableauPage() {
 function normaliserRows(parsed: any[]): BreakerRow[] {
   return parsed.map((row: any) => {
         if (!row || typeof row !== "object") return null;
-        const slots: (Breaker | null)[] = Array(9).fill(null);
+        const multimedia = row.kind === "multimedia";
         const rawSlots = Array.isArray(row.slots) ? row.slots : (Array.isArray(row.breakers) ? row.breakers : []);
+        // Coffret de communication : longueur libre (lignes de 8) ; rangée de tableau : 1 différentiel + 8 emplacements.
+        const nbSlots = multimedia ? Math.min(64, Math.max(8, Math.ceil(rawSlots.length / 8) * 8)) : 9;
+        const slots: (Breaker | null)[] = Array(nbSlots).fill(null);
         rawSlots.forEach((b: any, i: number) => {
-          if (i >= 9 || b == null || typeof b !== "object" || typeof b.type !== "string") return;
+          if (i >= nbSlots || b == null || typeof b !== "object" || typeof b.type !== "string") return;
           let pieces: PieceConfig[] = [];
           if (Array.isArray(b.pieces)) {
             pieces = b.pieces.map((p: any) => ({
@@ -1341,7 +1499,7 @@ function normaliserRows(parsed: any[]): BreakerRow[] {
             pieces,
           } as Breaker;
         });
-        return { id: row.id ?? uid(), name: row.name ?? "Rangée", slots, origine: row.origine === "plan" ? "plan" as const : undefined };
+        return { id: row.id ?? uid(), name: row.name ?? (multimedia ? "Coffret de communication" : "Rangée"), slots, origine: row.origine === "plan" ? "plan" as const : undefined, ...(multimedia ? { kind: "multimedia" as const } : {}) };
   }).filter(Boolean) as BreakerRow[];
 }
 
@@ -1430,7 +1588,9 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setSelectedSlot(null); setEditBreaker(null); setSchemaBreaker(null);
   };
 
-  const addRow = () => setRows(r => [...r, emptyRow(r.length + 1)]);
+  const addRow = () => setRows(r => [...r, emptyRow(r.filter(x => x.kind !== "multimedia").length + 1)]);
+  const addCoffret = () => setRows(r => (r.some(x => x.kind === "multimedia") ? r : [...r, emptyCoffret()]));
+  const addLigneCoffret = (rowId: number) => setRows(r => r.map(x => x.id === rowId && x.slots.length < 64 ? { ...x, slots: [...x.slots, ...Array(8).fill(null)] } : x));
   const deleteRow = (rowId: number) => { setRows(r => r.filter(x => x.id !== rowId)); if (selectedSlot?.rowId === rowId) setSelectedSlot(null); };
   const updateRowName = (rowId: number, name: string) => setRows(r => r.map(x => x.id === rowId ? { ...x, name } : x));
 
@@ -1439,13 +1599,16 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (!row) return;
     if (selectedSlot?.rowId === rowId && selectedSlot?.slotIdx === slotIdx) {
       const existing = row.slots[slotIdx];
-      const isDiffSlot = slotIdx === 0;
-      const defaultBreaker: Breaker = existing ?? {
+      const coffret = row.kind === "multimedia";
+      const isDiffSlot = !coffret && slotIdx === 0;
+      const defaultBreaker: Breaker = existing ?? (coffret ? {
+        id: uid(), label: "", circuit: "communication", amperes: 0, type: "rj45", pieces: [],
+      } : {
         id: uid(), label: "", circuit: isDiffSlot ? "general" : "prise_16",
         amperes: isDiffSlot ? 25 : 16, type: isDiffSlot ? "diff-AC" : "1P",
         customSection: isDiffSlot ? "10.0" : "1.5",
         pieces: [],
-      };
+      });
       setEditBreaker({ breaker: defaultBreaker, rowId, slotIdx });
       return;
     }
@@ -1556,9 +1719,11 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
               <p className="text-ink-500 font-medium">Tableau vide</p>
               <p className="text-ink-400 text-sm text-center max-w-xs">Ajoutez une rangée pour commencer.</p>
               <button onClick={addRow} className="btn-volt"><Plus size={15} /> Ajouter une rangée</button>
+              <button onClick={addCoffret} className="btn-ghost"><Plus size={15} /> Ajouter le coffret de communication (RJ45)</button>
             </div>
           ) : (
             <>
+              {rows.some(r => r.kind !== "multimedia") && (
               <div style={{ background: "linear-gradient(170deg,#374151 0%,#1f2937 100%)", borderRadius: 14, padding: "24px 24px 12px", boxShadow: "0 8px 32px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.06)", border: "2px solid #4b5563", display: "inline-block", minWidth: 400 }}>
                 <div style={{ background: "#111827", borderRadius: 7, padding: "6px 16px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <span style={{ fontSize: 11, color: "#F59E0B", fontFamily: "monospace", fontWeight: 700, letterSpacing: 2 }}>{actifId === TABLEAU_PRINCIPAL ? "TABLEAU ÉLECTRIQUE" : `TABLEAU ANNEXE — ${(annexes.find(a => a.id === actifId)?.nom ?? "").toUpperCase()}`}</span>
@@ -1572,16 +1737,28 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     ))}
                   </div>
                 </div>
-                {rows.map((row, ri) => (
+                {rows.map((row, ri) => row.kind === "multimedia" ? null : (
                   <DinRailRow key={row.id} row={row} globalOffset={getOffset(ri)}
                     selectedSlot={selectedSlot} compliance={compliance}
                     onClickSlot={handleClickSlot} onDeleteRow={deleteRow} onUpdateName={updateRowName} onMoveSlot={deplacerSlot} />
                 ))}
               </div>
-              <div className="mt-6">
+              )}
+              {rows.filter(r => r.kind === "multimedia").map(r => (
+                <div key={r.id} className="mt-6">
+                  <CoffretCommunication row={r} selectedSlot={selectedSlot} compliance={compliance}
+                    onClickSlot={handleClickSlot} onDeleteRow={deleteRow} onUpdateName={updateRowName} onMoveSlot={deplacerSlot} onAddLine={addLigneCoffret} />
+                </div>
+              ))}
+              <div className="mt-6 flex flex-wrap gap-2">
                 <button onClick={addRow} className="btn-ghost border-dashed border-ink-300 text-ink-400 hover:text-volt-600 hover:border-volt-300">
                   <Plus size={15} /> Ajouter une rangée
                 </button>
+                {!rows.some(r => r.kind === "multimedia") && (
+                  <button onClick={addCoffret} className="btn-ghost border-dashed border-ink-300 text-ink-400 hover:text-teal-700 hover:border-teal-300">
+                    <Plus size={15} /> Ajouter le coffret de communication (RJ45)
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -1597,7 +1774,7 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
       {editBreaker && (
         <BreakerEditModal
-          breaker={editBreaker.breaker} slotIndex={editBreaker.slotIdx} compliance={compliance}
+          breaker={editBreaker.breaker} slotIndex={editBreaker.slotIdx} multimedia={rows.find(r => r.id === editBreaker.rowId)?.kind === "multimedia"} compliance={compliance}
           onUpdate={updated => { updateSlot(editBreaker.rowId, editBreaker.slotIdx, updated); setEditBreaker({ ...editBreaker, breaker: updated }); }}
           onClose={() => { setEditBreaker(null); setSelectedSlot(null); }}
           onShowSchema={b => { const row = rows.find(r => r.id === editBreaker.rowId); setEditBreaker(null); setSchemaBreaker({ breaker: b, rowBreakers: row?.slots ?? [] }); }}

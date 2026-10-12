@@ -33,6 +33,7 @@ interface BreakerRow {
   id: number;
   name: string;
   slots: (Breaker | null)[];
+  kind?: "multimedia";
 }
 
 interface Profil {
@@ -68,6 +69,9 @@ const BREAKER_TYPES: Record<string, { isDiff?: boolean; diffType?: string; label
 
 const CIRCUITS: Record<string, { label: string; icon: string; section: string | null }> = {
   lumiere:         { label: "Lumière",          icon: "💡", section: "1.5" },
+  coupure_generale: { label: "Coupure générale", icon: "⏻", section: "10.0" },
+  prise_modulaire: { label: "Prise 16A modulaire", icon: "🔌", section: "1.5" },
+  communication:   { label: "RJ45 (communication)", icon: "🌐", section: null },
   prise_16:        { label: "Prises 16A",       icon: "🔌", section: "1.5" },
   prise_20:        { label: "Prises 20A",       icon: "🔌", section: "2.5" },
   cuisine_prises:  { label: "Prises cuisine",   icon: "🍳", section: "2.5" },
@@ -112,10 +116,12 @@ function parseRows(config: string): BreakerRow[] {
     if (!Array.isArray(parsed)) return [];
     return parsed.map((row: any) => {
       if (!row || typeof row !== "object") return null;
-      const slots: (Breaker | null)[] = Array(9).fill(null);
+      const multimedia = row.kind === "multimedia";
       const rawSlots = Array.isArray(row.slots) ? row.slots : (Array.isArray(row.breakers) ? row.breakers : []);
+      const nbSlots = multimedia ? Math.min(64, Math.max(8, rawSlots.length)) : 9;
+      const slots: (Breaker | null)[] = Array(nbSlots).fill(null);
       rawSlots.forEach((b: any, i: number) => {
-        if (i >= 9 || b == null || typeof b !== "object" || typeof b.type !== "string") return;
+        if (i >= nbSlots || b == null || typeof b !== "object" || typeof b.type !== "string") return;
         let pieces: PieceConfig[] = [];
         if (Array.isArray(b.pieces)) {
           pieces = b.pieces.map((p: any) => ({
@@ -128,7 +134,7 @@ function parseRows(config: string): BreakerRow[] {
         }
         slots[i] = { id: b.id ?? i, label: b.label ?? "", circuit: b.circuit ?? "autre", amperes: b.amperes ?? 16, type: b.type, pieces };
       });
-      return { id: row.id ?? Math.random(), name: row.name ?? "Rangée", slots };
+      return { id: row.id ?? Math.random(), name: row.name ?? (multimedia ? "Coffret de communication" : "Rangée"), slots, ...(multimedia ? { kind: "multimedia" as const } : {}) };
     }).filter(Boolean) as BreakerRow[];
   } catch { return []; }
 }
@@ -184,7 +190,7 @@ export default function TableauPublicPage() {
   }
 
   const dateExport = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
-  const totalCircuits = rows.flatMap(r => safeBreakers(r.slots)).filter(b => !BREAKER_TYPES[b.type]?.isDiff).length;
+  const totalCircuits = rows.flatMap(r => safeBreakers(r.slots)).filter(b => !BREAKER_TYPES[b.type]?.isDiff && !["sect", "prise-mod", "rj45"].includes(b.type)).length;
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans">
@@ -245,8 +251,9 @@ export default function TableauPublicPage() {
       {/* Tableau — rangées */}
       <div className="max-w-2xl mx-auto px-5 py-6 flex flex-col gap-6">
         {rows.map((row, ri) => {
-          const diff = row.slots[0];
-          const breakers = safeBreakers(row.slots.slice(1));
+          const coffret = row.kind === "multimedia";
+          const diff = coffret ? null : row.slots[0];
+          const breakers = safeBreakers(coffret ? row.slots : row.slots.slice(1));
           const isDiff = diff && !!BREAKER_TYPES[diff.type]?.isDiff;
 
           return (
@@ -279,7 +286,7 @@ export default function TableauPublicPage() {
                           <span className="text-base">{spec.icon}</span>
                           <span className="font-semibold text-gray-900 text-sm flex-1">{label}</span>
                           <div className="flex items-center gap-2 shrink-0">
-                            <span className="text-xs font-mono text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{b.amperes}A</span>
+                            {b.amperes > 0 && <span className="text-xs font-mono text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{b.amperes}A</span>}
                             {spec.section && (
                               <span className="text-xs font-mono text-gray-400">{spec.section}mm²</span>
                             )}

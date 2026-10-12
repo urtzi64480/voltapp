@@ -314,7 +314,7 @@ export default function TableauxPage() {
                 ? "text-emerald-600 bg-emerald-50 border-emerald-200"
                 : score >= 60 ? "text-amber-600 bg-amber-50 border-amber-200"
                 : "text-red-600 bg-red-50 border-red-200";
-              const nonDiffBreakers = rows.flatMap(r => r.slots ?? []).filter((b): b is Breaker => b != null && typeof b?.type === "string" && !BREAKER_TYPES[b?.type ?? ""]?.isDiff);
+              const nonDiffBreakers = rows.flatMap(r => r.slots ?? []).filter((b): b is Breaker => b != null && typeof b?.type === "string" && !BREAKER_TYPES[b?.type ?? ""]?.isDiff && !["sect", "prise-mod", "rj45"].includes(b.type));
               const totalBreakers = nonDiffBreakers.length;
               const preview = nonDiffBreakers.slice(0, 8);
 

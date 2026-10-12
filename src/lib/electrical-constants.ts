@@ -50,19 +50,28 @@ export interface BreakerRow {
   id: number;
   name: string;
   slots: (Breaker | null)[];
+  // « multimedia » : coffret de communication (case annexe NF C 15-100, grade 1/2/3) — pas de différentiel ni de disjoncteurs : des ports RJ45 (un par prise
+  // RJ45 du plan), des prises 16 A modulaires et, au besoin, une coupure générale. `slots` y est de longueur libre (8 par ligne). Absent = rangée de tableau.
+  kind?: "multimedia";
   // Tag posé par le module Plan sur les rangées qu'il génère — permet à un nouveau
   // "pousser vers le tableau" de remplacer proprement ce lot au lieu de le dupliquer,
   // sans jamais toucher aux rangées créées à la main dans l'éditeur de tableau.
   origine?: "plan";
 }
 
-export const BREAKER_TYPES: Record<string, { label: string; width: number; desc: string; isDiff?: boolean; diffType?: string }> = {
+export const BREAKER_TYPES: Record<string, { label: string; width: number; desc: string; isDiff?: boolean; diffType?: string; accessoire?: boolean }> = {
   "1P":      { label: "1P",    width: 1, desc: "Unipolaire" },
   "2P":      { label: "2P",    width: 2, desc: "Bipolaire" },
   "diff-AC": { label: "ID AC", width: 2, desc: "Différentiel Type AC", isDiff: true, diffType: "AC" },
   "diff-A":  { label: "ID A",  width: 2, desc: "Différentiel Type A",  isDiff: true, diffType: "A"  },
   "diff-F":  { label: "ID F",  width: 2, desc: "Différentiel Type F",  isDiff: true, diffType: "F"  },
+  // Appareils modulaires qui ne sont PAS des disjoncteurs de circuit (jamais comptés comme circuits, ni contrôlés comme tels) :
+  "sect":      { label: "Sect.",    width: 2, desc: "Interrupteur-sectionneur — coupure générale",              accessoire: true },
+  "prise-mod": { label: "Prise 16A", width: 2, desc: "Prise de courant modulaire 16 A 2P+T (sur rail DIN)",      accessoire: true },
+  "rj45":      { label: "RJ45",     width: 1, desc: "Port RJ45 du coffret de communication",                    accessoire: true },
 };
+/** Appareil modulaire du tableau qui n'est ni un disjoncteur ni un différentiel (coupure générale, prise modulaire, port RJ45). */
+export const estAccessoireTableau = (b: { type: string } | null | undefined): boolean => !!b && !!BREAKER_TYPES[b.type]?.accessoire;
 
 export const CIRCUITS: Record<string, {
   label: string; icon: string; ampMax: number; dedié: boolean;
@@ -105,6 +114,9 @@ export const CIRCUITS: Record<string, {
   autre:           { label: "Autre",            icon: "⚙️", ampMax: 32, dedié: false, diffType: "AC", section: "2.5", category: null },
   // Courant faible : un câble RJ45 par prise, en étoile vers le coffret de communication. Circuit de PLAN uniquement
   // (tracé, longueur, couleur) : jamais de disjoncteur, jamais poussé au tableau (voir CIRCUIT_COMMUNICATION).
+  // Appareils modulaires du tableau (voir BREAKER_TYPES « accessoire ») : pas des circuits à part entière.
+  coupure_generale: { label: "Coupure générale", icon: "⏻", ampMax: 160, dedié: true, diffType: null, section: "10.0", category: null },
+  prise_modulaire: { label: "Prise 16A modulaire", icon: "🔌", ampMax: 16, dedié: true, diffType: null, section: "1.5", category: null },
   communication:   { label: "RJ45 (communication)", icon: "🌐", ampMax: 0, dedié: true, diffType: null, section: null, category: null },
 };
 export const CIRCUIT_COMMUNICATION = "communication";

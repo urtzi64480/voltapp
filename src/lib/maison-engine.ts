@@ -953,6 +953,28 @@ export function maxIdRows(rows: BreakerRow[]): number {
   return max;
 }
 
+// ─── COFFRET DE COMMUNICATION (case annexe multimédia) ───────────────────────────────────────────────
+// Les circuits RJ45 du plan n'ont pas de disjoncteur : ils arrivent dans le coffret de communication du tableau, un PORT par prise RJ45.
+// À chaque « Pousser vers le tableau », les ports sont régénérés ; tout ce que l'électricien a posé à la main dans le coffret (prises 16 A
+// modulaires, coupure générale…) est conservé. Les prises TV (coaxial) ne sont pas des ports RJ45 : elles n'y figurent pas.
+export function integrerCoffretCommunication(rows: BreakerRow[], circuitsRj45: Breaker[]): BreakerRow[] {
+  const ports = circuitsRj45.filter(b => !b.label.startsWith("Antenne TV"));
+  const existant = rows.find(r => r.kind === "multimedia");
+  if (!existant && ports.length === 0) return rows;
+  const offset = maxIdRows(rows) + 100000;
+  const nouveauxPorts: Breaker[] = ports.map((b, i) => ({
+    id: b.id + offset + i, label: b.pieces[0]?.nom ? `${b.pieces[0].nom}${ports.filter(x => x.pieces[0]?.nom === b.pieces[0].nom).length > 1 ? ` ${ports.filter((x, j) => j <= i && x.pieces[0]?.nom === b.pieces[0].nom).length}` : ""}` : b.label,
+    circuit: b.circuit, amperes: 0, type: "rj45", pieces: b.pieces,
+  }));
+  const autres = (existant?.slots ?? []).filter((b): b is Breaker => !!b && b.type !== "rj45");
+  const liste = [...nouveauxPorts, ...autres];
+  const nbSlots = Math.min(64, Math.max(8, Math.ceil(liste.length / 8) * 8));
+  const slots: (Breaker | null)[] = Array(nbSlots).fill(null);
+  liste.slice(0, nbSlots).forEach((b, i) => { slots[i] = b; });
+  const coffret: BreakerRow = { id: existant?.id ?? offset, name: existant?.name ?? "Coffret de communication", slots, kind: "multimedia" };
+  return [...rows.filter(r => r.kind !== "multimedia"), coffret];
+}
+
 // ─── CHEMINEMENT DES GAINES — VUE GLOBALE PAR NIVEAU ────────────────────────────
 
 export interface TronconGaine {
