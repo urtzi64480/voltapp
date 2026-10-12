@@ -525,6 +525,9 @@ export interface Zone {
 }
 export const EPAISSEUR_CLOISON_ZONE_CM = 10;
 
+// Photo de chantier d'un circuit : fichier dans le stockage (chemin), position SUR le tracé du circuit (mètres, repère du plan), légende libre.
+export interface PhotoChantier { id: number; circuit: string; point: Point; chemin: string; legende?: string; date: string }
+
 export interface Niveau {
   id: number;
   nom: string;
@@ -556,6 +559,8 @@ export interface Niveau {
   liaisonsDirectesLumiere?: Record<string, [number, number][]>;
   // Circuits VERROUILLÉS (labels, même clé que boitesDerivation / ordresCircuits) : leur cheminement (tracé, boîtes, coudes, pose, liaisons) est protégé contre toute modification par erreur.
   circuitsVerrouilles?: string[];
+  // Photos de chantier prises le long des circuits (avant fermeture des cloisons) : voir lib/photos-chantier.ts. Plusieurs par point, autant que voulu.
+  photosChantier?: PhotoChantier[];
   // 3 = tracés remis dans les murs ET passages de portes / fenêtres traités (2 = sans les passages)  (lib/pose-circuits.ts : reconformerTracesNiveau) ; absent = à faire une fois.
   tracesMurs?: 2 | 3 | 4;
   hauteurPlafond?: number; // mètres — pour la vue 3D (2.5 par défaut)

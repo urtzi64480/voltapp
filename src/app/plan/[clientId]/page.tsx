@@ -10,6 +10,8 @@ import { useProjets, qsProjet, modifierProjet, sauverTableau, sauverAnnexes, syn
 import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import SchemaTechniqueCircuit from "@/components/plan/SchemaTechniqueCircuit";
+import PhotosChantier from "@/components/plan/PhotosChantier";
+import { BUCKET_PHOTOS, cheminPhoto, compresserImage, grouperPhotos, projeterSurCircuit } from "@/lib/photos-chantier";
 import { construireSchemaTechnique } from "@/lib/schema-technique";
 import { construireVueAppareil } from "@/lib/bornier-appareillage";
 import Link from "next/link";
@@ -17,7 +19,7 @@ import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, Hand, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
   GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt, Box,
-  Lightbulb, Network, Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler, ShieldCheck,
+  Lightbulb, Network, Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler, ShieldCheck, Camera,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -32,7 +34,7 @@ import {
   BoiteDerivation, migrerBoitesDerivation,
   Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, nouvelleVoiture, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
   estCommande, estCommandeDouble, estLumiere, estCourantFaible, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM,
-  Escalier, EscalierType, EscalierTournant, EXTERIEUR_PIECE_ID,
+  Escalier, EscalierType, EscalierTournant, EXTERIEUR_PIECE_ID, PhotoChantier,
 } from "@/lib/maison-types";
 import { pieceAutoDe } from "@/lib/piece-reelle";
 import {
@@ -2174,6 +2176,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [placingPointArrivee, setPlacingPointArrivee] = useState(false);
   // Boîte de dérivation à poser : label du circuit visé, puis un clic sur le plan la place exactement là.
   const [placingBoiteLabel, setPlacingBoiteLabel] = useState<string | null>(null);
+  // Photos de chantier : « placingPhoto » = l'emplacement sur le tracé du circuit reste à cliquer (files = photos à envoyer, deplacer = photos à déplacer).
+  const [placingPhoto, setPlacingPhoto] = useState<{ label: string; files?: File[]; deplacer?: number[] } | null>(null);
+  const [photosModal, setPhotosModal] = useState<{ label: string | null; ouvrirId?: number } | null>(null);
+  const [photoEnvoi, setPhotoEnvoi] = useState<string | null>(null);
   // Tableau tel qu'il est enregistré dans le module Tableau (section / calibre réglés là-bas) : relu à chaque ouverture d'un schéma technique.
   const [tableauPourSchema, setTableauPourSchema] = useState<BreakerRow[] | null>(null);
   // Pose par parties : on choisit une partie du circuit (clic de départ puis clic de fin, n'importe où sur le tracé) et sa pose.
@@ -2884,7 +2890,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setToolbarOuvert(o => {
       if (o) {
         setMode("select"); setDrawingPoints([]);
-        setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null);
+        setPlacementType(null); setPlacingBoiteLabel(null); setPlacingPhoto(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null);
         setPlacingPointArrivee(false); setSelectedPointArrivee(false); setPlacingMeuble(false);
         setCheminementDessin(null); setLiaisonLumiereMode(null);
       }
@@ -2913,7 +2919,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const reduireMenuHaut = (reduire: boolean) => {
     if (reduire) {
       setMode("select"); setDrawingPoints([]);
-      setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null);
+      setPlacementType(null); setPlacingBoiteLabel(null); setPlacingPhoto(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null);
       setPlacingPointArrivee(false); setSelectedPointArrivee(false); setPlacingMeuble(false);
       setCheminementDessin(null); setLiaisonLumiereMode(null);
     }
@@ -3021,7 +3027,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const nouvelleChaineMesure = () => { repereSeqRef.current.chaine += 1; };
   const entrerModeMesure = () => {
     if (mode === "mesure") { setMode("select"); return; }
-    setMode("mesure"); setDrawingPoints([]); setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
+    setMode("mesure"); setDrawingPoints([]); setPlacementType(null); setPlacingBoiteLabel(null); setPlacingPhoto(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
     setSelectedZoneId(null); setSelectedZoneOuv(null);
@@ -3187,7 +3193,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setMode("zone"); setZonePoints([]); setZoneEnAttente(null); setZoneCloisonSeule(cloisonSeule);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
     setSelectedZoneId(null); setSelectedZoneOuv(null);
-    setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
+    setPlacementType(null); setPlacingBoiteLabel(null); setPlacingPhoto(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null); setDrawingPoints([]);
   };
 
@@ -3283,7 +3289,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const entrerModeDessiner = () => {
     setMode("dessiner"); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
-    setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
+    setPlacementType(null); setPlacingBoiteLabel(null); setPlacingPhoto(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
   };
   const armerPlaque = (postes: PosteSpec[]) => {
@@ -3307,7 +3313,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
   };
   const armerPlacementPointArrivee = () => {
-    setPlacingPointArrivee(true); setMode("select"); setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false); setDrawingPoints([]);
+    setPlacingPointArrivee(true); setMode("select"); setPlacementType(null); setPlacingBoiteLabel(null); setPlacingPhoto(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false); setDrawingPoints([]);
     setLiaisonLumiereMode(null);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedPointArrivee(false); setSelectedMeubleId(null);
   };
@@ -3320,7 +3326,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // enchaîner plusieurs meubles sans rerouvrir le bouton — se désarme via son propre bouton
   // (toggle) ou en passant à un autre mode/outil.
   const armerPlacementMeuble = () => {
-    setPlacingMeuble(true); setMode("select"); setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setDrawingPoints([]);
+    setPlacingMeuble(true); setMode("select"); setPlacementType(null); setPlacingBoiteLabel(null); setPlacingPhoto(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setDrawingPoints([]);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedMeubleId(null);
   };
@@ -3523,7 +3529,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
   const onPersonnePointerDown = (piece: Piece, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingPhoto != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedPieceId(piece.id);
     setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
@@ -3561,7 +3567,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
   const onVoiturePointerDown = (piece: Piece, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingPhoto != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedPieceId(piece.id);
     setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedOuvertureId(null); setSelectedBoite(null);
@@ -3662,7 +3668,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // niveau bougent ensemble. Le décalage est toujours calculé depuis le niveau d'origine (annulation exacte).
   const demarrerDeplacementNiveau = () => {
     if (!niveauActif || vue3D) return;
-    setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false); setPlacingPointArrivee(false);
+    setPlacementType(null); setPlacingBoiteLabel(null); setPlacingPhoto(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false); setPlacingPointArrivee(false);
     setMode("select"); setEscalierMenuOpen(false); setOuvertureMenuOpen(false);
     deselectionnerAutres(); setSelectedEscalierId(null);
     departNiveauRef.current = niveauActif;
@@ -3690,7 +3696,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const onEscalierPointerDown = (esc: Escalier, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingPhoto != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     deselectionnerAutres(); setSelectedEscalierId(esc.id); setPanelResetTick(t => t + 1);
     const rect = svgRef.current?.getBoundingClientRect();
@@ -3948,6 +3954,34 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       demarrerDessinCheminement(breaker);
     }
   };
+  // ── Photos de chantier ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  const urlPhoto = (chemin: string) => supabase.storage.from(BUCKET_PHOTOS).getPublicUrl(chemin).data.publicUrl;
+  const envoyerPhotos = async (label: string, point: Point, fichiers: File[]) => {
+    if (!niveauActif) return;
+    const niveauId = niveauActif.id;
+    const ajoutees: PhotoChantier[] = [];
+    let echecs = 0;
+    for (let i = 0; i < fichiers.length; i++) {
+      setPhotoEnvoi(`Envoi ${i + 1} / ${fichiers.length}…`);
+      try {
+        const { blob, ext, type } = await compresserImage(fichiers[i]);
+        const chemin = cheminPhoto(clientId, niveauId, ext);
+        const { error } = await supabase.storage.from(BUCKET_PHOTOS).upload(chemin, blob, { contentType: type });
+        if (error) { console.error("Upload photo chantier:", error); echecs++; continue; }
+        ajoutees.push({ id: uidMaison(), circuit: label, point, chemin, date: new Date(Date.now() + i).toISOString() });
+      } catch (e) { console.error(e); echecs++; }
+    }
+    setPhotoEnvoi(null);
+    if (ajoutees.length > 0) setNiveaux(nvs => nvs.map(n => n.id === niveauId ? { ...n, photosChantier: [...(n.photosChantier ?? []), ...ajoutees] } : n));
+    if (echecs > 0) { setPlacementError(`⚠ ${echecs} photo${echecs > 1 ? "s" : ""} non envoyée${echecs > 1 ? "s" : ""} (stockage indisponible ?)`); setTimeout(() => setPlacementError(null), 6000); }
+  };
+  const supprimerPhoto = async (id: number) => {
+    const ph = niveauActif?.photosChantier?.find(x => x.id === id);
+    if (!ph) return;
+    try { await supabase.storage.from(BUCKET_PHOTOS).remove([ph.chemin]); } catch {}
+    updateNiveauActif(n => ({ ...n, photosChantier: (n.photosChantier ?? []).filter(x => x.id !== id) }));
+  };
+
   // Circuit de lumière généré depuis le formulaire dédié : ses membres peuvent être sur PLUSIEURS étages. Le circuit (CircuitManuel) est défini
   // sur le niveau qui porte le plus de lampes (le niveau actif en cas d'égalité) ; les membres des autres étages y sont rattachés par
   // circuitManuelId (voir genererCircuits : un seul disjoncteur, câblage de chaque étage depuis son point d'arrivée des gaines).
@@ -4108,6 +4142,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       ordresCircuits: mig(n.ordresCircuits), boitesDerivation: mig(n.boitesDerivation), liaisonsDirectesLumiere: mig(n.liaisonsDirectesLumiere),
       couleursCircuits: mig(n.couleursCircuits), nomsCircuits: mig(n.nomsCircuits),
       circuitsVerrouilles: n.circuitsVerrouilles?.map(l => (l === ancien ? nouveau : l)),
+      photosChantier: n.photosChantier?.map(ph => (ph.circuit === ancien ? { ...ph, circuit: nouveau } : ph)),
     };
   };
   const renommerCircuitManuelParId = (manuelId: number, nom: string) => {
@@ -4150,7 +4185,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // ─── DESSIN DU CHEMINEMENT (clic sur les appareillages du circuit, dans l'ordre) ───────
   const demarrerDessinCheminement = (b: Breaker) => {
     if (refuserVerrou(b.label)) return;
-    setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
+    setPlacementType(null); setPlacingBoiteLabel(null); setPlacingPhoto(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false);
     setPlacingPointArrivee(false); setSelectedPointArrivee(false); setLiaisonLumiereMode(null);
     setMode("select"); setDrawingPoints([]);
     setSelectedAppareillageId(null); setSelectedPieceId(null); setSelectedTableau(false); setSelectedMeubleId(null);
@@ -4204,7 +4239,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // ─── LIAISON DIRECTE ENTRE POINTS LUMINEUX (sans boîte de dérivation) ──────────────
   const demarrerLiaisonDirecteLumiere = (label: string) => {
     if (refuserVerrou(label)) return;
-    setPlacementType(null); setPlacingBoiteLabel(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingPointArrivee(false); setPlacingMeuble(false);
+    setPlacementType(null); setPlacingBoiteLabel(null); setPlacingPhoto(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingPointArrivee(false); setPlacingMeuble(false);
     setMode("select"); setDrawingPoints([]); setCheminementDessin(null);
     setSelectedAppareillageId(null); setSelectedPieceId(null); setSelectedTableau(false); setSelectedMeubleId(null);
     setSelectedOuvertureId(null); setSelectedBoite(null); setSelectedWaypoint(null); setSelectedPointArrivee(false);
@@ -4475,9 +4510,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       return;
     }
 
+    if (placingPhoto) {
+      const { label, files, deplacer } = placingPhoto;
+      const bk = resultat?.breakers.find(x => x.label === label);
+      const sur = niveauActif ? projeterSurCircuit(m, bk, niveauActif) : m;   // le repère se pose SUR le tracé du circuit
+      setPlacingPhoto(null);
+      if (deplacer) updateNiveauActif(n => ({ ...n, photosChantier: (n.photosChantier ?? []).map(ph => deplacer.includes(ph.id) ? { ...ph, point: sur } : ph) }));
+      else if (files && files.length > 0) void envoyerPhotos(label, sur, files);
+      setPhotosModal({ label });
+      return;
+    }
+
     if (placingBoiteLabel != null) {
       const label = placingBoiteLabel;
-      if (refuserVerrou(label)) { setPlacingBoiteLabel(null); return; }
+      if (refuserVerrou(label)) { setPlacingBoiteLabel(null); setPlacingPhoto(null); return; }
       const nouvelId = uidMaison();
       // Tronçon visé : le plus proche du clic parmi ceux du circuit ; la boîte est posée sur le tracé (projection du clic), A → boîte → B.
       let surSegment: { a: string; b: string } | undefined;
@@ -4501,7 +4547,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         return { ...n, boitesDerivation: { ...(n.boitesDerivation ?? {}), [label]: [...existantes, { id: nouvelId, nom: `Boîte ${existantes.length + 1}`, point: pointBoite, ...(surSegment ? { surSegment } : {}) }] } };
       });
       setSelectedBoite({ label, boiteId: nouvelId });
-      setPlacingBoiteLabel(null);
+      setPlacingBoiteLabel(null); setPlacingPhoto(null);
       return;
     }
 
@@ -4640,7 +4686,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
 
   const onPieceDown = (piece: Piece, e: React.PointerEvent) => {
-    if (cheminementDessin || liaisonLumiereMode || mode === "dessiner" || mode === "cloison" || mode === "zone" || mode === "mesure" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) return;
+    if (cheminementDessin || liaisonLumiereMode || mode === "dessiner" || mode === "cloison" || mode === "zone" || mode === "mesure" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingPhoto != null || poseParties != null || placingMeuble) return;
     e.stopPropagation();
     // Ctrl (ou Cmd) + clic : sélectionne la pièce SOUS celle du dessus, à l'endroit cliqué (clics répétés = on descend, puis on boucle).
     if ((e.ctrlKey || e.metaKey) && niveauActif) {
@@ -4729,7 +4775,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       }
       return;
     }
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingPhoto != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     // Maj / Ctrl (Cmd) + clic : ajoute / retire l'appareillage de la sélection multiple (pour les regrouper en plaque).
     if (e.shiftKey || e.ctrlKey || e.metaKey) {
@@ -4763,7 +4809,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const onMeublePointerDown = (piece: Piece, m: MeubleSimple, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingPhoto != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedMeubleId(m.id);
     setSelectedAppareillageId(null);
@@ -4789,7 +4835,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // décalage actuel (m) par rapport au centre de la pièce — y compris quand la position affichée
   // vient du placement automatique, pour que l'étiquette ne « saute » pas au premier mouvement.
   const onNomPieceDown = (piece: Piece, offsetDepart: Point, e: React.PointerEvent) => {
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingPhoto != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     if (piece.verrouillee) return;
     setDragMode({ kind: "nomPiece", pieceId: piece.id, startX: e.clientX, startY: e.clientY, startOffset: offsetDepart });
@@ -4801,7 +4847,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const onTableauPointerDown = (e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingPhoto != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedTableau(true);
     setSelectedPieceId(null);
@@ -4816,7 +4862,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const onPointArriveePointerDown = (e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingPhoto != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedPointArrivee(true);
     setSelectedPieceId(null);
@@ -4831,7 +4877,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const onOuverturePointerDown = (piece: Piece, o: Ouverture, e: React.PointerEvent) => {
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingPhoto != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     setSelectedOuvertureId(o.id);
     setSelectedPieceId(null);
@@ -4854,7 +4900,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       return;
     }
     if (cheminementDessin || liaisonLumiereMode) return;
-    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
+    if (mode !== "select" || placementType || placingTableau || placingOuverture || placingPointArrivee || placingBoiteLabel != null || placingPhoto != null || poseParties != null || placingMeuble) { e.stopPropagation(); return; }
     e.stopPropagation();
     let boiteId = boite?.id;
     if (boiteId == null && refuserVerrou(label)) return;
@@ -6112,7 +6158,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               </>
             )}
           </div>
-          <button onClick={() => { setPlacingBoiteLabel(null); setMode("select"); setPlacementType(null); setPoseParties(p => p ? null : { label: null, pose: "apparent", premier: null }); }} disabled={!resultat || !showCircuits}
+          <button onClick={() => { setPlacingBoiteLabel(null); setPlacingPhoto(null); setMode("select"); setPlacementType(null); setPoseParties(p => p ? null : { label: null, pose: "apparent", premier: null }); }} disabled={!resultat || !showCircuits}
             className={`btn-ghost !text-xs disabled:opacity-40 ${poseParties ? "!bg-ink-900 !text-volt-400" : ""}`}
             title="Sur un circuit déjà dessiné : clique « de ici » puis « à ici », cette partie devient apparente (ou encastrée)">
             <Route size={13} /> Apparent / encastré : de ici à ici
@@ -6309,7 +6355,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <svg
               ref={svgRef}
               className="w-full h-full block"
-              style={{ touchAction: "none", cursor: outilMain || espaceEnfonce ? "grab" : deplacementNiveau ? "move" : mode === "dessiner" || mode === "cloison" || mode === "zone" || mode === "mesure" || placementType || placingTableau || placingPointArrivee || placingBoiteLabel != null || poseParties != null || placingMeuble ? "crosshair" : "grab" }}
+              style={{ touchAction: "none", cursor: outilMain || espaceEnfonce ? "grab" : deplacementNiveau ? "move" : mode === "dessiner" || mode === "cloison" || mode === "zone" || mode === "mesure" || placementType || placingTableau || placingPointArrivee || placingBoiteLabel != null || placingPhoto != null || poseParties != null || placingMeuble ? "crosshair" : "grab" }}
               onPointerDown={onBackgroundPointerDown}
               // Outil cloison : le clic gauche est traité ICI, avant les pièces / appareillages / portes (un
               // appareillage posé sur le mur ne doit pas avaler le départ de la cloison).
@@ -7040,6 +7086,22 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   </g>
                 );
               })()}
+
+              {showCircuits && grouperPhotos((niveauActif?.photosChantier ?? []).filter(ph => { const bk = resultat?.breakers.find(x => x.label === ph.circuit); return !bk || circuitsVisibles.has(bk.id); })).map((g, gi) => {
+                const p = toScreen(g.point);
+                const bk = resultat?.breakers.find(x => x.label === g.circuit);
+                const couleur = bk ? (colorMap.get(bk.id) ?? "#475569") : "#475569";
+                return (
+                  <g key={`photo-${gi}`} style={{ cursor: "pointer" }} onPointerDown={e => e.stopPropagation()}
+                    onClick={e => { e.stopPropagation(); setPhotosModal({ label: g.circuit, ouvrirId: g.photos[0].id }); }}>
+                    <title>{`${g.photos.length} photo${g.photos.length > 1 ? "s" : ""} de chantier — ${bk ? nomAffiche(bk) : g.circuit}`}</title>
+                    <circle cx={p.x} cy={p.y} r={13} fill="#ffffff" stroke={couleur} strokeWidth={2.5} />
+                    <path d={`M ${p.x - 6} ${p.y - 3} h 2.5 l 1.4 -2 h 4.2 l 1.4 2 h 2.5 a 1 1 0 0 1 1 1 v 6 a 1 1 0 0 1 -1 1 h -12 a 1 1 0 0 1 -1 -1 v -6 a 1 1 0 0 1 1 -1 z`} fill={couleur} />
+                    <circle cx={p.x} cy={p.y + 0.5} r={2.4} fill="#ffffff" />
+                    {g.photos.length > 1 && (<><circle cx={p.x + 10} cy={p.y - 10} r={7} fill="#1c1917" /><text x={p.x + 10} y={p.y - 7} textAnchor="middle" fontSize="9" fontWeight="700" fill="#ffffff" style={{ pointerEvents: "none" }}>{g.photos.length}</text></>)}
+                  </g>
+                );
+              })}
 
               {niveauActif?.pointArriveeGaines && (() => {
                 const p = toScreen(niveauActif.pointArriveeGaines);
@@ -8548,6 +8610,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 </div>
               </div>
             )}
+            {placingPhoto && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-lg flex items-center gap-3">
+                {placingPhoto.deplacer ? "Clique sur le tracé du circuit : nouvel emplacement de la photo"
+                  : `Clique sur le tracé du circuit à l'endroit où ${placingPhoto.files?.length === 1 ? "cette photo a été prise" : `ces ${placingPhoto.files?.length ?? 0} photos ont été prises`} (le repère se pose sur le tracé)`}
+                <button onClick={() => { const l = placingPhoto.label; setPlacingPhoto(null); setPhotosModal({ label: l }); }} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">Annuler</button>
+              </div>
+            )}
+            {photoEnvoi && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-white text-xs font-semibold px-3 py-2 rounded-lg shadow-lg">{photoEnvoi}</div>
+            )}
             {placingBoiteLabel != null && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-ink-900 text-volt-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-lg flex items-center gap-3">
                 Clique sur le tronçon du circuit où tu veux la boîte de dérivation (elle se place là où tu cliques)
@@ -8690,6 +8762,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                             const verr = estVerrouille(labelStockage);
                             return (
                               <>
+                                <button type="button" className={cls} aria-label="Photos de chantier de ce circuit"
+                                  onClick={e => { e.preventDefault(); e.stopPropagation(); setPhotosModal({ label: labelStockage }); }}
+                                  title="Photos de chantier : à retrouver après la fermeture des cloisons, avec leur emplacement sur le tracé">
+                                  <span className="relative inline-flex"><Camera size={14} />{(niveauActif?.photosChantier ?? []).filter(ph => ph.circuit === labelStockage).length > 0 && <span className="absolute -top-1.5 -right-2 bg-ink-900 text-white text-[8px] leading-none rounded-full px-1 py-0.5">{(niveauActif?.photosChantier ?? []).filter(ph => ph.circuit === labelStockage).length}</span>}</span>
+                                </button>
                                 <button type="button" className={cls} aria-label="Poser une boîte de dérivation"
                                   onClick={e => { e.preventDefault(); e.stopPropagation(); setPlacingBoiteLabel(labelStockage); setMode("select"); setPlacementType(null); }}
                                   title="Boîte de dérivation (Wago) : clique ensuite sur le plan, sur le tronçon où la poser">
@@ -8697,7 +8774,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                                 </button>
                                 {b && (
                                   <button type="button" className={cls} aria-label="Pose par parties : apparent ou encastré"
-                                    onClick={e => { e.preventDefault(); e.stopPropagation(); setPlacingBoiteLabel(null); setPoseParties({ label: b.label, pose: "apparent", premier: null, fixe: true }); setMode("select"); setPlacementType(null); }}
+                                    onClick={e => { e.preventDefault(); e.stopPropagation(); setPlacingBoiteLabel(null); setPlacingPhoto(null); setPoseParties({ label: b.label, pose: "apparent", premier: null, fixe: true }); setMode("select"); setPlacementType(null); }}
                                     title="Apparent / encastré « de ici à ici » : choisis une ou plusieurs parties du circuit (avec ou sans coude)">
                                     <SplitSquareHorizontal size={14} />
                                   </button>
@@ -8984,6 +9061,22 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         </div>
       )}
 
+      {photosModal && niveauActif && (() => {
+        const tousPhotos = niveauActif.photosChantier ?? [];
+        const liste = photosModal.label == null ? tousPhotos : tousPhotos.filter(ph => ph.circuit === photosModal.label);
+        const circuitsPhotos = circuitsAffiches.map(it => ({ label: it.breaker ? it.breaker.label : it.manuel!.nom, nom: it.manuel ? it.manuel.nom : it.breaker ? nomAffiche(it.breaker) : "" }));
+        const nomCircuitModal = circuitsPhotos.find(c => c.label === photosModal.label)?.nom ?? photosModal.label ?? "tous les circuits";
+        return (
+          <PhotosChantier key={`${photosModal.label}-${photosModal.ouvrirId ?? ""}`} titre={nomCircuitModal} photos={liste} circuits={circuitsPhotos} labelCircuit={photosModal.label} url={urlPhoto}
+            ouvrirId={photosModal.ouvrirId} enCours={photoEnvoi}
+            onClose={() => setPhotosModal(null)}
+            onAjouter={photosModal.label != null ? (files => { setPlacingPhoto({ label: photosModal.label!, files }); setPhotosModal(null); setMode("select"); setPlacementType(null); }) : undefined}
+            onSupprimer={supprimerPhoto}
+            onLegende={(id, texte) => updateNiveauActif(n => ({ ...n, photosChantier: (n.photosChantier ?? []).map(ph => ph.id === id ? { ...ph, legende: texte } : ph) }))}
+            onDeplacer={ids => { const l = tousPhotos.find(ph => ph.id === ids[0])?.circuit; if (l != null) { setPlacingPhoto({ label: l, deplacer: ids }); setPhotosModal(null); setMode("select"); setPlacementType(null); } }}
+            onRattacher={(id, label) => updateNiveauActif(n => ({ ...n, photosChantier: (n.photosChantier ?? []).map(ph => ph.id === id ? { ...ph, circuit: label } : ph) }))} />
+        );
+      })()}
       {circuitLumiereForm && niveauActif && (
         <CircuitLumiereForm niveaux={niveaux} niveauActifId={niveauActif.id} onCancel={() => setCircuitLumiereForm(false)}
           onValidate={(...args) => { setCircuitLumiereForm(false); validerCircuitLumiereEtages(...args); }} />
