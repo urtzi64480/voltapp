@@ -758,7 +758,7 @@ function couleurTaux(tauxPct: number): string {
 function gaineNiveauHtml(troncon: TronconGaine | undefined, niveau: Niveau): string {
   const lignes: string[] = [];
   if (troncon) {
-    lignes.push(`<span>🔀 Gaine principale : <strong>${escapeXml(troncon.gaine)}</strong></span>` +
+    lignes.push(`<span>🔀 Gaine principale : <strong>${troncon.nbGaines > 1 ? `${troncon.nbGaines} × ` : ""}${escapeXml(troncon.gaine)}</strong></span>` +
       `<span style="color:${couleurTaux(troncon.tauxPct)};font-weight:bold;">${troncon.tauxPct}% de remplissage</span>` +
       `<span style="color:#888;">(${troncon.circuits.length} circuit${troncon.circuits.length > 1 ? "s" : ""} regroupés Tableau → niveau)</span>`);
   }
@@ -6378,8 +6378,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <span className="text-[11px] text-ink-400 font-mono">{resultat.breakers.length} circuit{resultat.breakers.length > 1 ? "s" : ""} généré{resultat.breakers.length > 1 ? "s" : ""}</span>
           )}
           {gaineNiveauActif && (
-            <span className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-mono font-semibold ${couleurTauxUi(gaineNiveauActif.tauxPct)}`}>
-              🔀 {gaineNiveauActif.gaine} · {gaineNiveauActif.tauxPct}%
+            <span title={`Gaine principale « ${gaineNiveauActif.niveau} » (tableau → niveau) : tous les circuits du niveau y passent (${gaineNiveauActif.circuits.length} circuits, un câble de départ chacun). Remplissage max conseillé : 33 %.${gaineNiveauActif.nbGaines > 1 ? ` Une seule gaine ne suffit pas : prévoir ${gaineNiveauActif.nbGaines} gaines ${gaineNiveauActif.gaine} en parallèle.` : ""}`}
+              className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-mono font-semibold ${couleurTauxUi(gaineNiveauActif.tauxPct)}`}>
+              🔀 Gaine principale {gaineNiveauActif.nbGaines > 1 ? `${gaineNiveauActif.nbGaines} × ` : ""}{gaineNiveauActif.gaine} · {gaineNiveauActif.nbGaines > 1 ? `${Math.round(gaineNiveauActif.tauxPct / gaineNiveauActif.nbGaines)}% chacune` : `${gaineNiveauActif.tauxPct}%`}
             </span>
           )}
           {resultat && niveauActif && !origineCircuits(niveauActif) && (

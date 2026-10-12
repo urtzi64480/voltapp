@@ -990,6 +990,8 @@ export interface TronconGaine {
   cables: string[];
   gaine: string;
   tauxPct: number;
+  /** Nombre de gaines identiques à prévoir : 1 si une seule suffit (≤ 33 %), sinon le plus petit nombre qui ramène chacune à ≤ 33 %. */
+  nbGaines: number;
 }
 
 export function genererGainesNiveaux(resultat: ResultatGeneration): TronconGaine[] {
@@ -1009,12 +1011,9 @@ export function genererGainesNiveaux(resultat: ResultatGeneration): TronconGaine
     const cables: string[] = [];
     circuitsNiveau.forEach(b => {
       const section = effectiveSection(b);
-      const spec = CIRCUITS[b.circuit];
-      if (spec?.category === "lumiere") {
-        b.pieces.forEach(p => p.groupes.forEach(g => cables.push(...cablesGroupe(g, section))));
-      } else {
-        cables.push(...cablesPrises(section));
-      }
+      // Gaine PRINCIPALE tableau → niveau : chaque circuit n'y passe qu'UNE fois (son câble de départ : phase + neutre + terre).
+      // Les retours / navettes / commandes de l'éclairage naissent plus loin (boîte, interrupteur) et ne montent pas au tableau.
+      cables.push(...cablesPrises(section));
     });
 
     const info = gaineRecommandee(cables);
@@ -1025,6 +1024,7 @@ export function genererGainesNiveaux(resultat: ResultatGeneration): TronconGaine
       cables,
       gaine: info.gaine,
       tauxPct: info.tauxPct,
+      nbGaines: info.ok ? 1 : Math.max(2, Math.ceil(info.tauxPct / 33)),
     });
   }
 
