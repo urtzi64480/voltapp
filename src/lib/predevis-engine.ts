@@ -398,7 +398,12 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           if (e) e.nb++; else parDestTaille.set(k, { dest, taille: t, nb: 1 });
         };
         parPlaque.forEach(({ nb, dest }) => compter(Math.min(nb, MAX_POSTES_PLAQUE), dest));
-        grouperParProximite(libres, 0.20, 4).forEach(g => compter(g.length, destParId.get(g[0])!));
+        // Une plaque ne regroupe jamais du courant faible (RJ45, TV) avec de la puissance, ni une prise TV avec une RJ45 :
+        // chaque famille a son circuit (en mode « par circuit », sinon la plaque disparaissait du circuit TV / RJ45).
+        const familleDe = (id: number) => { const t = apps.find(x => x.id === id)?.type; return t === "prise_tv" ? "tv" : t === "rj45" ? "rj45" : "puissance"; };
+        ["puissance", "rj45", "tv"].forEach(fam => {
+          grouperParProximite(libres.filter(c => familleDe(c.id) === fam), 0.20, 4).forEach(g => compter(g.length, destParId.get(g[0])!));
+        });
         parDestTaille.forEach(({ dest, taille, nb }) => {
           const suffixe = taille === 1 ? "poste" : "postes";
           ajouter(`boite_encastrement_${taille}${suffixe}@${dest.id}`, `boite_encastrement_${taille}${suffixe}`,
