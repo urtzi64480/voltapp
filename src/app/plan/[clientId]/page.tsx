@@ -796,7 +796,7 @@ function imprimerPlan(
 ) {
   const w = window.open("", "_blank");
   if (!w) return;
-  let html = `<html><head><title>Plan — ${clientName}</title><style>
+  let html = `<html><head><title>Plan — ${escapeXml(clientName)}</title><style>
     @page { margin: 10mm; }
     body { margin: 0; font-family: 'Courier New', monospace; }
     h2 { font-size: 14pt; margin: 6mm 6mm 1mm; }
@@ -5295,7 +5295,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (!img) return;
     const w = window.open("", "_blank");
     if (!w) return;
-    w.document.write(`<html><head><title>Vue 3D — ${client?.nom ?? ""}</title><style>@page{margin:10mm}body{margin:0;text-align:center}img{max-width:100%}</style></head><body><img src="${img}" /></body></html>`);
+    w.document.write(`<html><head><title>Vue 3D — ${escapeXml(client?.nom ?? "")}</title><style>@page{margin:10mm}body{margin:0;text-align:center}img{max-width:100%}</style></head><body><img src="${img}" /></body></html>`);
     w.document.close();
     setTimeout(() => { w.print(); w.close(); }, 400);
   };
@@ -9015,7 +9015,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
             {schemaCircuitId != null && niveauActif && (() => {
               const b = circuitsNiveauActif.find(x => x.id === schemaCircuitId);
-              const calc = calculSchemaCircuit(b!);
+              const calc = b ? calculSchemaCircuit(b) : null;
               if (!b || !calc) return null;
               const { points, tous, schema, section, dansTableau, amperesAffiches, longueurs } = calc;
               return (
