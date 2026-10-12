@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useState, useRef, useCallback, useEffect, useMemo, Fragment } from "react";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, Fragment, lazy, Suspense } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
@@ -55,8 +55,10 @@ import { cotesParDefaut, resoudreMural, aimanterMeuble, ancrageMural, ancrageClo
 import { enCm, estRectangle, redimensionnerMurUtile, reporterAppareillages } from "@/lib/dimensions-piece";
 import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece";
 import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, pieceLaPlusProche, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote, RepereCotes } from "@/lib/appareillage-mur";
-import Vue3D, { Vue3DHandle } from "@/components/plan/Vue3D";
-import Vue3DMaison from "@/components/plan/Vue3DMaison";
+import type { Vue3DHandle } from "@/components/plan/Vue3D";
+// La vue 3D (three.js, très lourde) n'est téléchargée qu'au premier clic sur « Vue 3D » : le plan 2D s'ouvre bien plus vite.
+const Vue3D = lazy(() => import("@/components/plan/Vue3D"));
+const Vue3DMaison = lazy(() => import("@/components/plan/Vue3DMaison"));
 import { toutesBoitesNiveau, segmentsDepuisMarche } from "@/lib/maison-engine";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, integrerCoffretCommunication, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, genererCircuitsManuelsSeuls, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur, estAccessoireTableau, BREAKER_TYPES, effectiveSection } from "@/lib/electrical-constants";
@@ -249,6 +251,22 @@ function snapAvecAlignement(m: Point, candidats: Point[], seuilM: number): Resul
     if (dy < meilleurDY) { meilleurDY = dy; y = c.y; guideY = c.y; }
   });
   return { point: { x, y }, guideX, guideY };
+}
+
+// Couche qui suit le curseur : possède elle-même la position (état local) et se redessine seule quand elle bouge.
+// `rendu` est recréé à chaque rendu de l'éditeur, donc toujours à jour de son état ; seul le mouvement de souris ne le déclenche pas.
+function CurseurAbonne({ abonnes, initial, rendu }: {
+  abonnes: { current: Set<(p: Point | null) => void> };
+  initial: Point | null;
+  rendu: (cursorPx: Point | null) => ReactNode;
+}) {
+  const [cursorPx, setCursorLocal] = useState<Point | null>(initial);
+  useEffect(() => {
+    const ensemble = abonnes.current;
+    ensemble.add(setCursorLocal);
+    return () => { ensemble.delete(setCursorLocal); };
+  }, [abonnes]);
+  return <>{rendu(cursorPx)}</>;
 }
 
 function ReglageAimant({ pasCm, setPasCm, aimant, setAimant, murs, setMurs }: { pasCm: number; setPasCm: (v: number) => void; aimant: boolean; setAimant: (v: boolean) => void; murs: boolean; setMurs: (v: boolean) => void }) {
@@ -2154,7 +2172,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [alignSeg, setAlignSeg] = useState<ResultatAlignMurs | null>(null);
   reglageAimant.murs = alignMurs;
   const [pendingContour, setPendingContour] = useState<Point[] | null>(null);
-  const [cursorPx, setCursorPx] = useState<Point | null>(null);
+  // Position du curseur (modes dessin / cloison / zone / mesure) : publiée vers la couche d'aperçu <CurseurAbonne> sans passer par l'état
+  // de l'éditeur, pour ne pas tout redessiner à chaque mouvement de souris.
+  const cursorPxRef = useRef<Point | null>(null);
+  const abonnesCurseur = useRef<Set<(p: Point | null) => void>>(new Set());
+  const setCursorPx = (p: Point | null) => { cursorPxRef.current = p; abonnesCurseur.current.forEach(f => f(p)); };
 
   const [selectedPieceId, setSelectedPieceId] = useState<number | null>(null);
   // Incrémenté à CHAQUE clic de sélection (même sur un élément déjà sélectionné) — inclus
@@ -2328,6 +2350,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     return () => { window.removeEventListener("keydown", maj); window.removeEventListener("keyup", maj); window.removeEventListener("blur", raz); };
   }, []);
   const [pan, setPan] = useState<Point>({ x: 60, y: 60 });
+  // Glissement de la vue : décalage « en direct » appliqué au groupe SVG (voir onMove / onUp), validé dans `pan` au relâchement.
+  const contenuSvgRef = useRef<SVGGElement>(null);
+  const panDirectRef = useRef<Point | null>(null);
+  // `pan` vient d'être validé et le rendu a recalé tout le plan : on retire le décalage provisoire AVANT l'affichage (sinon décalage doublé 1 image).
+  useLayoutEffect(() => { contenuSvgRef.current?.removeAttribute("transform"); }, [pan]);
   const [, forceRerender] = useState(0);
 
   const svgRef = useRef<SVGSVGElement>(null);
@@ -2493,12 +2520,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   useEffect(() => {
     if (dragMode.kind === "none") return;
-    dragBougeRef.current = false; dragDepartRef.current = null;
+    dragBougeRef.current = false; dragDepartRef.current = null; panDirectRef.current = null;
+    // Faces des AUTRES pièces pendant le déplacement d'une pièce : elles ne bougent pas pendant le glissement, inutile de les recalculer à chaque mouvement.
+    let facesAutresCache: { k: FaceKind; pts: Point[] }[] | null = null;
     const onMove = (e: PointerEvent) => {
-      if (!dragDepartRef.current) dragDepartRef.current = { x: e.clientX, y: e.clientY };
-      else if (Math.hypot(e.clientX - dragDepartRef.current.x, e.clientY - dragDepartRef.current.y) > 3) dragBougeRef.current = true;
       if (dragMode.kind === "pan") {
-        setPan({ x: dragMode.startPan.x + (e.clientX - dragMode.startX), y: dragMode.startPan.y + (e.clientY - dragMode.startY) });
+        const dx = e.clientX - dragMode.startX, dy = e.clientY - dragMode.startY;
+        panDirectRef.current = { x: dx, y: dy };
+        contenuSvgRef.current?.setAttribute("transform", `translate(${dx} ${dy})`);
       } else if (dragMode.kind === "vertex") {
         const rect = svgRef.current?.getBoundingClientRect();
         if (!rect) return;
@@ -2539,7 +2568,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             return res;
           };
           const facesM = facesDe(pieceM, dep);
-          const facesO = niveauA.pieces.filter(p => p.id !== pieceM.id).flatMap(pc => facesDe(pc, { x: 0, y: 0 }));
+          const facesO = facesAutresCache ?? (facesAutresCache = niveauA.pieces.filter(p => p.id !== pieceM.id).flatMap(pc => facesDe(pc, { x: 0, y: 0 })));
           const ptsM = facesM.flatMap(f => f.pts.map(pt => ({ pt, k: f.k })));
           const ptsO = facesO.flatMap(f => f.pts.map(pt => ({ pt, k: f.k })));
           let ax: AlignInfo["x"], ay: AlignInfo["y"], coin: (AlignInfo["coin"] & { d: number }) | undefined, am: AlignInfo["mur"];
@@ -2787,7 +2816,33 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         }));
       }
     };
+    // Un seul traitement par image : les mouvements de souris arrivés entre deux affichages sont regroupés (le dernier suffit, tous les
+    // calculs sont absolus depuis le point de départ). Le seuil « a bougé » reste évalué sur CHAQUE événement brut.
+    let evtEnAttente: PointerEvent | null = null;
+    let rafMove = 0;
+    const onMoveGroupe = (e: PointerEvent) => {
+      if (!dragDepartRef.current) dragDepartRef.current = { x: e.clientX, y: e.clientY };
+      else if (Math.hypot(e.clientX - dragDepartRef.current.x, e.clientY - dragDepartRef.current.y) > 3) dragBougeRef.current = true;
+      evtEnAttente = e;
+      if (!rafMove) rafMove = requestAnimationFrame(() => {
+        rafMove = 0;
+        const ev = evtEnAttente; evtEnAttente = null;
+        if (ev) onMove(ev);
+      });
+    };
+    const viderMove = () => {
+      if (rafMove) { cancelAnimationFrame(rafMove); rafMove = 0; }
+      const ev = evtEnAttente; evtEnAttente = null;
+      if (ev) onMove(ev);
+    };
     const onUp = () => {
+      viderMove();   // applique le dernier mouvement en attente AVANT de valider la fin du glissement
+      // Glissement de la vue : on valide maintenant la position finale (le plan était seulement translaté à l'écran).
+      if (dragMode.kind === "pan" && panDirectRef.current) {
+        const d = panDirectRef.current;
+        panDirectRef.current = null;
+        setPan({ x: dragMode.startPan.x + d.x, y: dragMode.startPan.y + d.y });
+      }
       // "pan" (clic dans le vide / déplacement de la vue), "liaison" (coude), "ouverture"
       // (porte/fenêtre), "boite" et "pointArrivee" (purement cosmétiques/informatifs) ne
       // changent jamais la composition électrique du plan — les exclure évite de
@@ -2799,13 +2854,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       setAlignPiece(null);
       setAlignSeg(null);
     };
-    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointermove", onMoveGroupe);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);   // geste tactile interrompu : sans ça le glissement restait « collé » au doigt
     return () => {
-      window.removeEventListener("pointermove", onMove);
+      if (rafMove) cancelAnimationFrame(rafMove);
+      window.removeEventListener("pointermove", onMoveGroupe);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
+      // Sécurité : jamais de décalage provisoire qui survive à la fin du glissement.
+      panDirectRef.current = null;
+      contenuSvgRef.current?.removeAttribute("transform");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dragMode, zoom, niveauActifId]);
@@ -5353,22 +5412,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const selectedPiece = niveauActif?.pieces.find(p => p.id === selectedPieceId) ?? null;
 
-  let curseurSnap: (ResultatSnap & { align?: ResultatAlignMurs }) | null = null;
-  if (mode === "dessiner" && cursorPx) curseurSnap = snapDessin(toMeters(cursorPx.x, cursorPx.y));
-  const alignAffiche: ResultatAlignMurs | null = dragMode.kind === "vertex" ? alignSeg : mode === "dessiner" ? (curseurSnap?.align ?? null) : null;
-  const curseurCl = mode === "cloison" && cursorPx && !cloisonEnAttente ? curseurCloison(toMeters(cursorPx.x, cursorPx.y)) : null;
   const cloisonAffichee: Point[] = cloisonEnAttente ? cloisonEnAttente.chemin : cloisonPoints;
-  const curseurMesure = mode === "mesure" && cursorPx ? accrocheMesure(toMeters(cursorPx.x, cursorPx.y)) : null;
-  const curseurZ = mode === "zone" && cursorPx && !zoneEnAttente ? curseurZone(toMeters(cursorPx.x, cursorPx.y)) : null;
   const zoneAffichee: Point[] = zoneEnAttente ? zoneEnAttente.contour : zonePoints;
   const selectedZone = niveauActif?.zones?.find(z => z.id === selectedZoneId) ?? null;
-  const guideActif: { x?: number; y?: number } | null =
-    mode === "zone" ? (curseurZ && (curseurZ.guideX !== undefined || curseurZ.guideY !== undefined) ? { x: curseurZ.guideX, y: curseurZ.guideY } : null)
-    : mode === "cloison" ? (curseurCl && (curseurCl.guideX !== undefined || curseurCl.guideY !== undefined) ? { x: curseurCl.guideX, y: curseurCl.guideY } : null)
-    : dragMode.kind === "vertex" ? snapGuide
-    : mode === "dessiner" && curseurSnap && (curseurSnap.guideX !== undefined || curseurSnap.guideY !== undefined)
-      ? { x: curseurSnap.guideX, y: curseurSnap.guideY }
-      : null;
   const selectedAppareillage = niveauActif?.pieces.flatMap(p => p.appareillages).find(a => a.id === selectedAppareillageId) ?? null;
   const pieceDeSelectedAppareillage = selectedAppareillage
     ? niveauActif?.pieces.find(p => p.appareillages.some(a => a.id === selectedAppareillage.id)) ?? null
@@ -6421,9 +6467,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             )}
             {vue3D ? (
               vue3DTous ? (
-                <Vue3DMaison niveaux={niveaux} niveauActifId={niveauActifId} />
+                <Suspense fallback={<div className="flex items-center justify-center h-full text-ink-400 text-sm">Chargement de la vue 3D…</div>}>
+                  <Vue3DMaison niveaux={niveaux} niveauActifId={niveauActifId} />
+                </Suspense>
               ) : niveauActif ? (
+                <Suspense fallback={<div className="flex items-center justify-center h-full text-ink-400 text-sm">Chargement de la vue 3D…</div>}>
                 <Vue3D ref={vue3DRef} niveau={niveauActif} resultat={resultat} showCircuits={showCircuits} orientationNord={orientationNord} circuitsAction={blocCircuits} escaliersEntrants={entrantsEscalier} />
+                </Suspense>
               ) : null
             ) : (
               <>
@@ -6449,6 +6499,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               onWheel={handleWheel}
             >
               <rect width="100%" height="100%" fill="#fafaf9" />
+              {/* Tout le contenu du plan est dans ce groupe : pendant un glissement de la vue, on ne fait que le translater (attribut
+                  transform posé directement sur le DOM) au lieu de recalculer tout le plan à chaque mouvement de souris ;
+                  la position réelle (pan) n'est enregistrée qu'au relâchement. Aucune donnée du plan n'est concernée. */}
+              <g ref={contenuSvgRef}>
               {gridLinesX.map(x => {
                 const p = toScreen({ x, y: 0 });
                 return <line key={`gx${x}`} x1={p.x} y1={0} x2={p.x} y2={H} stroke={x === 0 ? "#c4c4c0" : "#e7e7e3"} strokeWidth={x === 0 ? 1.5 : 1} />;
@@ -7327,187 +7381,209 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 );
               })()}
 
-              {alignAffiche && (() => {
-                const labels = Array.from(new Set(alignAffiche.labels));
+              <CurseurAbonne abonnes={abonnesCurseur} initial={cursorPxRef.current} rendu={(cursorPx) => {
+                // Tout ce qui dépend de la position du curseur est calculé ICI (et non dans le composant entier) : un mouvement de souris
+                // ne redessine que cette couche d'aperçu, plus tout l'éditeur.
+    let curseurSnap: (ResultatSnap & { align?: ResultatAlignMurs }) | null = null;
+    if (mode === "dessiner" && cursorPx) curseurSnap = snapDessin(toMeters(cursorPx.x, cursorPx.y));
+    const alignAffiche: ResultatAlignMurs | null = dragMode.kind === "vertex" ? alignSeg : mode === "dessiner" ? (curseurSnap?.align ?? null) : null;
+    const curseurCl = mode === "cloison" && cursorPx && !cloisonEnAttente ? curseurCloison(toMeters(cursorPx.x, cursorPx.y)) : null;
+    const curseurMesure = mode === "mesure" && cursorPx ? accrocheMesure(toMeters(cursorPx.x, cursorPx.y)) : null;
+    const curseurZ = mode === "zone" && cursorPx && !zoneEnAttente ? curseurZone(toMeters(cursorPx.x, cursorPx.y)) : null;
+    const guideActif: { x?: number; y?: number } | null =
+      mode === "zone" ? (curseurZ && (curseurZ.guideX !== undefined || curseurZ.guideY !== undefined) ? { x: curseurZ.guideX, y: curseurZ.guideY } : null)
+      : mode === "cloison" ? (curseurCl && (curseurCl.guideX !== undefined || curseurCl.guideY !== undefined) ? { x: curseurCl.guideX, y: curseurCl.guideY } : null)
+      : dragMode.kind === "vertex" ? snapGuide
+      : mode === "dessiner" && curseurSnap && (curseurSnap.guideX !== undefined || curseurSnap.guideY !== undefined)
+        ? { x: curseurSnap.guideX, y: curseurSnap.guideY }
+        : null;
                 return (
-                  <g style={{ pointerEvents: "none" }}>
-                    {alignAffiche.lignes.map((l, i) => {
-                      const p1 = toScreen({ x: l.q.x - l.d.x * 200, y: l.q.y - l.d.y * 200 });
-                      const p2 = toScreen({ x: l.q.x + l.d.x * 200, y: l.q.y + l.d.y * 200 });
-                      return <line key={i} x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="#16A34A" strokeWidth={1.5} strokeDasharray="4,3" opacity={0.9} />;
-                    })}
-                    {labels.map((txt, i) => {
-                      const t = `${txt} ✔`, w = t.length * 6.6 + 16;
+                  <>
+                    {alignAffiche && (() => {
+                      const labels = Array.from(new Set(alignAffiche.labels));
                       return (
-                        <g key={`al${i}`} transform={`translate(${W / 2 - w / 2} ${12 + i * 28})`} fontFamily="monospace">
-                          <rect width={w} height={22} rx={6} fill="#fff" stroke="#16A34A" strokeWidth={1.5} />
-                          <text x={w / 2} y={15} textAnchor="middle" fontSize={11.5} fontWeight={700} fill="#15803D">{t}</text>
-                        </g>
-                      );
-                    })}
-                  </g>
-                );
-              })()}
-
-              {guideActif?.x !== undefined && (() => {
-                const p = toScreen({ x: guideActif.x, y: 0 });
-                return <line x1={p.x} y1={0} x2={p.x} y2={H} stroke="#F59E0B" strokeWidth={1} strokeDasharray="4,3" opacity={0.7} />;
-              })()}
-              {guideActif?.y !== undefined && (() => {
-                const p = toScreen({ x: 0, y: guideActif.y });
-                return <line x1={0} y1={p.y} x2={W} y2={p.y} stroke="#F59E0B" strokeWidth={1} strokeDasharray="4,3" opacity={0.7} />;
-              })()}
-
-              {mode === "zone" && (zoneAffichee.length > 0 || curseurZ) && (() => {
-                const COUL = "#7C3AED";
-                const live = curseurZ && zoneAffichee.length > 0 && !zoneEnAttente ? curseurZ.point : null;
-                const trace = [...zoneAffichee, ...(live ? [live] : [])].map(toScreen);
-                const ferme = !!zoneEnAttente?.ferme || (curseurZ?.ferme ?? false);
-                return (
-                  <g pointerEvents="none">
-                    {zoneAffichee.length >= 3 && ferme && <polygon points={zoneAffichee.map(toScreen).map(q => `${q.x},${q.y}`).join(" ")} fill={COUL} fillOpacity={0.12} stroke="none" />}
-                    {trace.length >= 2 && (
-                      <polyline points={trace.map(q => `${q.x},${q.y}`).join(" ")} fill="none" stroke={COUL} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={zoneEnAttente ? undefined : "8,5"} />
-                    )}
-                    {zoneAffichee.map((pt, i) => {
-                      const q = toScreen(pt);
-                      return <circle key={`zp${i}`} cx={q.x} cy={q.y} r={i === 0 ? (zonePoints.length >= 3 ? 9 : 7) : 5} fill={i === 0 ? COUL : "#fff"} stroke={COUL} strokeWidth={2} />;
-                    })}
-                    {zoneAffichee.slice(1).map((pt, i) => (
-                      <EtiquetteLongueur key={`zseg${i}`} aPx={toScreen(zoneAffichee[i])} bPx={toScreen(pt)} texte={`${distance(zoneAffichee[i], pt).toFixed(2)} m`} />
-                    ))}
-                    {live && zoneAffichee.length > 0 && (
-                      <EtiquetteLongueur key="zlive" aPx={toScreen(zoneAffichee[zoneAffichee.length - 1])} bPx={toScreen(live)}
-                        texte={`${distance(zoneAffichee[zoneAffichee.length - 1], live).toFixed(2)} m`} actif />
-                    )}
-                    {curseurZ && (() => {
-                      const q = toScreen(curseurZ.point);
-                      return <circle cx={q.x} cy={q.y} r={8} fill="none" stroke={curseurZ.ferme || curseurZ.surMur ? "#16A34A" : COUL} strokeWidth={2.5} />;
-                    })()}
-                  </g>
-                );
-              })()}
-
-              {(reperesNiveau.length > 0 || curseurMesure) && (() => {
-                const COUL = "#0E7490";
-                const chaines = new Map<number, typeof reperesNiveau>();
-                for (const r of reperesNiveau) { const l = chaines.get(r.chaine) ?? []; l.push(r); chaines.set(r.chaine, l); }
-                const fmt = (d: number) => d >= 1 ? `${d.toFixed(2).replace(".", ",")} m` : `${Math.round(d * 100)} cm`;
-                const derniere = reperesNiveau[reperesNiveau.length - 1];
-                const enCours = mode === "mesure" && derniere && derniere.chaine === repereSeqRef.current.chaine ? derniere : null;
-                const survol = mode === "mesure" && cursorPx
-                  ? [...reperesNiveau].reverse().find(r => Math.hypot(toScreen(r.point).x - cursorPx.x, toScreen(r.point).y - cursorPx.y) <= 10) ?? null : null;
-                let num = 0;
-                return (
-                  <g pointerEvents="none">
-                    {[...chaines.values()].map((pts, ci) => {
-                      const tot = pts.slice(1).reduce((s, r, i) => s + distance(pts[i].point, r.point), 0);
-                      return (
-                        <g key={`ch${ci}`}>
-                          {pts.length >= 2 && <polyline points={pts.map(r => { const q = toScreen(r.point); return `${q.x},${q.y}`; }).join(" ")} fill="none" stroke={COUL} strokeWidth={2} strokeDasharray="7,4" strokeLinecap="round" strokeLinejoin="round" />}
-                          {pts.slice(1).map((r, i) => <EtiquetteLongueur key={`ms${r.id}`} aPx={toScreen(pts[i].point)} bPx={toScreen(r.point)} texte={fmt(distance(pts[i].point, r.point))} />)}
-                          {pts.length >= 3 && (() => { const q = toScreen(pts[pts.length - 1].point); return (
-                            <g transform={`translate(${q.x + 12}, ${q.y - 14})`}>
-                              <rect x={-4} y={-8} width={Math.max(36, fmt(tot).length * 6 + 18)} height={16} rx={3} fill={COUL} />
-                              <text x={2} y={4} fontSize={9} fontFamily="monospace" fontWeight={700} fill="#fff">Σ {fmt(tot)}</text>
-                            </g>); })()}
-                          {pts.map(r => {
-                            num += 1;
-                            const q = toScreen(r.point), sur = survol?.id === r.id;
+                        <g style={{ pointerEvents: "none" }}>
+                          {alignAffiche.lignes.map((l, i) => {
+                            const p1 = toScreen({ x: l.q.x - l.d.x * 200, y: l.q.y - l.d.y * 200 });
+                            const p2 = toScreen({ x: l.q.x + l.d.x * 200, y: l.q.y + l.d.y * 200 });
+                            return <line key={i} x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="#16A34A" strokeWidth={1.5} strokeDasharray="4,3" opacity={0.9} />;
+                          })}
+                          {labels.map((txt, i) => {
+                            const t = `${txt} ✔`, w = t.length * 6.6 + 16;
                             return (
-                              <g key={`mr${r.id}`}>
-                                <circle cx={q.x} cy={q.y} r={sur ? 8 : 6} fill={sur ? "#DC2626" : "#fff"} stroke={sur ? "#DC2626" : COUL} strokeWidth={2} />
-                                {sur
-                                  ? <text x={q.x} y={q.y + 3.5} textAnchor="middle" fontSize={11} fontWeight={700} fill="#fff">×</text>
-                                  : <text x={q.x} y={q.y + 3} textAnchor="middle" fontSize={8} fontWeight={700} fill={COUL}>{num}</text>}
+                              <g key={`al${i}`} transform={`translate(${W / 2 - w / 2} ${12 + i * 28})`} fontFamily="monospace">
+                                <rect width={w} height={22} rx={6} fill="#fff" stroke="#16A34A" strokeWidth={1.5} />
+                                <text x={w / 2} y={15} textAnchor="middle" fontSize={11.5} fontWeight={700} fill="#15803D">{t}</text>
                               </g>
                             );
                           })}
                         </g>
                       );
-                    })}
-                    {curseurMesure && !survol && (() => {
-                      const q = toScreen(curseurMesure.point);
-                      const coul = curseurMesure.type === "jonction" ? "#16A34A" : curseurMesure.type === "objet" ? "#F59E0B" : COUL;
+                    })()}
+
+                    {guideActif?.x !== undefined && (() => {
+                      const p = toScreen({ x: guideActif.x, y: 0 });
+                      return <line x1={p.x} y1={0} x2={p.x} y2={H} stroke="#F59E0B" strokeWidth={1} strokeDasharray="4,3" opacity={0.7} />;
+                    })()}
+                    {guideActif?.y !== undefined && (() => {
+                      const p = toScreen({ x: 0, y: guideActif.y });
+                      return <line x1={0} y1={p.y} x2={W} y2={p.y} stroke="#F59E0B" strokeWidth={1} strokeDasharray="4,3" opacity={0.7} />;
+                    })()}
+
+                    {mode === "zone" && (zoneAffichee.length > 0 || curseurZ) && (() => {
+                      const COUL = "#7C3AED";
+                      const live = curseurZ && zoneAffichee.length > 0 && !zoneEnAttente ? curseurZ.point : null;
+                      const trace = [...zoneAffichee, ...(live ? [live] : [])].map(toScreen);
+                      const ferme = !!zoneEnAttente?.ferme || (curseurZ?.ferme ?? false);
                       return (
-                        <g>
-                          {enCours && (
-                            <>
-                              <line x1={toScreen(enCours.point).x} y1={toScreen(enCours.point).y} x2={q.x} y2={q.y} stroke={COUL} strokeWidth={2} strokeDasharray="3,4" opacity={0.8} />
-                              <EtiquetteLongueur aPx={toScreen(enCours.point)} bPx={q} texte={`${fmt(distance(enCours.point, curseurMesure.point))}  (Δx ${fmt(Math.abs(curseurMesure.point.x - enCours.point.x))} · Δy ${fmt(Math.abs(curseurMesure.point.y - enCours.point.y))})`} actif />
-                            </>
+                        <g pointerEvents="none">
+                          {zoneAffichee.length >= 3 && ferme && <polygon points={zoneAffichee.map(toScreen).map(q => `${q.x},${q.y}`).join(" ")} fill={COUL} fillOpacity={0.12} stroke="none" />}
+                          {trace.length >= 2 && (
+                            <polyline points={trace.map(q => `${q.x},${q.y}`).join(" ")} fill="none" stroke={COUL} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={zoneEnAttente ? undefined : "8,5"} />
                           )}
-                          <circle cx={q.x} cy={q.y} r={curseurMesure.type === "libre" ? 4 : 9} fill="none" stroke={coul} strokeWidth={2.5} />
-                          <line x1={q.x - 5} y1={q.y} x2={q.x + 5} y2={q.y} stroke={coul} strokeWidth={1.5} />
-                          <line x1={q.x} y1={q.y - 5} x2={q.x} y2={q.y + 5} stroke={coul} strokeWidth={1.5} />
+                          {zoneAffichee.map((pt, i) => {
+                            const q = toScreen(pt);
+                            return <circle key={`zp${i}`} cx={q.x} cy={q.y} r={i === 0 ? (zonePoints.length >= 3 ? 9 : 7) : 5} fill={i === 0 ? COUL : "#fff"} stroke={COUL} strokeWidth={2} />;
+                          })}
+                          {zoneAffichee.slice(1).map((pt, i) => (
+                            <EtiquetteLongueur key={`zseg${i}`} aPx={toScreen(zoneAffichee[i])} bPx={toScreen(pt)} texte={`${distance(zoneAffichee[i], pt).toFixed(2)} m`} />
+                          ))}
+                          {live && zoneAffichee.length > 0 && (
+                            <EtiquetteLongueur key="zlive" aPx={toScreen(zoneAffichee[zoneAffichee.length - 1])} bPx={toScreen(live)}
+                              texte={`${distance(zoneAffichee[zoneAffichee.length - 1], live).toFixed(2)} m`} actif />
+                          )}
+                          {curseurZ && (() => {
+                            const q = toScreen(curseurZ.point);
+                            return <circle cx={q.x} cy={q.y} r={8} fill="none" stroke={curseurZ.ferme || curseurZ.surMur ? "#16A34A" : COUL} strokeWidth={2.5} />;
+                          })()}
                         </g>
                       );
                     })()}
-                  </g>
-                );
-              })()}
 
-              {mode === "cloison" && (cloisonAffichee.length > 0 || curseurCl) && (() => {
-                const COUL = "#B45309";
-                const live = curseurCl && cloisonAffichee.length > 0 ? curseurCl.point : null;
-                const trace = [...cloisonAffichee, ...(live ? [live] : [])].map(toScreen);
-                return (
-                  <g pointerEvents="none">
-                    {trace.length >= 2 && (
-                      <polyline points={trace.map(q => `${q.x},${q.y}`).join(" ")} fill="none" stroke={COUL} strokeWidth={5} strokeLinecap="round" strokeLinejoin="round"
-                        opacity={cloisonEnAttente ? 0.9 : 0.7} strokeDasharray={cloisonEnAttente ? undefined : "9,6"} />
-                    )}
-                    {cloisonAffichee.map((pt, i) => {
-                      const q = toScreen(pt);
-                      return <circle key={`cl${i}`} cx={q.x} cy={q.y} r={i === 0 ? 7 : 5} fill={i === 0 ? COUL : "#fff"} stroke={COUL} strokeWidth={2} />;
-                    })}
-                    {cloisonAffichee.slice(1).map((pt, i) => (
-                      <EtiquetteLongueur key={`clseg${i}`} aPx={toScreen(cloisonAffichee[i])} bPx={toScreen(pt)} texte={`${distance(cloisonAffichee[i], pt).toFixed(2)} m`} />
-                    ))}
-                    {live && cloisonAffichee.length > 0 && (
-                      <EtiquetteLongueur key="cllive" aPx={toScreen(cloisonAffichee[cloisonAffichee.length - 1])} bPx={toScreen(live)}
-                        texte={`${distance(cloisonAffichee[cloisonAffichee.length - 1], live).toFixed(2)} m`} actif />
-                    )}
-                    {curseurCl && (() => {
-                      const q = toScreen(curseurCl.point);
-                      return <circle cx={q.x} cy={q.y} r={8} fill="none" stroke={curseurCl.surMur ? "#16A34A" : COUL} strokeWidth={2.5} />;
+                    {(reperesNiveau.length > 0 || curseurMesure) && (() => {
+                      const COUL = "#0E7490";
+                      const chaines = new Map<number, typeof reperesNiveau>();
+                      for (const r of reperesNiveau) { const l = chaines.get(r.chaine) ?? []; l.push(r); chaines.set(r.chaine, l); }
+                      const fmt = (d: number) => d >= 1 ? `${d.toFixed(2).replace(".", ",")} m` : `${Math.round(d * 100)} cm`;
+                      const derniere = reperesNiveau[reperesNiveau.length - 1];
+                      const enCours = mode === "mesure" && derniere && derniere.chaine === repereSeqRef.current.chaine ? derniere : null;
+                      const survol = mode === "mesure" && cursorPx
+                        ? [...reperesNiveau].reverse().find(r => Math.hypot(toScreen(r.point).x - cursorPx.x, toScreen(r.point).y - cursorPx.y) <= 10) ?? null : null;
+                      let num = 0;
+                      return (
+                        <g pointerEvents="none">
+                          {[...chaines.values()].map((pts, ci) => {
+                            const tot = pts.slice(1).reduce((s, r, i) => s + distance(pts[i].point, r.point), 0);
+                            return (
+                              <g key={`ch${ci}`}>
+                                {pts.length >= 2 && <polyline points={pts.map(r => { const q = toScreen(r.point); return `${q.x},${q.y}`; }).join(" ")} fill="none" stroke={COUL} strokeWidth={2} strokeDasharray="7,4" strokeLinecap="round" strokeLinejoin="round" />}
+                                {pts.slice(1).map((r, i) => <EtiquetteLongueur key={`ms${r.id}`} aPx={toScreen(pts[i].point)} bPx={toScreen(r.point)} texte={fmt(distance(pts[i].point, r.point))} />)}
+                                {pts.length >= 3 && (() => { const q = toScreen(pts[pts.length - 1].point); return (
+                                  <g transform={`translate(${q.x + 12}, ${q.y - 14})`}>
+                                    <rect x={-4} y={-8} width={Math.max(36, fmt(tot).length * 6 + 18)} height={16} rx={3} fill={COUL} />
+                                    <text x={2} y={4} fontSize={9} fontFamily="monospace" fontWeight={700} fill="#fff">Σ {fmt(tot)}</text>
+                                  </g>); })()}
+                                {pts.map(r => {
+                                  num += 1;
+                                  const q = toScreen(r.point), sur = survol?.id === r.id;
+                                  return (
+                                    <g key={`mr${r.id}`}>
+                                      <circle cx={q.x} cy={q.y} r={sur ? 8 : 6} fill={sur ? "#DC2626" : "#fff"} stroke={sur ? "#DC2626" : COUL} strokeWidth={2} />
+                                      {sur
+                                        ? <text x={q.x} y={q.y + 3.5} textAnchor="middle" fontSize={11} fontWeight={700} fill="#fff">×</text>
+                                        : <text x={q.x} y={q.y + 3} textAnchor="middle" fontSize={8} fontWeight={700} fill={COUL}>{num}</text>}
+                                    </g>
+                                  );
+                                })}
+                              </g>
+                            );
+                          })}
+                          {curseurMesure && !survol && (() => {
+                            const q = toScreen(curseurMesure.point);
+                            const coul = curseurMesure.type === "jonction" ? "#16A34A" : curseurMesure.type === "objet" ? "#F59E0B" : COUL;
+                            return (
+                              <g>
+                                {enCours && (
+                                  <>
+                                    <line x1={toScreen(enCours.point).x} y1={toScreen(enCours.point).y} x2={q.x} y2={q.y} stroke={COUL} strokeWidth={2} strokeDasharray="3,4" opacity={0.8} />
+                                    <EtiquetteLongueur aPx={toScreen(enCours.point)} bPx={q} texte={`${fmt(distance(enCours.point, curseurMesure.point))}  (Δx ${fmt(Math.abs(curseurMesure.point.x - enCours.point.x))} · Δy ${fmt(Math.abs(curseurMesure.point.y - enCours.point.y))})`} actif />
+                                  </>
+                                )}
+                                <circle cx={q.x} cy={q.y} r={curseurMesure.type === "libre" ? 4 : 9} fill="none" stroke={coul} strokeWidth={2.5} />
+                                <line x1={q.x - 5} y1={q.y} x2={q.x + 5} y2={q.y} stroke={coul} strokeWidth={1.5} />
+                                <line x1={q.x} y1={q.y - 5} x2={q.x} y2={q.y + 5} stroke={coul} strokeWidth={1.5} />
+                              </g>
+                            );
+                          })()}
+                        </g>
+                      );
                     })()}
-                  </g>
-                );
-              })()}
 
-              {mode === "dessiner" && drawingPoints.length > 0 && (formeDessin === "rectangle" ? (() => {
-                const p0 = drawingPoints[0], p1 = curseurSnap?.point ?? p0;
-                const rc = rectangleDepuis(p0, p1);
-                const pts = rc.map(toScreen).map(q => `${q.x},${q.y}`).join(" ");
-                const c0 = toScreen(p0);
-                return (
-                  <>
-                    <polygon points={pts} fill="#F59E0B" fillOpacity={0.12} stroke="#F59E0B" strokeWidth={2} strokeDasharray="6,4" />
-                    <circle cx={c0.x} cy={c0.y} r={7} fill="#F59E0B" stroke="#F59E0B" strokeWidth={2} />
-                    <EtiquetteLongueur key="rw" aPx={toScreen(rc[0])} bPx={toScreen(rc[1])} texte={`${Math.abs(p1.x - p0.x).toFixed(2)} m`} actif />
-                    <EtiquetteLongueur key="rh" aPx={toScreen(rc[1])} bPx={toScreen(rc[2])} texte={`${Math.abs(p1.y - p0.y).toFixed(2)} m`} actif />
+                    {mode === "cloison" && (cloisonAffichee.length > 0 || curseurCl) && (() => {
+                      const COUL = "#B45309";
+                      const live = curseurCl && cloisonAffichee.length > 0 ? curseurCl.point : null;
+                      const trace = [...cloisonAffichee, ...(live ? [live] : [])].map(toScreen);
+                      return (
+                        <g pointerEvents="none">
+                          {trace.length >= 2 && (
+                            <polyline points={trace.map(q => `${q.x},${q.y}`).join(" ")} fill="none" stroke={COUL} strokeWidth={5} strokeLinecap="round" strokeLinejoin="round"
+                              opacity={cloisonEnAttente ? 0.9 : 0.7} strokeDasharray={cloisonEnAttente ? undefined : "9,6"} />
+                          )}
+                          {cloisonAffichee.map((pt, i) => {
+                            const q = toScreen(pt);
+                            return <circle key={`cl${i}`} cx={q.x} cy={q.y} r={i === 0 ? 7 : 5} fill={i === 0 ? COUL : "#fff"} stroke={COUL} strokeWidth={2} />;
+                          })}
+                          {cloisonAffichee.slice(1).map((pt, i) => (
+                            <EtiquetteLongueur key={`clseg${i}`} aPx={toScreen(cloisonAffichee[i])} bPx={toScreen(pt)} texte={`${distance(cloisonAffichee[i], pt).toFixed(2)} m`} />
+                          ))}
+                          {live && cloisonAffichee.length > 0 && (
+                            <EtiquetteLongueur key="cllive" aPx={toScreen(cloisonAffichee[cloisonAffichee.length - 1])} bPx={toScreen(live)}
+                              texte={`${distance(cloisonAffichee[cloisonAffichee.length - 1], live).toFixed(2)} m`} actif />
+                          )}
+                          {curseurCl && (() => {
+                            const q = toScreen(curseurCl.point);
+                            return <circle cx={q.x} cy={q.y} r={8} fill="none" stroke={curseurCl.surMur ? "#16A34A" : COUL} strokeWidth={2.5} />;
+                          })()}
+                        </g>
+                      );
+                    })()}
+
+                    {mode === "dessiner" && drawingPoints.length > 0 && (formeDessin === "rectangle" ? (() => {
+                      const p0 = drawingPoints[0], p1 = curseurSnap?.point ?? p0;
+                      const rc = rectangleDepuis(p0, p1);
+                      const pts = rc.map(toScreen).map(q => `${q.x},${q.y}`).join(" ");
+                      const c0 = toScreen(p0);
+                      return (
+                        <>
+                          <polygon points={pts} fill="#F59E0B" fillOpacity={0.12} stroke="#F59E0B" strokeWidth={2} strokeDasharray="6,4" />
+                          <circle cx={c0.x} cy={c0.y} r={7} fill="#F59E0B" stroke="#F59E0B" strokeWidth={2} />
+                          <EtiquetteLongueur key="rw" aPx={toScreen(rc[0])} bPx={toScreen(rc[1])} texte={`${Math.abs(p1.x - p0.x).toFixed(2)} m`} actif />
+                          <EtiquetteLongueur key="rh" aPx={toScreen(rc[1])} bPx={toScreen(rc[2])} texte={`${Math.abs(p1.y - p0.y).toFixed(2)} m`} actif />
+                        </>
+                      );
+                    })() : (
+                      <>
+                        <polyline
+                          points={[...drawingPoints.map(toScreen), ...(curseurSnap ? [toScreen(curseurSnap.point)] : [])].map(p => `${p.x},${p.y}`).join(" ")}
+                          fill="none" stroke="#F59E0B" strokeWidth={2} strokeDasharray="6,4" />
+                        {drawingPoints.map((pt, i) => {
+                          const p = toScreen(pt);
+                          return <circle key={i} cx={p.x} cy={p.y} r={i === 0 ? 7 : 5} fill={i === 0 ? "#F59E0B" : "#fff"} stroke="#F59E0B" strokeWidth={2} />;
+                        })}
+                        {drawingPoints.slice(1).map((pt, i) => {
+                          const prev = drawingPoints[i];
+                          return <EtiquetteLongueur key={`dseg${i}`} aPx={toScreen(prev)} bPx={toScreen(pt)} texte={`${distance(prev, pt).toFixed(2)} m`} />;
+                        })}
+                        {curseurSnap && (() => {
+                          const last = drawingPoints[drawingPoints.length - 1];
+                          return <EtiquetteLongueur key="live" aPx={toScreen(last)} bPx={toScreen(curseurSnap!.point)} texte={`${distance(last, curseurSnap!.point).toFixed(2)} m`} actif />;
+                        })()}
+                      </>
+                    ))}
                   </>
                 );
-              })() : (
-                <>
-                  <polyline
-                    points={[...drawingPoints.map(toScreen), ...(curseurSnap ? [toScreen(curseurSnap.point)] : [])].map(p => `${p.x},${p.y}`).join(" ")}
-                    fill="none" stroke="#F59E0B" strokeWidth={2} strokeDasharray="6,4" />
-                  {drawingPoints.map((pt, i) => {
-                    const p = toScreen(pt);
-                    return <circle key={i} cx={p.x} cy={p.y} r={i === 0 ? 7 : 5} fill={i === 0 ? "#F59E0B" : "#fff"} stroke="#F59E0B" strokeWidth={2} />;
-                  })}
-                  {drawingPoints.slice(1).map((pt, i) => {
-                    const prev = drawingPoints[i];
-                    return <EtiquetteLongueur key={`dseg${i}`} aPx={toScreen(prev)} bPx={toScreen(pt)} texte={`${distance(prev, pt).toFixed(2)} m`} />;
-                  })}
-                  {curseurSnap && (() => {
-                    const last = drawingPoints[drawingPoints.length - 1];
-                    return <EtiquetteLongueur key="live" aPx={toScreen(last)} bPx={toScreen(curseurSnap!.point)} texte={`${distance(last, curseurSnap!.point).toFixed(2)} m`} actif />;
-                  })()}
-                </>
-              ))}
+              }} />
+              </g>
             </svg>
 
             {deplacementNiveau && niveauActif && (() => {

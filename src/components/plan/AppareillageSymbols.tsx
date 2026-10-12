@@ -1,4 +1,5 @@
 "use client";
+import { memo } from "react";
 import { AppareillageType, AppareillagePlace, LIBELLE_USAGE_DEDIE, USAGE_DEDIE_DEFAUT } from "@/lib/maison-types";
 
 export const PALETTE: { type: AppareillageType; label: string; categorie: string }[] = [
@@ -225,7 +226,9 @@ export function symboleEstOriente(type: AppareillageType): boolean {
 // Pictogramme centré sur (0,0), à insérer dans un <svg> existant (plan 2D) : size = côté
 // visuel en px, rotation = degrés (sens horaire écran) appliqués aux symboles orientés.
 // rotation = 0 → mur en bas de l'écran, intérieur de la pièce vers le haut.
-export function AppareillageGlyphe({ type, size = 20, color = "#1c1917", rotation = 0, fond = "#ffffff" }: {
+// Composant pur (aucune dépendance autre que ses propriétés) : mémoïsé, il n'est redessiné que si son aspect change réellement —
+// pendant un glissement, les centaines d'autres symboles du plan ne sont plus recalculés à chaque mouvement.
+export const AppareillageGlyphe = memo(function AppareillageGlyphe({ type, size = 20, color = "#1c1917", rotation = 0, fond = "#ffffff" }: {
   type: AppareillageType; size?: number; color?: string; rotation?: number; fond?: string;
 }) {
   const def = SYMBOLES[type] ?? SYMBOLES.prise;
@@ -244,7 +247,7 @@ export function AppareillageGlyphe({ type, size = 20, color = "#1c1917", rotatio
       })}
     </g>
   );
-}
+});
 
 // Version autonome (palette, listes) : même dessin, dans son propre <svg>.
 export function AppareillageSymbol({ type, size = 20, color = "#1c1917" }: {
