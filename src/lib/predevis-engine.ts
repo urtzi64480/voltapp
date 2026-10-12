@@ -381,12 +381,16 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         // regroupement par proximité (≤ 20 cm, 4 postes max) comme avant. Le regroupement se fait toujours
         // par pièce réelle (une plaque est physique) ; en mode circuit, la boîte + plaque est rattachée au
         // circuit de son premier poste.
-        const parPlaque = new Map<number, { nb: number; dest: { id: string; nom: string } }>();
+        // Une plaque ne regroupe jamais du courant faible (RJ45, TV) avec de la puissance, ni une prise TV avec une RJ45 :
+        // chaque famille a son circuit, donc sa propre boîte + plaque (sinon elle disparaissait du circuit TV / RJ45).
+        const familleDe = (id: number) => { const t = apps.find(x => x.id === id)?.type; return t === "prise_tv" ? "tv" : t === "rj45" ? "rj45" : "puissance"; };
+        const parPlaque = new Map<string, { nb: number; dest: { id: string; nom: string } }>();
         const libres: { id: number; x: number; y: number }[] = [];
         clustersEncastrement.forEach(c => {
           if (c.groupeId != null) {
-            const e = parPlaque.get(c.groupeId);
-            if (e) e.nb++; else parPlaque.set(c.groupeId, { nb: 1, dest: destParId.get(c.id)! });
+            const k = `${c.groupeId}|${familleDe(c.id)}`;
+            const e = parPlaque.get(k);
+            if (e) e.nb++; else parPlaque.set(k, { nb: 1, dest: destParId.get(c.id)! });
           } else libres.push(c);
         });
         // Chaque boîte d'encastrement reçoit sa plaque de finition de même taille : un poste isolé
@@ -398,9 +402,6 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           if (e) e.nb++; else parDestTaille.set(k, { dest, taille: t, nb: 1 });
         };
         parPlaque.forEach(({ nb, dest }) => compter(Math.min(nb, MAX_POSTES_PLAQUE), dest));
-        // Une plaque ne regroupe jamais du courant faible (RJ45, TV) avec de la puissance, ni une prise TV avec une RJ45 :
-        // chaque famille a son circuit (en mode « par circuit », sinon la plaque disparaissait du circuit TV / RJ45).
-        const familleDe = (id: number) => { const t = apps.find(x => x.id === id)?.type; return t === "prise_tv" ? "tv" : t === "rj45" ? "rj45" : "puissance"; };
         ["puissance", "rj45", "tv"].forEach(fam => {
           grouperParProximite(libres.filter(c => familleDe(c.id) === fam), 0.20, 4).forEach(g => compter(g.length, destParId.get(g[0])!));
         });
