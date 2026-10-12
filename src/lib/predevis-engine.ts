@@ -345,6 +345,10 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         if (estCmd && a.domotique && LABEL_APPAREILLAGE_DOMOTIQUE[a.type]) {
           const sousCat = `${a.type}_domotique`;
           ajouter(`${sousCat}@${dest.id}`, sousCat, LABEL_APPAREILLAGE_DOMOTIQUE[a.type], dest.nom, 1, "u");
+        } else if (cleCircuitDedie(a) === "irve") {
+          // Tout point de recharge (prise renforcée IRVE, borne IRVE, prise dédiée « IRVE ») = « Prise renforcée IRVE »,
+          // jamais une sortie de câble spécialisée générique.
+          ajouter(`prise_irve@${dest.id}`, "prise_irve", LABEL_APPAREILLAGE.prise_irve, dest.nom, 1, "u");
         } else if (LABEL_APPAREILLAGE[a.type]) {
           ajouter(`${a.type}@${dest.id}`, a.type, LABEL_APPAREILLAGE[a.type], dest.nom, 1, "u");
         } else if (cleCircuitDedie(a) || a.type === "chauffage" || a.type === "volet_roulant") {
