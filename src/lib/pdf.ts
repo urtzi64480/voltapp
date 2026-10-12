@@ -218,7 +218,7 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string, ima
 
   // Totaux depuis la base uniquement — les kits ont kit_ratio_service qui ventile
   // différemment de type_branche, donc on ne recalcule PAS depuis les lignes
-  const remiseFideliteEur = devis.remise_fidelite_pct
+  const remiseFideliteEur = devis.remise_fidelite_pct && devis.remise_fidelite_pct < 100
     ? Math.round(devis.total_service / (1 - devis.remise_fidelite_pct / 100) * devis.remise_fidelite_pct / 100 * 100) / 100
     : 0;
   const remiseValeur = Math.round(((devis as any).remise_valeur ?? 0) * 100) / 100;
@@ -400,13 +400,13 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   let fy = (doc as any).lastAutoTable.finalY + 6;
 
   // Totaux depuis la base uniquement
-  const remiseFideliteEur = facture.remise_fidelite_pct
+  const remiseFideliteEur = facture.remise_fidelite_pct && facture.remise_fidelite_pct < 100
     ? Math.round(facture.total_service / (1 - facture.remise_fidelite_pct / 100) * facture.remise_fidelite_pct / 100 * 100) / 100
     : 0;
   const totServiceNet = Math.round(facture.total_service * 100) / 100;
   const totMateriauNet = Math.round(facture.total_materiau * 100) / 100;
-  const totalAcomptes = acomptes.reduce((a, ac) => a + ac.montant, 0);
-  const soldeRestant = facture.total_ttc - totalAcomptes;
+  const totalAcomptes = Math.round(acomptes.reduce((a, ac) => a + ac.montant, 0) * 100) / 100;
+  const soldeRestant = Math.round((facture.total_ttc - totalAcomptes) * 100) / 100;
 
   const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
     { label: "Prestation service :", value: fmt(totServiceNet) },

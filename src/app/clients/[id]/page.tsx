@@ -2,11 +2,11 @@
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { Client, Devis, Facture } from "@/types";
-import { fmt, fmtDate, fmtDatetime, initiales, STATUT_LABELS, STATUT_COLORS, cn, echecSupabase } from "@/lib/utils";
+import { fmt, fmtDate, initiales, STATUT_LABELS, STATUT_COLORS, cn, echecSupabase } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Phone, Mail, MapPin, Home, Key, FileText, Camera, X, Plus, Pencil, Save, Trash2, ChevronLeft, ChevronRight, Receipt, CalendarDays, MessageSquare, Building2 } from "lucide-react";
+import { ArrowLeft, Phone, Mail, MapPin, Home, Key, FileText, Camera, X, Plus, Pencil, Save, Trash2, ChevronLeft, ChevronRight, Receipt, CalendarDays, Building2 } from "lucide-react";
 import TableauClientWidget from "@/components/tableau/TableauClientWidget";
 import { fondModal } from "@/lib/fond-modal";
 

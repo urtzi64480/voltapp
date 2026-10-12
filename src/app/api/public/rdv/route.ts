@@ -1,7 +1,8 @@
 // src/app/api/public/rdv/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { parseICS, parisDateTime, parisYMD, ICSEvent } from "@/lib/ics";
+import { parisDateTime, parisYMD } from "@/lib/ics";
+import { listerCalendriers, chargerEvenements } from "@/lib/calendriers-publics";
 import { discoverCalendarUrl, createCalDAVEvent } from "@/lib/caldav";
 import { isRateLimited, recordAttempt, getClientIp, isTooFast } from "@/lib/rate-limit";
 
@@ -103,13 +104,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Écriture calendrier non configurée. Contactez-nous par téléphone." }, { status: 400 });
   }
 
-  let cals: { url: string; nom?: string }[] = [];
-  try {
-    cals = JSON.parse(token.calendars ?? "[]");
-  } catch { cals = []; }
-
-  // Cohérent avec /api/public/disponibilites : on exclut le calendrier de ta femme
-  cals = cals.filter(c => c.nom?.trim().toLowerCase() !== CALENDRIER_EXCLU.toLowerCase());
+  const cals = listerCalendriers(token, CALENDRIER_EXCLU);
 
   const blockStart = parisDateTime(y, mo, d, periode === "matin" ? MATIN_START : APREM_START, 0);
   const blockEnd = parisDateTime(y, mo, d, periode === "matin" ? MATIN_END : APREM_END, 0);
@@ -117,16 +112,9 @@ export async function POST(req: NextRequest) {
   // Revérification anti-conflit (double réservation simultanée)
   const timeMin = parisDateTime(y, mo, d, 0, 0);
   const timeMax = parisDateTime(y, mo, d + 1, 0, 0);
-  const allEvents: ICSEvent[] = [];
-  for (const cal of cals) {
-    if (!cal.url?.trim()) continue;
-    try {
-      const fetchUrl = cal.url.replace(/^webcal:\/\//i, "https://");
-      const res = await fetch(fetchUrl, { headers: { "Accept": "text/calendar" }, signal: AbortSignal.timeout(8000) });
-      if (!res.ok) continue;
-      const text = await res.text();
-      allEvents.push(...parseICS(text, timeMin, timeMax, cal.url));
-    } catch { continue; }
+  const { events: allEvents, echecs } = await chargerEvenements(cals, timeMin, timeMax);
+  if (echecs > 0) {
+    return NextResponse.json({ error: "Agenda momentanément indisponible, impossible de vérifier ce créneau. Réessayez dans un instant ou contactez-nous par téléphone." }, { status: 503 });
   }
   const conflit = allEvents.some(ev => {
     const evStart = new Date(ev.start).getTime();

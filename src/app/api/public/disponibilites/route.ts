@@ -1,7 +1,8 @@
 // src/app/api/public/disponibilites/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { parseICS, parisDateTime, parisYMD, ICSEvent } from "@/lib/ics";
+import { parisDateTime, parisYMD } from "@/lib/ics";
+import { listerCalendriers, chargerEvenements } from "@/lib/calendriers-publics";
 
 const MATIN_START = 8, MATIN_END = 12;
 const APREM_START = 13, APREM_END = 17;
@@ -27,16 +28,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ available: false, days: [] });
   }
 
-  const CALENDRIER_EXCLU = "Ninou";
-
-  let cals: { url: string; nom?: string }[] = [];
-  try {
-    cals = JSON.parse(token.calendars ?? "[]");
-  } catch { cals = []; }
-
   // On exclut le calendrier de ta femme ("Ninou") de la disponibilité client —
   // tous tes autres calendriers connectés comptent normalement.
-  cals = cals.filter(c => c.nom?.trim().toLowerCase() !== CALENDRIER_EXCLU.toLowerCase());
+  const CALENDRIER_EXCLU = "Ninou";
+
+  const cals = listerCalendriers(token, CALENDRIER_EXCLU);
 
   if (cals.length === 0) {
     return NextResponse.json({ available: false, days: [] });
@@ -48,16 +44,11 @@ export async function GET(req: NextRequest) {
   const timeMin = parisDateTime(auj.y, auj.m, auj.d + 1, 0, 0);
   const timeMax = parisDateTime(auj.y, auj.m, auj.d + 60, 23, 59);
 
-  const allEvents: ICSEvent[] = [];
-  for (const cal of cals) {
-    if (!cal.url?.trim()) continue;
-    try {
-      const fetchUrl = cal.url.replace(/^webcal:\/\//i, "https://");
-      const res = await fetch(fetchUrl, { headers: { "Accept": "text/calendar" }, signal: AbortSignal.timeout(8000) });
-      if (!res.ok) continue;
-      const text = await res.text();
-      allEvents.push(...parseICS(text, timeMin, timeMax, cal.url));
-    } catch { continue; }
+  const { events: allEvents, echecs } = await chargerEvenements(cals, timeMin, timeMax);
+  // Un calendrier illisible = on ne sait pas ce qui est occupé : on ne propose aucun créneau
+  // plutôt que de présenter comme libres des plages peut-être prises (la page bascule en saisie libre).
+  if (echecs > 0) {
+    return NextResponse.json({ available: false, days: [] });
   }
 
   const days: { date: string; matin: boolean; aprem: boolean }[] = [];

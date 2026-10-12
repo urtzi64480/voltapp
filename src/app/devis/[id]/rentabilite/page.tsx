@@ -78,10 +78,12 @@ export default function RentabiliteDevisPage({ params }: { params: { id: string 
         setLoading(false);
       });
 
-    // Même UUID profil codé en dur qu'ailleurs dans le module devis (multi-tenant non
-    // requis ici — voir devis/[id]/page.tsx).
-    supabase.from("profil").select("*").eq("id", "d506c94e-40c7-4bcd-a48c-97e86f4ea7c0").single()
-      .then(({ data }) => { if (data) setProfil(data); });
+    // Profil de l'utilisateur connecté (taux de cotisations) — plus d'UUID codé en dur.
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return;
+      return supabase.from("profil").select("*").eq("id", user.id).maybeSingle()
+        .then(({ data }) => { if (data) setProfil(data); });
+    });
   }, [id]);
 
   if (loading) return <Shell><div className="p-8 text-center text-ink-400">Chargement…</div></Shell>;

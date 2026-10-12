@@ -285,12 +285,13 @@ function DemandePageContent({ userId }: { userId: string }) {
     if (!files) return;
     const arr = Array.from(files).slice(0, 5 - photos.length);
     const newPhotos = [...photos, ...arr];
-    const newPreviews = newPhotos.map((f) => URL.createObjectURL(f));
+    const newPreviews = [...photoPreviews, ...arr.map((f) => URL.createObjectURL(f))];
     setPhotos(newPhotos);
     setPhotoPreviews(newPreviews);
   };
 
   const removePhoto = (i: number) => {
+    if (photoPreviews[i]) URL.revokeObjectURL(photoPreviews[i]);
     setPhotos(photos.filter((_, j) => j !== i));
     setPhotoPreviews(photoPreviews.filter((_, j) => j !== i));
   };
@@ -300,12 +301,13 @@ function DemandePageContent({ userId }: { userId: string }) {
     if (!files) return;
     const arr = Array.from(files).slice(0, 5 - rdvPhotos.length);
     const newPhotos = [...rdvPhotos, ...arr];
-    const newPreviews = newPhotos.map((f) => URL.createObjectURL(f));
+    const newPreviews = [...rdvPhotoPreviews, ...arr.map((f) => URL.createObjectURL(f))];
     setRdvPhotos(newPhotos);
     setRdvPhotoPreviews(newPreviews);
   };
 
   const removeRdvPhoto = (i: number) => {
+    if (rdvPhotoPreviews[i]) URL.revokeObjectURL(rdvPhotoPreviews[i]);
     setRdvPhotos(rdvPhotos.filter((_, j) => j !== i));
     setRdvPhotoPreviews(rdvPhotoPreviews.filter((_, j) => j !== i));
   };

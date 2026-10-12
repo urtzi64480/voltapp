@@ -8,7 +8,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Plus, X, Save, Trash2, Camera, ChevronRight,
-  User, Calendar, FileText, CheckCircle, Clock, ArrowLeft,
+  User, Calendar, FileText, CheckCircle, Clock,
 } from "lucide-react";
 import { fondModal } from "@/lib/fond-modal";
 
@@ -259,7 +259,6 @@ export default function DemandesPage() {
   }
 
   function creerDevis(d: Demande) {
-    const client = d.client;
     const params = new URLSearchParams();
     if (d.client_id) params.set("client", d.client_id);
     if (d.description) params.set("objet", d.description.slice(0, 80));
