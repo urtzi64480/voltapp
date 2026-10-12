@@ -26,7 +26,7 @@ interface Props {
   /** Vue détaillée (bornes) d'un appareil du schéma — un clic sur l'appareil l'ouvre. */
   vueAppareil?: (id: string) => VueAppareil | null;
   /** Photos de chantier du circuit (miniatures cliquables) + ouverture de la galerie. */
-  photos?: { id: number; url: string; legende?: string; cle: string; troncon: string }[];
+  photos?: { id: number; url: string; legende?: string; cle: string; troncon: string; coordonnees?: string }[];
   onPhoto?: (id: number) => void;
   onPhotos?: () => void;
   onClose: () => void;
@@ -238,7 +238,7 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
           <line x1={lx} y1={y0 + TH} x2={lx} y2={ly - 12} stroke={couleurCircuit} strokeWidth={1} strokeDasharray="2 2" />
           {vus.map((ph, i) => (
             <g key={ph.id} style={{ cursor: "pointer" }} onClick={() => onPhoto?.(ph.id)}>
-              <title>{`Photo de chantier — ${ph.troncon}`}</title>
+              <title>{`Photo de chantier — ${ph.troncon}${ph.coordonnees ? ` — ${ph.coordonnees}` : ""}`}</title>
               <image href={ph.url} x={x0 + i * (TH + 4)} y={y0} width={TH} height={TH} preserveAspectRatio="xMidYMid slice" />
               <rect x={x0 + i * (TH + 4)} y={y0} width={TH} height={TH} fill="none" stroke={couleurCircuit} strokeWidth={2} rx={3} />
             </g>
@@ -317,7 +317,7 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
               <button key={ph.id} type="button" onClick={() => onPhoto?.(ph.id)} className="flex items-center gap-2 shrink-0 text-left rounded-lg border border-ink-200 pr-2 hover:bg-ink-50">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={ph.url} alt={ph.legende ?? "Photo de chantier"} loading="lazy" className="h-12 w-12 rounded-l-lg object-cover" />
-                <span className="text-[10px] leading-tight text-ink-700 max-w-[190px]"><b>{ph.troncon}</b>{ph.legende ? <><br />{ph.legende}</> : null}</span>
+                <span className="text-[10px] leading-tight text-ink-700 max-w-[260px]"><b>{ph.troncon}</b>{ph.coordonnees ? <><br />{ph.coordonnees}</> : null}{ph.legende ? <><br />{ph.legende}</> : null}</span>
               </button>
             ))}
           </div>

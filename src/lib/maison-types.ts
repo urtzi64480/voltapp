@@ -526,7 +526,7 @@ export interface Zone {
 export const EPAISSEUR_CLOISON_ZONE_CM = 10;
 
 // Photo de chantier d'un circuit : fichier dans le stockage (chemin), position SUR le tracé du circuit (mètres, repère du plan), légende libre.
-export interface PhotoChantier { id: number; circuit: string; point: Point; chemin: string; legende?: string; date: string }
+export interface PhotoChantier { id: number; circuit: string; point: Point; chemin: string; legende?: string; date: string; hauteurCm?: number /* hauteur au-dessus du sol fini, cm */ }
 
 export interface Niveau {
   id: number;

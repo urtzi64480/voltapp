@@ -11,7 +11,7 @@ import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import SchemaTechniqueCircuit, { libelleTroncon } from "@/components/plan/SchemaTechniqueCircuit";
 import PhotosChantier from "@/components/plan/PhotosChantier";
-import { BUCKET_PHOTOS, cheminPhoto, compresserImage, grouperPhotos, projeterSurCircuit, tronconDePhoto } from "@/lib/photos-chantier";
+import { BUCKET_PHOTOS, cheminPhoto, compresserImage, grouperPhotos, projeterSurCircuit, tronconDePhoto, mursProches, deplacerADistanceDuMur, texteCoordonnees } from "@/lib/photos-chantier";
 import { construireSchemaTechnique } from "@/lib/schema-technique";
 import { construireVueAppareil } from "@/lib/bornier-appareillage";
 import Link from "next/link";
@@ -7130,7 +7130,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 return (
                   <g key={`photo-${gi}`} style={{ cursor: "pointer" }} onPointerDown={e => e.stopPropagation()}
                     onClick={e => { e.stopPropagation(); setPhotosModal({ label: g.circuit, ouvrirId: g.photos[0].id }); }}>
-                    <title>{`${g.photos.length} photo${g.photos.length > 1 ? "s" : ""} de chantier — ${bk ? nomAffiche(bk) : g.circuit}`}</title>
+                    <title>{`${g.photos.length} photo${g.photos.length > 1 ? "s" : ""} de chantier — ${bk ? nomAffiche(bk) : g.circuit}${niveauActif ? ` — ${texteCoordonnees(g.photos[0], niveauActif)}` : ""}`}</title>
                     <circle cx={p.x} cy={p.y} r={13} fill="#ffffff" stroke={couleur} strokeWidth={2.5} />
                     <path d={`M ${p.x - 6} ${p.y - 3} h 2.5 l 1.4 -2 h 4.2 l 1.4 2 h 2.5 a 1 1 0 0 1 1 1 v 6 a 1 1 0 0 1 -1 1 h -12 a 1 1 0 0 1 -1 -1 v -6 a 1 1 0 0 1 1 -1 z`} fill={couleur} />
                     <circle cx={p.x} cy={p.y + 0.5} r={2.4} fill="#ffffff" />
@@ -8853,7 +8853,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   longueurs={longueurs} onClose={() => setSchemaCircuitId(null)}
                   photos={(niveauActif.photosChantier ?? []).filter(ph => ph.circuit === b.label).flatMap(ph => {
                     const sg = tronconDePhoto(ph.point, schema.segments, niveauActif);
-                    return sg ? [{ id: ph.id, url: urlPhoto(ph.chemin), legende: ph.legende, cle: `${sg.aId}->${sg.bId}`, troncon: libelleTroncon(sg, section, schema.noeuds) }] : [];
+                    return sg ? [{ id: ph.id, url: urlPhoto(ph.chemin), legende: ph.legende, cle: `${sg.aId}->${sg.bId}`, troncon: libelleTroncon(sg, section, schema.noeuds), coordonnees: texteCoordonnees(ph, niveauActif) }] : [];
                   })}
                   onPhoto={id => setPhotosModal({ label: b.label, ouvrirId: id })}
                   onPhotos={() => setPhotosModal({ label: b.label })} />
@@ -9091,6 +9091,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         return (
           <PhotosChantier key={`${photosModal.label}-${photosModal.ouvrirId ?? ""}`} titre={nomCircuitModal} photos={liste} circuits={circuitsPhotos} labelCircuit={photosModal.label} url={urlPhoto}
             ouvrirId={photosModal.ouvrirId} enCours={photoEnvoi} troncon={tronconPhotoTexte}
+            mursProches={ph => mursProches(ph.point, niveauActif)} coordonnees={ph => texteCoordonnees(ph, niveauActif)}
+            onPosition={(id, mur, d) => updateNiveauActif(n => ({ ...n, photosChantier: (n.photosChantier ?? []).map(ph => ph.id === id ? { ...ph, point: deplacerADistanceDuMur(ph.point, mur, d) } : ph) }))}
+            onHauteur={(id, cm) => updateNiveauActif(n => ({ ...n, photosChantier: (n.photosChantier ?? []).map(ph => ph.id === id ? { ...ph, hauteurCm: cm } : ph) }))}
             onClose={() => setPhotosModal(null)}
             onAjouter={photosModal.label != null ? (files => { setPlacingPhoto({ label: photosModal.label!, files }); setPhotosModal(null); setMode("select"); setPlacementType(null); }) : undefined}
             onSupprimer={supprimerPhoto}

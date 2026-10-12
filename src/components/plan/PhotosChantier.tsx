@@ -5,7 +5,8 @@
 // Les données sont dans Niveau.photosChantier ; l'envoi et le stockage sont gérés par la page du plan (voir lib/photos-chantier.ts).
 import { useRef, useState } from "react";
 import { X, Camera, Trash2, MapPin, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
-import type { PhotoChantier } from "@/lib/maison-types";
+import type { PhotoChantier, Point } from "@/lib/maison-types";
+import type { MurProche } from "@/lib/photos-chantier";
 
 interface Props {
   titre: string;
@@ -18,6 +19,11 @@ interface Props {
   /** Photo à ouvrir d'emblée (clic sur un repère du plan). */
   ouvrirId?: number;
   enCours?: string | null;
+  /** Position précise : murs les plus proches (tout le niveau), texte des coordonnées, réglage de la position et de la hauteur. */
+  mursProches?: (ph: PhotoChantier) => MurProche[];
+  coordonnees?: (ph: PhotoChantier) => string;
+  onPosition?: (id: number, mur: MurProche, distanceM: number) => void;
+  onHauteur?: (id: number, cm: number | undefined) => void;
   /** Tronçon et section du câble où la photo a été prise (« Prise A → Prise B · 3G2,5 mm² »). */
   troncon?: (ph: PhotoChantier) => string | undefined;
   onClose: () => void;
@@ -26,6 +32,15 @@ interface Props {
   onLegende: (id: number, texte: string) => void;
   onDeplacer: (ids: number[]) => void;
   onRattacher: (id: number, label: string) => void;
+}
+
+/** Champ numérique validé à la sortie du champ ou sur Entrée (la photo ne saute pas à chaque frappe). */
+function ChampCm({ valeur, onValider, placeholder }: { valeur: number | undefined; onValider: (v: number | undefined) => void; placeholder?: string }) {
+  const [txt, setTxt] = useState<string | null>(null);
+  const affiche = txt ?? (valeur == null ? "" : String(Math.round(valeur * 10) / 10));
+  const valider = () => { if (txt == null) return; const t = txt.trim().replace(",", "."); setTxt(null); if (t === "") { onValider(undefined); return; } const v = Number(t); if (Number.isFinite(v) && v >= 0) onValider(v); };
+  return <input className="input !py-1 !text-xs w-20 text-right" inputMode="decimal" value={affiche} placeholder={placeholder}
+    onChange={e => setTxt(e.target.value)} onBlur={valider} onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />;
 }
 
 const dateFr = (iso: string) => { try { return new Date(iso).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); } catch { return iso; } };
@@ -59,6 +74,27 @@ export default function PhotosChantier(p: Props) {
                   <button className="absolute right-2 top-1/2 -translate-y-1/2 bg-white/80 rounded-full p-1.5" aria-label="Suivante" onClick={() => setIdx(((idx as number) + 1) % p.photos.length)}><ChevronRight size={18} /></button>
                 </>)}
               </div>
+              {p.coordonnees?.(courante) && <p className="text-xs font-semibold text-ink-900 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">📍 {p.coordonnees(courante)}</p>}
+              {p.mursProches && p.onPosition && (
+                <details className="rounded-lg border border-ink-200 px-2.5 py-1.5 text-xs" open>
+                  <summary className="cursor-pointer font-semibold text-ink-800">Régler la position précise</summary>
+                  <p className="text-[10px] text-ink-500 mt-1">Distances à l&apos;axe des murs les plus proches (tous les murs du niveau, cloisons comprises). Modifie une valeur : la photo se déplace perpendiculairement à ce mur.</p>
+                  <div className="flex flex-col gap-1 mt-1.5">
+                    {p.mursProches(courante).map((m, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <span className="flex-1 min-w-0 truncate">Mur {m.nom} <span className="text-ink-400">({m.cote})</span></span>
+                        <ChampCm valeur={m.distance * 100} onValider={v => { if (v != null) p.onPosition!(courante.id, m, v / 100); }} /><span className="text-ink-500 w-6">cm</span>
+                      </div>
+                    ))}
+                    {p.onHauteur && (
+                      <div className="flex items-center gap-2 pt-1 border-t border-ink-100 mt-0.5">
+                        <span className="flex-1">Hauteur au-dessus du sol fini</span>
+                        <ChampCm valeur={courante.hauteurCm} placeholder="—" onValider={v => p.onHauteur!(courante.id, v)} /><span className="text-ink-500 w-6">cm</span>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              )}
               {p.troncon?.(courante) && <p className="text-xs font-semibold text-ink-900 bg-volt-50 border border-volt-200 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5"><MapPin size={13} className="text-volt-600 shrink-0" />Câble : {p.troncon(courante)}</p>}
               <input className="input" placeholder="Légende (ex. : passage de gaine derrière le placard, avant doublage)" value={courante.legende ?? ""} onChange={e => p.onLegende(courante.id, e.target.value)} />
               <p className="text-[11px] text-ink-500">Prise le {dateFr(courante.date)} · position sur le plan : {courante.point.x.toFixed(2)} m, {courante.point.y.toFixed(2)} m · photo {(idx as number) + 1} / {p.photos.length}</p>
@@ -84,7 +120,7 @@ export default function PhotosChantier(p: Props) {
               {p.photos.length === 0 && <p className="text-sm text-ink-500">Aucune photo pour l&apos;instant. Ajoute-en autant que tu veux : tu choisis ensuite, sur le plan, où elles ont été prises sur le tracé du circuit.</p>}
               <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                 {p.photos.map((ph, i) => (
-                  <button key={ph.id} className="relative aspect-square rounded-lg overflow-hidden border border-ink-200 bg-ink-50 text-left" onClick={() => setIdx(i)} title={ph.legende || dateFr(ph.date)}>
+                  <button key={ph.id} className="relative aspect-square rounded-lg overflow-hidden border border-ink-200 bg-ink-50 text-left" onClick={() => setIdx(i)} title={[ph.legende || dateFr(ph.date), p.coordonnees?.(ph)].filter(Boolean).join(" — ")}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={p.url(ph.chemin)} alt={ph.legende || "Photo de chantier"} className="w-full h-full object-cover" loading="lazy" />
                     {(ph.legende || p.labelCircuit == null) && <span className="absolute bottom-0 inset-x-0 bg-black/55 text-white text-[10px] px-1.5 py-0.5 truncate">{ph.legende || nomCircuit(ph.circuit) || ph.circuit}</span>}
