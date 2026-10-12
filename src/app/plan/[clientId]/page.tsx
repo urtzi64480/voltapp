@@ -5987,8 +5987,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             )}
             <button onClick={annuler} disabled={!peutAnnuler} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Annuler la dernière action (Ctrl+Z)"><Undo2 size={14} /></button>
             <button onClick={refaire} disabled={!peutRefaire} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Refaire (Ctrl+Y)"><Redo2 size={14} /></button>
-            {autoSaveMsg && <span className="text-[11px] text-emerald-600 whitespace-nowrap">{autoSaveMsg}</span>}
-            <button onClick={handleSave} disabled={saving} className={`btn-volt !px-3 !py-1 !text-xs ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
+            <span className="text-[11px] text-emerald-600 whitespace-nowrap inline-block min-w-[8.5rem] text-right">{autoSaveMsg ?? ""}</span>
+            <button onClick={handleSave} disabled={saving} className={`btn-volt !px-3 !py-1 !text-xs min-w-[7.5rem] justify-center ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
               <Save size={13} />{saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
             </button>
           </div>
@@ -6043,8 +6043,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             )}
             <button onClick={annuler} disabled={!peutAnnuler} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Annuler la dernière action (Ctrl+Z)"><Undo2 size={14} /></button>
             <button onClick={refaire} disabled={!peutRefaire} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Refaire (Ctrl+Y)"><Redo2 size={14} /></button>
-            {autoSaveMsg && <span className="text-[11px] text-emerald-600 whitespace-nowrap">{autoSaveMsg}</span>}
-            <button onClick={handleSave} disabled={saving} className={`btn-volt ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
+            <span className="text-[11px] text-emerald-600 whitespace-nowrap inline-block min-w-[8.5rem] text-right">{autoSaveMsg ?? ""}</span>
+            <button onClick={handleSave} disabled={saving} className={`btn-volt min-w-[8.5rem] justify-center ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
               <Save size={15} />{saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
             </button>
           </div>
@@ -6360,6 +6360,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           <button onClick={handlePousserVersTableau} disabled={!resultat || pushing} className="btn-ghost !text-xs disabled:opacity-40">
             <ArrowRightCircle size={13} /> {pushing ? "…" : "Pousser vers le tableau"}
           </button>
+          {/* Zone d'état à hauteur FIXE : son contenu apparaît/disparaît après chaque action sans changer la hauteur de la barre (sinon le plan « saute »). */}
+          <div className="basis-full min-h-[28px] flex items-center gap-3 flex-wrap">
           {resultat && (
             <span className="text-[11px] text-ink-400 font-mono">{resultat.breakers.length} circuit{resultat.breakers.length > 1 ? "s" : ""} généré{resultat.breakers.length > 1 ? "s" : ""}</span>
           )}
@@ -6390,6 +6392,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               )}
             </div>
           )}
+          {pushMsg && (
+            <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-2">
+              {pushMsg} <Link href={`/tableau/${clientId}${qsProjet(projet.id)}`} className="underline">Voir le tableau →</Link>
+            </span>
+          )}
+          </div>
           <div className="flex items-center gap-0.5 rounded-lg border border-ink-200 p-0.5" title="N'afficher que certains appareillages (et leurs circuits)">
             {FILTRES_AFFICHAGE.map(f => (
               <button key={f.id} onClick={() => setFiltreAffichage(f.id)}
@@ -6438,11 +6446,6 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 </div>
               )}
             </div>
-          )}
-          {pushMsg && (
-            <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-2">
-              {pushMsg} <Link href={`/tableau/${clientId}${qsProjet(projet.id)}`} className="underline">Voir le tableau →</Link>
-            </span>
           )}
 
           <div className="ml-auto flex items-center gap-1">
