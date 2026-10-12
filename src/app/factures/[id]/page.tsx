@@ -162,7 +162,8 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
         acomptes,
       );
       const fileName = `factures/${facture.numero}.pdf`;
-      await supabase.storage.from("documents").upload(fileName, blob, { contentType: "application/pdf", upsert: true });
+      const { error: errUpload } = await supabase.storage.from("documents").upload(fileName, blob, { contentType: "application/pdf", upsert: true });
+      if (errUpload) throw errUpload;   // pas de mail de relance avec un lien mort
       const { data: urlData } = supabase.storage.from("documents").getPublicUrl(fileName);
       const pdfUrl = urlData.publicUrl;
       const client = facture.client as any;
@@ -177,6 +178,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
       window.open(`mailto:${email}?subject=${objet}&body=${corps}`);
     } catch (err) {
       console.error("Erreur relance:", err);
+      alert("Impossible de préparer la relance (PDF non envoyé au stockage). Réessaie.");
     }
     setSendingRelance(false);
   }

@@ -530,13 +530,19 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     //    échoue (ex. colonne `poste` absente), le devis garde ses lignes d'origine.
     //    Lignes remises à plat dans l'ordre d'affichage (postes, puis hors poste).
     //    La colonne `poste` n'est envoyée que si le devis utilise des postes.
-    const { data: anciennes } = await supabase.from("devis_lignes").select("id").eq("devis_id", id);
+    const { data: anciennes, error: errAnciennes } = await supabase.from("devis_lignes").select("id").eq("devis_id", id);
+    if (errAnciennes) {
+      alert("Impossible de lire les lignes actuelles du devis (devis inchangé) : " + errAnciennes.message);
+      setSaving(false);
+      return;
+    }
+    let nouveauxIds: string[] = [];
     const anciensIds = (anciennes ?? []).map((r: any) => r.id as string);
     const utilisePostes = lignes.some(l => posteDe(l) !== null);
     const colFournisseur = colonnesFournisseur(lignes);
     const colImage = colonnesImage(lignes);
     if (lignes.length > 0) {
-      const { error: errLignes } = await supabase.from("devis_lignes").insert(
+      const { data: inserees, error: errLignes } = await supabase.from("devis_lignes").insert(
         ordonnerLignes(lignes, postes).map((l, i) => ({
           devis_id: id,
           ordre: i,
@@ -554,15 +560,23 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
           ...colFournisseur(l),
           ...colImage(l),
         }))
-      );
+      ).select("id");
       if (errLignes) {
         alert("Erreur lors de l'enregistrement des lignes (devis inchangé) : " + errLignes.message);
         setSaving(false);
         return;
       }
+      nouveauxIds = (inserees ?? []).map((r: any) => r.id as string);
     }
     if (anciensIds.length > 0) {
-      await supabase.from("devis_lignes").delete().in("id", anciensIds);
+      const { error: errSuppr } = await supabase.from("devis_lignes").delete().in("id", anciensIds);
+      if (errSuppr) {
+        // Retour arrière : on retire les lignes qu'on vient d'ajouter pour ne pas laisser le devis avec ses lignes en double.
+        if (nouveauxIds.length > 0) await supabase.from("devis_lignes").delete().in("id", nouveauxIds);
+        alert("Impossible de remplacer les anciennes lignes (devis inchangé) : " + errSuppr.message);
+        setSaving(false);
+        return;
+      }
     }
     const { error: errMaj } = await supabase.from("devis").update({
       client_id: clientId || null,
@@ -673,7 +687,8 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         const profilFallback = p ?? { id: user.id, prefixe_devis: "DEV", prefixe_facture: "FAC", compteur_devis: 0, compteur_facture: 0, mention_tva: "TVA non applicable — Art. 293 B du CGI", conditions_paiement: "Paiement à réception", taux_horaire: 55, created_at: "", updated_at: "" };
         const blob = await genPDFDevisBlob(devis, profilFallback);
         const fileName = `devis/${devis.numero}.pdf`;
-        await supabase.storage.from("documents").upload(fileName, blob, { contentType: "application/pdf", upsert: true });
+        const { error: errUpload } = await supabase.storage.from("documents").upload(fileName, blob, { contentType: "application/pdf", upsert: true });
+        if (errUpload) throw errUpload;   // pas de mail avec un lien mort : on va directement à la facture
         const { data: urlData } = supabase.storage.from("documents").getPublicUrl(fileName);
         const pdfUrl = urlData.publicUrl;
         const clientObj = devis.client as any;
