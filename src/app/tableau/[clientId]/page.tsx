@@ -1585,16 +1585,14 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setAnnexes(ann.map(a => ({ id: a.id, nom: a.nom })));
     setStock(Object.fromEntries(ann.map(a => [a.id, normaliserRows(a.rows as any[])])));
     supabase.from("clients").select("*").eq("id", clientId).single().then(({ data: c }) => {
-      if (c) {
-        setClient(c);
-        if (projet.tableau_config) {
-          try {
-            const parsed = JSON.parse(projet.tableau_config);
-            if (!Array.isArray(parsed)) { setLoading(false); return; }
-            const normalized = normaliserRows(parsed);
-            setRows(normalized);
-          } catch {}
-        }
+      if (c) setClient(c);
+      // Le tableau vient du projet (déjà chargé) : il ne dépend pas de la lecture du client. Sinon, une lecture client ratée
+      // laissait le tableau VIDE à l'écran et la sauvegarde automatique suivante écrasait le tableau enregistré.
+      if (projet.tableau_config) {
+        try {
+          const parsed = JSON.parse(projet.tableau_config);
+          if (Array.isArray(parsed)) setRows(normaliserRows(parsed));
+        } catch {}
       }
       setLoading(false);
     });
