@@ -527,8 +527,13 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     dedies.forEach(item => {
       const circuitKey = cleCircuitDedie(item.base)!;
       const spec = CIRCUITS[circuitKey];
+      // Deux appareils dédiés de même type dans la même pièce (2 clims au salon…) auraient le MÊME libellé : le plan, le pré-devis
+      // (longueurs de câble, métrage) et les noms personnalisés les confondaient en un seul circuit. Le 2ᵉ devient « … n°2 », etc.
+      const libelleBase = `${spec.label} — ${item.pieceNom || niveau.nom}`;
+      let libelle = libelleBase, k = 1;
+      while (breakers.some(x => x.label === libelle)) { k++; libelle = `${libelleBase} n°${k}`; }
       const b: Breaker = {
-        id: uid(), label: `${spec.label} — ${item.pieceNom || niveau.nom}`, circuit: circuitKey,
+        id: uid(), label: libelle, circuit: circuitKey,
         amperes: spec.ampMax, type: "1P", customSection: spec.section ?? "2.5",
         pieces: [{ nom: item.pieceNom, nbPrises: 1, groupes: [{ nbPoints: 1, typeCommande: "simple", nbCommandes: 1 }] }],
       };

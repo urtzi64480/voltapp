@@ -2404,6 +2404,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           setNiveauActifId(premier.id);
           const cg = parsed.circuitsGeneres;
           if (cg && Array.isArray(cg.breakers) && cg.breakers.length > 0) {
+            // Plans enregistrés avant la correction : deux circuits dédiés identiques d'une même pièce portaient le même libellé (confondus
+            // partout). On numérote les doublons (« … n°2 ») sans toucher au premier.
+            const vus = new Set<string>();
+            cg.breakers.forEach((x: Breaker) => {
+              if (!vus.has(x.label)) { vus.add(x.label); return; }
+              const base = x.label; let k = 1, lib = base;
+              while (vus.has(lib)) { k++; lib = `${base} n°${k}`; }
+              x.label = lib; vus.add(lib);
+            });
             setResultat({ maison: { niveaux: niveauxFinal }, breakers: cg.breakers, alertes: Array.isArray(cg.alertes) ? cg.alertes : [] });
             setShowCircuits(true);
             setCircuitsVisibles(new Set(cg.breakers.map((b: Breaker) => b.id)));
