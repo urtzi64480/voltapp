@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, Fragment, lazy, Suspense } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -273,21 +274,30 @@ function CurseurAbonne({ abonnes, initial, rendu }: {
 function Outil({ label, aide, actif, primaire, disabled, onClick, badge, children, className = "" }: {
   label: string; aide?: string; actif?: boolean; primaire?: boolean; disabled?: boolean; onClick?: () => void; badge?: number; children: ReactNode; className?: string;
 }) {
+  const [bulle, setBulle] = useState<{ x: number; y: number } | null>(null);
+  const montrer = (el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    // centré sous le bouton, sans sortir de l'écran (la bulle fait au plus 16 rem ≈ 256 px)
+    setBulle({ x: Math.max(136, Math.min(window.innerWidth - 136, r.left + r.width / 2)), y: r.bottom + 8 });
+  };
   const etat = primaire ? "bg-volt-500 border-volt-500 text-ink-900 shadow-sm hover:bg-volt-400"
     : actif ? "bg-ink-900 border-ink-900 text-volt-400 shadow-inner"
     : "bg-white border-ink-200 text-ink-600 hover:border-ink-300 hover:text-ink-900 hover:-translate-y-px hover:shadow-md";
   return (
-    <button type="button" onClick={onClick} disabled={disabled} aria-label={label} aria-pressed={actif}
-      className={`group relative inline-flex h-9 min-w-[2.25rem] items-center justify-center gap-0.5 rounded-xl border px-2 transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-35 ${etat} ${className}`}>
+    <button type="button" onClick={() => { setBulle(null); onClick?.(); }} disabled={disabled} aria-label={label} aria-pressed={actif}
+      onMouseEnter={e => montrer(e.currentTarget)} onMouseLeave={() => setBulle(null)} onFocus={e => montrer(e.currentTarget)} onBlur={() => setBulle(null)}
+      className={`relative inline-flex h-9 min-w-[2.25rem] items-center justify-center gap-0.5 rounded-xl border px-2 transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-35 ${etat} ${className}`}>
       {children}
       {badge != null && <span className="absolute -right-1.5 -top-1.5 grid h-[1.1rem] min-w-[1.1rem] place-items-center rounded-full bg-volt-500 px-1 text-[10px] font-bold text-ink-900">{badge}</span>}
-      <span role="tooltip" style={{ backgroundColor: "#1c1917", color: "#ffffff" }} className="pointer-events-none absolute left-1/2 top-full z-[100] mt-2 w-max max-w-[16rem] -translate-x-1/2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug opacity-0 shadow-xl ring-1 ring-black/20 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
-        {label}{aide && <span className="mt-0.5 block text-[10px] font-normal" style={{ color: "#d6d3d1" }}>{aide}</span>}
-      </span>
+      {/* Infobulle dans <body> (portail) en position fixe : aucun parent (barre, panneaux, plan) ne peut la recouvrir ni la rogner. */}
+      {bulle && typeof document !== "undefined" && createPortal(
+        <div role="tooltip" style={{ position: "fixed", left: bulle.x, top: bulle.y, transform: "translateX(-50%)", zIndex: 99999, backgroundColor: "#1c1917", color: "#fff", pointerEvents: "none" }}
+          className="w-max max-w-[16rem] rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug shadow-xl ring-1 ring-black/20">
+          {label}{aide && <span className="mt-0.5 block text-[10px] font-normal" style={{ color: "#d6d3d1" }}>{aide}</span>}
+        </div>, document.body)}
     </button>
   );
 }
-
 
 function ReglageAimant({ pasCm, setPasCm, aimant, setAimant, murs, setMurs }: { pasCm: number; setPasCm: (v: number) => void; aimant: boolean; setAimant: (v: boolean) => void; murs: boolean; setMurs: (v: boolean) => void }) {
   return (
