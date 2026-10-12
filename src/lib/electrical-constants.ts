@@ -125,8 +125,11 @@ export const estCircuitSansDisjoncteur = (b: { circuit: string }): boolean => b.
 
 export const SECTIONS_CABLE = ["1.5", "2.5", "4.0", "6.0", "10.0"];
 
+// Diamètre EXTÉRIEUR (mm) d'UN conducteur isolé H07V-U / H07V-R (valeurs hautes de la norme) : gaineRecommandee compte les conducteurs
+// un par un (phase, neutre, terre = 3 entrées). Ces valeurs valaient avant ~6,8 à 13 mm — des diamètres de câbles multiconducteurs
+// comptés trois fois — ce qui surdimensionnait les gaines (une simple prise en IRL 32).
 export const CABLE_DIAM_MM: Record<string, number> = {
-  "1.5": 6.8, "2.5": 7.8, "4.0": 9.0, "6.0": 10.5, "10.0": 13.0,
+  "1.5": 3.3, "2.5": 4.0, "4.0": 4.8, "6.0": 5.4, "10.0": 7.2,
 };
 
 export const GAINES_IRL = [

@@ -62,7 +62,7 @@ const Vue3D = lazy(() => import("@/components/plan/Vue3D"));
 const Vue3DMaison = lazy(() => import("@/components/plan/Vue3DMaison"));
 import { toutesBoitesNiveau, segmentsDepuisMarche } from "@/lib/maison-engine";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, integrerCoffretCommunication, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, genererCircuitsManuelsSeuls, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
-import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur, estAccessoireTableau, BREAKER_TYPES, effectiveSection } from "@/lib/electrical-constants";
+import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur, estAccessoireTableau, BREAKER_TYPES, effectiveSection, gaineRecommandee } from "@/lib/electrical-constants";
 import { verifierEclairageManuel, fermetureCircuitLumiere, commandesPartagees } from "@/lib/controle-eclairage";
 import { coudesSegment } from "@/lib/routage-circuits";
 import { natureLiaison, conducteursSegment, geometrieCable, couleurDominante, COULEUR_FIL, LEGENDE_FILS} from "@/lib/couleurs-fils";
@@ -291,7 +291,9 @@ function Outil({ label, aide, actif, primaire, disabled, onClick, badge, childre
       {badge != null && <span className="absolute -right-1.5 -top-1.5 grid h-[1.1rem] min-w-[1.1rem] place-items-center rounded-full bg-volt-500 px-1 text-[10px] font-bold text-ink-900">{badge}</span>}
       {/* Infobulle dans <body> (portail) en position fixe : aucun parent (barre, panneaux, plan) ne peut la recouvrir ni la rogner. */}
       {bulle && typeof document !== "undefined" && createPortal(
-        <div role="tooltip" style={{ position: "fixed", left: bulle.x, top: bulle.y, transform: "translateX(-50%)", zIndex: 99999, backgroundColor: "#1c1917", color: "#fff", pointerEvents: "none" }}
+        <div role="tooltip" popover="manual"
+          ref={el => { try { el?.showPopover?.(); } catch { /* déjà ouvert / non supporté : le z-index très haut prend le relais */ } }}
+          style={{ position: "fixed", inset: "auto", margin: 0, left: bulle.x, top: bulle.y, transform: "translateX(-50%)", zIndex: 2147483647, backgroundColor: "#1c1917", color: "#fff", pointerEvents: "none", overflow: "visible", border: 0 }}
           className="w-max max-w-[16rem] rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug shadow-xl ring-1 ring-black/20">
           {label}{aide && <span className="mt-0.5 block text-[10px] font-normal" style={{ color: "#d6d3d1" }}>{aide}</span>}
         </div>, document.body)}
@@ -8954,6 +8956,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                           onClick={e => e.stopPropagation()}
                           onChange={e => b ? renommerCircuit(b, e.target.value) : renommerCircuitManuelDirect(manuel!.id, e.target.value)} />
                         {lg !== null && <span className="font-mono text-ink-400 shrink-0" title={lgDetail ? `${lgDetail.horizontale.toFixed(2)} m à l'horizontale + ${lgDetail.verticale.toFixed(2)} m de montées / descentes` : undefined}>{lg.toFixed(1)}m</span>}
+                        {b && visible && circuitsVisibles.size < circuitsNiveauActif.length && !estCircuitSansDisjoncteur(b) && (() => {
+                          // Gaine du circuit : seulement pour les circuits SÉLECTIONNÉS (cochés quand tous ne le sont pas) — chaque circuit part du
+                          // tableau dans sa propre gaine.
+                          const sc = effectiveSection(b), gi = gaineRecommandee([sc, sc, sc]);
+                          return <span className="font-mono text-[10px] text-ink-500 shrink-0 whitespace-nowrap" title={`Gaine de ce circuit (câble ${sc} mm² : phase + neutre + terre) — remplissage ${gi.tauxPct} % (max conseillé 33 %)`}>🔀 {gi.gaine} · {gi.tauxPct}%</span>;
+                        })()}
                         {!b && <span className="text-[9px] text-ink-400 shrink-0 italic whitespace-nowrap">vide</span>}
                         {manuel?.nonRelieTableau && <span className="text-[9px] text-sky-600 shrink-0" title="Circuit déjà existant, non relié au tableau">🔗✕</span>}
                         {b && CIRCUITS[b.circuit]?.category !== "lumiere" && (
