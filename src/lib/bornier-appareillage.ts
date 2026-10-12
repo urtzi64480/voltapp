@@ -19,7 +19,7 @@ import { baseCommande, estCommande, estCommandeDouble, estLumiere } from "@/lib/
 import { conducteursSegment, libelleLiaison, type RoleConducteur } from "@/lib/couleurs-fils";
 import type { NoeudSchema } from "@/lib/schema-technique";
 
-export interface Cond { role: RoleConducteur; libelle: string; voie?: 0 | 1; cable: string }
+export interface Cond { role: RoleConducteur; libelle: string; voie?: 0 | 1; cable: string; couleur?: string; rayure?: string }
 export interface CableVue { cle: string; cote: "amont" | "aval"; autre: string; description: string; conducteurs: Cond[] }
 export interface Borne { id: string; libelle: string; aide?: string }
 // modele « odace-inter » : mécanisme Odace simple / va-et-vient / poussoir (S9-204) — vue arrière dessinée d'après le produit (voir VueAppareilBranchement).
@@ -78,10 +78,11 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
     const conducteurs: Cond[] = conducteursSegment(s).map(c => {
       const m = c.libelle.match(/voie ([AB])/);
       const voie = m ? (m[1] === "A" ? 0 : 1) : (c.role === "navette" || c.role === "retour") ? v1 : undefined;
-      return { role: c.role, libelle: c.libelle, ...(voie !== undefined ? { voie: voie as 0 | 1 } : {}), cable: k };
+      return { role: c.role, libelle: c.libelle, ...(voie !== undefined ? { voie: voie as 0 | 1 } : {}), cable: k, ...(c.couleur ? { couleur: c.couleur } : {}), ...(c.rayure ? { rayure: c.rayure } : {}) };
     });
     const sect = s.type || s.avecRetour ? "1.5" : e.section;
-    return { cle: k, cote, autre: nomNoeud(cote === "amont" ? s.aId : s.bId), description: `${conducteurs.length}G${fmt(sect)} · ${libelleLiaison(s)}`, conducteurs };
+    const descr = s.communication ? libelleLiaison(s) : `${conducteurs.length}G${fmt(sect)} · ${libelleLiaison(s)}`;
+    return { cle: k, cote, autre: nomNoeud(cote === "amont" ? s.aId : s.bId), description: descr, conducteurs };
   });
   // Câbles qui arrivent de l'AMONT d'abord.
   cables.sort((a, b) => (a.cote === b.cote ? 0 : a.cote === "amont" ? -1 : 1));
@@ -99,6 +100,16 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
   const vue = (genre: NoeudSchema["genre"]): VueAppareil => ({ id: e.id, titre: noeud.titre, sous: noeud.sous, genre, cables, mecanismes, raccords, epissures, notes });
 
   // ── Tableau ──────────────────────────────────────────────────────────────────────────────────────
+  if (noeud.genre === "tableau" && e.segments.some(s => s.communication)) {
+    const coax = e.segments.some(s => s.communication === "coax");
+    mecanismes.push({ id: "t", titre: coax ? "Distribution antenne TV" : "Coffret de communication", bornes: coax
+      ? [{ id: "ant", libelle: "Sortie", aide: "répartiteur / amplificateur TV" }]
+      : [{ id: "port", libelle: "Port RJ45", aide: "un port du panneau de brassage par prise" }] });
+    notes.push(coax
+      ? "Câble coaxial 75 Ω tiré jusqu'au répartiteur TV du coffret de communication (fiche F). Aucun disjoncteur, aucun fil de puissance."
+      : "Le câble RJ45 arrive sur UN port du panneau de brassage du coffret de communication (un port par prise), 8 fils dans l'ordre T568B. Même ordre à l'autre bout, sur la prise. Aucun disjoncteur, aucun fil de puissance.");
+    return vue("tableau");
+  }
   if (noeud.genre === "tableau") {
     mecanismes.push({ id: "t", titre: "Départ du circuit", bornes: [
       { id: "DJ", libelle: "Disjoncteur", aide: "sortie phase" }, { id: "N", libelle: "Barrette neutre" }, { id: "PE", libelle: "Barrette de terre" }] });
@@ -142,12 +153,14 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
     if (t === "rj45") {
       const fils = ["blanc-orange", "orange", "blanc-vert", "bleu", "blanc-bleu", "vert", "blanc-marron", "marron"];
       mecanismes.push({ id: "r", titre: "Prise RJ45 (T568B)", bornes: fils.map((c, i) => ({ id: `p${i + 1}`, libelle: String(i + 1), aide: c })) });
+      role("rj45").forEach((c, i) => { if (i < fils.length) lier("r", `p${i + 1}`, [c]); });
       notes.push("Câble de communication (pas de phase / neutre / terre) : les 8 fils vont sur les 8 contacts du connecteur dans l'ordre T568B ci-contre. Même ordre aux DEUX extrémités du câble.");
       return vue("autre");
     }
     // Prise TV : câble coaxial, pas de fils de puissance.
     if (t === "prise_tv") {
       mecanismes.push({ id: "tv", titre: "Prise TV (coaxial)", bornes: [{ id: "ame", libelle: "Âme", aide: "fil central" }, { id: "tresse", libelle: "Tresse", aide: "blindage, sous le collier" }] });
+      lier("tv", "ame", role("coax")); lier("tv", "tresse", role("coax"));
       notes.push("Coaxial : l'âme centrale sur la borne centrale, la tresse (blindage) serrée sous le collier de masse — ne jamais les mettre en contact.");
       return vue("autre");
     }

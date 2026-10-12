@@ -12,15 +12,28 @@ export const COULEUR_FIL = {
   terreJaune: "#facc15",
   retour: "#7e22ce",
   navette: "#f97316",
+  rj45: "#475569",
+  coax: "#57534e",
 } as const;
 
 // Famille d'une liaison (couleur dominante, étiquettes, atténuation) — la composition EXACTE des fils vient de conducteursSegment().
 export type NatureLiaison = "alimentation" | "retour" | "navette" | "commande";
-export type RoleConducteur = "phase" | "neutre" | "terre" | "retour" | "navette";
+export type RoleConducteur = "phase" | "neutre" | "terre" | "retour" | "navette" | "rj45" | "coax";
 
-export interface Conducteur { role: RoleConducteur; libelle: string }
+/** `couleur` / `rayure` : seulement pour le courant faible (fils d'un câble RJ45 : couleur du fil + rayure blanche des « blanc-… »). */
+export interface Conducteur { role: RoleConducteur; libelle: string; couleur?: string; rayure?: string }
 
-type ChampsFils = Pick<SegmentCircuit, "type" | "neutre" | "phase" | "retourTraversant" | "avecRetour" | "voies" | "detecteur">;
+/** Les 8 fils d'un câble RJ45 dans l'ordre T568B (contacts 1 à 8 du connecteur). */
+export const FILS_RJ45_T568B: { libelle: string; couleur: string; rayure?: string }[] = [
+  { libelle: "Blanc-orange", couleur: "#f97316", rayure: "#ffffff" }, { libelle: "Orange", couleur: "#f97316" },
+  { libelle: "Blanc-vert", couleur: "#16a34a", rayure: "#ffffff" }, { libelle: "Bleu", couleur: "#2563eb" },
+  { libelle: "Blanc-bleu", couleur: "#2563eb", rayure: "#ffffff" }, { libelle: "Vert", couleur: "#16a34a" },
+  { libelle: "Blanc-marron", couleur: "#92400e", rayure: "#ffffff" }, { libelle: "Marron", couleur: "#92400e" },
+];
+const FILS_RJ45: Conducteur[] = FILS_RJ45_T568B.map(f => ({ role: "rj45" as const, ...f }));
+const FIL_COAX: Conducteur[] = [{ role: "coax", libelle: "Coaxial 75 Ω (âme + tresse)", couleur: COULEUR_FIL.coax }];
+
+type ChampsFils = Pick<SegmentCircuit, "type" | "neutre" | "phase" | "retourTraversant" | "avecRetour" | "voies" | "detecteur" | "communication">;
 
 /** Famille d'un segment de tracé (les segments domotiques n'ont pas de fil : à traiter avant). */
 export const natureLiaison = (seg: Pick<SegmentCircuit, "type">): NatureLiaison =>
@@ -43,6 +56,8 @@ const nomVoie = (i: number, voies: number) => (voies > 1 ? ` (voie ${LETTRES[i] 
  * « voies » = nombre de mécanismes distincts qui traversent le câble (un va-et-vient double = 2 voies, de lampes indépendantes).
  */
 export function conducteursSegment(seg: ChampsFils): Conducteur[] {
+  if (seg.communication === "rj45") return FILS_RJ45;
+  if (seg.communication === "coax") return FIL_COAX;
   const voies = Math.max(1, seg.voies ?? 1);
   const parVoie = (fn: (i: number) => Conducteur[]) => Array.from({ length: voies }, (_, i) => fn(i)).flat();
   const nav = parVoie(i => [
@@ -66,12 +81,17 @@ export const nbConducteurs = (seg: ChampsFils): number => conducteursSegment(seg
 export const couleurConducteur = (role: RoleConducteur): string =>
   role === "terre" ? COULEUR_FIL.terreVert : COULEUR_FIL[role];
 
+/** Couleur d'un conducteur précis (courant faible : couleur propre à chaque fil ; sinon celle de son rôle). */
+export const couleurFil = (c: { role: RoleConducteur; couleur?: string }): string => c.couleur ?? couleurConducteur(c.role);
+
 export const LIBELLE_NATURE: Record<NatureLiaison, string> = {
   alimentation: "Alimentation / circuit", retour: "Retour (commande ↔ lampe)", navette: "Navette (entre va-et-vient)", commande: "Commande (boutons-poussoirs)",
 };
 
 /** Libellé précis d'une liaison (schéma technique). */
 export function libelleLiaison(seg: ChampsFils): string {
+  if (seg.communication === "rj45") return "Câble RJ45 cat.6 · 8 fils (T568B)";
+  if (seg.communication === "coax") return "Câble coaxial 75 Ω";
   const voies = seg.voies ?? 1;
   if (seg.type === "navette") return seg.neutre ? `${voies > 1 ? "Navettes doubles" : "Navettes"} + neutre` : `${voies > 1 ? "Navettes doubles" : "Navettes"} + retour`;
   if (seg.type === "commande") return voies > 1 ? "Commande boutons-poussoirs (2 télérupteurs)" : "Commande boutons-poussoirs";
@@ -80,6 +100,11 @@ export function libelleLiaison(seg: ChampsFils): string {
   if (seg.type === "retour") return seg.phase ? (seg.neutre ? "Alimentation détecteur + retour" : "Phase + retour (lampe → commande)") : "Retour commande → lampe";
   return seg.avecRetour ? "Alimentation + retour (commandes en parallèle)" : "Alimentation";
 }
+
+/** Légende d'un schéma de courant faible. */
+export const LEGENDE_COMMUNICATION: { libelle: string; couleur: string; rayure?: string }[] = [
+  ...FILS_RJ45_T568B.map((f, i) => ({ libelle: `${i + 1} · ${f.libelle}`, couleur: f.couleur, ...(f.rayure ? { rayure: f.rayure } : {}) })),
+];
 
 /** Légende : couleur de chaque fil. */
 export const LEGENDE_FILS: { libelle: string; couleur: string; terre?: boolean }[] = [

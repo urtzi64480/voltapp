@@ -1173,7 +1173,9 @@ export interface SegmentCircuit { aId: string; aPoint: Point; bId: string; bPoin
   // Liaison d'un circuit d'ÉCLAIRAGE : elle peut passer par le plafond (gaine sous plafond), donc au plus court — pas besoin de suivre les murs.
   plafond?: boolean;
   // Câble relié à un détecteur de mouvement (alimentation L + N, ou sortie L' vers la lampe) : sert aux libellés du schéma.
-  detecteur?: boolean; }
+  detecteur?: boolean;
+  // Courant faible (schéma technique uniquement) : câble RJ45 (8 fils T568B) ou coaxial — jamais de phase / neutre / terre.
+  communication?: "rj45" | "coax"; }
 
 /**
  * Emplacement de la boîte de dérivation IMPLICITE d'un circuit d'éclairage (celle que le plan crée quand aucune boîte n'est posée) :

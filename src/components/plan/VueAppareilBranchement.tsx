@@ -5,7 +5,7 @@
 // chaque fil tracé dans sa couleur jusqu'à SA borne. Sous le mécanisme : ce qui se relie dans la boîte (neutre, terre, retour qui traverse…).
 // Les raccordements viennent de bornier-appareillage.ts.
 import { X, AlertTriangle } from "lucide-react";
-import { COULEUR_FIL, couleurConducteur } from "@/lib/couleurs-fils";
+import { COULEUR_FIL, couleurFil } from "@/lib/couleurs-fils";
 import type { Cond, Mecanisme, VueAppareil } from "@/lib/bornier-appareillage";
 import { fondModal } from "@/lib/fond-modal";
 
@@ -14,10 +14,11 @@ const ROND = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"];
 
 function Fil({ pts, c }: { pts: [number, number][]; c: Cond }) {
   const d = pts.map(p => p.join(",")).join(" ");
-  const couleur = couleurConducteur(c.role);
+  const couleur = couleurFil(c);
   return (<g>
     <polyline points={d} fill="none" stroke={couleur} strokeWidth={3.4} strokeLinejoin="round" strokeLinecap="round" />
     {c.role === "terre" && <polyline points={d} fill="none" stroke={COULEUR_FIL.terreJaune} strokeWidth={3.4} strokeDasharray="6 6" strokeLinejoin="round" />}
+    {c.rayure && <polyline points={d} fill="none" stroke={c.rayure} strokeWidth={3.4} strokeDasharray="6 6" strokeLinejoin="round" />}
   </g>);
 }
 
@@ -26,7 +27,7 @@ export default function VueAppareilBranchement({ vue, onClose }: { vue: VueAppar
   const coteDe = new Map(vue.cables.map(c => [c.cle, c.cote] as const));
   const cote = (c: Cond) => coteDe.get(c.cable) ?? "amont";
   const marque = (c: Cond) => ROND[idxCable.get(c.cable) ?? 0] ?? "";
-  const couleurTexte = (c: Cond) => (c.role === "terre" ? COULEUR_FIL.terreVert : couleurConducteur(c.role));
+  const couleurTexte = (c: Cond) => (c.role === "terre" ? COULEUR_FIL.terreVert : couleurFil(c));
 
   const els: JSX.Element[] = [];
   let y = 14;

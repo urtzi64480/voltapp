@@ -7,7 +7,7 @@
 import { useMemo, useRef, useState } from "react";
 import { X, Printer, Download, AlertTriangle, Camera } from "lucide-react";
 import type { SegmentCircuit } from "@/lib/maison-types";
-import { COULEUR_FIL, LEGENDE_FILS, conducteursSegment, couleurConducteur, libelleLiaison } from "@/lib/couleurs-fils";
+import { COULEUR_FIL, LEGENDE_COMMUNICATION, LEGENDE_FILS, conducteursSegment, couleurFil, libelleLiaison } from "@/lib/couleurs-fils";
 import type { GenreNoeud, NoeudSchema } from "@/lib/schema-technique";
 import type { VueAppareil } from "@/lib/bornier-appareillage";
 import VueAppareilBranchement from "@/components/plan/VueAppareilBranchement";
@@ -184,6 +184,7 @@ function Symbole({ genre, x, y, h, couleur }: { genre: GenreNoeud; x: number; y:
 /** « Prise salon → Prise cuisine · 3G2,5 mm² » : le tronçon d'un schéma, tel qu'affiché (même règle de section que le dessin). */
 export function libelleTroncon(seg: SegmentCircuit, section: string, noeuds: Record<string, NoeudSchema>): string {
   const nom = (id: string) => noeuds[id]?.titre ?? id;
+  if (seg.communication) return `${nom(seg.aId)} → ${nom(seg.bId)} · ${seg.communication === "coax" ? "coaxial 75 Ω" : "RJ45 cat.6"}`;
   const n = conducteursSegment(seg).length;
   return `${nom(seg.aId)} → ${nom(seg.bId)} · ${n}G${fmtSection(seg.type || seg.avecRetour ? "1.5" : section)} mm²`;
 }
@@ -194,7 +195,8 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
   const svgRef = useRef<SVGSVGElement>(null);
   const { pos, tronc, fentesSortie, fentesEntree, largeur, hauteur } = useMemo(() => disposer(segments, noeuds), [segments, noeuds]);
   const H_LEGENDE = 84;
-  const W = Math.max(largeur, 640);
+  const communication = segments.find(s => s.communication)?.communication;
+  const W = Math.max(largeur, communication === "rj45" ? 1100 : 640);
   let yMinPhoto = 0;   // les miniatures de photos peuvent dépasser en haut du dessin : on décale tout pour qu'elles ne soient pas coupées
 
   const fils: JSX.Element[] = [];
@@ -214,7 +216,7 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
     }
     const cond = conducteursSegment(seg);
     const sectionCable = seg.type || seg.avecRetour ? "1.5" : section;
-    const descr = `${cond.length}G${fmtSection(sectionCable)}`;
+    const descr = seg.communication ? (seg.communication === "coax" ? "Coaxial 75 Ω" : "RJ45 cat.6 · 8 fils") : `${cond.length}G${fmtSection(sectionCable)}`;
     const lg = longueurs?.[cle];
     const hb = hFaisceau(seg);
     const descendant = yc2 >= yc1;
@@ -222,9 +224,10 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
       const off = (i - (cond.length - 1) / 2) * ECART;
       const xm = xt + (descendant ? -off : off);
       const pts = `${x1},${yc1 + off} ${xm},${yc1 + off} ${xm},${yc2 + off} ${x2},${yc2 + off}`;
-      const couleur = couleurConducteur(c.role);
+      const couleur = couleurFil(c);
       fils.push(<polyline key={`c-${idx}-${i}`} points={pts} fill="none" stroke={couleur} strokeWidth={3.2} strokeLinejoin="round" />);
       if (c.role === "terre") fils.push(<polyline key={`cj-${idx}-${i}`} points={pts} fill="none" stroke={COULEUR_FIL.terreJaune} strokeWidth={3.2} strokeDasharray="6 6" strokeLinejoin="round" />);
+      else if (c.rayure) fils.push(<polyline key={`cj-${idx}-${i}`} points={pts} fill="none" stroke={c.rayure} strokeWidth={3.2} strokeDasharray="5 5" strokeLinejoin="round" />);
       fils.push(<circle key={`d1-${idx}-${i}`} cx={x1} cy={yc1 + off} r={2.8} fill={couleur} stroke="#fff" strokeWidth={0.8} />);
       fils.push(<circle key={`d2-${idx}-${i}`} cx={x2} cy={yc2 + off} r={2.8} fill={couleur} stroke="#fff" strokeWidth={0.8} />);
     });
@@ -253,9 +256,11 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
         <text x={lx} y={ly} fontSize={11} fontWeight={700} fill="#1c1917" textAnchor="middle" style={HALO}>{descr}{lg != null ? ` · ${lg.toFixed(1).replace(".", ",")} m` : ""}</text>
         <text x={lx} y={ly + 11} fontSize={8.5} fill="#57534e" textAnchor="middle" style={HALO}>{libelleLiaison(seg)}</text>
         <text x={lx} y={ly + 21} fontSize={7.5} fontWeight={700} textAnchor="middle" style={HALO}>
-          {cond.map((c, i) => (
-            <tspan key={i} fill={c.role === "terre" ? COULEUR_FIL.terreVert : couleurConducteur(c.role)}>{i > 0 ? " · " : ""}{court(c.libelle)}</tspan>
-          ))}
+          {seg.communication === "rj45"
+            ? <tspan fill="#57534e">fils 1 à 8 · ordre T568B (même ordre aux 2 bouts)</tspan>
+            : cond.map((c, i) => (
+              <tspan key={i} fill={c.role === "terre" ? COULEUR_FIL.terreVert : couleurFil(c)}>{i > 0 ? " · " : ""}{court(c.libelle)}</tspan>
+            ))}
         </text>
       </g>);
   });
@@ -342,15 +347,26 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
               {elements}
               {noeudsDessines}
               <g transform={`translate(${MARGE},${hauteur + 6})`}>
-                <text x={0} y={10} fontSize={10} fontWeight={700} fill="#1c1917">Couleur des fils</text>
-                {LEGENDE_FILS.map((f, i) => (
+                <text x={0} y={10} fontSize={10} fontWeight={700} fill="#1c1917">{communication ? "Ordre des fils (T568B)" : "Couleur des fils"}</text>
+                {communication === "rj45" ? LEGENDE_COMMUNICATION.map((f, i) => (
+                  <g key={f.libelle} transform={`translate(${i * 128},24)`}>
+                    <line x1={0} y1={0} x2={26} y2={0} stroke={f.couleur} strokeWidth={4} />
+                    {f.rayure && <line x1={0} y1={0} x2={26} y2={0} stroke={f.rayure} strokeWidth={4} strokeDasharray="5 5" />}
+                    <text x={32} y={3.5} fontSize={10} fill="#44403c">{f.libelle}</text>
+                  </g>
+                )) : communication === "coax" ? (
+                  <g transform="translate(0,24)">
+                    <line x1={0} y1={0} x2={26} y2={0} stroke={COULEUR_FIL.coax} strokeWidth={4} />
+                    <text x={32} y={3.5} fontSize={10} fill="#44403c">Coaxial 75 Ω (âme + tresse)</text>
+                  </g>
+                ) : LEGENDE_FILS.map((f, i) => (
                   <g key={f.libelle} transform={`translate(${i * 110},24)`}>
                     <line x1={0} y1={0} x2={26} y2={0} stroke={f.terre ? COULEUR_FIL.terreVert : f.couleur} strokeWidth={4} />
                     {f.terre && <line x1={0} y1={0} x2={26} y2={0} stroke={COULEUR_FIL.terreJaune} strokeWidth={4} strokeDasharray="5 5" />}
                     <text x={32} y={3.5} fontSize={10} fill="#44403c">{f.libelle}</text>
                   </g>
                 ))}
-                <text x={0} y={46} fontSize={9} fill="#78716c">Un trait par conducteur · pastille = point de raccordement · boîte pointillée = 3 bornes Wago 221 (Ph · N · PE) · contour = couleur du circuit · clic sur un appareil = branchements borne par borne · cadre violet pointillé = autre circuit (nom seul) · voie A / B = les deux mécanismes d'une commande double</text>
+                <text x={0} y={46} fontSize={9} fill="#78716c">{communication ? "Courant faible : un câble par prise, en étoile depuis le coffret de communication — pas de disjoncteur, pas de phase / neutre / terre · pastille = point de raccordement · clic sur la prise = branchement des 8 contacts" : "Un trait par conducteur · pastille = point de raccordement · boîte pointillée = 3 bornes Wago 221 (Ph · N · PE) · contour = couleur du circuit · clic sur un appareil = branchements borne par borne · cadre violet pointillé = autre circuit (nom seul) · voie A / B = les deux mécanismes d'une commande double"}</text>
               </g>
               </g>
             </svg>

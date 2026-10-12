@@ -20,6 +20,8 @@ export interface EntreeSchema {
   boites: BoiteDerivation[];
   libelle: (a: AppareillagePlace) => string;
   nomCircuit: (circuitId: number | undefined) => string;
+  /** Circuit de courant faible (câble RJ45 / coaxial) : arrive au coffret de communication, sans disjoncteur ni phase / neutre / terre. */
+  communication?: "rj45" | "coax";
 }
 
 export interface SchemaTechnique { noeuds: Record<string, NoeudSchema>; segments: SegmentCircuit[]; avertissements: string[]; voieExterne: Record<string, 0 | 1> }
@@ -30,14 +32,14 @@ const LETTRES = ["A", "B"];
 export function construireSchemaTechnique(e: EntreeSchema): SchemaTechnique {
   const parId = new Map(e.tous.map(t => [t.a.id, t] as const));
   const noeuds: Record<string, NoeudSchema> = {
-    tableau: { titre: "Tableau", sous: e.libelleTableau, genre: "tableau" },
+    tableau: { titre: e.communication ? "Coffret de communication" : "Tableau", sous: e.libelleTableau, genre: "tableau" },
     boite: { titre: "Boîte de dérivation", sous: "Bornes Wago 221", genre: "boite" },
   };
   e.boites.forEach(b => { noeuds[`boite-${b.id}`] = { titre: b.nom || "Boîte de dérivation", sous: "Bornes Wago 221", genre: "boite" }; });
   // Liaison avec un autre étage : les commandes lointaines sont reliées par un passage de gaine (boîte au point d'arrivée des gaines).
   if (e.segments.some(sg => sg.aId === "boite-etage" || sg.bId === "boite-etage"))
     noeuds["boite-etage"] = { titre: "Passage d'étage", sous: "gaine technique · Wago 221 · autre niveau", genre: "boite" };
-  const segments = e.segments.map(sg => ({ ...sg }));
+  const segments = e.segments.map(sg => ({ ...sg, ...(e.communication && sg.type !== "domotique" ? { communication: e.communication } : {}) }));
   const avertissements: string[] = [];
   const voieExterne: Record<string, 0 | 1> = {};
   const nomsLampes = (ids: number[] | undefined) => (ids ?? []).map(id => parId.get(id)).filter((t): t is AppareilNiveau => !!t)

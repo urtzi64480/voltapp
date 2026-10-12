@@ -4039,8 +4039,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const dansTableau = (tableauPourSchema ?? []).flatMap(r => r.slots).find(x => x && x.label === labelTableau && !BREAKER_TYPES[x.type]?.isDiff && !estAccessoireTableau(x)) ?? null;
     const section = dansTableau ? effectiveSection(dansTableau) : (b.customSection ?? CIRCUITS[b.circuit]?.section ?? "1.5");
     const amperesAffiches = dansTableau ? dansTableau.amperes : b.amperes;
+    // Courant faible (RJ45 / TV) : pas de disjoncteur ni de phase / neutre / terre — un câble de communication vers le coffret de communication.
+    const communication: "rj45" | "coax" | undefined = estCircuitSansDisjoncteur(b) ? (b.label.startsWith("Antenne TV") ? "coax" : "rj45") : undefined;
     const schema = construireSchemaTechnique({
-      circuitId: b.id, libelleTableau: `${dansTableau ? dansTableau.amperes : b.amperes} A · ${nomAffiche(b)}`, points, tous, segments: segs,
+      communication,
+      circuitId: b.id, libelleTableau: communication ? `${communication === "coax" ? "Antenne TV" : "Port RJ45"} · sans disjoncteur` : `${dansTableau ? dansTableau.amperes : b.amperes} A · ${nomAffiche(b)}`, points, tous, segments: segs,
       boites: Object.values(niveauActif.boitesDerivation ?? {}).flat(), libelle: a => a.nom || labelAppareillagePlace(a),
       nomCircuit: id => (id != null ? nomsCircuits.get(id) : undefined) ?? "sans circuit",
     });
@@ -4051,7 +4054,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       if (sg.type === "domotique") return;
       longueurs[`${sg.aId}->${sg.bId}`] = tracerLiaison(ctx, b, segs, sg, hAncre).sections.reduce((t, v) => t + v, 0);
     });
-    return { points, tous, segs, schema, section, dansTableau, amperesAffiches, longueurs };
+    return { points, tous, segs, schema, section, dansTableau, amperesAffiches, longueurs, communication };
   };
   /** Tronçon et section où une photo a été prise (« Prise A → Prise B · 3G2,5 mm² »), d'après le schéma technique du circuit. */
   const tronconPhotoTexte = (ph: PhotoChantier): string | undefined => {
@@ -9020,10 +9023,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               const b = circuitsNiveauActif.find(x => x.id === schemaCircuitId);
               const calc = b ? calculSchemaCircuit(b) : null;
               if (!b || !calc) return null;
-              const { points, tous, schema, section, dansTableau, amperesAffiches, longueurs } = calc;
+              const { points, tous, schema, section, dansTableau, amperesAffiches, longueurs, communication } = calc;
               return (
                 <SchemaTechniqueCircuit titre={nomAffiche(b)} couleurCircuit={colorMap.get(b.id) ?? "#666666"}
-                  descriptionTableau={`Disjoncteur ${amperesAffiches} A · câble ${fmtSectionTxt(section)} mm²${dansTableau ? " (tableau)" : " (plan)"} · ${points.length} appareillage${points.length > 1 ? "s" : ""}`}
+                  descriptionTableau={communication
+                    ? `Courant faible — sans disjoncteur · ${communication === "coax" ? "câble coaxial 75 Ω" : "câble RJ45 cat.6 (8 fils, T568B) vers le coffret de communication"}`
+                    : `Disjoncteur ${amperesAffiches} A · câble ${fmtSectionTxt(section)} mm²${dansTableau ? " (tableau)" : " (plan)"} · ${points.length} appareillage${points.length > 1 ? "s" : ""}`}
                   section={section} segments={schema.segments} noeuds={schema.noeuds} avertissements={schema.avertissements}
                   vueAppareil={id => construireVueAppareil({ id, segments: schema.segments, noeuds: schema.noeuds, section, voieExterne: schema.voieExterne,
                     appareil: i => tous.find(t => String(t.a.id) === String(i))?.a })}
