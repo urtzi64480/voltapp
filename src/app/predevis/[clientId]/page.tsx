@@ -18,7 +18,7 @@ import {
   chargerOffres, libelleOffre, marquesDe, miroirPrestation, normaliserDrafts, nouvelleOffreDraft, offresDe, synchroniserOffres, OffreDraft, OffreNormalisee,
 } from "@/lib/fournisseurs";
 import { BobineField, FournisseursEditor, longueurValide } from "@/components/catalogue/EditeurArticle";
-import { UNITES } from "@/lib/utils";
+import { UNITES, arrondi2, echecSupabase } from "@/lib/utils";
 import { colonnesFournisseur, colonnesImage } from "@/lib/devis-lignes";
 import ProduitPicker from "@/components/devis/ProduitPicker";
 import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
@@ -789,8 +789,8 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
         return;
       }
 
-      const totalService = lignesFinales.filter(l => l.type_branche === "service").reduce((s, l) => s + l.quantite * l.prix_unitaire, 0);
-      const totalMateriau = lignesFinales.filter(l => l.type_branche === "materiau").reduce((s, l) => s + l.quantite * l.prix_unitaire, 0);
+      const totalService = lignesFinales.filter(l => l.type_branche === "service").reduce((s, l) => s + arrondi2(l.quantite * l.prix_unitaire), 0);
+      const totalMateriau = lignesFinales.filter(l => l.type_branche === "materiau").reduce((s, l) => s + arrondi2(l.quantite * l.prix_unitaire), 0);
 
       const { data: prof } = await supabase.from("profil").select("*").eq("id", session.user.id).single();
       const numero = `${prof?.prefixe_devis ?? "DEV"}-${new Date().getFullYear()}-${String((prof?.compteur_devis ?? 0) + 1).padStart(3, "0")}`;
@@ -799,7 +799,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
         user_id: session.user.id, client_id: clientId, numero,
         objet: projets.length > 1 ? `Pré-devis électrique — ${projet.nom}` : "Pré-devis électrique",
         statut: "brouillon", total_service: totalService, total_materiau: totalMateriau,
-        total_ttc: totalService + totalMateriau,
+        total_ttc: arrondi2(totalService + totalMateriau),
       }).select().single();
       if (error || !devis) { alert("Erreur création devis : " + error?.message); setGenerating(false); return; }
 
@@ -831,7 +831,8 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
         setGenerating(false);
         return;
       }
-      await supabase.from("profil").update({ compteur_devis: (prof?.compteur_devis ?? 0) + 1 }).eq("id", session.user.id);
+      const { error: errCompteur } = await supabase.from("profil").update({ compteur_devis: (prof?.compteur_devis ?? 0) + 1 }).eq("id", session.user.id);
+      echecSupabase(errCompteur, "Mise à jour du compteur de devis");
       // Le devis final matérialise le brouillon — on l'efface pour ne pas laisser un
       // brouillon obsolète si le client revient sur cette page plus tard.
       await modifierProjet(projet.id, { predevis_config: null });

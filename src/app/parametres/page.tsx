@@ -3,6 +3,7 @@ import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { Profil } from "@/types";
 import Shell from "@/components/layout/Shell";
+import { echecSupabase } from "@/lib/utils";
 import { Save, Settings, Users, Plus, Trash2, Pencil, X, Check, Calendar, Smartphone, CreditCard, RefreshCw, CheckCircle, AlertCircle, ExternalLink, Upload, ImageIcon } from "lucide-react";
 
 interface Palier {
@@ -232,17 +233,20 @@ export default function ParametresPage() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) { setSaving(false); return; }
     const { id, created_at, updated_at, ...updateData } = profil as any;
-    await supabase.from("profil").update(updateData).eq("id", session.user.id);
-    setSaving(false); setSaved(true);
+    const { error } = await supabase.from("profil").update(updateData).eq("id", session.user.id);
+    setSaving(false);
+    if (echecSupabase(error, "Enregistrement du profil")) return;
+    setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   }
 
   async function savePaliers() {
     setSavingPaliers(true);
     for (const p of paliers) {
-      await supabase.from("paliers_fidelite").update({
+      const { error } = await supabase.from("paliers_fidelite").update({
         seuil_min: p.seuil_min, seuil_max: p.seuil_max, remise_pct: p.remise_pct,
       }).eq("id", p.id);
+      if (echecSupabase(error, "Enregistrement des paliers de fidélité")) { setSavingPaliers(false); return; }
     }
     setSavingPaliers(false); setSavedPaliers(true);
     setTimeout(() => setSavedPaliers(false), 2500);
@@ -256,31 +260,35 @@ export default function ParametresPage() {
     if (!newApporteur.nom.trim()) return;
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
-    const { data } = await supabase.from("apporteurs").insert({
+    const { data, error } = await supabase.from("apporteurs").insert({
       user_id: session.user.id, nom: newApporteur.nom, entreprise: newApporteur.entreprise || null,
       telephone: newApporteur.telephone || null, email: newApporteur.email || null, actif: true,
     }).select().single();
+    if (echecSupabase(error, "Création de l'apporteur")) return;
     if (data) setApporteurs(a => [...a, data]);
     setNewApporteur({ nom: "", entreprise: "", telephone: "", email: "" });
     setShowNewApporteur(false);
   }
 
   async function saveApporteur(id: string) {
-    await supabase.from("apporteurs").update({
+    const { error } = await supabase.from("apporteurs").update({
       nom: apporteurForm.nom, entreprise: apporteurForm.entreprise || null,
       telephone: apporteurForm.telephone || null, email: apporteurForm.email || null,
     }).eq("id", id);
+    if (echecSupabase(error, "Modification de l'apporteur")) return;
     setApporteurs(a => a.map(ap => ap.id === id ? { ...ap, ...apporteurForm } as Apporteur : ap));
     setEditingApporteur(null);
   }
 
   async function toggleApporteur(id: string, actif: boolean) {
-    await supabase.from("apporteurs").update({ actif }).eq("id", id);
+    const { error } = await supabase.from("apporteurs").update({ actif }).eq("id", id);
+    if (echecSupabase(error, "Changement d'état de l'apporteur")) return;
     setApporteurs(a => a.map(ap => ap.id === id ? { ...ap, actif } : ap));
   }
 
   async function deleteApporteur(id: string) {
-    await supabase.from("apporteurs").delete().eq("id", id);
+    const { error } = await supabase.from("apporteurs").delete().eq("id", id);
+    if (echecSupabase(error, "Suppression de l'apporteur")) return;
     setApporteurs(a => a.filter(ap => ap.id !== id));
   }
 
@@ -288,10 +296,11 @@ export default function ParametresPage() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
     const ordre = paliersApporteur.length;
-    const { data } = await supabase.from("paliers_apporteur").insert({
+    const { data, error } = await supabase.from("paliers_apporteur").insert({
       user_id: session.user.id, label: `Palier ${ordre + 1}`, seuil_min: 0, seuil_max: null,
       commission_pct: 5, ordre,
     }).select().single();
+    if (echecSupabase(error, "Création du palier")) return;
     if (data) setPaliersApporteur(p => [...p, data]);
   }
 
@@ -301,9 +310,10 @@ export default function ParametresPage() {
     if (!session) { setSavingPaliersAp(false); return; }
     for (const p of paliersApporteur) {
       if (p.id) {
-        await supabase.from("paliers_apporteur").update({
+        const { error } = await supabase.from("paliers_apporteur").update({
           label: p.label, seuil_min: p.seuil_min, seuil_max: p.seuil_max, commission_pct: p.commission_pct,
         }).eq("id", p.id);
+        if (echecSupabase(error, "Enregistrement des paliers apporteur")) { setSavingPaliersAp(false); return; }
       }
     }
     setSavingPaliersAp(false); setSavedPaliersAp(true);
@@ -311,7 +321,8 @@ export default function ParametresPage() {
   }
 
   async function deletePalierApporteur(id: string) {
-    await supabase.from("paliers_apporteur").delete().eq("id", id);
+    const { error } = await supabase.from("paliers_apporteur").delete().eq("id", id);
+    if (echecSupabase(error, "Suppression du palier")) return;
     setPaliersApporteur(p => p.filter(x => x.id !== id));
   }
 
@@ -326,11 +337,17 @@ export default function ParametresPage() {
     setAppleSaving(true);
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) { setAppleSaving(false); return; }
-    await supabase.from("apple_ics").upsert({
+    const { error: errApple } = await supabase.from("apple_ics").upsert({
       user_id: session.user.id,
       ics_urls: JSON.stringify(valid.map(c => c.url)),
       calendars: JSON.stringify(valid),
     }, { onConflict: "user_id" });
+    if (errApple) {
+      console.error("Enregistrement calendrier Apple :", errApple);
+      setAppleError("Échec de l'enregistrement : " + errApple.message);
+      setAppleSaving(false);
+      return;
+    }
     setAppleConnected(true);
     setAppleSaving(false);
   }
@@ -349,7 +366,8 @@ export default function ParametresPage() {
     setGoogleSaving(true);
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) { setGoogleSaving(false); return; }
-    await supabase.from("profil").update({ google_cals: updated }).eq("id", session.user.id);
+    const { error } = await supabase.from("profil").update({ google_cals: updated }).eq("id", session.user.id);
+    if (echecSupabase(error, "Enregistrement des calendriers Google")) { setGoogleSaving(false); return; }
     setGoogleCals(updated);
     setGoogleConnected(updated.length > 0);
     setGoogleSaving(false);

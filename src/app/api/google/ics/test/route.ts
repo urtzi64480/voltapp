@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { fetchSur } from "@/lib/ssrf";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -13,11 +14,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "URL invalide" });
   }
 
-  // Normaliser webcal:// → https://
-  const fetchUrl = url.replace(/^webcal:\/\//, "https://");
-
   try {
-    const res = await fetch(fetchUrl, {
+    // webcal:// → https:// ; adresses internes refusées (anti-SSRF), y compris via redirection
+    const res = await fetchSur(url, {
       headers: { "User-Agent": "VoltApp/1.0" },
       signal: AbortSignal.timeout(8000), // timeout 8 secondes
     });
@@ -38,7 +37,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ ok: true, eventCount });
   } catch (err: any) {
-    const message = err?.name === "TimeoutError"
+    const message = err?.name === "TimeoutError" || err?.name === "AbortError"
       ? "Délai d'attente dépassé (8s)"
       : String(err?.message ?? err);
     return NextResponse.json({ ok: false, error: message });

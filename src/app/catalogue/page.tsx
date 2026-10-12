@@ -7,7 +7,7 @@ import {
   miroirPrestation, normaliserDrafts, normTexte, nouvelleOffreDraft, nouvellePieceDraft, totalPiecesDrafts, offrePrincipale, offresDe, imageOffre, nomDepuisUrl, normaliserUrl,
   offresTriees, offresVersNormalisees, prixVenteOffre, synchroniserOffres, rattacherParNom, OffreDraft, OffreNormalisee, PieceDraft,
 } from "@/lib/fournisseurs";
-import { fmt, UNITES, cn } from "@/lib/utils";
+import { fmt, UNITES, cn, dateLocale, echecSupabase } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import { calcMarge, prixVenteFromMarge, URSSAF_MATERIAU_PCT, margeMiniUrssaf, prixVenteMiniUrssaf, gainNetUrssaf, MargeTag, MargeFields, FournisseursEditor, longueurValide, BobineField } from "@/components/catalogue/EditeurArticle";
 import FusionDoublons from "@/components/catalogue/FusionDoublons";
@@ -395,6 +395,7 @@ function KitModal({
     if (!session?.user) { setSaving(false); return; }
 
     let kitId = kit?.id;
+    let anciensComposants: string[] = [];
 
     if (!kitId) {
       const { data, error } = await supabase.from("prestations").insert({
@@ -411,7 +412,7 @@ function KitModal({
       if (error || !data) { alert("Erreur : " + error?.message); setSaving(false); return; }
       kitId = data.id;
     } else {
-      await supabase.from("prestations").update({
+      const { error: errKit } = await supabase.from("prestations").update({
         nom: nomKit,
         categorie: categorieKit,
         prix_unitaire: prixTotal,
@@ -419,10 +420,15 @@ function KitModal({
         est_kit: true,
         kit_description: description,
       }).eq("id", kitId);
-      await supabase.from("kit_composants").delete().eq("kit_id", kitId);
+      if (echecSupabase(errKit, "Modification du kit")) { setSaving(false); return; }
+      // Anciens composants mémorisés : on ne les supprime qu'APRÈS l'insertion réussie des nouveaux
+      // (sinon un échec réseau entre les deux laissait le kit vide).
+      const { data: anciens, error: errAnciens } = await supabase.from("kit_composants").select("id").eq("kit_id", kitId);
+      if (echecSupabase(errAnciens, "Lecture des composants du kit")) { setSaving(false); return; }
+      anciensComposants = (anciens ?? []).map((a: { id: string }) => a.id);
     }
 
-    await supabase.from("kit_composants").insert(
+    const { error: errInsert } = await supabase.from("kit_composants").insert(
       composants.map((c, i) => ({
         kit_id: kitId,
         composant_id: c.composant_id,
@@ -431,6 +437,11 @@ function KitModal({
         user_id: session.user.id,
       }))
     );
+    if (echecSupabase(errInsert, "Enregistrement des composants du kit")) { setSaving(false); return; }
+    if (anciensComposants.length > 0) {
+      const { error: errSuppr } = await supabase.from("kit_composants").delete().in("id", anciensComposants);
+      echecSupabase(errSuppr, "Nettoyage des anciens composants du kit");
+    }
 
     setSaving(false);
     onSaved();
@@ -627,7 +638,7 @@ function exportCSV(prestations: PrestationExt[]) {
   const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = `catalogue_voltapp_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.href = url; a.download = `catalogue_voltapp_${dateLocale()}.csv`;
   a.click(); URL.revokeObjectURL(url);
 }
 
@@ -1267,7 +1278,8 @@ export default function CataloguePage() {
 
   async function del(id: string) {
     if (!confirm("Supprimer cette prestation ?")) return;
-    await supabase.from("prestations").update({ actif: false }).eq("id", id);
+    const { error } = await supabase.from("prestations").update({ actif: false }).eq("id", id);
+    if (echecSupabase(error, "Suppression de la prestation")) return;
     setPrestations(p => p.filter(x => x.id !== id));
   }
 
@@ -1452,7 +1464,8 @@ export default function CataloguePage() {
         if (err) erreurs.push(`${u.data.nom} : ${err}`);
       } else if (u.principale && (u.principale.pieces ?? []).length === 0) {
         // Import « ancien format » sur un produit qui a des fournisseurs : on aligne l'offre principale.
-        await supabase.from("prestation_fournisseurs").update({ prix_achat: u.data.prix_achat, prix_vente: u.data.prix_unitaire }).eq("id", u.principale.id);
+        const { error: errPrincipale } = await supabase.from("prestation_fournisseurs").update({ prix_achat: u.data.prix_achat, prix_vente: u.data.prix_unitaire }).eq("id", u.principale.id);
+        if (errPrincipale) erreurs.push(`${u.data.nom} : ${errPrincipale.message}`);
       }
     }
     for (const [id, ajouts] of Array.from(ajoutsMarque.entries())) {

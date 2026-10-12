@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { lookup } from "dns/promises";
-import { isIP } from "net";
+import { hoteAutorise } from "@/lib/ssrf";
 
 // Relais d'images produit pour les PDF (devis, facture) : le navigateur ne peut pas lire une image
 // d'un site tiers (blocage CORS), le serveur si. Route publique car le client qui signe son devis
@@ -17,31 +16,6 @@ export const runtime = "nodejs";
 const MAX_OCTETS = 4 * 1024 * 1024;
 const TIMEOUT_MS = 6000;
 const MAX_REDIRECTIONS = 3;
-
-function ipPrivee(ip: string): boolean {
-  if (isIP(ip) === 4) {
-    const [a, b] = ip.split(".").map(Number);
-    return a === 10 || a === 127 || a === 0 || a >= 224
-      || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
-      || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
-  }
-  const v = ip.toLowerCase();
-  if (v.startsWith("::ffff:")) return ipPrivee(v.slice(7));
-  return v === "::1" || v === "::" || v.startsWith("fc") || v.startsWith("fd") || v.startsWith("fe80");
-}
-
-async function hoteAutorise(url: URL): Promise<boolean> {
-  if (url.protocol !== "https:") return false;
-  const h = url.hostname;
-  if (!h || h === "localhost" || h.endsWith(".local") || h.endsWith(".internal")) return false;
-  if (isIP(h)) return !ipPrivee(h);
-  try {
-    const adresses = await lookup(h, { all: true });
-    return adresses.length > 0 && adresses.every(a => !ipPrivee(a.address));
-  } catch {
-    return false;
-  }
-}
 
 async function urlConnue(url: string): Promise<boolean> {
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL;

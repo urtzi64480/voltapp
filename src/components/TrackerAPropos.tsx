@@ -1,5 +1,6 @@
 // src/components/TrackerAPropos.tsx
 "use client";
+import { lireStockage, ecrireStockage } from "@/lib/safe-storage";
 import { useEffect } from "react";
 
 // Déduit le type d'appareil à partir du user-agent — seulement mobile ou desktop
@@ -45,10 +46,10 @@ export default function TrackerAPropos({ userId }: { userId: string }) {
 
     const FENETRE_SESSION_MS = 30 * 60 * 1000; // 30 minutes
     const storageKey = `voltapp_derniere_visite_${userId}`;
-    const derniere = localStorage.getItem(storageKey);
+    const derniere = lireStockage("local", storageKey);
     const maintenant = Date.now();
     if (derniere && maintenant - Number(derniere) < FENETRE_SESSION_MS) return;
-    localStorage.setItem(storageKey, String(maintenant));
+    ecrireStockage("local", storageKey, String(maintenant));
 
     const ua = navigator.userAgent;
     fetch("/api/public/track", {

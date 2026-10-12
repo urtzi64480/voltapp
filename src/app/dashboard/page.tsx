@@ -17,8 +17,11 @@ export default function DashboardPage() {
   useEffect(() => {
     async function load() {
       const now = new Date();
-      const debutMois = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
-      const debutAnnee = `${now.getFullYear()}-01-01`;
+      // paye_le est un timestamptz : bornes = minuit LOCAL (instant complet). L'ancien
+      // `.toISOString().split("T")[0]` donnait le dernier jour du mois PRÉCÉDENT (minuit à Paris =
+      // 22h/23h UTC la veille), et le CA du mois incluait donc les paiements de la veille.
+      const debutMois = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const debutAnnee = new Date(now.getFullYear(), 0, 1).toISOString();
 
       const [{ data: fM }, { data: fA }, { data: dA }, { data: fI }, { data: cls }] = await Promise.all([
         // CA mois : factures payées ce mois, filtré sur paye_le

@@ -2,7 +2,7 @@
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { Client, Devis, Facture } from "@/types";
-import { fmt, fmtDate, fmtDatetime, initiales, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
+import { fmt, fmtDate, fmtDatetime, initiales, STATUT_LABELS, STATUT_COLORS, cn, echecSupabase } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -132,7 +132,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
 
   async function saveInfos() {
     setSaving(true);
-    await supabase.from("clients").update({
+    const { error } = await supabase.from("clients").update({
       nom: form.nom, prenom: form.prenom, telephone: form.telephone,
       email: form.email, adresse: form.adresse, code_postal: form.code_postal,
       ville: form.ville, contact_prefere: form.contact_prefere,
@@ -140,31 +140,35 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
       type_client: form.type_client ?? "particulier",
       siret_client: form.type_client === "professionnel" ? (form.siret_client ?? null) : null,
     }).eq("id", id);
+    if (echecSupabase(error, "Enregistrement des informations du client")) { setSaving(false); return; }
     setClient(c => c ? { ...c, ...form } : c);
     setEditInfos(false); setSaving(false);
   }
 
   async function saveLogement() {
     setSaving(true);
-    await supabase.from("clients").update({
+    const { error } = await supabase.from("clients").update({
       type_logement: form.type_logement,
       annee_construction: form.annee_construction ? parseInt(String(form.annee_construction)) : null,
       surface_m2: form.surface_m2 ? parseInt(String(form.surface_m2)) : null,
       tableau_marque: form.tableau_marque,
       code_acces: form.code_acces,
     }).eq("id", id);
+    if (echecSupabase(error, "Enregistrement du logement")) { setSaving(false); return; }
     setClient(c => c ? { ...c, ...form } : c);
     setEditLogement(false); setSaving(false);
   }
 
   async function saveNotes() {
-    await supabase.from("clients").update({ notes }).eq("id", id);
+    const { error } = await supabase.from("clients").update({ notes }).eq("id", id);
+    if (echecSupabase(error, "Enregistrement des notes")) return;
     setClient(c => c ? { ...c, notes } : c);
     setEditNotes(false);
   }
 
   async function deleteClient() {
-    await supabase.from("clients").delete().eq("id", id);
+    const { error } = await supabase.from("clients").delete().eq("id", id);
+    if (echecSupabase(error, "Suppression du client")) return;
     router.push("/clients");
   }
 
@@ -172,30 +176,35 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
     if (!files || !client) return;
     setUploading(true);
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) { setUploading(false); return; }
     const newUrls: string[] = [];
     for (const file of Array.from(files)) {
-      const path = `${user.id}/${Date.now()}-${file.name}`;
-      const { data } = await supabase.storage.from("client-photos").upload(path, file);
+      const nomSur = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9._-]+/g, "_");
+      const path = `${user.id}/${Date.now()}-${nomSur}`;
+      const { data, error: errUpload } = await supabase.storage.from("client-photos").upload(path, file);
+      if (errUpload) console.error("Upload photo client :", errUpload);
       if (data) {
         const { data: u } = supabase.storage.from("client-photos").getPublicUrl(path);
         newUrls.push(u.publicUrl);
       }
     }
     const updated = [...(client.photos ?? []), ...newUrls];
-    await supabase.from("clients").update({ photos: updated }).eq("id", id);
+    if (newUrls.length === 0) { setUploading(false); alert("Aucune photo n'a pu être envoyée."); return; }
+    const { error } = await supabase.from("clients").update({ photos: updated }).eq("id", id);
+    if (echecSupabase(error, "Enregistrement des photos")) { setUploading(false); return; }
     setClient(c => c ? { ...c, photos: updated } : c);
     setUploading(false);
   }
 
   async function removePhoto(url: string) {
     if (!client) return;
+    const updated = (client.photos ?? []).filter(p => p !== url);
+    const { error } = await supabase.from("clients").update({ photos: updated }).eq("id", id);
+    if (echecSupabase(error, "Suppression de la photo")) return;
     try {
       const bucketUrl = url.split("/storage/v1/object/public/client-photos/")[1];
       if (bucketUrl) await supabase.storage.from("client-photos").remove([decodeURIComponent(bucketUrl)]);
     } catch (e) { console.error(e); }
-    const updated = (client.photos ?? []).filter(p => p !== url);
-    await supabase.from("clients").update({ photos: updated }).eq("id", id);
     setClient(c => c ? { ...c, photos: updated } : c);
     if (lightbox !== null) setLightbox(null);
   }

@@ -1,33 +1,19 @@
 // src/app/api/public/disponibilites/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { parseICS, ICSEvent } from "@/lib/ics";
+import { parseICS, parisDateTime, parisYMD, ICSEvent } from "@/lib/ics";
 
 const MATIN_START = 8, MATIN_END = 12;
 const APREM_START = 13, APREM_END = 17;
 const NB_JOURS_OUVRES = 20; // ~4 semaines de lundi à vendredi
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function pad(n: number) { return String(n).padStart(2, "0"); }
-function toDateKey(d: Date) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
-
-// Construit une Date UTC pour une heure locale Europe/Paris donnée
-function parisDateTime(year: number, month: number, day: number, hour: number, minute: number): Date {
-  const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Europe/Paris",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-  });
-  const parts = fmt.formatToParts(utcGuess);
-  const get = (t: string) => parts.find(p => p.type === t)?.value ?? "0";
-  const parisAsUtc = new Date(Date.UTC(+get("year"), +get("month") - 1, +get("day"), +get("hour"), +get("minute"), +get("second")));
-  const offsetMs = utcGuess.getTime() - parisAsUtc.getTime();
-  return new Date(utcGuess.getTime() + offsetMs);
-}
 
 export async function GET(req: NextRequest) {
   const userId = req.nextUrl.searchParams.get("userId");
   if (!userId) return NextResponse.json({ error: "userId manquant" }, { status: 400 });
+  if (!UUID_RE.test(userId)) return NextResponse.json({ error: "userId invalide" }, { status: 400 });
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -56,17 +42,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ available: false, days: [] });
   }
 
-  // Fenêtre de recherche : demain -> +8 semaines calendaires (large pour couvrir 20 jours ouvrés)
-  const now = new Date();
-  const timeMin = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-  const timeMax = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 60);
+  // Fenêtre de recherche : demain -> +60 jours calendaires (large pour couvrir 20 jours ouvrés).
+  // Toutes les dates sont calculées en calendrier de Paris, indépendamment du fuseau du serveur.
+  const auj = parisYMD();
+  const timeMin = parisDateTime(auj.y, auj.m, auj.d + 1, 0, 0);
+  const timeMax = parisDateTime(auj.y, auj.m, auj.d + 60, 23, 59);
 
   const allEvents: ICSEvent[] = [];
   for (const cal of cals) {
     if (!cal.url?.trim()) continue;
     try {
       const fetchUrl = cal.url.replace(/^webcal:\/\//i, "https://");
-      const res = await fetch(fetchUrl, { headers: { "Accept": "text/calendar" } });
+      const res = await fetch(fetchUrl, { headers: { "Accept": "text/calendar" }, signal: AbortSignal.timeout(8000) });
       if (!res.ok) continue;
       const text = await res.text();
       allEvents.push(...parseICS(text, timeMin, timeMax, cal.url));
@@ -74,13 +61,15 @@ export async function GET(req: NextRequest) {
   }
 
   const days: { date: string; matin: boolean; aprem: boolean }[] = [];
-  const cursor = new Date(timeMin);
+  // Curseur = jour calendaire (midi UTC : jamais ambigu) ; le fuseau n'intervient qu'à la comparaison.
+  const cursor = new Date(Date.UTC(auj.y, auj.m - 1, auj.d + 1, 12));
+  const dernier = Date.UTC(auj.y, auj.m - 1, auj.d + 60, 12);
   let found = 0;
 
-  while (found < NB_JOURS_OUVRES && cursor <= timeMax) {
-    const dow = cursor.getDay(); // 0 = dimanche, 6 = samedi
+  while (found < NB_JOURS_OUVRES && cursor.getTime() <= dernier) {
+    const dow = cursor.getUTCDay(); // 0 = dimanche, 6 = samedi
     if (dow >= 1 && dow <= 5) {
-      const y = cursor.getFullYear(), m = cursor.getMonth() + 1, d = cursor.getDate();
+      const y = cursor.getUTCFullYear(), m = cursor.getUTCMonth() + 1, d = cursor.getUTCDate();
       const matinStart = parisDateTime(y, m, d, MATIN_START, 0);
       const matinEnd = parisDateTime(y, m, d, MATIN_END, 0);
       const apremStart = parisDateTime(y, m, d, APREM_START, 0);
@@ -91,9 +80,9 @@ export async function GET(req: NextRequest) {
         const evStart = new Date(ev.start).getTime();
         const evEnd = new Date(ev.end).getTime();
         if (ev.allDay) {
-          // Un événement journée entière bloque toute la journée
+          // Un événement journée entière bloque toute la journée (minuit → minuit, heure de Paris)
           const dayStart = parisDateTime(y, m, d, 0, 0).getTime();
-          const dayEnd = parisDateTime(y, m, d, 23, 59).getTime();
+          const dayEnd = parisDateTime(y, m, d + 1, 0, 0).getTime();
           if (evStart < dayEnd && evEnd > dayStart) { matinLibre = false; apremLibre = false; }
           continue;
         }
@@ -101,10 +90,10 @@ export async function GET(req: NextRequest) {
         if (evStart < apremEnd.getTime() && evEnd > apremStart.getTime()) apremLibre = false;
       }
 
-      days.push({ date: toDateKey(cursor), matin: matinLibre, aprem: apremLibre });
+      days.push({ date: `${y}-${pad(m)}-${pad(d)}`, matin: matinLibre, aprem: apremLibre });
       found++;
     }
-    cursor.setDate(cursor.getDate() + 1);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
 
   return NextResponse.json({ available: true, days });

@@ -3,9 +3,10 @@ import { Fragment, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Facture, Profil } from "@/types";
 import { verifierConformiteFacture } from "@/lib/facturx";
-import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
+import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, cn, dateLocale, echecSupabase } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import LigneImage from "@/components/devis/LigneImage";
+import { supprimerAvecDependances } from "@/lib/suppression";
 import { grouperParPoste, totalItems, trierParOrdre } from "@/lib/postes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -47,7 +48,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
   const [showAcompteForm, setShowAcompteForm] = useState(false);
   const [acompteMode, setAcompteMode] = useState<AcompteInputMode>("eur");
   const [acompteValeur, setAcompteValeur] = useState("");
-  const [acompteDate, setAcompteDate] = useState(new Date().toISOString().split("T")[0]);
+  const [acompteDate, setAcompteDate] = useState(dateLocale());
   const [acompteNotes, setAcompteNotes] = useState("");
   const [savingAcompte, setSavingAcompte] = useState(false);
   const [confirmDeleteAcompte, setConfirmDeleteAcompte] = useState<string | null>(null);
@@ -97,13 +98,16 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
 
   async function saveApporteur() {
     setSavingApporteur(true);
-    await supabase.from("factures").update({ apporteur_id: apporteurId || null }).eq("id", id);
+    const { error } = await supabase.from("factures").update({ apporteur_id: apporteurId || null }).eq("id", id);
+    echecSupabase(error, "Enregistrement de l'apporteur");
     setSavingApporteur(false);
   }
 
   async function marquerPayee() {
-    await supabase.from("factures").update({ statut: "payee", paye_le: new Date().toISOString() }).eq("id", id);
-    setFacture(f => f ? { ...f, statut: "payee", paye_le: new Date().toISOString() } : f);
+    const payeLe = new Date().toISOString();
+    const { error } = await supabase.from("factures").update({ statut: "payee", paye_le: payeLe }).eq("id", id);
+    if (echecSupabase(error, "Marquage de la facture comme payée")) return;
+    setFacture(f => f ? { ...f, statut: "payee", paye_le: payeLe } : f);
   }
 
   async function marquerEnvoyeeEtEnvoyer() {
@@ -125,7 +129,8 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
       if (uploadError) throw uploadError;
       const { data: urlData } = supabase.storage.from("documents").getPublicUrl(fileName);
       const pdfUrl = urlData.publicUrl;
-      await supabase.from("factures").update({ statut: "envoyee" }).eq("id", id);
+      const { error: errStatut } = await supabase.from("factures").update({ statut: "envoyee" }).eq("id", id);
+      if (echecSupabase(errStatut, "Passage de la facture au statut envoyée")) return;
       setFacture(f => f ? { ...f, statut: "envoyee" } : f);
       const client = facture.client as any;
       const email = client?.email ?? "";
@@ -137,7 +142,8 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
       window.open(`mailto:${email}?subject=${objet}&body=${corps}`);
     } catch (err) {
       console.error("Erreur envoi facture:", err);
-      await supabase.from("factures").update({ statut: "envoyee" }).eq("id", id);
+      const { error: errStatut } = await supabase.from("factures").update({ statut: "envoyee" }).eq("id", id);
+      if (echecSupabase(errStatut, "Passage de la facture au statut envoyée")) return;
       setFacture(f => f ? { ...f, statut: "envoyee" } : f);
     }
   }
@@ -176,14 +182,21 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
   }
 
   async function marquerRelance() {
-    await supabase.from("factures").update({ statut: "relance" }).eq("id", id);
+    const { error } = await supabase.from("factures").update({ statut: "relance" }).eq("id", id);
+    if (echecSupabase(error, "Passage de la facture au statut relance")) return;
     setFacture(f => f ? { ...f, statut: "relance" } : f);
   }
 
+  function supabaseSupprimer() {
+    return supprimerAvecDependances("factures", id, [
+      { table: "acomptes", colonne: "facture_id" },
+      { table: "facture_lignes", colonne: "facture_id" },
+    ]);
+  }
+
   async function deleteFacture() {
-    await supabase.from("acomptes").delete().eq("facture_id", id);
-    await supabase.from("facture_lignes").delete().eq("facture_id", id);
-    await supabase.from("factures").delete().eq("id", id);
+    const error = await supabaseSupprimer();
+    if (echecSupabase(error, "Suppression de la facture")) return;
     router.push("/factures");
   }
 
@@ -198,29 +211,34 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
     setSavingAcompte(true);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setSavingAcompte(false); return; }
-    const { data } = await supabase.from("acomptes").insert({
+    const { data, error: errAcompte } = await supabase.from("acomptes").insert({
       facture_id: id,
       user_id: user.id,
       montant,
       date_versement: acompteDate,
       notes: acompteNotes || null,
     }).select().single();
+    if (echecSupabase(errAcompte, "Enregistrement de l'acompte")) { setSavingAcompte(false); return; }
     if (data) {
       const newList = [...acomptes, data as Acompte].sort((a, b) => a.date_versement.localeCompare(b.date_versement));
       setAcomptes(newList);
       const nouveauSolde = soldeRestant - montant;
       if (nouveauSolde <= 0.01 && facture.statut !== "payee") {
-        await supabase.from("factures").update({ statut: "payee", paye_le: new Date().toISOString() }).eq("id", id);
-        setFacture(f => f ? { ...f, statut: "payee", paye_le: new Date().toISOString() } : f);
+        const payeLe = new Date().toISOString();
+        const { error: errPaye } = await supabase.from("factures").update({ statut: "payee", paye_le: payeLe }).eq("id", id);
+        if (!echecSupabase(errPaye, "Passage de la facture au statut payée")) {
+          setFacture(f => f ? { ...f, statut: "payee", paye_le: payeLe } : f);
+        }
       }
     }
-    setAcompteValeur(""); setAcompteNotes(""); setAcompteDate(new Date().toISOString().split("T")[0]);
+    setAcompteValeur(""); setAcompteNotes(""); setAcompteDate(dateLocale());
     setShowAcompteForm(false);
     setSavingAcompte(false);
   }
 
   async function supprimerAcompte(acId: string) {
-    await supabase.from("acomptes").delete().eq("id", acId);
+    const { error } = await supabase.from("acomptes").delete().eq("id", acId);
+    if (echecSupabase(error, "Suppression de l'acompte")) return;
     setAcomptes(prev => prev.filter(a => a.id !== acId));
     setConfirmDeleteAcompte(null);
   }

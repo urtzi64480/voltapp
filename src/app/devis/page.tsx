@@ -1,4 +1,5 @@
 "use client";
+import { supprimerAvecDependances } from "@/lib/suppression";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Devis } from "@/types";
@@ -100,12 +101,12 @@ export default function DevisPage() {
   async function handleDelete() {
     if (!toDelete) return;
     setDeleting(true);
-    // Supprime d'abord les lignes liées (contrainte FK), puis le devis
-    await supabase.from("devis_lignes").delete().eq("devis_id", toDelete.id);
-    const { error } = await supabase.from("devis").delete().eq("id", toDelete.id);
+    // Parent d'abord (les lignes suivent par cascade, ou sont supprimées si la base l'exige) :
+    // un échec ne laisse jamais un devis vidé de ses lignes.
+    const error = await supprimerAvecDependances("devis", toDelete.id, [{ table: "devis_lignes", colonne: "devis_id" }]);
     setDeleting(false);
     if (error) {
-      alert("Erreur lors de la suppression du devis.");
+      alert("Erreur lors de la suppression du devis" + (error.message ? ` (${error.message})` : "") + ".");
       return;
     }
     setDevis(prev => prev.filter(d => d.id !== toDelete.id));

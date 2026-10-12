@@ -63,8 +63,10 @@ export async function GET(req: NextRequest) {
   }
 
   const url = req.nextUrl;
-  const year = parseInt(url.searchParams.get("year") ?? String(new Date().getFullYear()));
-  const month = parseInt(url.searchParams.get("month") ?? String(new Date().getMonth()));
+  const yearParam = parseInt(url.searchParams.get("year") ?? "", 10);
+  const monthParam = parseInt(url.searchParams.get("month") ?? "", 10);
+  const year = Number.isFinite(yearParam) ? yearParam : new Date().getFullYear();
+  const month = Number.isFinite(monthParam) ? monthParam : new Date().getMonth();
 
   const timeMin = new Date(year, month - 1, 1).toISOString();
   const timeMax = new Date(year, month + 2, 0, 23, 59, 59).toISOString();

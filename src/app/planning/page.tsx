@@ -7,7 +7,7 @@ import {
   Receipt, Camera, Trash2, Clock, User, ExternalLink, AlertTriangle, Phone,
 } from "lucide-react";
 import Link from "next/link";
-import { cn } from "@/lib/utils";
+import { cn, echecSupabase } from "@/lib/utils";
 import { Intervention, Client, Devis, StatutIntervention } from "@/types";
 import Shell from "@/components/layout/Shell";
 import { fondModal } from "@/lib/fond-modal";
@@ -726,7 +726,7 @@ export default function PlanningPage() {
   };
 
   const handleCreate = async (form: FormData) => {
-    const { data: inserted } = await supabase.from("interventions").insert({
+    const { data: inserted, error: errCreation } = await supabase.from("interventions").insert({
       client_id: form.client_id || null, devis_id: form.devis_id || null,
       titre: form.titre, description: form.description || null,
       adresse_chantier: form.adresse_chantier || null,
@@ -734,6 +734,7 @@ export default function PlanningPage() {
       date_fin: new Date(form.date_fin).toISOString(),
       statut: form.statut, notes: form.notes || null,
     }).select().single();
+    if (echecSupabase(errCreation, "Création de l'intervention")) return;
 
     if (inserted) {
       const { summary, description } = buildCalDAVContentFromForm(form);
@@ -743,7 +744,8 @@ export default function PlanningPage() {
         end: new Date(form.date_fin).toISOString(),
       });
       if (eventUrl) {
-        await supabase.from("interventions").update({ caldav_url: eventUrl }).eq("id", inserted.id);
+        const { error: errUrl } = await supabase.from("interventions").update({ caldav_url: eventUrl }).eq("id", inserted.id);
+        if (errUrl) console.error("Enregistrement de l'URL du calendrier :", errUrl);
       }
     }
 
@@ -752,7 +754,7 @@ export default function PlanningPage() {
 
   const handleUpdate = async (form: FormData) => {
     if (!selected) return;
-    await supabase.from("interventions").update({
+    const { error: errMaj } = await supabase.from("interventions").update({
       client_id: form.client_id || null, devis_id: form.devis_id || null,
       titre: form.titre, description: form.description || null,
       adresse_chantier: form.adresse_chantier || null,
@@ -760,6 +762,7 @@ export default function PlanningPage() {
       date_fin: new Date(form.date_fin).toISOString(),
       statut: form.statut, notes: form.notes || null,
     }).eq("id", selected.id);
+    if (echecSupabase(errMaj, "Modification de l'intervention")) return;
 
     const existingUrl = (selected as any).caldav_url as string | null | undefined;
     const { summary, description } = buildCalDAVContentFromForm(form);
@@ -770,7 +773,8 @@ export default function PlanningPage() {
       end: new Date(form.date_fin).toISOString(),
     });
     if (eventUrl && !existingUrl) {
-      await supabase.from("interventions").update({ caldav_url: eventUrl }).eq("id", selected.id);
+      const { error: errUrl } = await supabase.from("interventions").update({ caldav_url: eventUrl }).eq("id", selected.id);
+      if (errUrl) console.error("Enregistrement de l'URL du calendrier :", errUrl);
     }
 
     setEditMode(false); setSelected(null); await fetchAll();
@@ -779,16 +783,19 @@ export default function PlanningPage() {
   const handleDelete = async () => {
     if (!selected || !confirm("Supprimer cette intervention ? Elle sera aussi retirée de votre calendrier Apple.")) return;
     const existingUrl = (selected as any).caldav_url as string | null | undefined;
+    // Base d'abord : si la suppression échoue, l'événement du calendrier reste cohérent avec l'intervention conservée
+    const { error: errSuppr } = await supabase.from("interventions").delete().eq("id", selected.id);
+    if (echecSupabase(errSuppr, "Suppression de l'intervention")) return;
     if (existingUrl) {
       await syncCalDAV("delete", { eventUrl: existingUrl });
     }
-    await supabase.from("interventions").delete().eq("id", selected.id);
     setSelected(null); await fetchAll();
   };
 
   const handleMarkTermine = async () => {
     if (!selected) return;
-    await supabase.from("interventions").update({ statut: "termine" }).eq("id", selected.id);
+    const { error } = await supabase.from("interventions").update({ statut: "termine" }).eq("id", selected.id);
+    if (echecSupabase(error, "Passage de l'intervention à terminée")) return;
     setSelected(null); await fetchAll();
   };
 
@@ -809,7 +816,8 @@ export default function PlanningPage() {
     if (conflict) {
       if (!confirm(`⚠️ Conflit avec "${conflict.title}" (${fmt(conflict.start)} → ${fmt(conflict.end)})\n\nForcer quand même ?`)) return;
     }
-    await supabase.from("interventions").update({ date_debut: newDebut.toISOString(), date_fin: newFin.toISOString() }).eq("id", ivId);
+    const { error: errDeplacement } = await supabase.from("interventions").update({ date_debut: newDebut.toISOString(), date_fin: newFin.toISOString() }).eq("id", ivId);
+    if (echecSupabase(errDeplacement, "Déplacement de l'intervention")) return;
     const existingUrl = (iv as any).caldav_url as string | null | undefined;
     if (existingUrl) {
       const { summary, description } = buildCalDAVContentFromIv(iv);
@@ -834,7 +842,8 @@ export default function PlanningPage() {
     if (conflict) {
       if (!confirm(`⚠️ Conflit avec "${conflict.title}" (${fmt(conflict.start)} → ${fmt(conflict.end)})\n\nForcer quand même ?`)) return;
     }
-    await supabase.from("interventions").update({ date_debut: newDebut.toISOString(), date_fin: newFin.toISOString() }).eq("id", ivId);
+    const { error: errDeplacement } = await supabase.from("interventions").update({ date_debut: newDebut.toISOString(), date_fin: newFin.toISOString() }).eq("id", ivId);
+    if (echecSupabase(errDeplacement, "Déplacement de l'intervention")) return;
     const existingUrl = (iv as any).caldav_url as string | null | undefined;
     if (existingUrl) {
       const { summary, description } = buildCalDAVContentFromIv(iv);
@@ -854,7 +863,8 @@ export default function PlanningPage() {
     if (error) { console.error("Upload error:", error); return; }
     const current = selected.photos || [];
     const newPhotos = [...current, path];
-    await supabase.from("interventions").update({ photos: newPhotos }).eq("id", selected.id);
+    const { error: errPhotos } = await supabase.from("interventions").update({ photos: newPhotos }).eq("id", selected.id);
+    if (echecSupabase(errPhotos, "Enregistrement des photos")) return;
     setSelected(s => s ? { ...s, photos: newPhotos } : s);
     await fetchAll();
   };
@@ -863,7 +873,8 @@ export default function PlanningPage() {
     if (!selected) return;
     try { await supabase.storage.from("intervention-photos").remove([path]); } catch {}
     const newPhotos = (selected.photos || []).filter(p => p !== path);
-    await supabase.from("interventions").update({ photos: newPhotos }).eq("id", selected.id);
+    const { error: errPhotos } = await supabase.from("interventions").update({ photos: newPhotos }).eq("id", selected.id);
+    if (echecSupabase(errPhotos, "Enregistrement des photos")) return;
     setSelected(s => s ? { ...s, photos: newPhotos } : s);
     await fetchAll();
   };

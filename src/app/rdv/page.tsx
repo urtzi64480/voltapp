@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { CalendarCheck, Phone, Mail, MapPin, Clock, MessageSquare, Trash2, X } from "lucide-react";
 import Shell from "@/components/layout/Shell";
 import { fondModal } from "@/lib/fond-modal";
+import { echecSupabase } from "@/lib/utils";
 
 function PhotoModal({ urls, onClose }: { urls: string[]; onClose: () => void }) {
   const [idx, setIdx] = useState(0);
@@ -80,7 +81,8 @@ export default function RdvPage() {
       setLoading(false);
 
       // Marque tous les RDV non consultés comme vus
-      await supabase.from("rdv").update({ consulte: true }).eq("consulte", false);
+      const { error: errConsulte } = await supabase.from("rdv").update({ consulte: true }).eq("consulte", false);
+      if (errConsulte) console.error("Marquage des RDV comme consultés :", errConsulte);
     }
     load();
   }, []);
@@ -88,9 +90,10 @@ export default function RdvPage() {
   const aVenir = rdvs.filter(r => !isPast(r));
   const passes = rdvs.filter(r => isPast(r));
 
-  const markConfirme = (id: string) => {
+  const markConfirme = async (id: string) => {
+    const { error } = await supabase.from("rdv").update({ confirme: true }).eq("id", id);
+    if (echecSupabase(error, "Confirmation du rendez-vous")) return;
     setRdvs(list => list.map(r => r.id === id ? { ...r, confirme: true } : r));
-    supabase.from("rdv").update({ confirme: true }).eq("id", id);
   };
 
   // Extrait le chemin du fichier à partir de l'URL publique Supabase Storage
@@ -111,6 +114,10 @@ export default function RdvPage() {
 
   const handleDelete = async (rdv: Rdv) => {
     if (!confirm("Supprimer ce rendez-vous ? Il sera aussi retiré de votre calendrier Apple.")) return;
+    // Base d'abord : un échec ne doit pas laisser un RDV conservé sans événement ni photos
+    const { error } = await supabase.from("rdv").delete().eq("id", rdv.id);
+    if (echecSupabase(error, "Suppression du rendez-vous")) return;
+    setRdvs(list => list.filter(r => r.id !== rdv.id));
     if (rdv.caldav_url) {
       try {
         await fetch("/api/apple/sync-event", {
@@ -120,12 +127,9 @@ export default function RdvPage() {
         });
       } catch (e) {
         console.error("Erreur suppression iCloud:", e);
-        // On continue quand même la suppression côté VoltApp
       }
     }
     await deletePhotosFromStorage(rdv.photos);
-    await supabase.from("rdv").delete().eq("id", rdv.id);
-    setRdvs(list => list.filter(r => r.id !== rdv.id));
   };
 
   const smsHref = (rdv: Rdv) => {

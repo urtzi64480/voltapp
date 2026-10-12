@@ -1,4 +1,5 @@
 "use client";
+import { lireStockage, ecrireStockage } from "@/lib/safe-storage";
 import { useState, useRef, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -163,10 +164,10 @@ function DemandePageContent({ userId }: { userId: string }) {
 
     const FENETRE_SESSION_MS = 30 * 60 * 1000; // 30 minutes
     const storageKey = `voltapp_derniere_visite_${userId}`;
-    const derniere = localStorage.getItem(storageKey);
+    const derniere = lireStockage("local", storageKey);
     const maintenant = Date.now();
     if (derniere && maintenant - Number(derniere) < FENETRE_SESSION_MS) return;
-    localStorage.setItem(storageKey, String(maintenant));
+    ecrireStockage("local", storageKey, String(maintenant));
 
     const ua = navigator.userAgent;
     fetch("/api/public/track", {
@@ -198,8 +199,8 @@ function DemandePageContent({ userId }: { userId: string }) {
     if (typeof window === "undefined") return;
     const screenKey = mode ?? "accueil";
     const sessionKey = `voltapp_ecran_${userId}_${screenKey}`;
-    if (sessionStorage.getItem(sessionKey)) return;
-    sessionStorage.setItem(sessionKey, "1");
+    if (lireStockage("session", sessionKey)) return;
+    ecrireStockage("session", sessionKey, "1");
 
     fetch("/api/public/track", {
       method: "POST",

@@ -2,7 +2,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Devis, DevisLigne, Prestation, Client, Profil } from "@/types";
-import { fmt, fmtDate, fmtDatetime, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
+import { fmt, fmtDate, fmtDatetime, STATUT_LABELS, STATUT_COLORS, cn, dateLocale, arrondi2, echecSupabase } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import PostesLignes from "@/components/devis/PostesLignes";
 import LigneImage from "@/components/devis/LigneImage";
@@ -261,6 +261,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const [remiseFidelitePct, setRemiseFidelitePct] = useState<number>(0);
   const [caClientPayé, setCaClientPayé] = useState<number>(0);
   const [saving, setSaving] = useState(false);
+  const [convertingFacture, setConvertingFacture] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [sigData, setSigData] = useState<string | null>(null);
   const [sigDate, setSigDate] = useState<string | null>(null);
@@ -327,20 +328,27 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         }
       });
 
-    supabase.from("factures").select("id, numero, statut").eq("devis_id", id).maybeSingle()
-      .then(({ data: f }) => { if (f) setFactureAssociee(f as any); });
+    // .maybeSingle() renvoie une ERREUR dès qu'il y a 2 factures pour le devis (doublon) et masquait
+    // alors le lien vers la facture : on prend la plus ancienne.
+    supabase.from("factures").select("id, numero, statut").eq("devis_id", id).order("created_at", { ascending: true }).limit(1)
+      .then(({ data }) => { const f = data?.[0]; if (f) setFactureAssociee(f as any); });
+
+    // Profil de l'utilisateur connecté (et non l'UUID d'un compte précis : l'app est multi-tenant).
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) return;
+      const { data: p } = await supabase.from("profil").select("*").eq("id", user.id).single();
+      if (p) setProfil(p as Profil);
+    });
 
     Promise.all([
       supabase.from("clients").select("id, nom, prenom, email, telephone, adresse, code_postal, ville, statut").order("nom"),
       supabase.from("prestations").select("*").eq("actif", true).order("categorie").order("nom"),
       supabase.from("paliers_fidelite").select("*").order("seuil_min"),
       supabase.from("apporteurs").select("id,nom,entreprise").eq("actif", true).order("nom"),
-      supabase.from("profil").select("*").eq("id", "d506c94e-40c7-4bcd-a48c-97e86f4ea7c0").single(),
-    ]).then(async ([{ data: cls }, { data: pre }, { data: pal }, { data: ap }, { data: p }]) => {
+    ]).then(async ([{ data: cls }, { data: pre }, { data: pal }, { data: ap }]) => {
       setClients((cls ?? []) as any);
       setPaliers(pal ?? []);
       setApporteurs(ap ?? []);
-      if (p) setProfil(p as Profil);
       // Catalogue + offres fournisseurs : sert à changer le fournisseur / le produit d'une ligne.
       setPrestations(await attacherFournisseurs((pre ?? []) as PrestationExt[]));
     });
@@ -430,11 +438,12 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   async function validerSignatureDirecte() {
     if (!viewSigData || !devis) return;
     if (bloqueSiACompleter()) return;
-    await supabase.from("devis").update({
+    const { error: errSig } = await supabase.from("devis").update({
       signature_data: viewSigData,
       signe_le: new Date().toISOString(),
       statut: "signe",
     }).eq("id", id);
+    if (echecSupabase(errSig, "Enregistrement de la signature")) return;
     setDevis(d => d ? { ...d, signature_data: viewSigData, signe_le: new Date().toISOString(), statut: "signe" } : d);
     setViewSigData(null); setViewSigDate(null);
   }
@@ -503,9 +512,11 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const remiseMateriau = calcRemise(totMateriauBrut, remise.materiau_type, remise.materiau_val);
   const totServiceApresRemise = totServiceBrut - remiseService;
   const remiseFideliteEur = remiseFidelitePct > 0 ? Math.round(totServiceApresRemise * remiseFidelitePct / 100 * 100) / 100 : 0;
-  const totService = totServiceApresRemise - remiseFideliteEur;
-  const totMateriau = totMateriauBrut - remiseMateriau;
-  const totTTC = totService + totMateriau;
+  // Arrondis au centime : sans cela 3 colonnes numeric(10,2) étaient arrondies séparément par la base
+  // et pouvaient différer de 1 ct de la somme affichée / imprimée.
+  const totService = arrondi2(totServiceApresRemise - remiseFideliteEur);
+  const totMateriau = arrondi2(totMateriauBrut - remiseMateriau);
+  const totTTC = arrondi2(totService + totMateriau);
   const hasRemise = remiseService > 0 || remiseMateriau > 0;
 
   const palierActuelClient = [...paliers].reverse().find(p => caClientPayé >= p.seuil_min) ?? null;
@@ -553,11 +564,11 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     if (anciensIds.length > 0) {
       await supabase.from("devis_lignes").delete().in("id", anciensIds);
     }
-    await supabase.from("devis").update({
+    const { error: errMaj } = await supabase.from("devis").update({
       client_id: clientId || null,
       apporteur_id: apporteurId || null,
       objet,
-      date_validite: dateV.toISOString().split("T")[0],
+      date_validite: dateLocale(dateV),
       total_service: totService, total_materiau: totMateriau, total_ttc: totTTC,
       remise_type: hasRemise ? JSON.stringify({ service: remise.service_type, materiau: remise.materiau_type }) : null,
       remise_valeur: remiseService + remiseMateriau,
@@ -566,6 +577,13 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       signe_le: sigData ? new Date().toISOString() : devis.signe_le,
       statut: sigData ? "signe" : devis.statut,
     }).eq("id", id);
+    if (errMaj) {
+      // Les nouvelles lignes sont déjà enregistrées mais les totaux n'ont pas été mis à jour :
+      // on le dit clairement et on laisse l'édition ouverte pour réessayer.
+      echecSupabase(errMaj, "Mise à jour du devis (en-tête et totaux)");
+      setSaving(false);
+      return;
+    }
     const { data, error: errRefetch } = await supabase.from("devis").select(SELECT_DEVIS).eq("id", id).single();
     if (errRefetch) console.error("Erreur récupération devis après sauvegarde :", errRefetch);
     if (data) {
@@ -580,8 +598,10 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   }
 
   async function deleteDevis() {
-    await supabase.from("devis_lignes").delete().eq("devis_id", id);
-    await supabase.from("devis").delete().eq("id", id);
+    const { error: errLignes } = await supabase.from("devis_lignes").delete().eq("devis_id", id);
+    if (echecSupabase(errLignes, "Suppression des lignes du devis")) { setConfirmDelete(false); return; }
+    const { error: errDevis } = await supabase.from("devis").delete().eq("id", id);
+    if (echecSupabase(errDevis, "Suppression du devis")) { setConfirmDelete(false); return; }
     router.push("/devis");
   }
 
@@ -597,28 +617,37 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   }
 
   async function convertirFacture() {
+    if (convertingFacture) return; // double clic : une seule création à la fois
     if (!devis || devis.statut !== "signe") { alert("Ce devis n'est pas encore signé."); return; }
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    const { data: p } = await supabase.from("profil").select("*").eq("id", user.id).single();
-    const num = `${p?.prefixe_facture ?? "FAC"}-${new Date().getFullYear()}-${String((p?.compteur_facture ?? 0) + 1).padStart(3, "0")}`;
-    const ech = new Date(); ech.setDate(ech.getDate() + 30);
-    const { data: f } = await supabase.from("factures").insert({
-      user_id: user.id, devis_id: devis.id, client_id: devis.client_id,
-      apporteur_id: (devis as any).apporteur_id ?? null,
-      numero: num, objet: devis.objet, statut: "a_envoyer",
-      total_service: devis.total_service, total_materiau: devis.total_materiau, total_ttc: devis.total_ttc,
-      remise_fidelite_pct: devis.remise_fidelite_pct ?? null,
-      date_echeance: ech.toISOString().split("T")[0],
-    }).select().single();
-    if (f && devis.lignes) {
+    setConvertingFacture(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      // Revérifie en base (l'état local peut être périmé, ou la facture créée depuis un autre onglet) :
+      // un devis ne doit jamais produire deux factures.
+      const { data: deja } = await supabase.from("factures").select("id").eq("devis_id", devis.id).limit(1);
+      if (deja && deja.length > 0) { window.location.href = `/factures/${deja[0].id}`; return; }
+
+      const { data: p } = await supabase.from("profil").select("*").eq("id", user.id).single();
+      const num = `${p?.prefixe_facture ?? "FAC"}-${new Date().getFullYear()}-${String((p?.compteur_facture ?? 0) + 1).padStart(3, "0")}`;
+      const ech = new Date(); ech.setDate(ech.getDate() + 30);
+      const { data: f, error: errFacture } = await supabase.from("factures").insert({
+        user_id: user.id, devis_id: devis.id, client_id: devis.client_id,
+        apporteur_id: (devis as any).apporteur_id ?? null,
+        numero: num, objet: devis.objet, statut: "a_envoyer",
+        total_service: devis.total_service, total_materiau: devis.total_materiau, total_ttc: devis.total_ttc,
+        remise_fidelite_pct: devis.remise_fidelite_pct ?? null,
+        date_echeance: dateLocale(ech),
+      }).select().single();
+      if (echecSupabase(errFacture ?? (f ? null : { message: "aucune facture renvoyée" }), "Création de la facture") || !f) return;
+
       // Lignes reprises dans l'ordre d'affichage du devis (postes, puis hors poste).
       // `poste` n'est envoyé que si le devis en utilise : sans poste, insertion identique à avant.
-      const lignesDevis = trierParOrdre(devis.lignes as any[]);
+      const lignesDevis = trierParOrdre((devis.lignes ?? []) as any[]);
       const lignesFacture = ordonnerLignes(lignesDevis, extrairePostes(lignesDevis));
       const facturePostes = lignesFacture.some(l => posteDe(l) !== null);
       const colImageFacture = colonnesImage(lignesFacture as any[]);
-      await supabase.from("facture_lignes").insert(lignesFacture.map((l: any, i: number) => ({
+      const { error: errLignes } = await supabase.from("facture_lignes").insert(lignesFacture.map((l: any, i: number) => ({
         facture_id: f.id,
         nom: l.nom,
         kit_description: l.kit_description ?? null,
@@ -630,8 +659,15 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         ...(facturePostes ? { poste: posteDe(l) } : {}),
         ...colImageFacture(l),
       })));
-      await supabase.from("profil").update({ compteur_facture: (p?.compteur_facture ?? 0) + 1 }).eq("id", user.id);
-      await supabase.from("devis").update({ statut: "signe" }).eq("id", devis.id);
+      if (errLignes) {
+        // Pas de facture sans ses lignes : on annule la création plutôt que de laisser un document vide
+        await supabase.from("factures").delete().eq("id", f.id);
+        echecSupabase(errLignes, "Enregistrement des lignes de la facture (facture annulée)");
+        return;
+      }
+      // Numéro suivant : si cet UPDATE échoue, la prochaine facture réutiliserait le même numéro
+      const { error: errCompteur } = await supabase.from("profil").update({ compteur_facture: (p?.compteur_facture ?? 0) + 1 }).eq("id", user.id);
+      echecSupabase(errCompteur, "Mise à jour du compteur de numérotation (la prochaine facture risque d'avoir le même numéro)");
       try {
         const { genPDFDevisBlob } = await import("@/lib/pdf");
         const profilFallback = p ?? { id: user.id, prefixe_devis: "DEV", prefixe_facture: "FAC", compteur_devis: 0, compteur_facture: 0, mention_tva: "TVA non applicable — Art. 293 B du CGI", conditions_paiement: "Paiement à réception", taux_horaire: 55, created_at: "", updated_at: "" };
@@ -650,6 +686,8 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       } catch {
         window.location.href = `/factures/${f.id}`;
       }
+    } finally {
+      setConvertingFacture(false);
     }
   }
 
@@ -929,9 +967,13 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                   <Receipt size={15} /> Convertir en facture
                 </button>
               )}
-              {devis.statut === "signe" && (
-                <button onClick={convertirFacture} className="btn-volt flex-1 justify-center"><CheckCircle size={15} /> Créer la facture</button>
-              )}
+              {devis.statut === "signe" && (factureAssociee ? (
+                <Link href={`/factures/${factureAssociee.id}`} className="btn-volt flex-1 justify-center"><Receipt size={15} /> Voir la facture</Link>
+              ) : (
+                <button onClick={convertirFacture} disabled={convertingFacture} className="btn-volt flex-1 justify-center disabled:opacity-60">
+                  <CheckCircle size={15} /> {convertingFacture ? "Création…" : "Créer la facture"}
+                </button>
+              ))}
             </div>
           </>
         )}

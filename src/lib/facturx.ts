@@ -5,6 +5,7 @@
 // Le fichier produit est accepté par toutes les plateformes agréées (format socle).
 // ─────────────────────────────────────────────────────────────────────────────
 import { Facture, Profil } from "@/types";
+import { dateLocale } from "@/lib/utils";
 
 export interface AcompteFX {
   montant: number;
@@ -34,7 +35,7 @@ function esc(s: string): string {
 
 // "2026-09-23" | "2026-09-23T10:00:00+00:00" → "20260923"
 function d102(d?: string | null): string {
-  const s = d && /^\d{4}-\d{2}-\d{2}/.test(d) ? d.slice(0, 10) : new Date().toISOString().slice(0, 10);
+  const s = d && /^\d{4}-\d{2}-\d{2}/.test(d) ? d.slice(0, 10) : dateLocale();
   return s.replace(/-/g, "");
 }
 

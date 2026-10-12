@@ -13,6 +13,21 @@ export const fmtDatetime = (d: string | Date) =>
     day: "2-digit", month: "2-digit", year: "numeric",
     hour: "2-digit", minute: "2-digit",
   }).format(typeof d === "string" ? new Date(d) : d);
+// Date locale (navigateur) au format YYYY-MM-DD. À utiliser à la place de
+// `date.toISOString().split("T")[0]` qui renvoie la date UTC : en France, entre 00:00 et 02:00
+// — et pour tout minuit local (ex. `new Date(annee, mois, 0)`) — elle tombe la VEILLE.
+export const dateLocale = (d: Date = new Date()): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// Arrondi au centime (évite les écarts de 1 ct entre totaux affichés, stockés et imprimés).
+export const arrondi2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
+// Journalise et signale à l'utilisateur l'échec d'une requête Supabase. Renvoie true si `error`
+// est renseignée — l'appelant doit alors s'arrêter sans mettre à jour son état local.
+export function echecSupabase(error: { message?: string } | null | undefined, action: string): boolean {
+  if (!error) return false;
+  console.error(`Échec — ${action} :`, error);
+  if (typeof window !== "undefined") window.alert(`${action} : l'opération a échoué${error.message ? ` (${error.message})` : ""}.`);
+  return true;
+}
 export const genNumero = (prefixe: string, compteur: number) =>
   `${prefixe}-${new Date().getFullYear()}-${String(compteur + 1).padStart(3, "0")}`;
 export const initiales = (nom: string, prenom?: string | null) => {

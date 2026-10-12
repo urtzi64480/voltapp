@@ -40,17 +40,20 @@ export async function middleware(request: NextRequest) {
   //    /auth/confirm : page d'activation / réinitialisation du mot de passe (lien email, sans session).
   //    /tableau/[id]/public : tableau électrique partagé au client (QR code / lien).
   const isTableauPublic = /^\/tableau\/[^/]+\/public\/?$/.test(pathname);
+  // Correspondance par SEGMENT : "/demande" ne doit pas laisser passer "/demandes" (page privée
+  // de l'artisan). Un simple startsWith("/demande") la rendait publique, sans contrôle de session.
+  const estSousChemin = (prefixe: string) => pathname === prefixe || pathname.startsWith(`${prefixe}/`);
   if (
     isTableauPublic ||
-    pathname.startsWith("/login") ||
-    pathname.startsWith("/auth/confirm") ||
-    pathname.startsWith("/demande") ||
-    pathname.startsWith("/devis/signer") ||
-    pathname.startsWith("/liste") ||
-    pathname.startsWith("/a-propos") ||
-    pathname.startsWith("/api/public") ||
-    pathname.startsWith("/images") ||
-    pathname.startsWith("/carte-nfc") ||
+    estSousChemin("/login") ||
+    estSousChemin("/auth/confirm") ||
+    estSousChemin("/demande") ||
+    estSousChemin("/devis/signer") ||
+    estSousChemin("/liste") ||
+    estSousChemin("/a-propos") ||
+    estSousChemin("/api/public") ||
+    estSousChemin("/images") ||
+    estSousChemin("/carte-nfc") ||
     pathname === "/icon-192.png" ||
     pathname === "/icon-512.png" ||
     pathname === "/robots.txt" ||

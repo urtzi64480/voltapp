@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { parseICS } from "@/lib/ics";
+import { fetchSur } from "@/lib/ssrf";
 
 // Certains événements iCloud sont créés par VoltApp lui-même. Deux cas :
 // 1. Interventions (src/app/planning/page.tsx) : déjà affichées dans le
@@ -50,8 +51,11 @@ export async function GET(req: NextRequest) {
   if (cals.length === 0) return NextResponse.json({ events: [], connected: true, cals: [] });
 
   const url = req.nextUrl;
-  const year = parseInt(url.searchParams.get("year") ?? String(new Date().getFullYear()));
-  const month = parseInt(url.searchParams.get("month") ?? String(new Date().getMonth()));
+  // Paramètres absents ou invalides → mois courant (un NaN faisait planter toISOString() en 500)
+  const yearParam = parseInt(url.searchParams.get("year") ?? "", 10);
+  const monthParam = parseInt(url.searchParams.get("month") ?? "", 10);
+  const year = Number.isFinite(yearParam) ? yearParam : new Date().getFullYear();
+  const month = Number.isFinite(monthParam) ? monthParam : new Date().getMonth();
   const timeMin = new Date(year, month - 1, 1);
   const timeMax = new Date(year, month + 2, 0, 23, 59, 59);
 
@@ -76,10 +80,10 @@ export async function GET(req: NextRequest) {
   const allEvents: ReturnType<typeof parseICS> = [];
 
   for (const cal of cals) {
-    if (!cal.url.trim()) continue;
+    if (!cal.url?.trim()) continue;
     try {
-      const fetchUrl = cal.url.replace(/^webcal:\/\//i, "https://");
-      const res = await fetch(fetchUrl, { headers: { "Accept": "text/calendar" } });
+      // webcal:// → https:// ; adresses internes refusées (anti-SSRF), y compris via redirection
+      const res = await fetchSur(cal.url, { headers: { "Accept": "text/calendar" }, signal: AbortSignal.timeout(8000) });
       if (!res.ok) continue;
       const text = await res.text();
       const parsed = parseICS(text, timeMin, timeMax, cal.url);

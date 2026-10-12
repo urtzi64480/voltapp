@@ -3,6 +3,8 @@
 // (jamais exposé au client, credentials sensibles).
 
 const CALDAV_ROOT = "https://caldav.icloud.com";
+// Sans délai maximal, un iCloud lent bloque la fonction serverless jusqu'à son propre timeout.
+const TIMEOUT_MS = 15000;
 
 function authHeader(appleId: string, appPassword: string) {
   const basic = Buffer.from(`${appleId}:${appPassword}`).toString("base64");
@@ -18,6 +20,7 @@ async function propfind(url: string, body: string, depth: string, appleId: strin
       "Authorization": authHeader(appleId, appPassword),
     },
     body,
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (res.status === 401 || res.status === 403) {
     throw new Error("Identifiants iCloud invalides (Apple ID ou mot de passe d'application incorrect).");
@@ -84,6 +87,19 @@ function toICSUTC(d: Date): string {
   return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
 }
 
+// Échappement d'une valeur TEXT (RFC 5545 §3.3.11). Les champs viennent de formulaires PUBLICS
+// (nom du client, adresse, notes) : sans cela, un saut de ligne dans le nom permettait d'injecter
+// des propriétés arbitraires (alarmes, participants…) dans l'agenda iCloud.
+function echapperTexte(valeur: string): string {
+  return valeur
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\r\n|\r|\n/g, "\\n")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+}
+
 function buildICS(params: { uid: string; summary: string; description?: string; start: Date; end: Date }): string {
   const fmt = new Intl.DateTimeFormat("en-US", {
     timeZone: "Europe/Paris",
@@ -101,7 +117,7 @@ function buildICS(params: { uid: string; summary: string; description?: string; 
   const dtstamp = toICSUTC(new Date());
 
   const descLine = params.description
-    ? `DESCRIPTION:${params.description.replace(/\\/g, "\\\\").replace(/\n/g, "\\n")}\r\n`
+    ? `DESCRIPTION:${echapperTexte(params.description)}\r\n`
     : "";
 
   return (
@@ -113,7 +129,7 @@ function buildICS(params: { uid: string; summary: string; description?: string; 
     `DTSTAMP:${dtstamp}\r\n` +
     `DTSTART;TZID=Europe/Paris:${dtstart}\r\n` +
     `DTEND;TZID=Europe/Paris:${dtend}\r\n` +
-    `SUMMARY:${params.summary}\r\n` +
+    `SUMMARY:${echapperTexte(params.summary)}\r\n` +
     descLine +
     "END:VEVENT\r\n" +
     "END:VCALENDAR\r\n"
@@ -144,6 +160,7 @@ export async function createCalDAVEvent(params: {
       "Authorization": authHeader(params.appleId, params.appPassword),
     },
     body: ics,
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
 
   if (!res.ok) {
@@ -173,6 +190,7 @@ export async function updateCalDAVEvent(params: {
       "Authorization": authHeader(params.appleId, params.appPassword),
     },
     body: ics,
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
 
   if (!res.ok) {
@@ -189,6 +207,7 @@ export async function deleteCalDAVEvent(params: {
   const res = await fetch(params.eventUrl, {
     method: "DELETE",
     headers: { "Authorization": authHeader(params.appleId, params.appPassword) },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   // 404 = déjà supprimé côté iCloud, on considère ça comme un succès (idempotent)
   if (!res.ok && res.status !== 404) {

@@ -2,7 +2,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Client, DevisLigne, Prestation } from "@/types";
-import { fmt, genNumero, cn } from "@/lib/utils";
+import { fmt, genNumero, cn, dateLocale, arrondi2, echecSupabase } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import PostesLignes from "@/components/devis/PostesLignes";
 import LigneImage from "@/components/devis/LigneImage";
@@ -170,9 +170,11 @@ function NouveauDevisPage() {
   const remiseMateriau = calcRemise(totMateriauBrut, remise.materiau_type, remise.materiau_val);
   const totServiceApresRemise = totServiceBrut - remiseService;
   const remiseFideliteEur = remiseFidelitePct > 0 ? Math.round(totServiceApresRemise * remiseFidelitePct / 100 * 100) / 100 : 0;
-  const totService = totServiceApresRemise - remiseFideliteEur;
-  const totMateriau = totMateriauBrut - remiseMateriau;
-  const totTTC = totService + totMateriau;
+  // Arrondis au centime : sans cela 3 colonnes numeric(10,2) étaient arrondies séparément par la base
+  // et pouvaient différer de 1 ct de la somme affichée / imprimée.
+  const totService = arrondi2(totServiceApresRemise - remiseFideliteEur);
+  const totMateriau = arrondi2(totMateriauBrut - remiseMateriau);
+  const totTTC = arrondi2(totService + totMateriau);
   const hasRemise = remiseService > 0 || remiseMateriau > 0;
 
   const selectedClient = clients.find(c => c.id === clientId) ?? null;
@@ -190,7 +192,7 @@ function NouveauDevisPage() {
       user_id: user.id, client_id: clientId || null,
       apporteur_id: apporteurId || null,
       numero, objet,
-      date_validite: dateV.toISOString().split("T")[0],
+      date_validite: dateLocale(dateV),
       statut: sigData ? "signe" : statut,
       total_service: totService, total_materiau: totMateriau, total_ttc: totTTC,
       remise_type: hasRemise ? JSON.stringify({ service: remise.service_type, materiau: remise.materiau_type }) : null,
@@ -231,7 +233,8 @@ function NouveauDevisPage() {
         return;
       }
     }
-    await supabase.from("profil").update({ compteur_devis: (profil?.compteur_devis ?? 0) + 1 }).eq("id", user.id);
+    const { error: errCompteur } = await supabase.from("profil").update({ compteur_devis: (profil?.compteur_devis ?? 0) + 1 }).eq("id", user.id);
+    echecSupabase(errCompteur, "Mise à jour du compteur de devis");
     router.push(`/devis/${dv.id}`);
   }
 
@@ -242,7 +245,7 @@ function NouveauDevisPage() {
     const { genPDFDevis } = await import("@/lib/pdf");
     await genPDFDevis({
       id: "preview", user_id: user.id, numero: "DEV-PREVIEW", objet, statut: "brouillon",
-      date_emission: new Date().toISOString().split("T")[0],
+      date_emission: dateLocale(),
       total_service: totService, total_materiau: totMateriau, total_ttc: totTTC,
       remise_fidelite_pct: remiseFidelitePct > 0 ? remiseFidelitePct : undefined,
       created_at: "", updated_at: "",

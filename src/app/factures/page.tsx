@@ -1,4 +1,5 @@
 "use client";
+import { supprimerAvecDependances } from "@/lib/suppression";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Facture } from "@/types";
@@ -59,12 +60,15 @@ export default function FacturesPage() {
   async function handleDelete() {
     if (!toDelete) return;
     setDeleting(true);
-    // Supprime d'abord les lignes liées (contrainte FK), puis la facture
-    await supabase.from("facture_lignes").delete().eq("facture_id", toDelete.id);
-    const { error } = await supabase.from("factures").delete().eq("id", toDelete.id);
+    // Parent d'abord (lignes et acomptes suivent par cascade, ou sont supprimés si la base l'exige) :
+    // un échec ne laisse jamais une facture vidée de ses lignes.
+    const error = await supprimerAvecDependances("factures", toDelete.id, [
+      { table: "acomptes", colonne: "facture_id" },
+      { table: "facture_lignes", colonne: "facture_id" },
+    ]);
     setDeleting(false);
     if (error) {
-      alert("Erreur lors de la suppression de la facture.");
+      alert("Erreur lors de la suppression de la facture" + (error.message ? ` (${error.message})` : "") + ".");
       return;
     }
     setFactures(prev => prev.filter(f => f.id !== toDelete.id));

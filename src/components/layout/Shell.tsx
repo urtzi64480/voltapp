@@ -7,7 +7,7 @@ import {
   LayoutTemplate,
 } from "lucide-react";
 import { useState, useEffect } from "react";
-import { cn } from "@/lib/utils";
+import { cn, dateLocale } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
 
 const NAV = [
@@ -131,7 +131,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const seuilDate = new Date();
     seuilDate.setDate(seuilDate.getDate() - 15);
-    const seuil = seuilDate.toISOString().split("T")[0];
+    const seuil = dateLocale(seuilDate);
 
     supabase
       .from("factures")

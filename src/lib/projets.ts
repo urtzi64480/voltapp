@@ -112,7 +112,8 @@ export async function sauverTableau(clientId: string, projetId: string, json: st
   const ok = await modifierProjet(projetId, { tableau_config: json });
   const { data } = await supabase.from("projets").select("id").eq("client_id", clientId).order("created_at", { ascending: true }).limit(1);
   if (data?.[0]?.id === projetId) {
-    await supabase.from("clients").update({ tableau_config: json } as any).eq("id", clientId);
+    const { error } = await supabase.from("clients").update({ tableau_config: json } as any).eq("id", clientId);
+    if (error) console.error("projets: copie du tableau vers le client impossible", error);
   }
   return ok;
 }
@@ -131,9 +132,11 @@ export async function supprimerProjet(clientId: string, id: string) {
   const { data: restants } = await supabase
     .from("projets").select("tableau_config").eq("client_id", clientId).order("created_at", { ascending: true });
   if (restants && restants.length > 0) {
-    await supabase.from("clients").update({ tableau_config: (restants[0] as any).tableau_config ?? null } as any).eq("id", clientId);
+    const { error: errAlign } = await supabase.from("clients").update({ tableau_config: (restants[0] as any).tableau_config ?? null } as any).eq("id", clientId);
+    if (errAlign) console.error("projets: réalignement du client impossible", errAlign);
   } else {
-    await supabase.from("clients").update({ maison_config: null, tableau_config: null, predevis_config: null } as any).eq("id", clientId);
+    const { error: errReset } = await supabase.from("clients").update({ maison_config: null, tableau_config: null, predevis_config: null } as any).eq("id", clientId);
+    if (errReset) console.error("projets: remise à zéro du client impossible", errReset);
   }
   return true;
 }

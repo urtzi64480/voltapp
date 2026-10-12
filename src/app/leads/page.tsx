@@ -9,7 +9,7 @@ import {
   CheckCircle, Loader2, ExternalLink, X, Trash2,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { cn } from "@/lib/utils";
+import { cn, echecSupabase } from "@/lib/utils";
 import { fondModal } from "@/lib/fond-modal";
 
 const STATUT_LABEL: Record<StatutDemande, string> = {
@@ -80,7 +80,8 @@ function LeadCard({ demande, onRefresh }: { demande: DemandeClient; onRefresh: (
 
   const marquerVu = async () => {
     if (demande.statut !== "nouveau") return;
-    await supabase.from("demandes_client").update({ statut: "vu" }).eq("id", demande.id);
+    const { error } = await supabase.from("demandes_client").update({ statut: "vu" }).eq("id", demande.id);
+    if (error) console.error("Marquage de la demande comme vue :", error);
     onRefresh();
   };
 
@@ -108,15 +109,18 @@ function LeadCard({ demande, onRefresh }: { demande: DemandeClient; onRefresh: (
 
       if (clientErr || !client) throw clientErr ?? new Error("Erreur création client");
 
-      await supabase.from("demandes_client").update({
+      const { error: errConversion } = await supabase.from("demandes_client").update({
         statut: "converti",
         client_id: client.id,
       }).eq("id", demande.id);
+      // Le client est créé : on avertit sans bloquer la suite, la demande restera simplement « non convertie »
+      echecSupabase(errConversion, "Marquage de la demande comme convertie");
 
       onRefresh();
       router.push(`/devis/nouveau?client_id=${client.id}&objet=${encodeURIComponent(demande.type_travaux.join(", "))}`);
     } catch (e) {
       console.error(e);
+      alert("La conversion en client a échoué.");
     } finally {
       setLoading(false);
     }
@@ -125,6 +129,8 @@ function LeadCard({ demande, onRefresh }: { demande: DemandeClient; onRefresh: (
   const supprimerLead = async () => {
     setDeleting(true);
     try {
+      const { error } = await supabase.from("demandes_client").delete().eq("id", demande.id);
+      if (echecSupabase(error, "Suppression de la demande")) return;
       if (demande.photos.length > 0) {
         const paths = demande.photos.map((url) => {
           const parts = url.split("/demande-photos/");
@@ -132,10 +138,10 @@ function LeadCard({ demande, onRefresh }: { demande: DemandeClient; onRefresh: (
         }).filter(Boolean) as string[];
 
         if (paths.length > 0) {
-          await supabase.storage.from("demande-photos").remove(paths);
+          const { error: errPhotos } = await supabase.storage.from("demande-photos").remove(paths);
+          if (errPhotos) console.error("Suppression des photos :", errPhotos);
         }
       }
-      await supabase.from("demandes_client").delete().eq("id", demande.id);
       onRefresh();
     } catch (e) {
       console.error(e);

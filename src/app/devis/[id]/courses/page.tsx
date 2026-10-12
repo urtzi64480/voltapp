@@ -77,8 +77,13 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   }, [menuOpen]);
 
   async function persistChecked(next: Record<string, boolean>) {
+    const precedent = checked;
     setChecked(next);
-    await supabase.from("devis").update({ liste_courses_checked: next }).eq("id", id);
+    const { error } = await supabase.from("devis").update({ liste_courses_checked: next }).eq("id", id);
+    if (error) {
+      console.error("Enregistrement de la liste de courses :", error);
+      setChecked(precedent);
+    }
   }
 
   function toggle(key: string) {

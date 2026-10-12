@@ -4,6 +4,11 @@ import { createClient } from "@supabase/supabase-js";
 
 type TrackTable = "demande_visites" | "demande_clics";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Route publique sans authentification : on borne la taille de chaque champ stocké.
+const borne = (v: unknown, max: number): string | null =>
+  typeof v === "string" && v ? v.slice(0, max) : null;
+
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
   if (!body) return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
@@ -26,7 +31,7 @@ export async function POST(req: NextRequest) {
     mode?: string | null;
   };
 
-  if (!table || (table !== "demande_visites" && table !== "demande_clics") || !user_id) {
+  if (!table || (table !== "demande_visites" && table !== "demande_clics") || typeof user_id !== "string" || !UUID_RE.test(user_id)) {
     return NextResponse.json({ error: "Paramètres invalides." }, { status: 400 });
   }
 
@@ -41,28 +46,31 @@ export async function POST(req: NextRequest) {
   const pays = req.headers.get("x-vercel-ip-country") || null;
   const region = req.headers.get("x-vercel-ip-country-region") || null;
   const villeRaw = req.headers.get("x-vercel-ip-city");
-  const ville = villeRaw ? decodeURIComponent(villeRaw) : null;
+  let ville: string | null = null;
+  if (villeRaw) {
+    try { ville = decodeURIComponent(villeRaw); } catch { ville = villeRaw; } // en-tête mal encodé → valeur brute
+  }
 
   const row: Record<string, unknown> = {
     user_id,
-    referrer: referrer || null,
-    user_agent: user_agent || null,
-    device_type: device_type || null,
-    navigateur: navigateur || null,
-    os: os || null,
-    langue: langue || null,
+    referrer: borne(referrer, 500),
+    user_agent: borne(user_agent, 500),
+    device_type: borne(device_type, 50),
+    navigateur: borne(navigateur, 100),
+    os: borne(os, 100),
+    langue: borne(langue, 35),
     pays,
     region,
     ville,
   };
 
   if (table === "demande_visites") {
-    row.page = page || null;
-    row.mode = mode || null;
+    row.page = borne(page, 300);
+    row.mode = borne(mode, 50);
   }
 
   if (table === "demande_clics") {
-    row.type_clic = type_clic || "ajout_contact";
+    row.type_clic = borne(type_clic, 80) ?? "ajout_contact";
   }
 
   const { error } = await supabase.from(table).insert(row);

@@ -2,7 +2,7 @@
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { Client } from "@/types";
-import { cn, fmtDate } from "@/lib/utils";
+import { cn, fmtDate, dateLocale, echecSupabase } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -150,7 +150,7 @@ export default function DemandesPage() {
 
   // Form state
   const [formClientId, setFormClientId] = useState("");
-  const [formDateVisite, setFormDateVisite] = useState(new Date().toISOString().split("T")[0]);
+  const [formDateVisite, setFormDateVisite] = useState(dateLocale());
   const [formDescription, setFormDescription] = useState("");
   const [formNotes, setFormNotes] = useState("");
   const [formStatut, setFormStatut] = useState<Demande["statut"]>("nouveau");
@@ -175,7 +175,7 @@ export default function DemandesPage() {
   }, []);
 
   function resetForm() {
-    setFormClientId(""); setFormDateVisite(new Date().toISOString().split("T")[0]);
+    setFormClientId(""); setFormDateVisite(dateLocale());
     setFormDescription(""); setFormNotes(""); setFormStatut("nouveau");
     setFormPhotos([]); setFormId(null);
   }
@@ -213,11 +213,10 @@ export default function DemandesPage() {
       photos: formPhotos,
     };
 
-    if (formId) {
-      await supabase.from("demandes").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", formId);
-    } else {
-      await supabase.from("demandes").insert(payload);
-    }
+    const { error: errSauvegarde } = formId
+      ? await supabase.from("demandes").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", formId)
+      : await supabase.from("demandes").insert(payload);
+    if (echecSupabase(errSauvegarde, "Enregistrement de la demande")) { setSaving(false); return; }
 
     await load();
     setShowForm(false);
@@ -227,11 +226,13 @@ export default function DemandesPage() {
 
   async function deleteDemande() {
     if (!selected) return;
-    // Supprimer les photos du storage
+    // Base d'abord : si la suppression échoue, les photos restent accessibles
+    const { error } = await supabase.from("demandes").delete().eq("id", selected.id);
+    if (echecSupabase(error, "Suppression de la demande")) return;
     if (selected.photos.length > 0) {
-      await supabase.storage.from("intervention-photos").remove(selected.photos);
+      const { error: errPhotos } = await supabase.storage.from("intervention-photos").remove(selected.photos);
+      if (errPhotos) console.error("Suppression des photos :", errPhotos);
     }
-    await supabase.from("demandes").delete().eq("id", selected.id);
     setSelected(null);
     setConfirmDelete(false);
     await load();
@@ -251,7 +252,8 @@ export default function DemandesPage() {
     setFormPhotos(prev => prev.filter(p => p !== path));
     if (formId) {
       const newPhotos = formPhotos.filter(p => p !== path);
-      await supabase.from("demandes").update({ photos: newPhotos }).eq("id", formId);
+      const { error } = await supabase.from("demandes").update({ photos: newPhotos }).eq("id", formId);
+      echecSupabase(error, "Mise à jour des photos");
       await load();
     }
   }

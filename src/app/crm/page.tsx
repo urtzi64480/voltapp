@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, PLAFOND_SERVICE, PLAFOND_MATERIAU, cn } from "@/lib/utils";
+import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, PLAFOND_SERVICE, PLAFOND_MATERIAU, cn, dateLocale } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { TrendingUp, FileText, Receipt, CheckCircle, Clock, AlertTriangle, BarChart3, PieChart, Euro, Users, Download, Landmark, ShoppingBag, ChevronDown } from "lucide-react";
@@ -121,11 +121,15 @@ export default function CRMPage() {
       setLoading(true);
       const debut   = `${annee}-01-01`;
       const fin     = `${annee}-12-31`;
-      const debutN1 = `${annee - 1}-01-01`;
-      const finN1   = `${annee - 1}-12-31`;
-      const moisStr = String(moisCommission).padStart(2, "0");
-      const debutMois = `${annee}-${moisStr}-01`;
-      const finMois = new Date(annee, moisCommission, 0).toISOString().split("T")[0];
+      // `paye_le` est un timestamptz : on le filtre sur des INSTANTS (minuit local, intervalle
+      // semi-ouvert [début, fin[). Comparer à "YYYY-MM-DD" (= minuit UTC) excluait toute la dernière
+      // journée de la période (ex. les paiements du 31 décembre) et, via toISOString().split("T"),
+      // les bornes de mois étaient décalées d'un jour.
+      const payeDebut    = new Date(annee, 0, 1).toISOString();
+      const payeFin      = new Date(annee + 1, 0, 1).toISOString();
+      const payeDebutN1  = new Date(annee - 1, 0, 1).toISOString();
+      const payeDebutMois = new Date(annee, moisCommission - 1, 1).toISOString();
+      const payeFinMois   = new Date(annee, moisCommission, 1).toISOString();
 
       const { data: { user } } = await supabase.auth.getUser();
       if (user) setUserId(user.id);
@@ -143,8 +147,8 @@ export default function CRMPage() {
         { data: paliersAp },
         { data: facsMois },
       ] = await Promise.all([
-        supabase.from("factures").select("total_service,total_materiau,date_emission,statut").gte("paye_le", debut).lte("paye_le", fin).eq("statut", "payee"),
-        supabase.from("factures").select("total_service,total_materiau,date_emission,statut").gte("paye_le", debutN1).lte("paye_le", finN1).eq("statut", "payee"),
+        supabase.from("factures").select("total_service,total_materiau,date_emission,statut").gte("paye_le", payeDebut).lt("paye_le", payeFin).eq("statut", "payee"),
+        supabase.from("factures").select("total_service,total_materiau,date_emission,statut").gte("paye_le", payeDebutN1).lt("paye_le", payeDebut).eq("statut", "payee"),
         supabase.from("factures").select("statut,total_ttc").gte("date_emission", debut).lte("date_emission", fin),
         supabase.from("devis").select("statut,total_ttc,total_service,total_materiau").gte("date_emission", debut).lte("date_emission", fin),
         supabase.from("facture_lignes").select("nom,type_branche,quantite,prix_unitaire,facture:factures!inner(statut,date_emission)").gte("facture.date_emission", debut).lte("facture.date_emission", fin).eq("facture.statut", "payee"),
@@ -154,7 +158,7 @@ export default function CRMPage() {
         user ? supabase.from("profil").select("taux_cotisations_service,taux_cotisations_materiau,taux_ir_service,taux_ir_materiau").eq("id", user.id).single() : Promise.resolve({ data: null }),
         supabase.from("apporteurs").select("*").eq("actif", true).order("nom"),
         supabase.from("paliers_apporteur").select("*").order("seuil_min"),
-        supabase.from("factures").select("total_ttc,apporteur_id").eq("statut","payee").gte("paye_le", debutMois).lte("paye_le", finMois).not("apporteur_id", "is", null),
+        supabase.from("factures").select("total_ttc,apporteur_id").eq("statut","payee").gte("paye_le", payeDebutMois).lt("paye_le", payeFinMois).not("apporteur_id", "is", null),
       ]);
 
       if (profil) {
@@ -234,8 +238,8 @@ export default function CRMPage() {
         .from("factures")
         .select("id,numero,paye_le,total_materiau,devis_id,client:clients(nom,prenom)")
         .eq("statut", "payee")
-        .gte("paye_le", debut)
-        .lte("paye_le", fin)
+        .gte("paye_le", payeDebut)
+        .lt("paye_le", payeFin)
         .gt("total_materiau", 0);
 
       const devisIds = Array.from(new Set((facsRentabBase ?? []).map((f: any) => f.devis_id).filter(Boolean)));
@@ -313,15 +317,16 @@ export default function CRMPage() {
   // ── Export comptable CSV ──
   async function exportComptable() {
     const moisStr = String(moisExport).padStart(2, "0");
-    const debutMois = `${anneeExport}-${moisStr}-01`;
-    const finMois = new Date(anneeExport, moisExport, 0).toISOString().split("T")[0];
+    // paye_le est un timestamptz : bornes = minuit local du 1er du mois → minuit local du 1er du mois suivant
+    const debutMois = new Date(anneeExport, moisExport - 1, 1).toISOString();
+    const finMois = new Date(anneeExport, moisExport, 1).toISOString();
 
     const { data: facs } = await supabase
       .from("factures")
       .select("numero, date_emission, objet, total_service, total_materiau, total_ttc, paye_le, client:clients(nom, prenom)")
       .eq("statut", "payee")
       .gte("paye_le", debutMois)
-      .lte("paye_le", finMois)
+      .lt("paye_le", finMois)
       .order("paye_le");
 
     if (!facs || facs.length === 0) {
@@ -330,21 +335,29 @@ export default function CRMPage() {
     }
 
     const headers = ["Numéro", "Client", "Date émission", "Date paiement", "Objet", "CA Service (€)", "CA Matériaux (€)", "Total TTC (€)"];
+    // Un texte commençant par = + - @ est interprété comme une formule par Excel/LibreOffice
+    // (injection CSV, ex. nom de client saisi depuis le formulaire public) : on le neutralise.
+    const texteCsv = (v: unknown) => {
+      const t = String(v ?? "");
+      return /^[=+\-@\t\r]/.test(t) ? `'${t}` : t;
+    };
+    const euros = (n: unknown) => (Number(n) || 0).toFixed(2).replace(".", ",");
     const rows = facs.map((f: any) => [
-      f.numero,
-      f.client ? `${f.client.prenom ?? ""} ${f.client.nom}`.trim() : "",
+      texteCsv(f.numero),
+      texteCsv(f.client ? `${f.client.prenom ?? ""} ${f.client.nom}`.trim() : ""),
       f.date_emission,
-      f.paye_le ? f.paye_le.split("T")[0] : "",
-      f.objet ?? "",
-      f.total_service.toFixed(2).replace(".", ","),
-      f.total_materiau.toFixed(2).replace(".", ","),
-      f.total_ttc.toFixed(2).replace(".", ","),
+      // Jour de paiement vu depuis le navigateur (l'instant UTC donnait la veille juste après minuit)
+      f.paye_le ? dateLocale(new Date(f.paye_le)) : "",
+      texteCsv(f.objet),
+      euros(f.total_service),
+      euros(f.total_materiau),
+      euros(f.total_ttc),
     ]);
 
-    const totService = facs.reduce((a: number, f: any) => a + f.total_service, 0);
-    const totMateriau = facs.reduce((a: number, f: any) => a + f.total_materiau, 0);
-    const totTTC = facs.reduce((a: number, f: any) => a + f.total_ttc, 0);
-    rows.push(["TOTAL", "", "", "", "", totService.toFixed(2).replace(".", ","), totMateriau.toFixed(2).replace(".", ","), totTTC.toFixed(2).replace(".", ",")]);
+    const totService = facs.reduce((a: number, f: any) => a + (Number(f.total_service) || 0), 0);
+    const totMateriau = facs.reduce((a: number, f: any) => a + (Number(f.total_materiau) || 0), 0);
+    const totTTC = facs.reduce((a: number, f: any) => a + (Number(f.total_ttc) || 0), 0);
+    rows.push(["TOTAL", "", "", "", "", euros(totService), euros(totMateriau), euros(totTTC)]);
 
     const csv = [
       `Export comptable — ${MOIS_LONG[moisExport - 1]} ${anneeExport}`,

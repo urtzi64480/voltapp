@@ -55,13 +55,16 @@ export async function GET(req: NextRequest) {
   if (!token) return NextResponse.json({ events: [], connected: false });
 
   const url = req.nextUrl;
-  const year = parseInt(url.searchParams.get("year") ?? String(new Date().getFullYear()));
-  const month = parseInt(url.searchParams.get("month") ?? String(new Date().getMonth()));
+  const yearParam = parseInt(url.searchParams.get("year") ?? "", 10);
+  const monthParam = parseInt(url.searchParams.get("month") ?? "", 10);
+  const year = Number.isFinite(yearParam) ? yearParam : new Date().getFullYear();
+  const month = Number.isFinite(monthParam) ? monthParam : new Date().getMonth();
 
   const timeMin = new Date(year, month - 1, 1).toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
   const timeMax = new Date(year, month + 2, 0, 23, 59, 59).toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
 
-  const calendarUrls: string[] = JSON.parse(token.selected_calendars ?? "[]");
+  let calendarUrls: string[] = [];
+  try { calendarUrls = JSON.parse(token.selected_calendars ?? "[]"); } catch { calendarUrls = []; }
   if (calendarUrls.length === 0) return NextResponse.json({ events: [], connected: true });
 
   const allEvents: { id: string; title: string; start: string; end: string; allDay: boolean }[] = [];
