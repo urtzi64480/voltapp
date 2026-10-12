@@ -19,7 +19,7 @@ import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, Hand, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
   GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt, Box,
-  Lightbulb, Network, Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, Magnet, Layers, Brush, Square, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler, ShieldCheck, Camera,
+  Lightbulb, Network, Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, Footprints, Move, SlidersHorizontal, Plug, MoveHorizontal, Tag, ArrowLeftRight, Magnet, Layers, Brush, Square, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler, ShieldCheck, Camera,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -268,6 +268,26 @@ function CurseurAbonne({ abonnes, initial, rendu }: {
   }, [abonnes]);
   return <>{rendu(cursorPx)}</>;
 }
+
+// Bouton d'outil « icône seule » : le nom complet (et l'aide) s'affiche au survol / au focus clavier dans une infobulle.
+function Outil({ label, aide, actif, primaire, disabled, onClick, badge, children, className = "" }: {
+  label: string; aide?: string; actif?: boolean; primaire?: boolean; disabled?: boolean; onClick?: () => void; badge?: number; children: ReactNode; className?: string;
+}) {
+  const etat = primaire ? "bg-volt-500 border-volt-500 text-ink-900 shadow-sm hover:bg-volt-400"
+    : actif ? "bg-ink-900 border-ink-900 text-volt-400 shadow-inner"
+    : "bg-white border-ink-200 text-ink-600 hover:border-ink-300 hover:text-ink-900 hover:-translate-y-px hover:shadow-md";
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} aria-label={label} aria-pressed={actif}
+      className={`group relative inline-flex h-9 min-w-[2.25rem] items-center justify-center gap-0.5 rounded-xl border px-2 transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-35 ${etat} ${className}`}>
+      {children}
+      {badge != null && <span className="absolute -right-1.5 -top-1.5 grid h-[1.1rem] min-w-[1.1rem] place-items-center rounded-full bg-volt-500 px-1 text-[10px] font-bold text-ink-900">{badge}</span>}
+      <span role="tooltip" className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 w-max max-w-[16rem] -translate-x-1/2 rounded-lg bg-ink-900 px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
+        {label}{aide && <span className="mt-0.5 block text-[10px] font-normal text-ink-300">{aide}</span>}
+      </span>
+    </button>
+  );
+}
+
 
 function ReglageAimant({ pasCm, setPasCm, aimant, setAimant, murs, setMurs }: { pasCm: number; setPasCm: (v: number) => void; aimant: boolean; setAimant: (v: boolean) => void; murs: boolean; setMurs: (v: boolean) => void }) {
   return (
@@ -6133,59 +6153,43 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         </div>
 
         {!vue3D && toolbarOuvert && (
-        <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 shrink-0 flex-wrap bg-ink-50">
-          <button onClick={choisirSelection}
-            className={`btn-ghost !text-xs ${!outilMain && mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingPointArrivee && !placingMeuble ? "!bg-ink-900 !text-volt-400" : ""}`}>
-            <MousePointer2 size={13} /> Sélection
-          </button>
-          <button onClick={entrerModeDessiner} className={`btn-ghost !text-xs ${mode === "dessiner" ? "!bg-ink-900 !text-volt-400" : ""}`}>
-            <Pencil size={13} /> Dessiner une pièce
-          </button>
+        <div className="flex items-center gap-2 px-4 md:px-6 py-2.5 border-b border-ink-100 shrink-0 flex-wrap bg-gradient-to-b from-ink-50 to-white">
+          <div className="flex items-center gap-1 p-1 rounded-2xl bg-ink-100/60 border border-ink-100">
+          <Outil label="Sélection" aide="Sélectionner et déplacer les éléments du plan" onClick={choisirSelection}
+            actif={!outilMain && mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingPointArrivee && !placingMeuble}>
+            <MousePointer2 size={16} />
+          </Outil>
+          <Outil label="Dessiner une pièce" onClick={entrerModeDessiner} actif={mode === "dessiner"}><Pencil size={16} /></Outil>
           {mode === "dessiner" && (
             <div className="flex items-center gap-1">
               <button onClick={() => { setFormeDessin("rectangle"); setDrawingPoints([]); }} title="Rectangle à 4 côtés : 2 clics (un coin, puis le coin opposé). Tu pourras ensuite plier ses murs en forme complexe."
-                className={`btn-ghost !px-2 !py-1 !text-xs ${formeDessin === "rectangle" ? "!bg-ink-900 !text-volt-400" : ""}`}>▭ Rectangle</button>
+                aria-label="Rectangle" className={`btn-ghost !px-2 !py-1 !text-xs ${formeDessin === "rectangle" ? "!bg-ink-900 !text-volt-400" : ""}`}>▭</button>
               <button onClick={() => { setFormeDessin("libre"); setDrawingPoints([]); }} title="Forme libre : un clic par sommet"
-                className={`btn-ghost !px-2 !py-1 !text-xs ${formeDessin === "libre" ? "!bg-ink-900 !text-volt-400" : ""}`}>Libre</button>
+                aria-label="Forme libre" className={`btn-ghost !px-2 !py-1 !text-xs ${formeDessin === "libre" ? "!bg-ink-900 !text-volt-400" : ""}`}>✎</button>
             </div>
           )}
-          <button onClick={entrerModeCloison} disabled={!niveauActif}
-            title="Monter une cloison (mur intérieur) : clic pour chaque point, Entrée pour terminer. Elle ne modifie aucune pièce : on peut ensuite la nommer, la déplacer à la souris, y percer une porte ou la supprimer"
-            className={`btn-ghost !text-xs disabled:opacity-40 ${mode === "zone" && zoneCloisonSeule ? "!bg-ink-900 !text-volt-400" : ""}`}>
-            <SplitSquareHorizontal size={13} /> Cloison
-          </button>
-          <button onClick={entrerModeZone} disabled={!niveauActif}
-            title="Dessiner une zone nommée (dressing ouvert, coin bureau…) avec sa surface, ou une cloison libre qui s'arrête dans la pièce"
-            className={`btn-ghost !text-xs disabled:opacity-40 ${mode === "zone" && !zoneCloisonSeule ? "!bg-ink-900 !text-volt-400" : ""}`}>
-            <BoxSelect size={13} /> Zone
-          </button>
-          <button onClick={entrerModeMesure} disabled={!niveauActif}
-            title="Mesurer : clic pour poser un repère (aimanté à la jonction la plus proche : angles de murs, bords de portes et fenêtres, cloisons). La distance s'affiche entre repères consécutifs. Clic sur un repère = l'effacer · Retour arrière = effacer le dernier · Entrée = nouvelle mesure · Échap = quitter"
-            className={`btn-ghost !text-xs disabled:opacity-40 ${mode === "mesure" ? "!bg-ink-900 !text-volt-400" : ""}`}>
-            <Ruler size={13} /> Mesure
-          </button>
+          <Outil label="Cloison" aide="Monter une cloison (mur intérieur) : clic pour chaque point, Entrée pour terminer. On peut ensuite la nommer, la déplacer, y percer une porte ou la supprimer." onClick={entrerModeCloison} disabled={!niveauActif}
+            actif={mode === "zone" && zoneCloisonSeule}><SplitSquareHorizontal size={16} /></Outil>
+          <Outil label="Zone" aide="Dessiner une zone nommée (dressing ouvert, coin bureau…) avec sa surface, ou une cloison libre qui s'arrête dans la pièce." onClick={entrerModeZone} disabled={!niveauActif}
+            actif={mode === "zone" && !zoneCloisonSeule}><BoxSelect size={16} /></Outil>
+          <Outil label="Mesure" aide="Clic pour poser un repère (aimanté aux jonctions) · Retour arrière = effacer le dernier · Entrée = nouvelle mesure · Échap = quitter" onClick={entrerModeMesure} disabled={!niveauActif}
+            actif={mode === "mesure"}><Ruler size={16} /></Outil>
           {reperesNiveau.length > 0 && (
             <>
-              <button onClick={effacerDernierRepere} title="Efface le dernier repère posé (Retour arrière)" className="btn-ghost !px-2 !py-1 !text-xs">↶ Dernier repère</button>
-              <button onClick={effacerTousReperes} title="Efface tous les repères de ce niveau" className="btn-ghost !px-2 !py-1 !text-xs">🗑 Effacer les {reperesNiveau.length} repère{reperesNiveau.length > 1 ? "s" : ""}</button>
+              <button onClick={effacerDernierRepere} title="Efface le dernier repère posé (Retour arrière)" aria-label="Effacer le dernier repère" className="btn-ghost !px-2 !py-1 !text-xs">↶</button>
+              <button onClick={effacerTousReperes} title="Efface tous les repères de ce niveau" aria-label="Effacer tous les repères" className="btn-ghost !px-2 !py-1 !text-xs">🗑 {reperesNiveau.length}</button>
             </>
           )}
-          <button onClick={armerPlacementTableau} className={`btn-ghost !text-xs ${placingTableau ? "!bg-ink-900 !text-volt-400" : ""}`}>
-            <Zap size={13} /> Position tableau
-          </button>
-          <button onClick={armerPlacementPointArrivee} className={`btn-ghost !text-xs ${placingPointArrivee ? "!bg-ink-900 !text-volt-400" : ""}`}>
-            <ArrowDownToLine size={13} /> Arrivée gaines
-          </button>
-          <button onClick={() => placingMeuble ? setPlacingMeuble(false) : armerPlacementMeuble()}
-            title="Meuble simple (vue 3D) — pour mieux juger l'éclairage"
-            className={`btn-ghost !text-xs ${placingMeuble ? "!bg-ink-900 !text-volt-400" : ""}`}>
-            <Box size={13} /> Meuble
-          </button>
+          </div>
+          <div className="flex items-center gap-1 p-1 rounded-2xl bg-ink-100/60 border border-ink-100">
+          <Outil label="Position du tableau" onClick={armerPlacementTableau} actif={placingTableau}><Zap size={16} /></Outil>
+          <Outil label="Arrivée des gaines" onClick={armerPlacementPointArrivee} actif={placingPointArrivee}><ArrowDownToLine size={16} /></Outil>
+          <Outil label="Meuble" aide="Meuble simple (vue 3D) — pour mieux juger l'éclairage" onClick={() => placingMeuble ? setPlacingMeuble(false) : armerPlacementMeuble()} actif={placingMeuble}><Box size={16} /></Outil>
           <div className="relative">
-            <button onClick={() => setOuvertureMenuOpen(o => !o)}
-              className={`btn-ghost !text-xs ${placingOuverture ? "!bg-ink-900 !text-volt-400" : ""}`}>
-              <OuvertureIcon type={placingOuverture ?? "porte"} size={13} /> {placingOuverture ? (placingOuverture === "porte" ? LABEL_USAGE_PORTE[placingUsagePorte] : placingOuverture === "porte_coulissante" && placingMontage === "galandage" ? "Porte à galandage" : LABEL_OUVERTURE[placingOuverture]) : "Porte / fenêtre"}
-            </button>
+            <Outil label={placingOuverture ? (placingOuverture === "porte" ? LABEL_USAGE_PORTE[placingUsagePorte] : placingOuverture === "porte_coulissante" && placingMontage === "galandage" ? "Porte à galandage" : LABEL_OUVERTURE[placingOuverture]) : "Porte / fenêtre"}
+              onClick={() => setOuvertureMenuOpen(o => !o)} actif={!!placingOuverture}>
+              <OuvertureIcon type={placingOuverture ?? "porte"} size={16} />
+            </Outil>
             {ouvertureMenuOpen && (
               <div className="absolute z-20 top-full left-0 mt-1 card card-inner !p-1 flex flex-col shadow-lg w-56">
                 {([
@@ -6207,10 +6211,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             )}
           </div>
           <div className="relative">
-            <button onClick={() => setEscalierMenuOpen(o => !o)} className={`btn-ghost !text-xs ${escalierMenuOpen ? "!bg-ink-900 !text-volt-400" : ""}`}
-              title="Ajouter un escalier (droit, tournant, hélicoïdal) qui dessert un autre niveau : sa trémie apparaît sur l'étage desservi">
-              🪜 Escalier
-            </button>
+            <Outil label="Escalier" aide="Ajouter un escalier (droit, tournant, hélicoïdal) qui dessert un autre niveau : sa trémie apparaît sur l'étage desservi" onClick={() => setEscalierMenuOpen(o => !o)} actif={escalierMenuOpen}>
+              <Footprints size={16} />
+            </Outil>
             {escalierMenuOpen && (
               <div className="absolute z-20 top-full left-0 mt-1 card card-inner !p-1 flex flex-col shadow-lg w-64">
                 {([
@@ -6229,17 +6232,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               </div>
             )}
           </div>
-          <button onClick={() => (deplacementNiveau ? terminerDeplacementNiveau(false) : demarrerDeplacementNiveau())}
-            className={`btn-ghost !text-xs ${deplacementNiveau ? "!bg-ink-900 !text-volt-400" : ""}`}
-            title="Déplacer tout l'étage d'un bloc (toutes les pièces et leur contenu, zones, tableau, escaliers) — pour le caler sur l'escalier qui y arrive">
-            ⤧ Déplacer l&apos;étage
-          </button>
-          <button onClick={() => setCircuitsManuelsOpen(o => !o)} className={`btn-ghost !text-xs ${circuitsManuelsOpen ? "!bg-ink-900 !text-volt-400" : ""}`}>
-            🎛️ Circuits manuels
-          </button>
-          <button onClick={() => setPaletteOpen(o => !o)} className={`btn-ghost !text-xs lg:hidden ${paletteOpen ? "!bg-ink-900 !text-volt-400" : ""}`}>
-            Appareillages
-          </button>
+          <Outil label="Déplacer l'étage" aide="Déplacer tout l'étage d'un bloc (pièces, contenu, zones, tableau, escaliers) pour le caler sur l'escalier qui y arrive"
+            onClick={() => (deplacementNiveau ? terminerDeplacementNiveau(false) : demarrerDeplacementNiveau())} actif={!!deplacementNiveau}><Move size={16} /></Outil>
+          <Outil label="Circuits manuels" onClick={() => setCircuitsManuelsOpen(o => !o)} actif={circuitsManuelsOpen}><SlidersHorizontal size={16} /></Outil>
+          <Outil label="Appareillages" onClick={() => setPaletteOpen(o => !o)} actif={paletteOpen} className="lg:hidden"><Plug size={16} /></Outil>
           {mode === "zone" && !zoneCloisonSeule && (
             <>
               <span className="text-[11px] text-ink-500 max-w-md">
@@ -6269,14 +6265,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             </>
           )}
 
-          <div className="w-px h-5 bg-ink-200 mx-0.5 hidden sm:block" />
+          </div>
+          <div className="flex items-center gap-1 p-1 rounded-2xl bg-ink-100/60 border border-ink-100">
 
-          <button onClick={handleGenerer} className="btn-volt !text-xs"><Sparkles size={13} /> Générer les circuits</button>
+          <Outil label="Générer les circuits" primaire onClick={handleGenerer}><Sparkles size={16} /></Outil>
           <div className="relative">
-            <button onClick={() => setMenuEffacerOuvert(o => !o)} disabled={!resultat} className="btn-ghost !text-xs disabled:opacity-40"
-              title="Effacer des circuits déjà générés : tous, ceux d'un niveau, ou un seul">
-              <Trash2 size={13} /> Effacer <ChevronDown size={12} />
-            </button>
+            <Outil label="Effacer des circuits" aide="Tous, ceux d'un niveau, ou un seul" onClick={() => setMenuEffacerOuvert(o => !o)} disabled={!resultat}><Trash2 size={16} /><ChevronDown size={11} /></Outil>
             {menuEffacerOuvert && resultat && (
               <>
                 <div className="fixed inset-0 z-30" onClick={() => setMenuEffacerOuvert(false)} />
@@ -6317,48 +6311,31 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               </>
             )}
           </div>
-          <button onClick={() => { setPlacingBoiteLabel(null); setPlacingPhoto(null); setMode("select"); setPlacementType(null); setPoseParties(p => p ? null : { label: null, pose: "apparent", premier: null }); }} disabled={!resultat || !showCircuits}
-            className={`btn-ghost !text-xs disabled:opacity-40 ${poseParties ? "!bg-ink-900 !text-volt-400" : ""}`}
-            title="Sur un circuit déjà dessiné : clique « de ici » puis « à ici », cette partie devient apparente (ou encastrée)">
-            <Route size={13} /> Apparent / encastré : de ici à ici
-          </button>
-          <button onClick={() => setShowCircuits(s => !s)} disabled={!resultat} className="btn-ghost !text-xs disabled:opacity-40">
-            {showCircuits ? <Eye size={13} /> : <EyeOff size={13} />} Afficher les circuits
-          </button>
-          <button onClick={() => setShowLongueurs(s => !s)} disabled={!resultat || !showCircuits} className="btn-ghost !text-xs disabled:opacity-40">
-            📏 Longueurs des circuits
-          </button>
-          <button onClick={() => setShowEtiquettesFils(v => !v)} disabled={!resultat || !showCircuits}
-            className={`btn-ghost !text-xs disabled:opacity-40 ${showEtiquettesFils ? "!bg-ink-100" : ""}`}
-            title="Pastilles « retour » (violet) et « navette » (orange) sur le tracé">
-            🏷 Étiquettes retours / navettes
-          </button>
-          <button onClick={() => setRetoursSeuls(v => !v)} disabled={!resultat || !showCircuits}
-            className={`btn-ghost !text-xs disabled:opacity-40 ${retoursSeuls ? "!bg-ink-900 !text-volt-400" : ""}`}
-            title="Atténue le câblage d'alimentation pour ne voir que les retours (violet) et les navettes (orange) — combine avec la liste des circuits pour les vérifier un par un">
-            ⇄ Retours &amp; navettes seuls
-          </button>
+          <Outil label="Apparent / encastré" aide="Sur un circuit déjà dessiné : clique « de ici » puis « à ici », cette partie devient apparente (ou encastrée)"
+            onClick={() => { setPlacingBoiteLabel(null); setPlacingPhoto(null); setMode("select"); setPlacementType(null); setPoseParties(p => p ? null : { label: null, pose: "apparent", premier: null }); }}
+            disabled={!resultat || !showCircuits} actif={!!poseParties}><Route size={16} /></Outil>
+          <Outil label={showCircuits ? "Masquer les circuits" : "Afficher les circuits"} onClick={() => setShowCircuits(s => !s)} disabled={!resultat} actif={showCircuits}>
+            {showCircuits ? <Eye size={16} /> : <EyeOff size={16} />}
+          </Outil>
+          <Outil label="Longueurs des circuits" onClick={() => setShowLongueurs(s => !s)} disabled={!resultat || !showCircuits} actif={showLongueurs}><MoveHorizontal size={16} /></Outil>
+          <Outil label="Étiquettes retours / navettes" aide="Pastilles « retour » (violet) et « navette » (orange) sur le tracé" onClick={() => setShowEtiquettesFils(v => !v)} disabled={!resultat || !showCircuits} actif={showEtiquettesFils}><Tag size={16} /></Outil>
+          <Outil label="Retours & navettes seuls" aide="Atténue le câblage d'alimentation pour ne voir que les retours (violet) et les navettes (orange)" onClick={() => setRetoursSeuls(v => !v)} disabled={!resultat || !showCircuits} actif={retoursSeuls}><ArrowLeftRight size={16} /></Outil>
           {niveauActif && niveauActif.pieces.length > 0 && (() => {
             const toutVerrouille = niveauActif.pieces.every(pc => pc.verrouillee);
             return (
-              <button onClick={() => verrouillerToutLeNiveau(!toutVerrouille)} className={`${toutVerrouille ? "btn-volt" : "btn-ghost"} !text-xs`}
-                title={toutVerrouille ? "Déverrouiller toutes les pièces de ce niveau" : "Verrouiller toutes les pièces de ce niveau (aucun déplacement par erreur)"}>
-                {toutVerrouille ? <Lock size={13} /> : <Unlock size={13} />} {toutVerrouille ? "Niveau verrouillé" : "Verrouiller le niveau"}
-              </button>
+              <Outil label={toutVerrouille ? "Niveau verrouillé" : "Verrouiller le niveau"} aide={toutVerrouille ? "Déverrouiller toutes les pièces de ce niveau" : "Verrouiller toutes les pièces de ce niveau (aucun déplacement par erreur)"}
+                onClick={() => verrouillerToutLeNiveau(!toutVerrouille)} actif={toutVerrouille}>
+                {toutVerrouille ? <Lock size={16} /> : <Unlock size={16} />}
+              </Outil>
             );
           })()}
-          <button onClick={() => setMasquerEtiquettes(v => !v)} className={`${masquerEtiquettes ? "btn-volt" : "btn-ghost"} !text-xs`}
-            title={masquerEtiquettes ? "Noms et dimensions des pièces masqués (les cotes cochées restent affichées) — cliquer pour les réafficher" : "Plan épuré : masquer d'un coup les noms, surfaces et longueurs de murs des pièces, pour placer appareillages et circuits sur un écran dégagé (les cotes cochées dans « Cotes » restent affichées)"}>
-            {masquerEtiquettes ? "👁 Réafficher noms des pièces" : "🧹 Plan épuré"}
-          </button>
+          <Outil label={masquerEtiquettes ? "Réafficher les noms des pièces" : "Plan épuré"} aide="Masque d'un coup noms, surfaces et longueurs de murs pour placer appareillages et circuits sur un écran dégagé (les cotes cochées restent affichées)"
+            onClick={() => setMasquerEtiquettes(v => !v)} actif={masquerEtiquettes}><Brush size={16} /></Outil>
           <div className="relative">
             {(() => {
               const nb = [showCotes, showCotesPieces, showCotesExt, showCotesOuv].filter(Boolean).length;
               return (
-                <button onClick={() => setMenuCotesOuvert(o => !o)} className={`${nb > 0 ? "btn-volt" : "btn-ghost"} !text-xs`}
-                  title="Cotes d'architecte : à afficher selon le besoin">
-                  📐 Cotes{nb > 0 ? ` (${nb})` : ""} <ChevronDown size={12} />
-                </button>
+                <Outil label="Cotes" aide="Cotes d'architecte : à afficher selon le besoin" onClick={() => setMenuCotesOuvert(o => !o)} actif={nb > 0} badge={nb > 0 ? nb : undefined}><Ruler size={16} /><ChevronDown size={11} /></Outil>
               );
             })()}
             {menuCotesOuvert && (
@@ -6381,9 +6358,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               </>
             )}
           </div>
-          <button onClick={handlePousserVersTableau} disabled={!resultat || pushing} className="btn-ghost !text-xs disabled:opacity-40">
-            <ArrowRightCircle size={13} /> {pushing ? "…" : "Pousser vers le tableau"}
-          </button>
+          <Outil label="Pousser vers le tableau" onClick={handlePousserVersTableau} disabled={!resultat || pushing}>
+            {pushing ? <span className="text-xs font-bold">…</span> : <ArrowRightCircle size={16} />}
+          </Outil>
+          </div>
           {/* Zone d'état à hauteur FIXE : son contenu apparaît/disparaît après chaque action sans changer la hauteur de la barre (sinon le plan « saute »). */}
           <div className="basis-full min-h-[28px] flex items-center gap-3 flex-wrap">
           {resultat && (
