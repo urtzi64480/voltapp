@@ -1721,7 +1721,7 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   return (
     <Shell>
-      <div className="flex flex-col h-[calc(100dvh-4rem)] md:h-screen overflow-hidden">
+      <div className="flex flex-col h-[calc(100dvh-8.5rem)] md:h-screen overflow-hidden">
         <div className="flex items-center justify-between px-4 md:px-6 py-3 border-b border-ink-200 bg-white shrink-0 gap-3">
           <div className="flex items-center gap-3">
             <Link href={`/clients/${clientId}`} className="btn-ghost !px-2 !py-1.5 text-ink-400"><ArrowLeft size={16} /></Link>

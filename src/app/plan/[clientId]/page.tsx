@@ -5960,9 +5960,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     <Shell>
       <div className={modeFocus
         ? "fixed inset-0 z-[45] flex flex-col bg-white overflow-hidden"
-        : "flex flex-col h-[calc(100dvh-4rem)] md:h-screen overflow-hidden"}>
+        : "flex flex-col h-[calc(100dvh-8.5rem)] md:h-screen overflow-hidden"}>
         {menuHautReduit ? (
-        <div className="flex items-center gap-2 px-3 py-1 border-b border-ink-200 bg-white shrink-0 relative z-10">
+        <div className="flex items-center gap-2 px-3 py-1 border-b border-ink-200 bg-white shrink-0 relative z-10 flex-wrap">
           <button onClick={() => reduireMenuHaut(false)} className="btn-ghost !px-2 !py-1 !text-xs" title="Afficher le menu du haut">
             <PanelTopOpen size={15} /> Menu
           </button>
@@ -5973,7 +5973,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           ) : (
             <span className="text-xs font-semibold text-ink-700 truncate">{niveauActif ? (niveauActif.nom || NIVEAU_TYPES[niveauActif.type]) : ""}</span>
           )}
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex items-center gap-1 flex-wrap justify-end min-w-0">
             {!vue3D && (
               <>
                 <button onClick={() => zoomBtn(-1)} className="btn-ghost !px-2 !py-1" title="Zoom arrière"><ZoomOut size={14} /></button>
@@ -6007,7 +6007,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             )}
             <button onClick={annuler} disabled={!peutAnnuler} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Annuler la dernière action (Ctrl+Z)"><Undo2 size={14} /></button>
             <button onClick={refaire} disabled={!peutRefaire} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Refaire (Ctrl+Y)"><Redo2 size={14} /></button>
-            <span className="text-[11px] text-emerald-600 whitespace-nowrap inline-block min-w-[8.5rem] text-right">{autoSaveMsg ?? ""}</span>
+            <span className="text-[11px] text-emerald-600 whitespace-nowrap inline-block lg:min-w-[8.5rem] text-right">{autoSaveMsg ?? ""}</span>
             <button onClick={handleSave} disabled={saving} className={`btn-volt !px-3 !py-1 !text-xs min-w-[7.5rem] justify-center ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
               <Save size={13} />{saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
             </button>
@@ -6025,7 +6025,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <ProjetSwitcher clientId={clientId} projets={projets} projetId={projet.id}
               avantChangement={handleSave} onSelect={onSelect} onChanged={onChanged} compact />
           </div>
-          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap min-w-0 max-w-full ml-auto justify-end">
             <button onClick={() => reduireMenuHaut(true)} className="btn-ghost !px-2 !py-1.5" title="Masquer le menu du haut (plus de place pour le plan)">
               <PanelTopClose size={15} />
             </button>
@@ -6063,7 +6063,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             )}
             <button onClick={annuler} disabled={!peutAnnuler} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Annuler la dernière action (Ctrl+Z)"><Undo2 size={14} /></button>
             <button onClick={refaire} disabled={!peutRefaire} className="btn-ghost !px-2 !py-1 disabled:opacity-40" title="Refaire (Ctrl+Y)"><Redo2 size={14} /></button>
-            <span className="text-[11px] text-emerald-600 whitespace-nowrap inline-block min-w-[8.5rem] text-right">{autoSaveMsg ?? ""}</span>
+            <span className="text-[11px] text-emerald-600 whitespace-nowrap inline-block lg:min-w-[8.5rem] text-right">{autoSaveMsg ?? ""}</span>
             <button onClick={handleSave} disabled={saving} className={`btn-volt min-w-[8.5rem] justify-center ${saved ? "!bg-emerald-500 !border-emerald-600 !text-white" : ""}`}>
               <Save size={15} />{saving ? "…" : saved ? "Sauvegardé !" : "Sauvegarder"}
             </button>
