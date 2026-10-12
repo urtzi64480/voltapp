@@ -633,7 +633,7 @@ function exportCSV(prestations: PrestationExt[]) {
       p.sous_categorie ?? "", p.marque ?? "", p.unite,
       p.prix_achat ?? "", p.prix_unitaire, (p as any).gamme ?? "", (p as any).longueur_unitaire ?? "", p.image_url ?? "",
       (p.liens_fournisseurs ?? []).join("|"), fournisseursVersCSV(p),
-    ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(";"))
+    ].map(v => `"${String(v).replace(/\r?\n/g, " ").replace(/"/g, '""')}"`).join(";"))
   ];
   const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
@@ -651,7 +651,7 @@ type ImportRow = {
 };
 
 function parseCSV(text: string): ImportRow[] {
-  const lines = text.trim().split(/\r?\n/);
+  const lines = text.replace(/^\uFEFF/, "").trim().split(/\r?\n/);
   if (lines.length < 2) return [];
   const headers = lines[0].split(";").map(h => h.replace(/^"|"$/g, "").trim());
   return lines.slice(1).map(line => {
@@ -666,6 +666,8 @@ function parseCSV(text: string): ImportRow[] {
     values.push(cur);
     const row: Record<string, string> = {};
     headers.forEach((h, i) => { row[h] = (values[i] ?? "").trim(); });
+    // Virgule décimale (Excel français) : « 12,5 » serait lu « 12 » par parseFloat.
+    ["prix_achat", "prix_unitaire", "longueur_unitaire"].forEach(k => { if (row[k]) row[k] = row[k].replace(",", "."); });
     const errors: string[] = [];
     if (!row.nom?.trim()) errors.push("Nom manquant");
     if (!row.prix_unitaire || isNaN(parseFloat(row.prix_unitaire))) errors.push("Prix de vente invalide");

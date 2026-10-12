@@ -1385,8 +1385,8 @@ function DinRailRow({ row, globalOffset, selectedSlot, compliance, onClickSlot, 
   const panelW = Math.max(totalW, 400);
   const getIssue = (b: Breaker | null) => {
     if (!b) return null;
-    if (compliance.errors.some(e => e.id.includes(String(b.id)))) return "error";
-    if (compliance.warnings.some(w => w.id.includes(String(b.id)))) return "warning";
+    if (compliance.errors.some(e => e.id.endsWith(`-${b.id}`))) return "error";
+    if (compliance.warnings.some(w => w.id.endsWith(`-${b.id}`))) return "warning";
     return null;
   };
   return (
@@ -1480,14 +1480,19 @@ function SlotCell({ breaker, slotIdx, isDiffSlot, issue, isSelected, globalNum, 
 
 // ─── PRINT LABELS ─────────────────────────────────────────────────────────────
 
-function printLabels(rows: BreakerRow[], clientName: string) {
+function echapperHtml(t: string): string {
+  return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function printLabels(rows: BreakerRow[], clientNameBrut: string) {
+  const clientName = echapperHtml(clientNameBrut);
   let gn = 0, html = "";
   rows.forEach(row => {
     row.slots.forEach(b => {
       if (!b) return;
       gn++;
       const c = CIRCUITS[b.circuit] || CIRCUITS.autre;
-      const label = b.label || c.label;
+      const label = echapperHtml(b.label || c.label);
       html += `<div style="display:inline-flex;flex-direction:column;align-items:center;justify-content:center;width:28mm;height:22mm;border:1.5px solid #333;border-radius:2mm;overflow:hidden;background:#fff;vertical-align:top;margin:2mm;font-family:'Courier New',monospace;">
         <div style="font-size:18pt;line-height:1;margin-bottom:2mm;">${c.icon}</div>
         <div style="font-size:8pt;font-weight:700;color:#111;text-align:center;padding:0 2mm;line-height:1.2;">${label}</div>
