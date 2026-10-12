@@ -6,7 +6,7 @@
 // Les raccordements viennent de bornier-appareillage.ts.
 import { X, AlertTriangle } from "lucide-react";
 import { COULEUR_FIL, couleurConducteur } from "@/lib/couleurs-fils";
-import type { Cond, VueAppareil } from "@/lib/bornier-appareillage";
+import type { Cond, Mecanisme, VueAppareil } from "@/lib/bornier-appareillage";
 
 const W = 980, X_G = 16, XB = 366, WB = 248, XC = XB + WB / 2;
 const ROND = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"];
@@ -29,6 +29,7 @@ export default function VueAppareilBranchement({ vue, onClose }: { vue: VueAppar
 
   const els: JSX.Element[] = [];
   let y = 14;
+  let odaceFait = false;
 
   const fils = (liste: Cond[], cy: number, xBout: number, key: string, cible: number) => {
     const n = liste.length;
@@ -44,65 +45,132 @@ export default function VueAppareilBranchement({ vue, onClose }: { vue: VueAppar
   };
 
   vue.mecanismes.forEach(m => {
-    if (m.modele === "odace-inter") {
-      // ── Face arrière réelle d'un mécanisme Odace (simple / va-et-vient / poussoir) ──────────────────────────────────────
-      // Trois bornes automatiques à DEUX entrées chacune (2 câbles par pôle) : « 1 » en haut à gauche, « L » (commun) en haut à droite,
-      // « 2 » en bas à gauche ; en bas à droite, deux emplacements sans borne. Un levier blanc libère chaque paire d'entrées. Les fils
-      // arrivent par le HAUT (1, L) ou par le BAS (2) et se piquent sans vis (dénudage 4 mm).
-      const HAUT = 20 + 11 * Math.max(1, vue.raccords.filter(r => r.mecanisme === m.id).length), BAS = 20 + 11 * Math.max(1, vue.raccords.filter(r => r.mecanisme === m.id).length), HC = 236, bx = XB + 8, bw = WB - 16, by = y + 12 + HAUT, bh = HC;
-      const hx: Record<string, number[]> = { "1": [bx + 34, bx + 64], L: [bx + bw - 64, bx + bw - 34], "2": [bx + 34, bx + 64] };
-      const hy = (lib: string) => (lib === "2" ? by + bh - 34 : by + 34);
-      const dessus = (lib: string) => lib !== "2";
-      type It = { c: Cond; lib: string; gauche: boolean; cible: number };
-      const items: It[] = [];
-      m.bornes.forEach(b => {
-        const cs = vue.raccords.filter(r => r.mecanisme === m.id && r.borne === b.id).map(r => r.conducteur);
-        cs.forEach((c, i) => items.push({ c, lib: b.libelle, gauche: cote(c) === "amont", cible: hx[b.libelle]?.[Math.min(i, 1)] ?? bx }));
-      });
-      const lanes = (haut: boolean, gauche: boolean) => {
-        const l = items.filter(t => dessus(t.lib) === haut && t.gauche === gauche);
-        // le fil dont la borne est la plus lointaine passe par la voie extérieure : aucun croisement avec les autres descentes
-        l.sort((a, b) => (gauche ? b.cible - a.cible : a.cible - b.cible));
-        return l;
+    if (m.modele) {
+      if (odaceFait) return;
+      odaceFait = true;
+      // ── Face arrière réelle des mécanismes Odace (photos Schneider) ───────────────────────────────────────────────────
+      // Bornes automatiques à DEUX entrées chacune (2 câbles par pôle), levier de libération par paire, fils piqués sans vis.
+      // Plusieurs mécanismes de même rang (plaque double : deux mécanismes S9-214 indépendants) sont dessinés côte à côte.
+      type Geo = { w: number; h: number; bornes: Record<string, { trous: { x: number; y: number }[]; haut: boolean }>; corps: (bx: number, by: number, pref: string, occ: (lib: string, i: number) => boolean) => JSX.Element[] };
+      const ci = (k: string, x: number, yy: number, r: number, f: string, st: string) => <circle key={k} cx={x} cy={yy} r={r} fill={f} stroke={st} strokeWidth={1.6} />;
+      const levier = (k: string, x: number, yy: number, w: number, c = "#fff") => <rect key={k} x={x} y={yy} width={w} height={11} rx={3} fill={c} stroke="#a8a29e" strokeWidth={1.4} />;
+      const geoInter = (): Geo => {
+        const w = 200, h = 236;
+        return { w, h, bornes: { "1": { trous: [{ x: 34, y: 34 }, { x: 64, y: 34 }], haut: true }, L: { trous: [{ x: w - 64, y: 34 }, { x: w - 34, y: 34 }], haut: true }, "2": { trous: [{ x: 34, y: h - 34 }, { x: 64, y: h - 34 }], haut: false } },
+          corps: (bx, by, pf, occ) => {
+            const o: JSX.Element[] = [<rect key={`${pf}b`} x={bx} y={by} width={w} height={h} rx={14} fill="#f5f5f4" stroke="#44403c" strokeWidth={2} />];
+            o.push(levier(`${pf}l1`, bx + 22, by - 9, 54), levier(`${pf}l2`, bx + w - 76, by - 9, 54), levier(`${pf}l3`, bx + 22, by + h - 2, 54));
+            (["1", "L", "2"] as const).forEach(lib => { const g = lib === "L" ? [{ x: w - 64, y: 34 }, { x: w - 34, y: 34 }] : [{ x: 34, y: lib === "2" ? h - 34 : 34 }, { x: 64, y: lib === "2" ? h - 34 : 34 }]; g.forEach((t, i) => o.push(ci(`${pf}h${lib}${i}`, bx + t.x, by + t.y, 8.5, occ(lib, i) ? "#1c1917" : "#44403c", "#fff"))); });
+            [w - 64, w - 34].forEach((x, i) => o.push(ci(`${pf}v${i}`, bx + x, by + h - 34, 8, "#e7e5e4", "#a8a29e")));
+            const yp = by + h / 2 + 4;
+            o.push(<g key={`${pf}sym`} stroke="#44403c" strokeWidth={1.6} fill="none">
+              <circle cx={bx + 30} cy={by + 78} r={10} fill="#fff" /><circle cx={bx + 30} cy={by + h - 78} r={10} fill="#fff" /><circle cx={bx + w - 30} cy={by + 78} r={10} fill="#fff" />
+              <polyline points={`${bx + w - 40},${by + 78} ${bx + 92},${by + 78} ${bx + 92},${yp}`} />
+              <line x1={bx + 92} y1={yp} x2={bx + 44} y2={yp + 22} />
+              <line x1={bx + 30} y1={by + 88} x2={bx + 30} y2={yp - 22} /><line x1={bx + 30} y1={by + h - 88} x2={bx + 30} y2={yp + 30} />
+              <circle cx={bx + 30} cy={yp - 22} r={2.5} fill="#fff" /><circle cx={bx + 44} cy={yp + 22} r={2.5} fill="#fff" /><circle cx={bx + 92} cy={yp} r={2.5} fill="#44403c" />
+            </g>);
+            o.push(<g key={`${pf}lab`} fontSize={11} fontWeight={800} fill="#1c1917" textAnchor="middle"><text x={bx + 30} y={by + 82}>1</text><text x={bx + 30} y={by + h - 74}>2</text><text x={bx + w - 30} y={by + 82}>L</text></g>);
+            return o;
+          } };
       };
-      els.push(<text key="od-t" x={XC} y={y + 14} fontSize={12} fontWeight={800} textAnchor="middle" fill="#1c1917">{m.titre} — vue arrière</text>);
-      els.push(<rect key="od-b" x={bx} y={by} width={bw} height={bh} rx={14} fill="#f5f5f4" stroke="#44403c" strokeWidth={2} />);
-      // leviers de libération
-      (["1", "L"] as const).forEach(lib => els.push(<rect key={`od-lv-${lib}`} x={hx[lib][0] - 12} y={by - 9} width={hx[lib][1] - hx[lib][0] + 24} height={11} rx={3} fill="#fff" stroke="#a8a29e" strokeWidth={1.4} />));
-      els.push(<rect key="od-lv-2" x={hx["2"][0] - 12} y={by + bh - 2} width={hx["2"][1] - hx["2"][0] + 24} height={11} rx={3} fill="#fff" stroke="#a8a29e" strokeWidth={1.4} />);
-      // entrées de câble (2 par borne) + emplacements sans borne
-      (["1", "L", "2"] as const).forEach(lib => hx[lib].forEach((x, i) => {
-        const occupe = items.some(t => t.lib === lib && t.cible === x);
-        els.push(<circle key={`od-h-${lib}-${i}`} cx={x} cy={hy(lib)} r={8.5} fill={occupe ? "#1c1917" : "#44403c"} stroke="#fff" strokeWidth={2} />);
-      }));
-      [bx + bw - 64, bx + bw - 34].forEach((x, i) => els.push(<circle key={`od-v-${i}`} cx={x} cy={by + bh - 34} r={8} fill="#e7e5e4" stroke="#a8a29e" strokeWidth={1.6} />));
-      // symbole du contact inverseur : L commun, bascule entre 1 et 2
-      const yp = by + bh / 2 + 4;
-      els.push(<g key="od-sym" stroke="#44403c" strokeWidth={1.6} fill="none">
-        <circle cx={bx + 30} cy={by + 78} r={10} fill="#fff" /><circle cx={bx + 30} cy={by + bh - 78} r={10} fill="#fff" /><circle cx={bx + bw - 30} cy={by + 78} r={10} fill="#fff" />
-        <polyline points={`${bx + bw - 40},${by + 78} ${bx + 92},${by + 78} ${bx + 92},${yp}`} />
-        <line x1={bx + 92} y1={yp} x2={bx + 44} y2={yp + 22} />
-        <line x1={bx + 30} y1={by + 88} x2={bx + 30} y2={yp - 22} /><line x1={bx + 30} y1={by + bh - 88} x2={bx + 30} y2={yp + 30} />
-        <circle cx={bx + 30} cy={yp - 22} r={2.5} fill="#fff" /><circle cx={bx + 44} cy={yp + 22} r={2.5} fill="#fff" /><circle cx={bx + 92} cy={yp} r={2.5} fill="#44403c" />
-      </g>);
-      els.push(<g key="od-lab" fontSize={11} fontWeight={800} fill="#1c1917" textAnchor="middle">
-        <text x={bx + 30} y={by + 82}>1</text><text x={bx + 30} y={by + bh - 74}>2</text><text x={bx + bw - 30} y={by + 82}>L</text>
-      </g>);
-      // fils
-      ([[true, true], [true, false], [false, true], [false, false]] as const).forEach(([haut, gauche]) => {
-        const decalage = gauche ? 0 : lanes(haut, true).length;   // voies distinctes à gauche et à droite : jamais deux fils superposés
-        lanes(haut, gauche).forEach((t, k0) => {
-          const k = k0 + decalage;
-          const yi = haut ? by - 20 - k * 11 : by + bh + 22 + k * 11;
-          const x0 = gauche ? X_G + 168 : W - X_G - 168;
-          const yh = hy(t.lib);
-          els.push(<Fil key={`od-f-${haut}-${gauche}-${k}`} c={t.c} pts={[[x0, yi], [t.cible, yi], [t.cible, yh]]} />);
-          els.push(<text key={`od-ft-${haut}-${gauche}-${k}`} x={gauche ? x0 - 6 : x0 + 6} y={yi + 3.5} fontSize={10.5} fontWeight={700} textAnchor={gauche ? "end" : "start"} fill={couleurTexte(t.c)}>{`${t.c.libelle} ${marque(t.c)}`}</text>);
+      const geoPerm = (): Geo => {
+        // Permutateur S9-205 : 1 / L1 / 2 en haut (L1 sous le levier rouge), L2 en bas (levier rouge) ; inverseur croisé (symétrique : on peut le prendre dans les deux sens).
+        const w = 262, h = 226, X1 = [30, 58], XL = [w / 2 - 14, w / 2 + 14], X2 = [w - 58, w - 30];
+        return { w, h, bornes: { "1": { trous: X1.map(x => ({ x, y: 34 })), haut: true }, L1: { trous: XL.map(x => ({ x, y: 34 })), haut: true }, "2": { trous: X2.map(x => ({ x, y: 34 })), haut: true }, L2: { trous: XL.map(x => ({ x, y: h - 34 })), haut: false } },
+          corps: (bx, by, pf, occ) => {
+            const o: JSX.Element[] = [<rect key={`${pf}b`} x={bx} y={by} width={w} height={h} rx={14} fill="#f5f5f4" stroke="#44403c" strokeWidth={2} />];
+            o.push(levier(`${pf}la`, bx + 18, by - 9, 52), levier(`${pf}lb`, bx + w / 2 - 28, by - 9, 56, "#ef4444"), levier(`${pf}lc`, bx + w - 70, by - 9, 52), levier(`${pf}ld`, bx + w / 2 - 28, by + h - 2, 56, "#ef4444"));
+            const trous: [string, number[], number][] = [["1", X1, 34], ["L1", XL, 34], ["2", X2, 34], ["L2", XL, h - 34]];
+            trous.forEach(([lib, xs, yy]) => xs.forEach((x, i) => o.push(ci(`${pf}h${lib}${i}`, bx + x, by + yy, 8.5, occ(lib, i) ? "#1c1917" : "#44403c", "#fff"))));
+            [X1, X2].forEach((xs, k) => xs.forEach((x, i) => o.push(ci(`${pf}v${k}${i}`, bx + x, by + h - 34, 8, "#e7e5e4", "#a8a29e"))));
+            o.push(<g key={`${pf}sym`} stroke="#44403c" strokeWidth={1.6} fill="none">
+              <circle cx={bx + 44} cy={by + 78} r={11} fill="#fff" /><circle cx={bx + w - 44} cy={by + 78} r={11} fill="#fff" />
+              <circle cx={bx + w / 2} cy={by + 78} r={12} fill="#fff" /><circle cx={bx + w / 2} cy={by + h - 64} r={12} fill="#fff" />
+              <line x1={bx + 60} y1={by + 108} x2={bx + w - 60} y2={by + 136} /><line x1={bx + 60} y1={by + 136} x2={bx + w - 60} y2={by + 108} />
+              <circle cx={bx + 60} cy={by + 108} r={2.5} fill="#fff" /><circle cx={bx + 60} cy={by + 136} r={2.5} fill="#fff" /><circle cx={bx + w - 60} cy={by + 108} r={2.5} fill="#fff" /><circle cx={bx + w - 60} cy={by + 136} r={2.5} fill="#fff" />
+            </g>);
+            o.push(<g key={`${pf}lab`} fontSize={11} fontWeight={800} fill="#1c1917" textAnchor="middle"><text x={bx + 44} y={by + 82}>1</text><text x={bx + w - 44} y={by + 82}>2</text><text x={bx + w / 2} y={by + 82}>L1</text><text x={bx + w / 2} y={by + h - 60}>L2</text></g>);
+            return o;
+          } };
+      };
+      const geoPrise = (): Geo => {
+        // Prise 2P+T S9-052 : de gauche à droite L (levier rouge), terre (levier vert), N (levier bleu) — 2 connexions rapides par pôle.
+        const w = 250, h = 122, XS: Record<string, number[]> = { L: [34, 62], PE: [w / 2 - 14, w / 2 + 14], N: [w - 62, w - 34] };
+        const coul: Record<string, string> = { L: "#ef4444", PE: "#22c55e", N: "#3b82f6" };
+        return { w, h, bornes: Object.fromEntries(Object.entries(XS).map(([k, xs]) => [k, { trous: xs.map(x => ({ x, y: 34 })), haut: true }])),
+          corps: (bx, by, pf, occ) => {
+            const o: JSX.Element[] = [<rect key={`${pf}b`} x={bx} y={by} width={w} height={h} rx={14} fill="#f5f5f4" stroke="#44403c" strokeWidth={2} />];
+            Object.entries(XS).forEach(([lib, xs]) => {
+              o.push(levier(`${pf}l${lib}`, bx + xs[0] - 12, by - 9, xs[1] - xs[0] + 24, coul[lib]));
+              xs.forEach((x, i) => o.push(ci(`${pf}h${lib}${i}`, bx + x, by + 34, 8.5, occ(lib, i) ? "#1c1917" : "#44403c", "#fff")));
+              o.push(<text key={`${pf}t${lib}`} x={bx + (xs[0] + xs[1]) / 2} y={by + 78} fontSize={13} fontWeight={800} textAnchor="middle" fill="#1c1917">{lib === "PE" ? "⏚" : lib}</text>);
+            });
+            o.push(<text key={`${pf}n`} x={bx + w / 2} y={by + 106} fontSize={9.5} textAnchor="middle" fill="#78716c">16 A 250 V~ · S9-052</text>);
+            return o;
+          } };
+      };
+      const mecs = vue.mecanismes.filter(x => x.modele);
+      const geos = mecs.map(x => (x.modele === "odace-perm" ? geoPerm() : x.modele === "odace-prise" ? geoPrise() : geoInter()));
+      const ECART = 30;
+      const largeurTotale = geos.reduce((t, g) => t + g.w, 0) + ECART * (geos.length - 1);
+      const x0b = XC - largeurTotale / 2;
+      const hMax = Math.max(...geos.map(g => g.h));
+      type It = { c: Cond; haut: boolean; gauche: boolean; cx: number; cy: number };
+      const items: It[] = [];
+      const posX: number[] = [];
+      geos.reduce((acc, g, k) => { posX[k] = acc; return acc + g.w + ECART; }, x0b);
+      const nHaut = { g: 0, d: 0 }, nBas = { g: 0, d: 0 };
+      mecs.forEach((mm, k) => {
+        mm.bornes.forEach(b => {
+          const cfg = geos[k].bornes[b.libelle];
+          if (!cfg) return;
+          vue.raccords.filter(r => r.mecanisme === mm.id && r.borne === b.id).map(r => r.conducteur).forEach((c, i) => {
+            const t = cfg.trous[Math.min(i, cfg.trous.length - 1)];
+            const gauche = cote(c) === "amont";
+            items.push({ c, haut: cfg.haut, gauche, cx: posX[k] + t.x, cy: cfg.haut ? 0 : geos[k].h - 0 });
+            (cfg.haut ? nHaut : nBas)[gauche ? "g" : "d"]++;
+          });
         });
       });
-      const surcharge = ["1", "L", "2"].filter(lib => items.filter(t => t.lib === lib).length > 2);
-      if (surcharge.length > 0) els.push(<text key="od-warn" x={XC} y={by + bh + BAS + 40} fontSize={10} textAnchor="middle" fill="#b45309">{`Plus de 2 fils sur la borne ${surcharge.join(", ")} : relier l'excédent dans une borne Wago`}</text>);
-      y = by + bh + BAS + (surcharge.length > 0 ? 52 : 36);
+      const HAUT = 24 + 11 * Math.max(1, nHaut.g + nHaut.d), BAS = 24 + 11 * Math.max(1, nBas.g + nBas.d);
+      const by = y + 22 + HAUT;
+      els.push(<text key="od-t" x={XC} y={y + 14} fontSize={12} fontWeight={800} textAnchor="middle" fill="#1c1917">{`${vue.titre} — vue arrière`}</text>);
+      mecs.forEach((mm, k) => {
+        const occ = (lib: string, i: number) => items.some(t => {
+          const cfg = geos[k].bornes[lib]; return !!cfg && t.cx === posX[k] + cfg.trous[i]?.x && (t.haut === cfg.haut);
+        });
+        geos[k].corps(posX[k], by, `od${k}`, occ).forEach(e => els.push(e));
+        if (mecs.length > 1) els.push(<text key={`od-v${k}`} x={posX[k] + geos[k].w / 2} y={by + 17} fontSize={10.5} fontWeight={800} textAnchor="middle" fill="#57534e">{mm.titre}</text>);
+      });
+      // fils : pour chaque terminal, les 2 premiers fils entrent dans les 2 trous, au-delà : alerte
+      const hole = (mm: Mecanisme, k: number, lib: string, i: number) => { const cfg = geos[k].bornes[lib]; const t = cfg.trous[Math.min(i, cfg.trous.length - 1)]; return { x: posX[k] + t.x, y: by + t.y, haut: cfg.haut }; };
+      type F = { c: Cond; gauche: boolean; x: number; yh: number; haut: boolean };
+      const fs: F[] = [];
+      mecs.forEach((mm, k) => mm.bornes.forEach(b => {
+        if (!geos[k].bornes[b.libelle]) return;
+        vue.raccords.filter(r => r.mecanisme === mm.id && r.borne === b.id).map(r => r.conducteur).forEach((c, i) => {
+          const h = hole(mm, k, b.libelle, i);
+          fs.push({ c, gauche: cote(c) === "amont", x: h.x, yh: h.y, haut: h.haut });
+        });
+      }));
+      let kg = { h: 0, b: 0 };
+      ([[true, true], [true, false], [false, true], [false, false]] as const).forEach(([haut, gauche]) => {
+        const l = fs.filter(t => t.haut === haut && t.gauche === gauche).sort((a, b) => (gauche ? b.x - a.x : a.x - b.x));
+        const dec = gauche ? 0 : fs.filter(t => t.haut === haut && t.gauche).length;
+        l.forEach((t, k0) => {
+          const k = k0 + dec;
+          const yi = haut ? by - 20 - k * 11 : by + hMax + 22 + k * 11;
+          const xs = gauche ? X_G + 168 : W - X_G - 168;
+          els.push(<Fil key={`od-f-${haut}-${gauche}-${k0}`} c={t.c} pts={[[xs, yi], [t.x, yi], [t.x, t.yh]]} />);
+          els.push(<text key={`od-ft-${haut}-${gauche}-${k0}`} x={gauche ? xs - 6 : xs + 6} y={yi + 3.5} fontSize={10.5} fontWeight={700} textAnchor={gauche ? "end" : "start"} fill={couleurTexte(t.c)}>{`${t.c.libelle} ${marque(t.c)}`}</text>);
+        });
+      });
+      void kg;
+      const surcharge: string[] = [];
+      mecs.forEach(mm => mm.bornes.forEach(b => { if (vue.raccords.filter(r => r.mecanisme === mm.id && r.borne === b.id).length > 2) surcharge.push(b.libelle); }));
+      if (surcharge.length > 0) els.push(<text key="od-warn" x={XC} y={by + hMax + BAS + 38} fontSize={10} textAnchor="middle" fill="#b45309">{`Plus de 2 fils sur la borne ${Array.from(new Set(surcharge)).join(", ")} : relier l'excédent dans une borne Wago`}</text>);
+      y = by + hMax + BAS + (surcharge.length > 0 ? 52 : 34);
       return;
     }
     const rows = m.bornes.map(b => {

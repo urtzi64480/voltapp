@@ -23,7 +23,7 @@ export interface Cond { role: RoleConducteur; libelle: string; voie?: 0 | 1; cab
 export interface CableVue { cle: string; cote: "amont" | "aval"; autre: string; description: string; conducteurs: Cond[] }
 export interface Borne { id: string; libelle: string; aide?: string }
 // modele « odace-inter » : mécanisme Odace simple / va-et-vient / poussoir (S9-204) — vue arrière dessinée d'après le produit (voir VueAppareilBranchement).
-export interface Mecanisme { id: string; titre: string; bornes: Borne[]; modele?: "odace-inter" }
+export interface Mecanisme { id: string; titre: string; bornes: Borne[]; modele?: "odace-inter" | "odace-perm" | "odace-prise" }
 export interface Raccord { mecanisme: string; borne: string; conducteur: Cond }
 export interface Epissure { titre: string; aide: string; conducteurs: Cond[] }
 export interface VueAppareil {
@@ -163,9 +163,10 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
     mecanismes.push({
       id: "a", titre: estPrise ? "Prise 2P+T" : "Raccordement de l'appareil",
       bornes: [{ id: "L", libelle: "L", aide: estPrise ? "phase" : undefined }, { id: "N", libelle: "N", aide: estPrise ? "neutre" : undefined }, { id: "PE", libelle: "PE", aide: "terre" }],
+      ...(estPrise ? { modele: "odace-prise" as const } : {}),
     });
     lier("a", "L", role("phase")); lier("a", "N", role("neutre")); lier("a", "PE", role("terre"));
-    if (estPrise) notes.push("Prise 2P+T (ex. Odace) : 2 connexions rapides PAR PÔLE — le câble d'arrivée et celui de départ se raccordent chacun sur la borne L, sur la borne N, et la terre au contact de terre de la prise. Pas de pontage nécessaire.");
+    if (estPrise) notes.push("Prise 2P+T Odace (S9-052) : de gauche à droite L (levier rouge), terre (levier vert), N (levier bleu) — 2 connexions rapides PAR PÔLE — le câble d'arrivée et celui de départ se raccordent chacun sur la borne L, sur la borne N, et la terre au contact de terre de la prise. Pas de pontage nécessaire.");
     else notes.push("Appareil à alimentation directe : phase, neutre et terre sur son bornier (repères L / N / ⏚ de l'appareil, voir sa notice) ; sortie de câble ou prise spécialisée selon l'appareil.");
     return vue("autre");
   }
@@ -191,14 +192,15 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
       const phases = role("phase");
       if (navAmont.length > 0 && navAval.length > 0) {
         mecanismes.push({ id: idM(v), titre: titreVoie(v, "Permutateur"), bornes: [
-          { id: "E1", libelle: "E1", aide: "entrée navette 1" }, { id: "E2", libelle: "E2", aide: "entrée navette 2" },
-          { id: "S1", libelle: "S1", aide: "sortie navette 1" }, { id: "S2", libelle: "S2", aide: "sortie navette 2" }] });
+          { id: "E1", libelle: "L1", aide: "navette 1 (côté alimentation)" }, { id: "E2", libelle: "L2", aide: "navette 2 (côté alimentation)" },
+          { id: "S1", libelle: "1", aide: "navette 1 (côté lampe)" }, { id: "S2", libelle: "2", aide: "navette 2 (côté lampe)" }], modele: "odace-perm" });
+        notes.push("Permutateur Odace (S9-205) : L1 / L2 d'un côté (leviers rouges), 1 / 2 de l'autre. Le mécanisme est symétrique : les deux navettes venant de l'alimentation vont sur L1 et L2, celles qui repartent vers la lampe sur 1 et 2 (ou l'inverse, c'est équivalent) — sans croiser une navette avec l'autre.");
         lier(idM(v), "E1", nav(navAmont, 1)); lier(idM(v), "E2", nav(navAmont, 2));
         lier(idM(v), "S1", nav(navAval, 1)); lier(idM(v), "S2", nav(navAval, 2));
         episser(titreVoie(v, "Retour (traverse)"), "Le fil de retour passe dans cette boîte sans se raccorder : relier les deux bouts entre eux.", retours);
       } else {
         const com = { id: "COM", libelle: "L", aide: "borne commune" };
-        mecanismes.push({ id: idM(v), titre: titreVoie(v, "Va-et-vient"), bornes: [com, { id: "L1", libelle: "1", aide: "navette" }, { id: "L2", libelle: "2", aide: "navette" }], ...(double ? {} : { modele: "odace-inter" as const }) });
+        mecanismes.push({ id: idM(v), titre: titreVoie(v, "Va-et-vient"), bornes: [com, { id: "L1", libelle: "1", aide: "navette" }, { id: "L2", libelle: "2", aide: "navette" }], modele: "odace-inter" as const });
         if (navAval.length > 0) {                   // PREMIER (côté alimentation) : navettes vers l'aval
           lier(idM(v), "L1", nav(navAval, 1)); lier(idM(v), "L2", nav(navAval, 2));
           lier(idM(v), "COM", phases);
@@ -214,7 +216,7 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
     });
     if (double) notes.push("Plaque double : deux mécanismes INDÉPENDANTS (voie A et voie B), chacun commande sa lampe. Ne pas croiser les fils d'une voie sur l'autre.");
     if (role("phase").length > 0 && double && voies.every(v => raccords.some(r => r.mecanisme === idM(v) && r.borne === "COM" && r.conducteur.role === "phase"))) {
-      notes.push("La même phase alimente les deux bornes L : les relier par le pont (peigne) fourni, puis un seul fil de phase.");
+      notes.push("La même phase alimente les deux bornes L : relier les deux par un petit cavalier de fil (chaque borne L a 2 entrées), puis un seul fil de phase.");
     }
     episser("Neutre", TERRE_NEUTRE_BOITE, role("neutre"));
     episser("Terre", TERRE_NEUTRE_BOITE, role("terre"));
@@ -224,7 +226,7 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
   if (base === "telerupteur") {
     voies.forEach(v => {
       const conc = ofVoie(v);
-      mecanismes.push({ id: idM(v), titre: titreVoie(v, "Bouton-poussoir"), bornes: [{ id: "COM", libelle: "L", aide: "phase" }, { id: "S", libelle: "1", aide: "retour vers A1" }], ...(double ? {} : { modele: "odace-inter" as const }) });
+      mecanismes.push({ id: idM(v), titre: titreVoie(v, "Bouton-poussoir"), bornes: [{ id: "COM", libelle: "L", aide: "phase" }, { id: "S", libelle: "1", aide: "retour vers A1" }], modele: "odace-inter" as const });
       lier(idM(v), "COM", role("phase"));
       lier(idM(v), "S", role("retour", conc));
     });
@@ -246,10 +248,13 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
   }
   const mecas = double ? ([0, 1] as const) : ([undefined] as const);
   if (double) {
-    mecanismes.push({ id: "m", titre: "Double interrupteur", bornes: [{ id: "COM", libelle: "L", aide: "communs reliés par le pont" }, { id: "SA", libelle: "1 (voie A)" }, { id: "SB", libelle: "1 (voie B)" }] });
-    lier("m", "COM", role("phase"));
-    mecas.forEach(v => lier("m", v === 0 ? "SA" : "SB", role("retour", ofVoie(v))));
-    notes.push("Double interrupteur : les deux bornes L sont reliées par le pont fourni (une seule phase), et chaque sortie « 1 » part vers SA lampe (voie A / voie B).");
+    // Plaque double : DEUX mécanismes indépendants côte à côte (photo S9-214), chacun avec sa borne L, sa borne 1 et sa lampe.
+    ([0, 1] as const).forEach(v => {
+      mecanismes.push({ id: `m${v}`, titre: `Voie ${LETTRES[v]}`, bornes: [{ id: "COM", libelle: "L", aide: "phase" }, { id: "S", libelle: "1", aide: "retour" }], modele: "odace-inter" });
+      lier(`m${v}`, "COM", role("phase"));
+      lier(`m${v}`, "S", role("retour", ofVoie(v)));
+    });
+    notes.push("Double interrupteur : deux mécanismes indépendants, chacun avec sa borne L. Une seule phase alimente les deux : la 2e entrée de chaque borne L permet de les relier par un petit cavalier de fil. Chaque borne « 1 » part vers SA lampe (voie A / voie B).");
   } else {
     mecanismes.push({ id: "m", titre: "Interrupteur", bornes: [{ id: "COM", libelle: "L", aide: "phase" }, { id: "S", libelle: "1", aide: "retour" }], modele: "odace-inter" });
     lier("m", "COM", role("phase")); lier("m", "S", role("retour"));
