@@ -529,8 +529,10 @@ function rendreSVGImprimable(n: Niveau, resultat: ResultatGeneration | null, sho
               const mx = (aPx.x + bPx.x) / 2, my = (aPx.y + bPx.y) / 2;
               // Longueur toujours en noir, quelle que soit la couleur du circuit — lisible sur
               // n'importe quelle teinte de tracé, contrairement au trait lui-même (couleurSegment).
-              s += `<rect x="${(mx - (distM.toFixed(2).length + 1) * 2.1).toFixed(1)}" y="${(my - 8).toFixed(1)}" width="${((distM.toFixed(2).length + 1) * 4.2).toFixed(1)}" height="7" fill="#fff" opacity="0.85"/>`;
-              s += `<text x="${mx.toFixed(1)}" y="${(my - 3).toFixed(1)}" font-size="6" text-anchor="middle" font-family="monospace" fill="#111">${distM.toFixed(2)}m</text>`;
+              const vertM = distM - distance(cheminM[j], cheminM[j + 1]);
+              const txtLg = `${distM.toFixed(2)}m${vertM >= 0.1 ? ` ↕${vertM.toFixed(2)}` : ""}`;   // part verticale (montée/descente) si notable
+              s += `<rect x="${(mx - (txtLg.length + 1) * 1.8).toFixed(1)}" y="${(my - 8).toFixed(1)}" width="${((txtLg.length + 1) * 3.6).toFixed(1)}" height="7" fill="#fff" opacity="0.85"/>`;
+              s += `<text x="${mx.toFixed(1)}" y="${(my - 3).toFixed(1)}" font-size="6" text-anchor="middle" font-family="monospace" fill="#111">${txtLg}</text>`;
             }
           }
         }
@@ -5803,7 +5805,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             });
           }
           if (visuel && sectionsLg) {
-            elements.push(<EtiquetteLongueur key={`${cle}-${j}-lg`} aPx={aPx} bPx={bPx} texte={`${(sectionsLg[j] ?? distance(ptA, ptB)).toFixed(2)}m`} />);
+            // Longueur 3D = course sur le plan + montée/descente le long du mur. Quand la part verticale est notable (câble qui descend du
+            // point d'arrivée, à hauteur de gaine, jusqu'à une prise à 30 cm), on l'affiche : « 2.31m ↕2.01 » — sinon une section de 30 cm sur
+            // le plan paraît fausse.
+            const totalSec = sectionsLg[j] ?? distance(ptA, ptB), vertSec = totalSec - distance(ptA, ptB);
+            elements.push(<EtiquetteLongueur key={`${cle}-${j}-lg`} aPx={aPx} bPx={bPx} texte={`${totalSec.toFixed(2)}m${vertSec >= 0.1 ? ` ↕${vertSec.toFixed(2)}` : ""}`} />);
           }
           if (!visuel && mode === "select" && !cheminementDessin) {
             elements.push(
