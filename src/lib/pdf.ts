@@ -144,9 +144,12 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string, ima
   const W = doc.internal.pageSize.getWidth();
   const M = 18;
 
-  const logoBase64 = await loadLogoBase64((profil as any).logo_url);
+  let logoBase64 = await loadLogoBase64((profil as any).logo_url);
   doc.setFillColor(28, 25, 23); doc.rect(0, 0, W, 38, "F");
-  if (logoBase64) doc.addImage(logoBase64, "PNG", M, 6, 24, 24);
+  if (logoBase64) {
+    // Format non géré par jsPDF (WebP, SVG…) : on génère le PDF sans logo plutôt que d'échouer.
+    try { doc.addImage(logoBase64, "PNG", M, 6, 24, 24); } catch { logoBase64 = null; }
+  }
 
   const textX = logoBase64 ? M + 28 : M;
   doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.setTextColor(251, 191, 36);
@@ -156,7 +159,7 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string, ima
   doc.text(`Émis le ${fmtDate(devis.date_emission)}${devis.date_validite ? ` · Valable jusqu'au ${fmtDate(devis.date_validite)}` : ""}`, textX, 28);
 
   const artisan = [
-    profil.nom_entreprise ?? `${profil.prenom ?? ""} ${profil.nom ?? ""}`.trim(),
+    profil.nom_entreprise || `${profil.prenom ?? ""} ${profil.nom ?? ""}`.trim(),
     profil.siret ? `SIRET ${profil.siret}` : "",
     profil.telephone ?? "",
     profil.email ?? "",
@@ -268,7 +271,7 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string, ima
   doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(120, 113, 108);
   doc.text("Bon pour accord — Signature du client :", M, sigY + 7);
   if (sig) {
-    doc.addImage(sig, "PNG", M, sigY + 10, 70, 24);
+    try { doc.addImage(sig, "PNG", M, sigY + 10, 70, 24); } catch { doc.rect(M, sigY + 10, 70, 24); }
     if (devis.signe_le) doc.text(`Signé le ${fmtDatetime(devis.signe_le)}`, M, sigY + 38);
   } else {
     doc.rect(M, sigY + 10, 70, 24);
@@ -307,9 +310,12 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   }
   const estPro = facture.client?.type_client === "professionnel";
 
-  const logoBase64 = await loadLogoBase64((profil as any).logo_url);
+  let logoBase64 = await loadLogoBase64((profil as any).logo_url);
   doc.setFillColor(28, 25, 23); doc.rect(0, 0, W, 38, "F");
-  if (logoBase64) doc.addImage(logoBase64, "PNG", M, 6, 24, 24);
+  if (logoBase64) {
+    // Format non géré par jsPDF (WebP, SVG…) : on génère le PDF sans logo plutôt que d'échouer.
+    try { doc.addImage(logoBase64, "PNG", M, 6, 24, 24); } catch { logoBase64 = null; }
+  }
 
   const textX = logoBase64 ? M + 28 : M;
   doc.setFont(FONT, "bold"); doc.setFontSize(20); doc.setTextColor(251, 191, 36);

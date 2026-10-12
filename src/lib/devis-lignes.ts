@@ -56,11 +56,13 @@ export function ligneDepuisArticle(p: Prestation, offre: PrestationFournisseur |
 
 // Ligne pour un kit : prix = somme des composants, ventilé service/matériau par ratio.
 export async function ligneDepuisKit(p: Prestation & { kit_description?: string | null }, poste: string | null): Promise<LigneEdition> {
-  const { data: composants } = await supabase
+  const { data: composants, error } = await supabase
     .from("kit_composants")
     .select("*, prestation:composant_id(*)")
     .eq("kit_id", p.id)
     .order("ordre");
+  // Une lecture en échec ne doit pas produire un kit à 0 € ajouté en silence au devis.
+  if (error) throw new Error(`Lecture des composants du kit impossible : ${error.message}`);
   const comps = composants ?? [];
   const totalComposants = comps.reduce((s: number, c: any) => s + (c.prestation?.prix_unitaire ?? 0) * c.quantite, 0);
   const totalService = comps.filter((c: any) => c.prestation?.type_branche === "service")
@@ -68,7 +70,7 @@ export async function ligneDepuisKit(p: Prestation & { kit_description?: string 
   const ratioService = totalComposants > 0 ? totalService / totalComposants : 0;
   return {
     nom: p.nom,
-    prix_unitaire: totalComposants,
+    prix_unitaire: Math.round(totalComposants * 100) / 100,
     quantite: 1,
     unite: "forfait",
     type_branche: ratioService >= 0.5 ? "service" : "materiau",

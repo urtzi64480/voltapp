@@ -141,8 +141,8 @@ async function reprendreKits(refId: string, idsAutres: string[]): Promise<string
 
 // Brouillons de pré-devis (clients.predevis_config) : les identifiants de produits fusionnés y sont
 // remplacés par celui du produit de référence (les ids d'offres, eux, ne changent pas).
-async function reprendreBrouillons(refId: string, idsAutres: string[]): Promise<string | null> {
-  const { data, error } = await supabase.from("clients").select("id, predevis_config").not("predevis_config", "is", null);
+async function reprendreBrouillonsTable(table: "clients" | "projets", refId: string, idsAutres: string[]): Promise<string | null> {
+  const { data, error } = await supabase.from(table).select("id, predevis_config").not("predevis_config", "is", null);
   if (error) return error.message;
   for (const c of (data ?? []) as { id: string; predevis_config: string | null }[]) {
     let texte = c.predevis_config ?? "";
@@ -153,10 +153,21 @@ async function reprendreBrouillons(refId: string, idsAutres: string[]): Promise<
       if (texte.includes(cible)) { texte = texte.split(cible).join(`"${refId}"`); change = true; }
     }
     if (!change) continue;
-    const maj = await supabase.from("clients").update({ predevis_config: texte }).eq("id", c.id);
+    const maj = await supabase.from(table).update({ predevis_config: texte }).eq("id", c.id);
     if (maj.error) return maj.error.message;
   }
   return null;
+}
+
+// Les brouillons vivent dans projets.predevis_config (un par projet) ET, pour la reprise des anciens clients,
+// dans clients.predevis_config : les deux sont mis à jour.
+async function reprendreBrouillons(refId: string, idsAutres: string[]): Promise<string | null> {
+  const erreurs: string[] = [];
+  for (const table of ["clients", "projets"] as const) {
+    const err = await reprendreBrouillonsTable(table, refId, idsAutres);
+    if (err) erreurs.push(`${table} : ${err}`);
+  }
+  return erreurs.length > 0 ? erreurs.join(" ; ") : null;
 }
 
 // Fusionne `produits` (référence comprise, avec leurs offres attachées) dans le produit `referenceId`.

@@ -122,7 +122,8 @@ export async function genPDFListeCourses(
 // Exports déclenchés à la main par l'artisan, depuis sa page privée. Le lien public de la liste n'en reprend rien.
 
 
-const eur = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
+// L'espace fine insécable (U+202F) des milliers n'existe pas dans la police Helvetica de jsPDF (elle s'afficherait en caractère parasite) : espace normale.
+const eur = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR" }).replace(/\u202f/g, " ");
 const qtyTexte = (l: { qty: number; unite?: string }) =>
   l.unite && l.unite !== "u" && l.unite !== "forfait" ? `${l.qty} ${l.unite}` : `${l.qty}×`;
 

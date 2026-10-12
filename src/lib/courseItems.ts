@@ -43,7 +43,8 @@ export function buildCourseItems(lignes: any[]): CourseItem[] {
         }
       }
     } else if (l.type_branche === "materiau") {
-      const key = l.nom.toLowerCase();
+      const nomLigne = String(l.nom ?? "");
+      const key = nomLigne.toLowerCase();
       const qty = l.quantite || 1;
       const image = l.image_url ? String(l.image_url) : undefined;
       if (map.has(key)) {
@@ -51,7 +52,7 @@ export function buildCourseItems(lignes: any[]): CourseItem[] {
         ex.qty += qty;
         if (!ex.image && image) ex.image = image;
       } else {
-        map.set(key, { key, nom: l.nom, qty, unite: l.unite, image });
+        map.set(key, { key, nom: nomLigne, qty, unite: l.unite, image });
       }
     }
   }

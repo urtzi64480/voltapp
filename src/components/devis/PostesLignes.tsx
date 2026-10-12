@@ -250,7 +250,14 @@ export default function PostesLignes({ lignes, setLignes, postes, setPostes, pre
   }
 
   async function ajouterProduit(p: PrestationPicker, offre: PrestationFournisseur | null, poste: string | null) {
-    const ligne = p.est_kit ? await ligneDepuisKit(p, poste) : ligneDepuisArticle(p, offre, poste);
+    let ligne;
+    try {
+      ligne = p.est_kit ? await ligneDepuisKit(p, poste) : ligneDepuisArticle(p, offre, poste);
+    } catch (e) {
+      console.error(e);
+      alert("Impossible d'ajouter ce kit : lecture de ses composants échouée. Réessaie.");
+      return;
+    }
     setLignes(prev => fusionnerLigne(prev, ligne));
   }
 
