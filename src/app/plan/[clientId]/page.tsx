@@ -5115,11 +5115,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     } finally { setSuppNiveauEnCours(false); }
   };
 
+  // Dernier état du plan réellement enregistré en base : sert à prévenir quand on quitte la page avec des modifications non enregistrées.
+  const etatEnregistreRef = useRef<Niveau[] | null>(null);
   const handleSave = useCallback(async () => {
     setSaving(true);
     const ok = await modifierProjet(projet.id, { maison_config: configPlan(niveaux) });
     setSaving(false);
     if (!ok) { alert("Le plan n'a pas pu être enregistré. Vérifie ta connexion et réessaie."); return; }
+    etatEnregistreRef.current = niveaux;
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }, [niveaux, projet.id]);
@@ -5143,6 +5146,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const sauvegardeAuto = useCallback(async (etat: Niveau[]) => {
     const ok = await modifierProjet(projet.id, { maison_config: configPlan(etat) });
+    if (ok) etatEnregistreRef.current = etat;
     setAutoSaveMsg(ok ? "Sauvegarde auto ✓" : "Sauvegarde auto impossible");
     setTimeout(() => setAutoSaveMsg(null), 2500);
   }, [projet.id]);
@@ -5154,7 +5158,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   useEffect(() => {
     if (loading) return;
-    if (dernierEtatRef.current === null) { dernierEtatRef.current = niveaux; return; }   // état chargé : point de départ
+    if (dernierEtatRef.current === null) { dernierEtatRef.current = niveaux; etatEnregistreRef.current = niveaux; return; }   // état chargé : point de départ
     if (dragMode.kind !== "none") return;                                                  // pas pendant un glisser
     if (niveaux === dernierEtatRef.current) return;
     const t = setTimeout(() => {
@@ -5169,6 +5173,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }, 500);
     return () => clearTimeout(t);
   }, [niveaux, dragMode.kind, loading, compterAction]);
+
+  // Fermeture / rechargement de l'onglet avec des modifications pas encore enregistrées : le navigateur demande confirmation.
+  useEffect(() => {
+    const avant = (e: BeforeUnloadEvent) => {
+      if (etatEnregistreRef.current === null || niveauxRef.current === etatEnregistreRef.current) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", avant);
+    return () => window.removeEventListener("beforeunload", avant);
+  }, []);
 
   // Remplace tout le plan par un état de l'historique, et referme tout ce qui dépendait de l'ancien (sélections, circuits générés).
   const restaurerEtat = (etat: Niveau[]) => {
