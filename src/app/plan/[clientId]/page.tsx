@@ -281,8 +281,8 @@ function Outil({ label, aide, actif, primaire, disabled, onClick, badge, childre
       className={`group relative inline-flex h-9 min-w-[2.25rem] items-center justify-center gap-0.5 rounded-xl border px-2 transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-35 ${etat} ${className}`}>
       {children}
       {badge != null && <span className="absolute -right-1.5 -top-1.5 grid h-[1.1rem] min-w-[1.1rem] place-items-center rounded-full bg-volt-500 px-1 text-[10px] font-bold text-ink-900">{badge}</span>}
-      <span role="tooltip" className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 w-max max-w-[16rem] -translate-x-1/2 rounded-lg bg-ink-900 px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
-        {label}{aide && <span className="mt-0.5 block text-[10px] font-normal text-ink-300">{aide}</span>}
+      <span role="tooltip" style={{ backgroundColor: "#1c1917", color: "#ffffff" }} className="pointer-events-none absolute left-1/2 top-full z-[100] mt-2 w-max max-w-[16rem] -translate-x-1/2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug opacity-0 shadow-xl ring-1 ring-black/20 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
+        {label}{aide && <span className="mt-0.5 block text-[10px] font-normal" style={{ color: "#d6d3d1" }}>{aide}</span>}
       </span>
     </button>
   );
@@ -6153,7 +6153,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         </div>
 
         {!vue3D && toolbarOuvert && (
-        <div className="flex items-center gap-2 px-4 md:px-6 py-2.5 border-b border-ink-100 shrink-0 flex-wrap bg-gradient-to-b from-ink-50 to-white">
+        <div className="flex items-center gap-2 px-4 md:px-6 py-2.5 border-b border-ink-100 shrink-0 flex-wrap relative z-30 bg-gradient-to-b from-ink-50 to-white">
           <div className="flex items-center gap-1 p-1 rounded-2xl bg-ink-100/60 border border-ink-100">
           <Outil label="Sélection" aide="Sélectionner et déplacer les éléments du plan" onClick={choisirSelection}
             actif={!outilMain && mode === "select" && !placementType && !placingTableau && !placingOuverture && !placingPointArrivee && !placingMeuble}>
