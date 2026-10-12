@@ -3,11 +3,12 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { CalendarCheck, Phone, Mail, MapPin, Clock, MessageSquare, Trash2, X } from "lucide-react";
 import Shell from "@/components/layout/Shell";
+import { fondModal } from "@/lib/fond-modal";
 
 function PhotoModal({ urls, onClose }: { urls: string[]; onClose: () => void }) {
   const [idx, setIdx] = useState(0);
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" {...fondModal(onClose)}>
       <div className="relative max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
         <button onClick={onClose} className="absolute -top-10 right-0 text-white/70 hover:text-white">
           <X size={24} />

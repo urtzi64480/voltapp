@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Phone, Mail, MapPin, Home, Key, FileText, Camera, X, Plus, Pencil, Save, Trash2, ChevronLeft, ChevronRight, Receipt, CalendarDays, MessageSquare, Building2 } from "lucide-react";
 import TableauClientWidget from "@/components/tableau/TableauClientWidget";
+import { fondModal } from "@/lib/fond-modal";
 
 interface Palier {
   id: string; label: string; seuil_min: number; seuil_max: number | null;
@@ -238,7 +239,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
       <div className="p-4 md:p-8 max-w-3xl mx-auto">
 
         {lightbox !== null && photos.length > 0 && (
-          <div className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center" onClick={() => setLightbox(null)}>
+          <div className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center" {...fondModal(() => setLightbox(null))}>
             <button onClick={() => setLightbox(null)} className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 z-10"><X size={20} /></button>
             <button onClick={e => { e.stopPropagation(); removePhoto(photos[lightbox]); }} className="absolute top-4 left-4 w-10 h-10 rounded-full bg-red-500/80 flex items-center justify-center text-white hover:bg-red-600 z-10"><Trash2 size={16} /></button>
             {photos.length > 1 && <button onClick={e => { e.stopPropagation(); prevPhoto(); }} className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 z-10"><ChevronLeft size={20} /></button>}

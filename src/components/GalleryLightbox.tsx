@@ -2,6 +2,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { X } from "lucide-react";
+import { fondModal } from "@/lib/fond-modal";
 
 interface Photo {
   id: string;
@@ -46,7 +47,7 @@ export default function GalleryLightbox({ photos }: { photos: Photo[] }) {
       {openIndex !== null && (
         <div
           className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center px-4"
-          onClick={() => setOpenIndex(null)}
+          {...fondModal(() => setOpenIndex(null))}
         >
           <button
             onClick={() => setOpenIndex(null)}

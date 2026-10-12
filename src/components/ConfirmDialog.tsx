@@ -1,5 +1,6 @@
 "use client";
 import { AlertTriangle, X } from "lucide-react";
+import { fondModal } from "@/lib/fond-modal";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -27,7 +28,7 @@ export default function ConfirmDialog({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4"
-      onClick={onCancel}
+      {...fondModal(onCancel)}
     >
       <div className="card w-full max-w-sm p-6 relative" onClick={e => e.stopPropagation()}>
         <button

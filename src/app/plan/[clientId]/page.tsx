@@ -63,6 +63,7 @@ import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur, estAccessoire
 import { verifierEclairageManuel, fermetureCircuitLumiere, commandesPartagees } from "@/lib/controle-eclairage";
 import { coudesSegment } from "@/lib/routage-circuits";
 import { natureLiaison, conducteursSegment, geometrieCable, couleurDominante, COULEUR_FIL, LEGENDE_FILS, LIBELLE_NATURE } from "@/lib/couleurs-fils";
+import { fondModal } from "@/lib/fond-modal";
 
 const PX_PER_M = 60;
 const MIN_ZOOM = 0.25;
@@ -909,7 +910,7 @@ function PieceForm({ initialNom, initialType, initialHauteurPlafond, initialCont
   const modifie = contourApercu !== initialContour;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(onCancel)}>
       <div className="card w-full max-w-sm max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200 shrink-0">
           <p className="font-semibold text-ink-900">Pièce</p>
@@ -1030,7 +1031,7 @@ function CloisonForm({ piece, pieces, chemin, onValidate, onCancel }: {
   const longueurTotale = chemin.slice(1).reduce((t, pt, i) => t + distance(chemin[i], pt), 0);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(onCancel)}>
       <div className="card w-full max-w-sm max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200 shrink-0">
           <p className="font-semibold text-ink-900">Cloison — {chemin.length - 1} tronçon{chemin.length > 2 ? "s" : ""}, {longueurTotale.toFixed(2)} m</p>
@@ -1171,7 +1172,7 @@ function ZoneForm({ contour, ferme, pieces, onValidate, onCancel }: {
   const longueurTotale = segmentsZone(apercu).reduce((t, sg) => t + distance(sg.a, sg.b), 0);
   const nbCloisons = cotes.filter(c => c === "cloison").length;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(onCancel)}>
       <div className="card w-full max-w-sm max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200 shrink-0">
           <p className="font-semibold text-ink-900">{ferme ? "Zone" : "Cloison libre"}</p>
@@ -1265,9 +1266,11 @@ function DraggablePanel({ corner, className, dark, children }: {
     const onUp = () => { dragRef.current = null; };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);   // geste tactile interrompu : sans ça le glissement restait « collé » au doigt
     return () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
   }, []);
 
@@ -1393,7 +1396,7 @@ function SegmentLengthForm({ longueurActuelle, murActuel, onValidate, onCancel }
   const valide = !isNaN(cm) && cm >= 1 && mur != null;
   const num = Math.round(cm);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(onCancel)}>
       <div className="card w-full max-w-xs" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <p className="font-semibold text-ink-900">Mur</p>
@@ -1425,7 +1428,7 @@ function NiveauForm({ onValidate, onCancel }: { onValidate: (nom: string, type: 
   const [type, setType] = useState<NiveauType>("etage");
   const [hauteurPlafond, setHauteurPlafond] = useState("2.50");
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(onCancel)}>
       <div className="card w-full max-w-sm" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <p className="font-semibold text-ink-900">Nouveau niveau</p>
@@ -1479,7 +1482,7 @@ function CommandeLinkForm({ niveau, niveaux, item, onValidate, onCancel }: {
   };
   const total = choix.length + (double ? choix2.length : 0);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(onCancel)}>
       <div className="card w-full max-w-sm" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <p className="font-semibold text-ink-900">{labelAppareillage(item.type)} — quel(s) point(s) lumineux ?</p>
@@ -1583,7 +1586,7 @@ function CircuitLumiereForm({ niveaux, niveauActifId, onValidate, onCancel }: {
   const valide = nom.trim() !== "" && lampes.length > 0 && !(bilan && bilan.bloquants.length > 0);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(onCancel)}>
       <div className="card w-full max-w-lg max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <p className="font-semibold text-ink-900">Générer un circuit de lumière</p>
@@ -1702,7 +1705,7 @@ function CircuitManuelForm({ niveau, existing, onValidate, onCancel, onDelete }:
   const nomValide = nom.trim() !== "";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(onCancel)}>
       <div className="card w-full max-w-md max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <p className="font-semibold text-ink-900">{existing ? "Modifier le circuit manuel" : "Nouveau circuit manuel"}</p>
@@ -1874,7 +1877,7 @@ function PlaqueForm({ initial, onValider, onCancel }: {
     return { type, ...(type === "prise_dediee" ? { usageDedie: patch.usageDedie ?? po.usageDedie ?? USAGE_DEDIE_DEFAUT } : {}) };
   }));
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(onCancel)}>
       <div className="card w-full max-w-md" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <p className="font-semibold text-ink-900">Appareillage {nomPlaque(postes.length)} ({postes.length} postes)</p>
@@ -1993,7 +1996,7 @@ function PrintForm({ niveaux, resultatDisponible, onValider, onCancel }: {
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(onCancel)}>
       <div className="card w-full max-w-sm max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <p className="font-semibold text-ink-900">Imprimer le plan</p>
@@ -2076,7 +2079,7 @@ function Print3DForm({ niveaux, niveauActifId, onValider, onCancel }: {
 }) {
   const [choix, setChoix] = useState<number>(niveauActifId ?? niveaux[0]?.id);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(onCancel)}>
       <div className="card w-full max-w-sm" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <p className="font-semibold text-ink-900">Imprimer la vue 3D</p>
@@ -2459,9 +2462,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const recalculerCircuits = (nv: Niveau[]): ResultatGeneration => {
     const res = genererCircuitsManuelsSeuls({ niveaux: nv }, resultat);
     setNiveaux(res.maison.niveaux);
+    // Visibilité CONSERVÉE : si tu as isolé/masqué des circuits, une modification ne les ré-affiche pas. Seuls les circuits NOUVEAUX
+    // (jamais vus avant) deviennent visibles. Comparaison par libellé : les identifiants peuvent être renumérotés au recalcul.
+    const avant = resultat?.breakers ?? [];
+    const labelsVisibles = new Set(avant.filter(b => circuitsVisibles.has(b.id)).map(b => b.label));
+    const labelsConnus = new Set(avant.map(b => b.label));
     setResultat(res);
-    setShowCircuits(true);
-    setCircuitsVisibles(new Set(res.breakers.map(b => b.id)));
+    if (!resultat) setShowCircuits(true);
+    setCircuitsVisibles(avant.length === 0
+      ? new Set(res.breakers.map(b => b.id))
+      : new Set(res.breakers.filter(b => labelsVisibles.has(b.label) || !labelsConnus.has(b.label)).map(b => b.id)));
     return res;
   };
 
@@ -2784,7 +2794,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       // changent jamais la composition électrique du plan — les exclure évite de
       // réinitialiser les circuits générés à chaque simple clic ou déplacement de ces éléments.
       if (dragBougeRef.current && !["liaison", "pan", "ouverture", "boite", "pointArrivee", "meuble", "escalier", "personne", "voiture", "nomPiece", "zone", "zoneSommet"].includes(dragMode.kind)) invalidateResultat();
-      setDragEndTick(t => t + 1);
+      if (dragBougeRef.current) setDragEndTick(t => t + 1);   // simple clic dans le vide : on ne re-crée pas les champs de saisie (le texte en cours serait perdu)
       setDragMode({ kind: "none" });
       setSnapGuide(null);
       setAlignPiece(null);
@@ -2792,9 +2802,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);   // geste tactile interrompu : sans ça le glissement restait « collé » au doigt
     return () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dragMode, zoom, niveauActifId]);
@@ -3183,7 +3195,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [mode, zoneEnAttente, zonePoints.length, zoneCloisonSeule]);
+  }, [mode, zoneEnAttente, zonePoints, zoneCloisonSeule]);
 
   const entrerModeZone = () => {
     if (mode === "zone" && !zoneCloisonSeule) { setMode("select"); return; }
@@ -5868,7 +5880,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     <Shell>
       <div className={modeFocus
         ? "fixed inset-0 z-[45] flex flex-col bg-white overflow-hidden"
-        : "flex flex-col h-[calc(100vh-4rem)] md:h-screen overflow-hidden"}>
+        : "flex flex-col h-[calc(100dvh-4rem)] md:h-screen overflow-hidden"}>
         {menuHautReduit ? (
         <div className="flex items-center gap-2 px-3 py-1 border-b border-ink-200 bg-white shrink-0 relative z-10">
           <button onClick={() => reduireMenuHaut(false)} className="btn-ghost !px-2 !py-1 !text-xs" title="Afficher le menu du haut">
@@ -8957,7 +8969,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           ))}
 
           {!vue3D && paletteOpen && (
-            <div className="lg:hidden fixed inset-0 z-40 flex justify-end" onClick={() => setPaletteOpen(false)}>
+            <div className="lg:hidden fixed inset-0 z-40 flex justify-end" {...fondModal(() => setPaletteOpen(false))}>
               <div className="absolute inset-0 bg-black/40" />
               <div className="relative w-72 max-w-[85vw] bg-white h-full overflow-y-auto p-3 shadow-2xl" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between mb-2">

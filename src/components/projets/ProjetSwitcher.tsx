@@ -4,6 +4,7 @@ import { Home, Plus, Pencil, Trash2, X } from "lucide-react";
 import { Projet } from "@/types";
 import { creerProjet, modifierProjet, supprimerProjet } from "@/lib/projets";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import { fondModal } from "@/lib/fond-modal";
 
 interface Props {
   clientId: string;
@@ -89,7 +90,7 @@ export default function ProjetSwitcher({ clientId, projets, projetId, avantChang
       </div>
 
       {modal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={() => !busy && setModal(null)}>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(() => !busy && setModal(null))}>
           <div className="card w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <p className="font-semibold text-ink-900">{modal.mode === "new" ? "Nouveau projet" : "Renommer le projet"}</p>

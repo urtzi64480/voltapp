@@ -10,6 +10,7 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { LayoutTemplate, ListChecks, FilePlus2, Pencil, ChevronDown, Plus, Search, ChevronRight, X, Trash2 } from "lucide-react";
+import { fondModal } from "@/lib/fond-modal";
 
 interface Niveau { id: number; nom: string; type: string; pieces: { id: number }[]; }
 
@@ -22,7 +23,7 @@ function ClientPickerModal({ clients, planClientIds, onPick, onClose }: {
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-ink-900/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-ink-900/60 backdrop-blur-sm" {...fondModal(onClose)}>
       <div className="card w-full max-w-md max-h-[80vh] flex flex-col rounded-t-2xl md:rounded-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <div>
@@ -84,7 +85,7 @@ function NouveauPlanModal({ client, existants, onCreer, onClose }: {
     try { await onCreer(nom.trim()); } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={() => !busy && onClose()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(() => !busy && onClose())}>
       <div className="card w-full max-w-md p-5" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-1">
           <p className="font-semibold text-ink-900">Nouveau plan · {client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</p>
@@ -408,7 +409,7 @@ export default function PlansPage() {
       />
 
       {aRenommer && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={() => !renommageEnCours && setARenommer(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(() => !renommageEnCours && setARenommer(null))}>
           <div className="card w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
             <p className="font-semibold text-ink-900 mb-3">Renommer le plan / chantier</p>
             <input autoFocus className="input mb-4" value={nomSaisi} maxLength={80} onChange={e => setNomSaisi(e.target.value)}

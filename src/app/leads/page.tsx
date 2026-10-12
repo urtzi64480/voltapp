@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { fondModal } from "@/lib/fond-modal";
 
 const STATUT_LABEL: Record<StatutDemande, string> = {
   nouveau: "Nouveau",
@@ -26,7 +27,7 @@ const STATUT_COLOR: Record<StatutDemande, string> = {
 function PhotoModal({ urls, onClose }: { urls: string[]; onClose: () => void }) {
   const [idx, setIdx] = useState(0);
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" {...fondModal(onClose)}>
       <div className="relative max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
         <button onClick={onClose} className="absolute -top-10 right-0 text-white/70 hover:text-white">
           <X size={24} />

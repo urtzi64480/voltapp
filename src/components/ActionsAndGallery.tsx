@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { FileText, CalendarDays, Zap, Images, X } from "lucide-react";
 import ChantierGallery from "@/components/ChantierGallery";
+import { fondModal } from "@/lib/fond-modal";
 
 interface Photo {
   id: string;
@@ -66,7 +67,7 @@ export default function ActionsAndGallery({
       {showGallery && photos.length > 0 && (
         <div
           className="fixed inset-0 z-50 bg-ink-900/80 backdrop-blur-sm flex items-start sm:items-center justify-center p-4 sm:p-8"
-          onClick={() => setShowGallery(false)}
+          {...fondModal(() => setShowGallery(false))}
         >
           <div
             className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto p-5 sm:p-8 relative shadow-xl"

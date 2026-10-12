@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Loader2, Smartphone, Monitor, Globe, Clock, UserPlus, FileSearch, X, ChevronRight } from "lucide-react";
+import { fondModal } from "@/lib/fond-modal";
 
 interface Visite {
   [colonne: string]: unknown;
@@ -254,7 +255,7 @@ export default function VisitesStats({ userId }: { userId: string }) {
       {selection && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4"
-          onClick={() => setSelection(null)}
+          {...fondModal(() => setSelection(null))}
         >
           <div className="card w-full max-w-lg max-h-[85vh] overflow-y-auto p-6 relative" onClick={(e) => e.stopPropagation()}>
             <button

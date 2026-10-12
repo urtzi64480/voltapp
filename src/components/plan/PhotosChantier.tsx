@@ -7,6 +7,7 @@ import { useRef, useState } from "react";
 import { X, Camera, Trash2, MapPin, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import type { PhotoChantier, Point } from "@/lib/maison-types";
 import type { MurProche } from "@/lib/photos-chantier";
+import { fondModal } from "@/lib/fond-modal";
 
 interface Props {
   titre: string;
@@ -53,7 +54,7 @@ export default function PhotosChantier(p: Props) {
   const nomCircuit = (label: string) => p.circuits.find(c => c.label === label)?.nom ?? null;
 
   return (
-    <div className="fixed inset-0 z-[90] bg-black/60 flex items-center justify-center p-3" onClick={p.onClose}>
+    <div className="fixed inset-0 z-[90] bg-black/60 flex items-center justify-center p-3" {...fondModal(p.onClose)}>
       <div className="card w-full max-w-3xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-ink-200 shrink-0">
           <div className="min-w-0">

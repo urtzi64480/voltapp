@@ -10,6 +10,7 @@ import {
   Plus, X, Save, Trash2, Camera, ChevronRight,
   User, Calendar, FileText, CheckCircle, Clock, ArrowLeft,
 } from "lucide-react";
+import { fondModal } from "@/lib/fond-modal";
 
 interface Demande {
   id: string;
@@ -57,7 +58,7 @@ function PhotoGrid({ photos, onAdd, onRemove, uploading }: {
   return (
     <div>
       {lightbox && (
-        <div className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center" onClick={() => setLightbox(null)}>
+        <div className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center" {...fondModal(() => setLightbox(null))}>
           <button onClick={e => { e.stopPropagation(); onRemove(lightbox); setLightbox(null); }}
             className="absolute top-4 left-4 w-10 h-10 rounded-full bg-red-500/80 flex items-center justify-center text-white hover:bg-red-600 z-10">
             <Trash2 size={16} />

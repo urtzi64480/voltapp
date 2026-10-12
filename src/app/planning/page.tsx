@@ -10,6 +10,7 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Intervention, Client, Devis, StatutIntervention } from "@/types";
 import Shell from "@/components/layout/Shell";
+import { fondModal } from "@/lib/fond-modal";
 
 const JOURS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 const MOIS = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
@@ -333,7 +334,7 @@ function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTer
           )}
           <div>
             {lightbox && (
-              <div className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center" onClick={() => setLightbox(null)}>
+              <div className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center" {...fondModal(() => setLightbox(null))}>
                 <button onClick={e => { e.stopPropagation(); onPhotoRemove(lightbox); setLightbox(null); }}
                   className="absolute top-4 left-4 w-10 h-10 rounded-full bg-red-500/80 flex items-center justify-center text-white hover:bg-red-600 z-10">
                   <Trash2 size={16} />

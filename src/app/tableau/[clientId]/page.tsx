@@ -17,6 +17,7 @@ import {
   gaineRecommandee, cablesGroupe, cablesPrises, labelCommande,
   DIFF_HIERARCHY, AMPERES, AMPERES_DIFFERENTIEL, getCategory, effectiveSection, uid, estAccessoireTableau,
 } from "@/lib/electrical-constants";
+import { fondModal } from "@/lib/fond-modal";
 
 // ─── CONSTANTES LOCALES (mise en page du tableau, propres à cette page) ────────
 
@@ -511,7 +512,7 @@ function BreakerEditModal({ breaker, slotIndex, multimedia, compliance, onUpdate
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-ink-900/60 backdrop-blur-sm pb-[env(safe-area-inset-bottom)]"
-      onClick={onClose}>
+      {...fondModal(onClose)}>
       <div className="card w-full max-w-sm md:max-w-lg flex flex-col rounded-t-2xl md:rounded-2xl" style={{ maxHeight: "min(92vh, calc(100dvh - 4rem - env(safe-area-inset-bottom, 0px)))" }}
         onClick={e => e.stopPropagation()}>
 
@@ -779,7 +780,7 @@ function CompliancePanel({ result, onClose, onApply }: { result: ReturnType<type
   const ScoreIcon  = score >= 85 ? ShieldCheck : score >= 60 ? ShieldAlert : ShieldX;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(onClose)}>
       <div className="card w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <div className="flex items-center gap-3">
@@ -1132,7 +1133,7 @@ function CircuitSchema({ breaker, rowBreakers, onClose }: {
     : isLight ? 360+lampCount*58 : 420;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4" {...fondModal(onClose)}>
       <div className="card w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <div className="flex items-center gap-2">
@@ -1281,7 +1282,7 @@ function QRModal({ clientId, projetId, clientName, onClose }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 backdrop-blur-sm p-4"
-      onClick={onClose}>
+      {...fondModal(onClose)}>
       <div className="card w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
           <div>
@@ -1718,7 +1719,7 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   return (
     <Shell>
-      <div className="flex flex-col h-[calc(100vh-4rem)] md:h-screen overflow-hidden">
+      <div className="flex flex-col h-[calc(100dvh-4rem)] md:h-screen overflow-hidden">
         <div className="flex items-center justify-between px-4 md:px-6 py-3 border-b border-ink-200 bg-white shrink-0 gap-3">
           <div className="flex items-center gap-3">
             <Link href={`/clients/${clientId}`} className="btn-ghost !px-2 !py-1.5 text-ink-400"><ArrowLeft size={16} /></Link>

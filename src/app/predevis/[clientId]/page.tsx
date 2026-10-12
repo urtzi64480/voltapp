@@ -26,6 +26,7 @@ import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { ArrowLeft, AlertTriangle, Search, Sparkles, Save, Cable, RefreshCw } from "lucide-react";
 import { sousCategoriesDe, aSousCategorie, sousCategoriePrincipale, libelleSousCategories } from "@/lib/sous-categories";
+import { fondModal } from "@/lib/fond-modal";
 
 const LABEL_GAMME: Record<string, string> = { entree: "Entrée de gamme", moyenne: "Moyenne gamme", haut: "Haut de gamme" };
 
@@ -203,7 +204,7 @@ function AjoutCatalogueRapide({ besoin, prestations, onCree, onFermer }: {
   }
 
   return (
-    <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-3" onClick={onFermer}>
+    <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-3" {...fondModal(onFermer)}>
       <div className="card card-inner w-full max-w-3xl max-h-[92vh] overflow-y-auto flex flex-col gap-3" onClick={e => e.stopPropagation()}>
         <div>
           <p className="text-base font-bold text-ink-900">Ajouter au catalogue</p>

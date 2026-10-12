@@ -8,6 +8,7 @@ import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { Zap, Plus, ShieldCheck, ShieldAlert, ShieldX, Search, ChevronRight, X } from "lucide-react";
 import { Breaker, BreakerRow, BREAKER_TYPES, CIRCUITS, DIFF_HIERARCHY } from "@/lib/electrical-constants";
+import { fondModal } from "@/lib/fond-modal";
 
 function quickScore(rows: BreakerRow[]) {
   let errors = 0;
@@ -53,7 +54,7 @@ function ClientPickerModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-ink-900/60 backdrop-blur-sm"
-      onClick={onClose}>
+      {...fondModal(onClose)}>
       <div className="card w-full max-w-md max-h-[80vh] flex flex-col rounded-t-2xl md:rounded-2xl overflow-hidden"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">
@@ -136,7 +137,7 @@ function ReassignModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-ink-900/60 backdrop-blur-sm"
-      onClick={onClose}>
+      {...fondModal(onClose)}>
       <div className="card w-full max-w-md max-h-[80vh] flex flex-col rounded-t-2xl md:rounded-2xl overflow-hidden"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-ink-200">

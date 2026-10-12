@@ -7,6 +7,7 @@
 import { X, AlertTriangle } from "lucide-react";
 import { COULEUR_FIL, couleurConducteur } from "@/lib/couleurs-fils";
 import type { Cond, Mecanisme, VueAppareil } from "@/lib/bornier-appareillage";
+import { fondModal } from "@/lib/fond-modal";
 
 const W = 980, X_G = 16, XB = 366, WB = 248, XC = XB + WB / 2;
 const ROND = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"];
@@ -219,7 +220,7 @@ export default function VueAppareilBranchement({ vue, onClose }: { vue: VueAppar
   const H = y + 14;
 
   return (
-    <div className="fixed inset-0 z-[90] bg-black/55 flex items-center justify-center p-3" onClick={onClose}>
+    <div className="fixed inset-0 z-[90] bg-black/55 flex items-center justify-center p-3" {...fondModal(onClose)}>
       <div className="card card-inner !p-0 w-full max-w-[96vw] max-h-[94vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-ink-100">
           <div className="min-w-0">

@@ -11,6 +11,7 @@ import { COULEUR_FIL, LEGENDE_FILS, conducteursSegment, couleurConducteur, libel
 import type { GenreNoeud, NoeudSchema } from "@/lib/schema-technique";
 import type { VueAppareil } from "@/lib/bornier-appareillage";
 import VueAppareilBranchement from "@/components/plan/VueAppareilBranchement";
+import { fondModal } from "@/lib/fond-modal";
 
 interface Props {
   titre: string;
@@ -300,7 +301,7 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
   return (
     <>
     {detail && <VueAppareilBranchement vue={detail} onClose={() => setDetailId(null)} />}
-    <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-3" onClick={onClose}>
+    <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-3" {...fondModal(onClose)}>
       <div className="card card-inner !p-0 w-full max-w-[96vw] max-h-[94vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-ink-100">
           <div className="min-w-0">
