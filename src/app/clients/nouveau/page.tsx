@@ -70,17 +70,24 @@ export default function NouveauClientPage() {
     if (!form.nom.trim()) return alert("Le nom est obligatoire.");
     setSaving(true);
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { router.push("/login"); return; }
+    if (!user) { setSaving(false); router.push("/login"); return; }
 
     const photoUrls: string[] = [];
+    let photosEnEchec = 0;
     for (const photo of photos) {
-      const path = `${user.id}/${Date.now()}-${photo.name}`;
-      const { data } = await supabase.storage.from("client-photos").upload(path, photo);
-      if (data) {
+      // Nom de fichier assaini (accents, espaces, symboles) : un chemin de stockage invalide faisait échouer l'envoi en silence.
+      const nomSur = photo.name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9._-]+/g, "_");
+      const path = `${user.id}/${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${nomSur}`;
+      const { data, error: errUp } = await supabase.storage.from("client-photos").upload(path, photo);
+      if (data && !errUp) {
         const { data: urlData } = supabase.storage.from("client-photos").getPublicUrl(path);
         photoUrls.push(urlData.publicUrl);
+      } else {
+        photosEnEchec++;
+        console.error("Envoi de photo impossible :", errUp);
       }
     }
+    if (photosEnEchec > 0) alert(`${photosEnEchec} photo${photosEnEchec > 1 ? "s n'ont" : " n'a"} pas pu être envoyée${photosEnEchec > 1 ? "s" : ""} : tu pourras les ajouter depuis la fiche client.`);
 
     const { data, error } = await supabase.from("clients").insert({
       ...form,

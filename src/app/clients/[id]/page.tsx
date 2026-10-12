@@ -104,6 +104,9 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [lightbox, setLightbox] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Rechargement au retour sur l'onglet : il ne doit jamais écraser un formulaire en cours de modification.
+  const enEditionRef = useRef({ infos: false, logement: false, notes: false });
+  enEditionRef.current = { infos: editInfos, logement: editLogement, notes: editNotes };
 
   async function loadData() {
     const [{ data: c }, { data: d }, { data: f }, { data: p }, { data: iv }] = await Promise.all([
@@ -113,7 +116,11 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
       supabase.from("paliers_fidelite").select("*").order("seuil_min"),
       supabase.from("interventions").select("*").eq("client_id", id).order("date_debut", { ascending: false }),
     ]);
-    if (c) { setClient(c); setNotes(c.notes ?? ""); setForm(c); }
+    if (c) {
+      setClient(c);
+      if (!enEditionRef.current.notes) setNotes(c.notes ?? "");
+      if (!enEditionRef.current.infos && !enEditionRef.current.logement) setForm(c);
+    }
     setDevis(d ?? []);
     setFactures(f ?? []);
     setPaliers(p ?? []);

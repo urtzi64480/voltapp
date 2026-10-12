@@ -71,7 +71,7 @@ export const STATUT_LABELS: Record<string, string> = {
   refuse: "Refusé", expire: "Expiré",
   a_envoyer: "À envoyer",
   envoyee: "Envoyée", payee: "Payée", relance: "Relancée", impayee: "Impayée",
-  actif: "Actif", inactif: "Inactif", vip: "VIP",
+  actif: "Actif", inactif: "Inactif", vip: "VIP", prospect: "Prospect",
 };
 export const STATUT_COLORS: Record<string, string> = {
   brouillon: "bg-ink-100 text-ink-600",
@@ -87,4 +87,5 @@ export const STATUT_COLORS: Record<string, string> = {
   actif:     "bg-emerald-100 text-emerald-700",
   inactif:   "bg-ink-100 text-ink-500",
   vip:       "bg-volt-100 text-volt-700",
+  prospect:  "bg-blue-100 text-blue-700",
 };

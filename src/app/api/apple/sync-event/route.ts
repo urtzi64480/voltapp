@@ -42,6 +42,13 @@ export async function POST(req: NextRequest) {
     end?: string;
   };
 
+  // Les identifiants iCloud ne partent que vers iCloud : une eventUrl vers un autre hôte est refusée.
+  if (eventUrl !== undefined) {
+    let ok = false;
+    try { const u = new URL(eventUrl); ok = u.protocol === "https:" && (u.hostname === "icloud.com" || u.hostname.endsWith(".icloud.com")); } catch { ok = false; }
+    if (!ok) return NextResponse.json({ error: "eventUrl invalide." }, { status: 400 });
+  }
+
   try {
     const creds = await getCreds(supabase, user.id);
 

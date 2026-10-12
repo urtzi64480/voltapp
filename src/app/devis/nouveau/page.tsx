@@ -70,7 +70,9 @@ function RemiseLine({ label, type, val, onType, onVal, base }: {
 function NouveauDevisPage() {
   const router = useRouter();
   const params = useSearchParams();
-  const clientIdParam = params.get("client");
+  // « client » (fiche client, demandes) ou « client_id » (conversion d'un lead) ; « objet » pré-rempli par les demandes / leads.
+  const clientIdParam = params.get("client") ?? params.get("client_id");
+  const objetParam = params.get("objet") ?? "";
 
   const [tab, setTab] = useState<Tab>("edition");
   const [clients, setClients] = useState<Client[]>([]);
@@ -79,7 +81,7 @@ function NouveauDevisPage() {
   const [apporteurs, setApporteurs] = useState<Apporteur[]>([]);
   const [clientId, setClientId] = useState(clientIdParam ?? "");
   const [apporteurId, setApporteurId] = useState("");
-  const [objet, setObjet] = useState("");
+  const [objet, setObjet] = useState(objetParam);
   const [validite, setValidite] = useState(60);
   const [lignes, setLignes] = useState<DevisLigneExt[]>([]);
   const [postes, setPostes] = useState<string[]>([]);

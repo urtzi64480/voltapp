@@ -147,8 +147,8 @@ export default function CRMPage() {
         { data: paliersAp },
         { data: facsMois },
       ] = await Promise.all([
-        supabase.from("factures").select("total_service,total_materiau,date_emission,statut").gte("paye_le", payeDebut).lt("paye_le", payeFin).eq("statut", "payee"),
-        supabase.from("factures").select("total_service,total_materiau,date_emission,statut").gte("paye_le", payeDebutN1).lt("paye_le", payeDebut).eq("statut", "payee"),
+        supabase.from("factures").select("total_service,total_materiau,date_emission,paye_le,statut").gte("paye_le", payeDebut).lt("paye_le", payeFin).eq("statut", "payee"),
+        supabase.from("factures").select("total_service,total_materiau,date_emission,paye_le,statut").gte("paye_le", payeDebutN1).lt("paye_le", payeDebut).eq("statut", "payee"),
         supabase.from("factures").select("statut,total_ttc").gte("date_emission", debut).lte("date_emission", fin),
         supabase.from("devis").select("statut,total_ttc,total_service,total_materiau").gte("date_emission", debut).lte("date_emission", fin),
         supabase.from("facture_lignes").select("nom,type_branche,quantite,prix_unitaire,facture:factures!inner(statut,date_emission)").gte("facture.date_emission", debut).lte("facture.date_emission", fin).eq("facture.statut", "payee"),
@@ -180,12 +180,13 @@ export default function CRMPage() {
 
       const map: Record<number, { service: number; materiau: number }> = {};
       for (let m = 1; m <= 12; m++) map[m] = { service: 0, materiau: 0 };
-      rows.forEach(r => { const m = new Date(r.date_emission).getMonth() + 1; map[m].service += r.total_service; map[m].materiau += r.total_materiau; });
+      // Mois d'ENCAISSEMENT (paye_le), comme le filtre d'année : une facture émise en décembre et payée en janvier compte en janvier.
+      rows.forEach(r => { const m = new Date(r.paye_le ?? r.date_emission).getMonth() + 1; map[m].service += r.total_service; map[m].materiau += r.total_materiau; });
       setCaMensuel(Object.entries(map).map(([k, v]) => ({ mois: parseInt(k), ...v })));
 
       const mapN1: Record<number, { service: number; materiau: number }> = {};
       for (let m = 1; m <= 12; m++) mapN1[m] = { service: 0, materiau: 0 };
-      rowsN1.forEach(r => { const m = new Date(r.date_emission).getMonth() + 1; mapN1[m].service += r.total_service; mapN1[m].materiau += r.total_materiau; });
+      rowsN1.forEach(r => { const m = new Date(r.paye_le ?? r.date_emission).getMonth() + 1; mapN1[m].service += r.total_service; mapN1[m].materiau += r.total_materiau; });
       setCaMensuelN1(Object.entries(mapN1).map(([k, v]) => ({ mois: parseInt(k), ...v })));
 
       const catMap: Record<string, CATStat> = {};
