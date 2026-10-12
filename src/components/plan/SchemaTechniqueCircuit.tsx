@@ -194,7 +194,8 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
   const svgRef = useRef<SVGSVGElement>(null);
   const { pos, tronc, fentesSortie, fentesEntree, largeur, hauteur } = useMemo(() => disposer(segments, noeuds), [segments, noeuds]);
   const H_LEGENDE = 84;
-  const W = Math.max(largeur, 640), Ht = hauteur + H_LEGENDE;
+  const W = Math.max(largeur, 640);
+  let yMinPhoto = 0;   // les miniatures de photos peuvent dépasser en haut du dessin : on décale tout pour qu'elles ne soient pas coupées
 
   const fils: JSX.Element[] = [];
   const etiquettes: JSX.Element[] = [];
@@ -233,6 +234,7 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
     const phs = photos.filter(ph => ph.cle === cle);
     if (phs.length > 0) {
       const TH = 34, vus = phs.slice(0, 3), x0 = lx - (vus.length * (TH + 4) - 4) / 2, y0 = ly - TH - 16;
+      yMinPhoto = Math.min(yMinPhoto, y0 - 6);
       etiquettes.push(
         <g key={`ph-${idx}`}>
           <line x1={lx} y1={y0 + TH} x2={lx} y2={ly - 12} stroke={couleurCircuit} strokeWidth={1} strokeDasharray="2 2" />
@@ -257,6 +259,7 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
         </text>
       </g>);
   });
+  const decalage = -yMinPhoto, Ht = hauteur + H_LEGENDE + decalage;
   const elements = [...fils, ...etiquettes];
 
   const noeudsDessines = Array.from(pos.values()).map(p => {
@@ -335,6 +338,7 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
           ) : (
             <svg ref={svgRef} xmlns="http://www.w3.org/2000/svg" viewBox={`0 0 ${W} ${Ht}`} width={W} height={Ht} style={{ maxWidth: "none", fontFamily: "system-ui, sans-serif", background: "#fff" }}>
               <rect x={0} y={0} width={W} height={Ht} fill="#fff" />
+              <g transform={`translate(0,${decalage})`}>
               {elements}
               {noeudsDessines}
               <g transform={`translate(${MARGE},${hauteur + 6})`}>
@@ -347,6 +351,7 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
                   </g>
                 ))}
                 <text x={0} y={46} fontSize={9} fill="#78716c">Un trait par conducteur · pastille = point de raccordement · boîte pointillée = 3 bornes Wago 221 (Ph · N · PE) · contour = couleur du circuit · clic sur un appareil = branchements borne par borne · cadre violet pointillé = autre circuit (nom seul) · voie A / B = les deux mécanismes d'une commande double</text>
+              </g>
               </g>
             </svg>
           )}
