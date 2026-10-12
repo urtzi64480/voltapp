@@ -5,7 +5,7 @@
 // conducteur aux couleurs normalisées (lib/couleurs-fils.ts) : phase rouge, neutre bleu, terre vert/jaune, retour violet, navette orange.
 // La composition de chaque câble vient de conducteursSegment() — la même source que le plan, la 3D, le pré-devis et le suivi.
 import { useMemo, useRef, useState } from "react";
-import { X, Printer, Download, AlertTriangle } from "lucide-react";
+import { X, Printer, Download, AlertTriangle, Camera } from "lucide-react";
 import type { SegmentCircuit } from "@/lib/maison-types";
 import { COULEUR_FIL, LEGENDE_FILS, conducteursSegment, couleurConducteur, libelleLiaison } from "@/lib/couleurs-fils";
 import type { GenreNoeud, NoeudSchema } from "@/lib/schema-technique";
@@ -25,6 +25,10 @@ interface Props {
   longueurs?: Record<string, number>;
   /** Vue détaillée (bornes) d'un appareil du schéma — un clic sur l'appareil l'ouvre. */
   vueAppareil?: (id: string) => VueAppareil | null;
+  /** Photos de chantier du circuit (miniatures cliquables) + ouverture de la galerie. */
+  photos?: { id: number; url: string; legende?: string }[];
+  onPhoto?: (id: number) => void;
+  onPhotos?: () => void;
   onClose: () => void;
 }
 
@@ -177,7 +181,7 @@ function Symbole({ genre, x, y, h, couleur }: { genre: GenreNoeud; x: number; y:
   return <rect x={x} y={y} width={LARG} height={h} rx={6} fill="#fff" stroke={couleur} strokeWidth={2.4} />;
 }
 
-export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descriptionTableau, section, segments, noeuds, avertissements = [], longueurs, vueAppareil, onClose }: Props) {
+export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descriptionTableau, section, segments, noeuds, avertissements = [], longueurs, vueAppareil, photos = [], onPhoto, onPhotos, onClose }: Props) {
   const [detailId, setDetailId] = useState<string | null>(null);
   const detail = detailId && vueAppareil ? vueAppareil(detailId) : null;
   const svgRef = useRef<SVGSVGElement>(null);
@@ -278,11 +282,21 @@ export default function SchemaTechniqueCircuit({ titre, couleurCircuit, descript
             <p className="text-[11px] text-ink-500 truncate">{descriptionTableau}</p>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
+            {onPhotos && <button className="btn-ghost !text-xs" onClick={onPhotos}><Camera size={13} /> Photos{photos.length > 0 ? ` (${photos.length})` : ""}</button>}
             <button className="btn-ghost !text-xs" onClick={imprimer}><Printer size={13} /> Imprimer</button>
             <button className="btn-ghost !text-xs" onClick={telecharger}><Download size={13} /> SVG</button>
             <button className="btn-ghost !p-1.5" onClick={onClose} aria-label="Fermer"><X size={15} /></button>
           </div>
         </div>
+        {photos.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto px-3 pt-2 pb-1">
+            {photos.map(ph => (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img key={ph.id} src={ph.url} alt={ph.legende ?? "Photo de chantier"} title={ph.legende ?? "Photo de chantier"} loading="lazy"
+                className="h-14 w-14 shrink-0 rounded-lg object-cover border border-ink-200 cursor-pointer" onClick={() => onPhoto?.(ph.id)} />
+            ))}
+          </div>
+        )}
         {avertissements.length > 0 && (
           <div className="mx-3 mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5" role="alert">
             {avertissements.map((t, i) => (

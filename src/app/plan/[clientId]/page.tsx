@@ -7087,7 +7087,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 );
               })()}
 
-              {showCircuits && grouperPhotos((niveauActif?.photosChantier ?? []).filter(ph => { const bk = resultat?.breakers.find(x => x.label === ph.circuit); return !bk || circuitsVisibles.has(bk.id); })).map((g, gi) => {
+              {grouperPhotos((niveauActif?.photosChantier ?? []).filter(ph => { const bk = resultat?.breakers.find(x => x.label === ph.circuit); return !showCircuits || !bk || circuitsVisibles.has(bk.id); })).map((g, gi) => {
                 const p = toScreen(g.point);
                 const bk = resultat?.breakers.find(x => x.label === g.circuit);
                 const couleur = bk ? (colorMap.get(bk.id) ?? "#475569") : "#475569";
@@ -8834,7 +8834,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   section={section} segments={schema.segments} noeuds={schema.noeuds} avertissements={schema.avertissements}
                   vueAppareil={id => construireVueAppareil({ id, segments: schema.segments, noeuds: schema.noeuds, section, voieExterne: schema.voieExterne,
                     appareil: i => tous.find(t => String(t.a.id) === String(i))?.a })}
-                  longueurs={longueurs} onClose={() => setSchemaCircuitId(null)} />
+                  longueurs={longueurs} onClose={() => setSchemaCircuitId(null)}
+                  photos={(niveauActif.photosChantier ?? []).filter(ph => ph.circuit === b.label).map(ph => ({ id: ph.id, url: urlPhoto(ph.chemin), legende: ph.legende }))}
+                  onPhoto={id => setPhotosModal({ label: b.label, ouvrirId: id })}
+                  onPhotos={() => setPhotosModal({ label: b.label })} />
               );
             })()}
 
