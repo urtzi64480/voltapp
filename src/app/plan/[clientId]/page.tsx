@@ -849,7 +849,7 @@ function imprimerPlan(
     html += nomenclatureHtml(piecesFiltrees);
     const troncon = gainesNiveaux.find(g => g.niveau === (n.nom || n.type));
     if (showCircuits || (n.pointArriveeGaines && n.distanceArriveeGainesTableau != null)) {
-      html += gaineNiveauHtml(showCircuits ? troncon : undefined, n);
+      html += gaineNiveauHtml(undefined, n);   // chaque circuit part du tableau dans SA gaine : pas de gaine « principale » commune à afficher
     }
   });
   html += `</body></html>`;
@@ -5718,10 +5718,6 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     return items;
   })() : [];
 
-  const gainesNiveaux = resultat ? genererGainesNiveaux(resultat) : [];
-  const gaineNiveauActif = niveauActif
-    ? gainesNiveaux.find(g => g.niveau === (niveauActif.nom || niveauActif.type))
-    : undefined;
   const couleurTauxUi = (t: number) => (t <= 20 ? "text-emerald-600 bg-emerald-50 border-emerald-200" : t <= 33 ? "text-amber-600 bg-amber-50 border-amber-200" : "text-red-600 bg-red-50 border-red-200");
 
   if (loading) return <Shell><div className="flex items-center justify-center h-64 text-ink-400">Chargement…</div></Shell>;
@@ -6376,12 +6372,6 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           <div className="basis-full min-h-[28px] flex items-center gap-3 flex-wrap">
           {resultat && (
             <span className="text-[11px] text-ink-400 font-mono">{resultat.breakers.length} circuit{resultat.breakers.length > 1 ? "s" : ""} généré{resultat.breakers.length > 1 ? "s" : ""}</span>
-          )}
-          {gaineNiveauActif && (
-            <span title={`Gaine principale « ${gaineNiveauActif.niveau} » (tableau → niveau) : tous les circuits du niveau y passent (${gaineNiveauActif.circuits.length} circuits, un câble de départ chacun). Remplissage max conseillé : 33 %.${gaineNiveauActif.nbGaines > 1 ? ` Une seule gaine ne suffit pas : prévoir ${gaineNiveauActif.nbGaines} gaines ${gaineNiveauActif.gaine} en parallèle.` : ""}`}
-              className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-mono font-semibold ${couleurTauxUi(gaineNiveauActif.tauxPct)}`}>
-              🔀 Gaine principale {gaineNiveauActif.nbGaines > 1 ? `${gaineNiveauActif.nbGaines} × ` : ""}{gaineNiveauActif.gaine} · {gaineNiveauActif.nbGaines > 1 ? `${Math.round(gaineNiveauActif.tauxPct / gaineNiveauActif.nbGaines)}% chacune` : `${gaineNiveauActif.tauxPct}%`}
-            </span>
           )}
           {resultat && niveauActif && !origineCircuits(niveauActif) && (
             <span className="text-[11px] text-amber-600 font-semibold">
