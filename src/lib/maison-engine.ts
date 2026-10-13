@@ -12,7 +12,7 @@ import {
   PMAX_CHAUFFAGE_16A_W, PMAX_CHAUFFAGE_20A_W, PUISSANCE_CHAUFFAGE_DEFAUT_W,
   AMPERES_DIFFERENTIEL,
   gaineRecommandee, cablesGroupe, cablesPrises, effectiveSection, uid,
-  CIRCUIT_COMMUNICATION, estCircuitSansDisjoncteur,
+  CIRCUIT_COMMUNICATION, estCircuitSansDisjoncteur, agencerAppareils,
 } from "./electrical-constants";
 import {
   Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone, BoiteDerivation,
@@ -1026,8 +1026,11 @@ export function integrerCoffretCommunication(rows: BreakerRow[], circuitsRj45: B
   const autres = (existant?.slots ?? []).filter((b): b is Breaker => !!b && b.type !== "rj45");
   const liste = [...nouveauxPorts, ...autres];
   const nbSlots = Math.min(64, Math.max(8, Math.ceil(liste.length / 8) * 8));
-  const slots: (Breaker | null)[] = Array(nbSlots).fill(null);
-  liste.slice(0, nbSlots).forEach((b, i) => { slots[i] = b; });
+  const brut: (Breaker | null)[] = Array(nbSlots).fill(null);
+  liste.slice(0, nbSlots).forEach((b, i) => { brut[i] = b; });
+  // La prise modulaire et la coupure générale occupent 2 emplacements : l'agencement les range à leur vraie largeur, sans jamais les couper entre deux lignes
+  // de 8 (le coffret s'agrandit d'une ligne si besoin, dans la limite de 64 emplacements).
+  const { slots } = agencerAppareils(brut, true);
   const coffret: BreakerRow = { id: existant?.id ?? offset, name: existant?.name ?? "Coffret de communication", slots, kind: "multimedia" };
   return [...rows.filter(r => r.kind !== "multimedia"), coffret];
 }

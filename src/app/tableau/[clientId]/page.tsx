@@ -14,7 +14,9 @@ import {
 import {
   CommandeType, GroupeLumineux, PieceConfig, Breaker, BreakerRow,
   BREAKER_TYPES, CIRCUITS, SECTIONS_CABLE, gaineRecommandee, cablesGroupe, cablesPrises, labelCommande,
-  DIFF_HIERARCHY, AMPERES, AMPERES_DIFFERENTIEL, getCategory, effectiveSection, uid, estAccessoireTableau} from "@/lib/electrical-constants";
+  DIFF_HIERARCHY, AMPERES, AMPERES_DIFFERENTIEL, getCategory, effectiveSection, uid, estAccessoireTableau,
+  EMPLACEMENTS_PAR_RANGEE, largeurAppareil, emplacementsCouverts, emplacementsOccupes, peutPlacerLargeur, premierEmplacementLibre,
+  poserAppareil, deplacerAppareil, agencerAppareils} from "@/lib/electrical-constants";
 
 
 import { fondModal } from "@/lib/fond-modal";
@@ -22,7 +24,9 @@ import { fondModal } from "@/lib/fond-modal";
 // ─── CONSTANTES LOCALES (mise en page du tableau, propres à cette page) ────────
 
 const SLOT_W = 52;
+const SLOT_GAP = 4;   // espace entre deux cases (gap du rail) : un appareil de 2 emplacements fait 2 × SLOT_W + SLOT_GAP
 const DIFF_W = 96;
+const MSG_PAS_DE_PLACE = "Pas assez de place : la coupure générale et la prise modulaire occupent 2 emplacements côte à côte. Libère l'emplacement voisin ou choisis un autre emplacement.";
 const BREAKER_H = 130;
 
 const defaultGroupe = (): GroupeLumineux => ({ nbPoints: 1, typeCommande: "simple", nbCommandes: 1 });
@@ -232,10 +236,13 @@ function checkNFC(rows: BreakerRow[]) {
       action: { label: "Supprimer les rangées vides", run: rs => rs.filter(x => x.kind === "multimedia" || safeBreakers(x.slots.slice(1)).length > 0) } });
   }
   if (rangees.length > 0) {
-    const capacite = rangees.length * 8;
-    const utilises = rangees.reduce((n, r) => n + safeBreakers(r.slots.slice(1)).length, 0);
-    if ((capacite - utilises) / capacite < 0.2 && nbRangeesVides === 0) {
-      warnings.push({ id: "reserve", msg: `Réserve insuffisante : ${capacite - utilises} emplacement(s) libre(s) sur ${capacite} (moins de 20 %).`, rule: "Réserve 20 % du tableau",
+    // Réserve en EMPLACEMENTS (modules), pas en appareils : la coupure générale et la prise modulaire en occupent 2.
+    // Comparaison en entiers (libres / capacité < 20 % ⇔ 5 × libres < capacité) : pas d'arrondi flottant à la limite exacte de 20 %.
+    const capacite = rangees.length * EMPLACEMENTS_PAR_RANGEE;
+    const utilises = rangees.reduce((n, r) => n + emplacementsOccupes(r.slots, false), 0);
+    const libres = Math.max(0, capacite - utilises);
+    if (libres * 5 < capacite && nbRangeesVides === 0) {
+      warnings.push({ id: "reserve", msg: `Réserve insuffisante : ${libres} emplacement(s) libre(s) sur ${capacite} (moins de 20 %). La coupure générale et les prises modulaires comptent pour 2 emplacements.`, rule: "Réserve 20 % du tableau",
         fix: "Ajoute une rangée équipée de son différentiel pour garder 20 % d'emplacements libres (évolutions futures).",
         action: { label: "Ajouter une rangée avec un différentiel type A 40 A", run: rs => [...rs, { id: uid(), name: `Rangée ${rs.filter(x => x.kind !== "multimedia").length + 1}`, slots: [{ id: uid(), label: "", circuit: "general", amperes: 40, type: "diff-A", customSection: "10.0", pieces: [] } as Breaker, ...Array(8).fill(null)] }] } });
     }
@@ -246,7 +253,7 @@ function checkNFC(rows: BreakerRow[]) {
   if (!allBreakers.some(b => b.circuit === "parafoudre")) {
     infos.push({ id: "parafoudre", msg: "Parafoudre non détecté. Obligatoire NFC 15-100 (2024).", rule: "§443",
       fix: "Ajoute un parafoudre type 2 dans une case libre de la 1re rangée (circuit « Parafoudre »), protégé par son disjoncteur de déconnexion.",
-      action: { label: "Ajouter un parafoudre dans la première case libre", run: rs => { let fait = false; return rs.map(r => { if (fait || r.kind === "multimedia") return r; const i = r.slots.findIndex((c, k) => k > 0 && !c); if (i < 0) return r; fait = true; return { ...r, slots: r.slots.map((c, k) => (k === i ? { id: uid(), label: "Parafoudre", circuit: "parafoudre", amperes: 20, type: "2P", customSection: "4.0", pieces: [] } as Breaker : c)) }; }); } } });
+      action: { label: "Ajouter un parafoudre dans la première case libre", run: rs => { let fait = false; return rs.map(r => { if (fait || r.kind === "multimedia") return r; const i = premierEmplacementLibre(r.slots, 1, false); if (i < 0) return r; fait = true; return { ...r, slots: r.slots.map((c, k) => (k === i ? { id: uid(), label: "Parafoudre", circuit: "parafoudre", amperes: 20, type: "2P", customSection: "4.0", pieces: [] } as Breaker : c)) }; }); } } });
   }
 
   const specialTypes = ["plaque", "four", "lave_linge", "lave_vaisselle", "chauffe_eau"];
@@ -325,10 +332,11 @@ function AppareilModulaireSVG({ breaker, w, h, isSelected }: { breaker: Breaker;
   );
 }
 
-function BreakerSVG({ breaker, isEmpty, isSelected, isDiffSlot }: {
+function BreakerSVG({ breaker, isEmpty, isSelected, isDiffSlot, largeur = 1 }: {
   breaker: Breaker | null; isEmpty: boolean; isSelected: boolean; isDiffSlot?: boolean;
+  largeur?: number;   // nombre d'emplacements occupés (2 pour la coupure générale et la prise modulaire)
 }) {
-  const w = isDiffSlot ? DIFF_W : SLOT_W;
+  const w = isDiffSlot ? DIFF_W : SLOT_W * largeur + SLOT_GAP * (largeur - 1);
   const h = BREAKER_H;
   const isDiff = breaker ? !!BREAKER_TYPES[breaker.type]?.isDiff : false;
   const bodyColor = "#e8e8e6";
@@ -428,9 +436,10 @@ function BreakerSVG({ breaker, isEmpty, isSelected, isDiffSlot }: {
 
 // ─── BREAKER EDIT MODAL ───────────────────────────────────────────────────────
 
-function BreakerEditModal({ breaker, slotIndex, multimedia, compliance, onUpdate, onClose, onShowSchema, onRemove }: {
+function BreakerEditModal({ breaker, slotIndex, multimedia, placeLarge, compliance, onUpdate, onClose, onShowSchema, onRemove }: {
   breaker: Breaker;
   multimedia?: boolean;
+  placeLarge: boolean;   // 2 emplacements libres côte à côte à partir de celui-ci (condition pour poser une coupure générale ou une prise modulaire)
   slotIndex: number;
   compliance: ReturnType<typeof checkNFC>;
   onUpdate: (b: Breaker) => void;
@@ -492,8 +501,11 @@ function BreakerEditModal({ breaker, slotIndex, multimedia, compliance, onUpdate
   const NATURES: { cle: string; libelle: string; icone: string }[] = multimedia
     ? [{ cle: "rj45", libelle: "Port RJ45", icone: "🌐" }, { cle: "prise-mod", libelle: "Prise 16 A", icone: "🔌" }, { cle: "sect", libelle: "Coupure générale", icone: "⏻" }]
     : [{ cle: "disj", libelle: "Disjoncteur", icone: "⚡" }, { cle: "diff", libelle: "Différentiel", icone: "🔲" }, { cle: "prise-mod", libelle: "Prise 16 A modulaire", icone: "🔌" }, { cle: "sect", libelle: "Coupure générale", icone: "⏻" }];
+  const nbEmplacements = !multimedia && slotIndex === 0 ? 1 : largeurAppareil(breaker);   // la case 0 d'une rangée est déjà une case double
+  // Une nature qui prend 2 emplacements n'est proposée que s'il y en a 2 de libres côte à côte (sinon le clic serait refusé).
+  const naturePossible = (cle: string) => (cle !== "prise-mod" && cle !== "sect") || placeLarge || cle === natureActuelle;
   const changerNature = (cle: string) => {
-    if (cle === natureActuelle) return;
+    if (cle === natureActuelle || !naturePossible(cle)) return;
     const base = { ...breaker, pieces: [] as PieceConfig[] };
     if (cle === "disj") onUpdate({ ...base, type: "1P", circuit: "prise_16", amperes: 16, customSection: "1.5", label: breaker.label });
     else if (cle === "diff") onUpdate({ ...base, type: "diff-AC", circuit: "general", amperes: 40, customSection: "10.0" });
@@ -520,7 +532,7 @@ function BreakerEditModal({ breaker, slotIndex, multimedia, compliance, onUpdate
           <div className="flex items-center gap-2">
             <span className="text-xl">{isDiff ? "🔲" : (spec || CIRCUITS.autre).icon}</span>
             <span className="font-semibold text-ink-900">
-              {isDiff ? "Différentiel" : accessoire ? (BREAKER_TYPES[breaker.type]?.desc.split(" — ")[0] ?? "Appareil modulaire") : "Disjoncteur"} — emplacement {slotIndex + 1}
+              {isDiff ? "Différentiel" : accessoire ? (BREAKER_TYPES[breaker.type]?.desc.split(" — ")[0] ?? "Appareil modulaire") : "Disjoncteur"} — {nbEmplacements > 1 ? `emplacements ${slotIndex + 1} et ${slotIndex + nbEmplacements}` : `emplacement ${slotIndex + 1}`}
             </span>
           </div>
           <button onClick={onClose} className="btn-ghost !px-2 !py-1 text-ink-400">✕</button>
@@ -531,12 +543,14 @@ function BreakerEditModal({ breaker, slotIndex, multimedia, compliance, onUpdate
             <label className="label">Nature de l&apos;appareil</label>
             <div className="flex flex-wrap gap-2">
               {NATURES.map(n => (
-                <button key={n.cle} onClick={() => changerNature(n.cle)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${natureActuelle === n.cle ? "bg-ink-900 text-volt-400 border-ink-700" : "bg-ink-50 text-ink-500 border-ink-200 hover:border-ink-400"}`}>
-                  {n.icone} {n.libelle}
+                <button key={n.cle} onClick={() => changerNature(n.cle)} disabled={!naturePossible(n.cle)}
+                  title={naturePossible(n.cle) ? undefined : "Il faut 2 emplacements libres côte à côte"}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${natureActuelle === n.cle ? "bg-ink-900 text-volt-400 border-ink-700" : "bg-ink-50 text-ink-500 border-ink-200 hover:border-ink-400"} ${naturePossible(n.cle) ? "" : "opacity-40 cursor-not-allowed"}`}>
+                  {n.icone} {n.libelle}{n.cle === "prise-mod" || n.cle === "sect" ? " · 2 empl." : ""}
                 </button>
               ))}
             </div>
+            {!placeLarge && nbEmplacements === 1 && <p className="text-xs text-ink-400 mt-1.5">Coupure générale et prise modulaire occupent 2 emplacements : libère l&apos;emplacement voisin pour les proposer.</p>}
           </div>
 
           <div>
@@ -1341,6 +1355,7 @@ function CoffretCommunication({ row, selectedSlot, compliance, onClickSlot, onDe
   const nbRj45 = row.slots.filter(b => b?.type === "rj45").length;
   const nbPrises = row.slots.filter(b => b?.type === "prise-mod").length;
   const panelW = 8 * SLOT_W + 9 * 4 + 40;
+  const couvert = emplacementsCouverts(row.slots, true);
   return (
     <div style={{ background: "linear-gradient(170deg,#0f766e 0%,#134e4a 100%)", borderRadius: 14, padding: "20px 22px 10px", boxShadow: "0 8px 32px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.08)", border: "2px solid #115e59", display: "inline-block", verticalAlign: "top" }}>
       <div style={{ background: "#042f2e", borderRadius: 7, padding: "6px 14px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
@@ -1354,11 +1369,15 @@ function CoffretCommunication({ row, selectedSlot, compliance, onClickSlot, onDe
           <div style={{ background: "linear-gradient(160deg,#e2e8f0 0%,#cbd5e1 60%,#94a3b8 100%)", borderRadius: 8, padding: "16px 16px 50px", width: panelW, display: "inline-flex", alignItems: "flex-start", gap: 4, boxShadow: "inset 0 2px 6px rgba(0,0,0,0.2), 0 4px 12px rgba(0,0,0,0.15)", border: "2px solid #94a3b8", position: "relative" as const }}>
             <div style={{ position: "absolute", left: 12, right: 12, top: 16 + BREAKER_H * 0.40, height: 7, background: "linear-gradient(180deg,#b0b8c0,#6b7280,#9ca3af)", borderRadius: 1, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }} />
             <div style={{ position: "absolute", left: 12, right: 12, top: 16 + BREAKER_H * 0.40 + 9, height: 3, background: "linear-gradient(180deg,#4b5563,#374151)" }} />
-            {idxs.map(slotIdx => (
-              <SlotCell key={slotIdx} breaker={row.slots[slotIdx]} slotIdx={slotIdx} issue={null}
-                isSelected={selectedSlot?.rowId === row.id && selectedSlot?.slotIdx === slotIdx}
-                globalNum={slotIdx + 1} onClick={() => onClickSlot(row.id, slotIdx)} rowId={row.id} onMoveSlot={onMoveSlot} />
-            ))}
+            {idxs.map(slotIdx => {
+              const b = row.slots[slotIdx] ?? null;
+              if (!b && couvert[slotIdx]) return null;   // 2e emplacement d'un appareil large : dessiné par la case de gauche
+              return (
+                <SlotCell key={slotIdx} breaker={b} slotIdx={slotIdx} largeur={b ? Math.min(largeurAppareil(b), idxs[idxs.length - 1] + 1 - slotIdx) : 1} issue={null}
+                  isSelected={selectedSlot?.rowId === row.id && selectedSlot?.slotIdx === slotIdx}
+                  globalNum={slotIdx + 1} onClick={() => onClickSlot(row.id, slotIdx)} rowId={row.id} onMoveSlot={onMoveSlot} />
+              );
+            })}
           </div>
         </div>
       ))}
@@ -1383,6 +1402,7 @@ function DinRailRow({ row, globalOffset, selectedSlot, compliance, onClickSlot, 
 }) {
   const totalW = DIFF_W + 8 * SLOT_W + 9 * 4 + 40;
   const panelW = Math.max(totalW, 400);
+  const couvert = emplacementsCouverts(row.slots, false);
   const getIssue = (b: Breaker | null) => {
     if (!b) return null;
     if (compliance.errors.some(e => e.id.endsWith(`-${b.id}`))) return "error";
@@ -1413,19 +1433,23 @@ function DinRailRow({ row, globalOffset, selectedSlot, compliance, onClickSlot, 
         <SlotCell breaker={row.slots[0]} slotIdx={0} isDiffSlot issue={getIssue(row.slots[0])}
           isSelected={selectedSlot?.rowId === row.id && selectedSlot?.slotIdx === 0}
           globalNum={globalOffset + 1} onClick={() => onClickSlot(row.id, 0)} rowId={row.id} onMoveSlot={onMoveSlot} />
-        {Array.from({ length: 8 }, (_, i) => i + 1).map(slotIdx => (
-          <SlotCell key={slotIdx} breaker={row.slots[slotIdx]} slotIdx={slotIdx}
-            issue={getIssue(row.slots[slotIdx])}
-            isSelected={selectedSlot?.rowId === row.id && selectedSlot?.slotIdx === slotIdx}
-            globalNum={globalOffset + slotIdx + 1} onClick={() => onClickSlot(row.id, slotIdx)} rowId={row.id} onMoveSlot={onMoveSlot} />
-        ))}
+        {Array.from({ length: EMPLACEMENTS_PAR_RANGEE }, (_, i) => i + 1).map(slotIdx => {
+          const b = row.slots[slotIdx] ?? null;
+          if (!b && couvert[slotIdx]) return null;   // 2e emplacement d'un appareil large : il est dessiné par la case de gauche
+          return (
+            <SlotCell key={slotIdx} breaker={b} slotIdx={slotIdx} largeur={b ? Math.min(largeurAppareil(b), EMPLACEMENTS_PAR_RANGEE + 1 - slotIdx) : 1}
+              issue={getIssue(b)}
+              isSelected={selectedSlot?.rowId === row.id && selectedSlot?.slotIdx === slotIdx}
+              globalNum={globalOffset + slotIdx + 1} onClick={() => onClickSlot(row.id, slotIdx)} rowId={row.id} onMoveSlot={onMoveSlot} />
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function SlotCell({ breaker, slotIdx, isDiffSlot, issue, isSelected, globalNum, onClick, rowId, onMoveSlot }: {
-  breaker: Breaker | null; slotIdx: number; isDiffSlot?: boolean;
+function SlotCell({ breaker, slotIdx, isDiffSlot, largeur = 1, issue, isSelected, globalNum, onClick, rowId, onMoveSlot }: {
+  breaker: Breaker | null; slotIdx: number; isDiffSlot?: boolean; largeur?: number;
   issue: "error" | "warning" | null; isSelected: boolean;
   globalNum: number; onClick: () => void;
   rowId: number; onMoveSlot: (de: { rowId: number; slotIdx: number }, vers: { rowId: number; slotIdx: number }) => void;
@@ -1451,7 +1475,7 @@ function SlotCell({ breaker, slotIdx, isDiffSlot, issue, isSelected, globalNum, 
             : issue === "warning" ? "drop-shadow(0 0 5px rgba(245,158,11,0.5))"
             : isSelected ? "drop-shadow(0 4px 10px rgba(245,158,11,0.4))" : "none",
     }}>
-      <BreakerSVG breaker={breaker} isEmpty={!breaker} isSelected={isSelected} isDiffSlot={isDiffSlot} />
+      <BreakerSVG breaker={breaker} isEmpty={!breaker} isSelected={isSelected} isDiffSlot={isDiffSlot} largeur={largeur} />
       {issue && (
         <div style={{ position: "absolute", top: 4, right: 4, width: 14, height: 14, borderRadius: "50%", background: issue === "error" ? "#ef4444" : "#f59e0b", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "white", fontWeight: "bold" }}>!</div>
       )}
@@ -1524,8 +1548,10 @@ export default function TableauPage() {
 // Normalise un tableau_config brut (formats historiques compris) en BreakerRow[] — utilisé
 // pour le tableau principal et pour chaque tableau annexe.
 function normaliserRows(parsed: any[]): BreakerRow[] {
-  return parsed.map((row: any) => {
-        if (!row || typeof row !== "object") return null;
+  const sortie: BreakerRow[] = [];
+  const debordements: { nom: string; appareils: Breaker[] }[] = [];
+  parsed.forEach((row: any) => {
+        if (!row || typeof row !== "object") return;
         const multimedia = row.kind === "multimedia";
         const rawSlots = Array.isArray(row.slots) ? row.slots : (Array.isArray(row.breakers) ? row.breakers : []);
         // Coffret de communication : longueur libre (lignes de 8) ; rangée de tableau : 1 différentiel + 8 emplacements.
@@ -1555,8 +1581,29 @@ function normaliserRows(parsed: any[]): BreakerRow[] {
             pieces,
           } as Breaker;
         });
-        return { id: row.id ?? uid(), name: row.name ?? (multimedia ? "Coffret de communication" : "Rangée"), slots, origine: row.origine === "plan" ? "plan" as const : undefined, ...(multimedia ? { kind: "multimedia" as const } : {}) };
-  }).filter(Boolean) as BreakerRow[];
+        // Les appareils de 2 emplacements (coupure générale, prise modulaire) enregistrés avant cette règle ne tenaient qu'une case : on les range
+        // à leur vraie largeur. Rien n'est supprimé ; ce qui ne tient vraiment pas est repris plus bas dans une rangée « (suite) ».
+        const { slots: agences, debordement } = agencerAppareils(slots, multimedia);
+        const nom = row.name ?? (multimedia ? "Coffret de communication" : "Rangée");
+        sortie.push({ id: row.id ?? uid(), name: nom, slots: agences, origine: row.origine === "plan" ? "plan" as const : undefined, ...(multimedia ? { kind: "multimedia" as const } : {}) });
+        if (debordement.length > 0) debordements.push({ nom, appareils: debordement });
+  });
+  // Débordements (rangée de tableau pleine) : une rangée « suite » SANS différentiel, que le contrôle NF C 15-100 signale pour que l'électricien la complète.
+  let idMax = 0;
+  sortie.forEach(r => { if (Number.isFinite(r.id)) idMax = Math.max(idMax, r.id); r.slots.forEach(b => { if (b && Number.isFinite(b.id)) idMax = Math.max(idMax, b.id); }); });
+  debordements.forEach(({ nom, appareils }) => {
+    let courante: BreakerRow | null = null;
+    for (const b of [...appareils].sort((x, y) => largeurAppareil(y) - largeurAppareil(x))) {
+      let i = courante ? premierEmplacementLibre(courante.slots, largeurAppareil(b), false) : -1;
+      if (!courante || i < 0) {
+        courante = { id: ++idMax, name: `${nom} (suite)`, slots: Array(1 + EMPLACEMENTS_PAR_RANGEE).fill(null) };
+        sortie.push(courante);
+        i = premierEmplacementLibre(courante.slots, largeurAppareil(b), false);
+      }
+      courante.slots[i] = b;
+    }
+  });
+  return sortie;
 }
 
 function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
@@ -1575,6 +1622,12 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [schemaBreaker, setSchemaBreaker] = useState<{ breaker: Breaker; rowBreakers: (Breaker|null)[] } | null>(null);
   const [showReport, setShowReport]       = useState(false);
   const [showQR, setShowQR]               = useState(false);
+  const [avisPose, setAvisPose]           = useState<string | null>(null);   // pose / déplacement refusé faute de place
+  useEffect(() => {
+    if (!avisPose) return;
+    const t = setTimeout(() => setAvisPose(null), 6000);
+    return () => clearTimeout(t);
+  }, [avisPose]);
 
   // Tableaux du projet : le principal + d'éventuels tableaux annexes (pool house, garage…).
   // `rows` est toujours le tableau ACTIF ; `stock` garde les rangées des autres (celles du
@@ -1677,11 +1730,18 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setSelectedSlot({ rowId, slotIdx });
   };
 
-  const updateSlot = (rowId: number, slotIdx: number, breaker: Breaker) => {
+  // Pose / modification d'un appareil. Renvoie false (sans toucher au tableau) si ses emplacements ne sont pas libres :
+  // la coupure générale et la prise modulaire en occupent 2 côte à côte.
+  const updateSlot = (rowId: number, slotIdx: number, breaker: Breaker): boolean => {
+    const cible = rows.find(r => r.id === rowId);
+    if (!cible) return false;
+    if (!poserAppareil(cible.slots, slotIdx, breaker, cible.kind === "multimedia")) { setAvisPose(MSG_PAS_DE_PLACE); return false; }
     setRows(r => r.map(row => {
       if (row.id !== rowId) return row;
-      const newSlots = [...row.slots]; newSlots[slotIdx] = breaker; return { ...row, slots: newSlots };
+      const newSlots = poserAppareil(row.slots, slotIdx, breaker, row.kind === "multimedia");
+      return newSlots ? { ...row, slots: newSlots } : row;
     }));
+    return true;
   };
 
   const removeSlot = (rowId: number, slotIdx: number) => {
@@ -1693,20 +1753,12 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
 
   // Glisser-déposer d'un disjoncteur : vers une case vide (il s'y déplace) ou sur un autre (les deux s'échangent) — dans la même rangée ou une autre.
+  // Un appareil de 2 emplacements n'est déplacé (ou échangé) que si chacun des deux trouve la place qu'il lui faut : sinon rien ne bouge et on prévient.
   const deplacerSlot = (de: { rowId: number; slotIdx: number }, vers: { rowId: number; slotIdx: number }) => {
     if (de.rowId === vers.rowId && de.slotIdx === vers.slotIdx) return;
-    setRows(rs => {
-      const src = rs.find(r => r.id === de.rowId)?.slots[de.slotIdx] ?? null;
-      const dst = rs.find(r => r.id === vers.rowId)?.slots[vers.slotIdx] ?? null;
-      if (!src) return rs;
-      return rs.map(r => {
-        if (r.id !== de.rowId && r.id !== vers.rowId) return r;
-        const slots = [...r.slots];
-        if (r.id === de.rowId) slots[de.slotIdx] = dst;
-        if (r.id === vers.rowId) slots[vers.slotIdx] = src;
-        return { ...r, slots };
-      });
-    });
+    if (!rows.find(r => r.id === de.rowId)?.slots[de.slotIdx]) return;
+    if (!deplacerAppareil(rows, de, vers)) { setAvisPose(MSG_PAS_DE_PLACE); return; }
+    setRows(rs => deplacerAppareil(rs, de, vers) ?? rs);
     setSelectedSlot({ rowId: vers.rowId, slotIdx: vers.slotIdx });
   };
 
@@ -1761,6 +1813,12 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <button onClick={() => void handleSave()} className="btn-ghost !text-xs shrink-0">Réessayer</button>
           </div>
         )}
+        {avisPose && (
+          <div className="flex items-center justify-between gap-3 px-4 md:px-6 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-800 shrink-0" role="status">
+            <span>⚠️ {avisPose}</span>
+            <button onClick={() => setAvisPose(null)} className="btn-ghost !text-xs shrink-0">OK</button>
+          </div>
+        )}
         <div className="flex items-center gap-2 px-4 md:px-6 py-2 border-b border-ink-100 bg-ink-50 overflow-x-auto shrink-0">
           <button onClick={() => basculerTableau(TABLEAU_PRINCIPAL)}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
@@ -1777,7 +1835,7 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
           )}
         </div>
         <div className="px-6 py-2 bg-ink-50 border-b border-ink-100 text-xs text-ink-400 hidden md:block">
-          1er clic = sélectionner · 2e clic = configurer · Chaque rangée : 1 différentiel + 8 disjoncteurs
+          1er clic = sélectionner · 2e clic = configurer · Chaque rangée : 1 différentiel + 8 emplacements (coupure générale et prise modulaire : 2 emplacements)
         </div>
 
         <div className="flex-1 overflow-auto p-4 md:p-8">
@@ -1843,7 +1901,13 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
       {editBreaker && (
         <BreakerEditModal
           breaker={editBreaker.breaker} slotIndex={editBreaker.slotIdx} multimedia={rows.find(r => r.id === editBreaker.rowId)?.kind === "multimedia"} compliance={compliance}
-          onUpdate={updated => { updateSlot(editBreaker.rowId, editBreaker.slotIdx, updated); setEditBreaker({ ...editBreaker, breaker: updated }); }}
+          placeLarge={(() => {
+            const r = rows.find(x => x.id === editBreaker.rowId);
+            if (!r) return false;
+            const sansCelui = [...r.slots]; sansCelui[editBreaker.slotIdx] = null;   // l'appareil qu'on édite libère sa propre place
+            return peutPlacerLargeur(sansCelui, editBreaker.slotIdx, 2, r.kind === "multimedia");
+          })()}
+          onUpdate={updated => { if (updateSlot(editBreaker.rowId, editBreaker.slotIdx, updated)) setEditBreaker({ ...editBreaker, breaker: updated }); }}
           onClose={() => { setEditBreaker(null); setSelectedSlot(null); }}
           onShowSchema={b => { const row = rows.find(r => r.id === editBreaker.rowId); setEditBreaker(null); setSchemaBreaker({ breaker: b, rowBreakers: row?.slots ?? [] }); }}
           onRemove={() => removeSlot(editBreaker.rowId, editBreaker.slotIdx)}

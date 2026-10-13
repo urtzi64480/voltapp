@@ -75,7 +75,7 @@ import {
 import { MAX_POSTES_PLAQUE, estCommande, estLumiere, estSaillie, TYPES_SAILLIE_POSSIBLE } from "./maison-types";
 import { appareillagesParPieceReelle } from "./piece-reelle";
 import {
-  Breaker as TableauBreaker, BreakerRow, BREAKER_TYPES, effectiveSection, gaineRecommandee, gaineCommunication, GAINE_COMMUNICATION_DIAMETRE, estCircuitSansDisjoncteur, estAccessoireTableau} from "./electrical-constants";
+  Breaker as TableauBreaker, BreakerRow, BREAKER_TYPES, effectiveSection, gaineRecommandee, gaineCommunication, GAINE_COMMUNICATION_DIAMETRE, estCircuitSansDisjoncteur, estAccessoireTableau, emplacementsLibresRangee} from "./electrical-constants";
 
 
 import {
@@ -294,7 +294,8 @@ function indexerTableau(rows: BreakerRow[]): IndexTableau {
       if (b.label) parLabel.set(b.label, b);
     });
     if (rangeeUtilisee) nbRangees++;
-    if (rangeeUtilisee && row.kind !== "multimedia") emplacementsLibres += row.slots.slice(1).filter(c => !c).length;
+    // Emplacements libres en modules : la coupure générale et la prise modulaire en occupent 2 (la case vide qui suit n'est pas libre).
+    if (rangeeUtilisee && row.kind !== "multimedia") emplacementsLibres += emplacementsLibresRangee(row.slots, false);
   });
   return { parLabel, disjoncteurs, differentiels, nbRangees, sectionneurs, prisesModulaires, coffretCommunication, emplacementsLibres, parafoudres };
 }

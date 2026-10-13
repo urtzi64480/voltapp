@@ -73,6 +73,148 @@ export const BREAKER_TYPES: Record<string, { label: string; width: number; desc:
 /** Appareil modulaire du tableau qui n'est ni un disjoncteur ni un différentiel (coupure générale, prise modulaire, port RJ45). */
 export const estAccessoireTableau = (b: { type: string } | null | undefined): boolean => !!b && !!BREAKER_TYPES[b.type]?.accessoire;
 
+// ─── EMPLACEMENTS (modules de 17,5 mm) ─────────────────────────────────────────────────────────────────────────────
+// Une rangée de tableau = 1 différentiel de tête (case 0, sa propre case double) + 8 emplacements (cases 1 à 8). Le coffret de
+// communication = des lignes de 8 emplacements. Un appareil est rangé dans `slots` à l'indice de son PREMIER emplacement ; la coupure
+// générale et la prise modulaire en occupent 2 (BREAKER_TYPES.width) : l'indice suivant reste alors null mais n'est PAS libre
+// (« couvert »). Toute la logique de pose, de déplacement et de réserve (20 %) passe par les fonctions ci-dessous.
+
+export const EMPLACEMENTS_PAR_RANGEE = 8;
+
+type Appareil = Breaker | null | undefined;
+const appareilPresent = (b: Appareil): b is Breaker => !!b && typeof b === "object" && typeof b.type === "string" && b.type.length > 0;
+
+/** Nombre d'emplacements occupés par un appareil : 2 pour la coupure générale et la prise modulaire, 1 pour le reste (disjoncteur, port RJ45…). */
+export function largeurAppareil(b: Appareil): number {
+  if (!appareilPresent(b) || !estAccessoireTableau(b)) return 1;
+  return Math.max(1, BREAKER_TYPES[b.type].width);
+}
+
+/** Largeur à l'indice `i` : la case 0 d'une rangée de tableau (celle du différentiel) est déjà une case double et reste comptée pour 1. */
+function largeurEn(b: Appareil, i: number, coffret: boolean): number {
+  return !coffret && i === 0 ? 1 : largeurAppareil(b);
+}
+
+/** Plage d'emplacements d'un rail : cases 1 à 8 d'une rangée de tableau, toutes les cases du coffret. */
+function bornesRail(slots: readonly unknown[], coffret: boolean): { debut: number; fin: number } {
+  return coffret ? { debut: 0, fin: slots.length } : { debut: 1, fin: Math.min(slots.length, 1 + EMPLACEMENTS_PAR_RANGEE) };
+}
+
+/** Fin (exclue) de la ligne qui contient l'indice `i` : un appareil large ne se pose jamais à cheval sur deux lignes du coffret. */
+function finLigne(slots: readonly unknown[], i: number, coffret: boolean): number {
+  return coffret ? Math.min(slots.length, (Math.floor(i / EMPLACEMENTS_PAR_RANGEE) + 1) * EMPLACEMENTS_PAR_RANGEE) : bornesRail(slots, false).fin;
+}
+
+/** couvert[i] = true quand l'indice i est le 2e emplacement d'un appareil large posé juste avant (case vide mais occupée). */
+export function emplacementsCouverts(slots: readonly Appareil[], coffret: boolean): boolean[] {
+  const couvert: boolean[] = Array(slots.length).fill(false);
+  for (let i = bornesRail(slots, coffret).debut; i < slots.length; i++) {
+    const b = slots[i];
+    if (!appareilPresent(b)) continue;
+    for (let k = 1; k < largeurEn(b, i, coffret) && i + k < slots.length; k++) couvert[i + k] = true;
+  }
+  return couvert;
+}
+
+/** Emplacements occupés dans le rail (un appareil large compte pour 2). */
+export function emplacementsOccupes(slots: readonly Appareil[], coffret: boolean): number {
+  const { debut, fin } = bornesRail(slots, coffret);
+  let n = 0;
+  for (let i = debut; i < fin; i++) if (appareilPresent(slots[i])) n += largeurEn(slots[i], i, coffret);
+  return n;
+}
+
+/** Emplacements libres d'une rangée (réserve) : 8 moins les emplacements occupés, jamais négatif. */
+export function emplacementsLibresRangee(slots: readonly Appareil[], coffret = false): number {
+  const { debut, fin } = bornesRail(slots, coffret);
+  return Math.max(0, fin - debut - emplacementsOccupes(slots, coffret));
+}
+
+/** Vrai si `largeur` emplacements consécutifs sont libres à partir de `i`, dans le rail et sur la même ligne. `slots` ne doit plus contenir l'appareil qu'on déplace. */
+export function peutPlacerLargeur(slots: readonly Appareil[], i: number, largeur: number, coffret: boolean): boolean {
+  if (!coffret && i === 0) return !appareilPresent(slots[0]);
+  const { debut, fin } = bornesRail(slots, coffret);
+  if (!Number.isInteger(i) || i < debut || i >= fin || i + largeur > finLigne(slots, i, coffret)) return false;
+  const couvert = emplacementsCouverts(slots, coffret);
+  for (let k = 0; k < largeur; k++) if (appareilPresent(slots[i + k]) || couvert[i + k]) return false;
+  return true;
+}
+
+/** Premier indice où poser un appareil de `largeur` emplacements, ou -1 s'il n'y a pas assez de place côte à côte. */
+export function premierEmplacementLibre(slots: readonly Appareil[], largeur: number, coffret: boolean): number {
+  const { debut, fin } = bornesRail(slots, coffret);
+  for (let i = debut; i < fin; i++) if (peutPlacerLargeur(slots, i, largeur, coffret)) return i;
+  return -1;
+}
+
+/** Pose `b` à l'indice `i` (en remplaçant l'appareil qui s'y trouve). Renvoie les nouvelles cases, ou null si les emplacements nécessaires ne sont pas libres. */
+export function poserAppareil(slots: readonly Appareil[], i: number, b: Breaker, coffret: boolean): (Breaker | null)[] | null {
+  const copie: (Breaker | null)[] = slots.map(x => x ?? null);
+  copie[i] = null;
+  if (!peutPlacerLargeur(copie, i, largeurEn(b, i, coffret), coffret)) return null;
+  copie[i] = b;
+  return copie;
+}
+
+export interface PositionAppareil { rowId: number; slotIdx: number }
+
+/**
+ * Déplace l'appareil `de` vers la case `vers` (case vide : il s'y déplace ; case occupée : les deux appareils s'échangent), dans la même rangée
+ * ou une autre. Renvoie les nouvelles rangées, ou null si l'un des deux appareils n'a pas assez de place à son nouvel emplacement.
+ */
+export function deplacerAppareil(rows: BreakerRow[], de: PositionAppareil, vers: PositionAppareil): BreakerRow[] | null {
+  const rs = rows.find(r => r.id === de.rowId), rd = rows.find(r => r.id === vers.rowId);
+  if (!rs || !rd) return null;
+  const src = rs.slots[de.slotIdx] ?? null, dst = rd.slots[vers.slotIdx] ?? null;
+  if (!appareilPresent(src)) return null;
+  const memeRangee = rs.id === rd.id;
+  const slotsS: (Breaker | null)[] = rs.slots.map(x => x ?? null);
+  const slotsD: (Breaker | null)[] = memeRangee ? slotsS : rd.slots.map(x => x ?? null);
+  slotsS[de.slotIdx] = null;
+  slotsD[vers.slotIdx] = null;
+  if (!peutPlacerLargeur(slotsD, vers.slotIdx, largeurEn(src, vers.slotIdx, rd.kind === "multimedia"), rd.kind === "multimedia")) return null;
+  slotsD[vers.slotIdx] = src;
+  if (appareilPresent(dst)) {
+    if (!peutPlacerLargeur(slotsS, de.slotIdx, largeurEn(dst, de.slotIdx, rs.kind === "multimedia"), rs.kind === "multimedia")) return null;
+    slotsS[de.slotIdx] = dst;
+  }
+  return rows.map(r => (r.id === rs.id ? { ...r, slots: slotsS } : r.id === rd.id ? { ...r, slots: slotsD } : r));
+}
+
+/**
+ * Remet un rail en conformité avec les largeurs (données enregistrées avant que les appareils larges ne prennent 2 emplacements, ou plan
+ * généré) : chaque appareil garde son indice quand il peut ; sinon il est poussé vers la droite en conservant l'ordre, puis, à défaut, rangé
+ * dans le premier trou assez large. Rien n'est jamais perdu : ce qui ne tient pas du tout est renvoyé dans `debordement`
+ * (le coffret, lui, s'agrandit d'une ligne de 8, dans la limite de 64 emplacements).
+ */
+export function agencerAppareils(slots: readonly Appareil[], coffret: boolean): { slots: (Breaker | null)[]; debordement: Breaker[] } {
+  const { debut, fin } = bornesRail(slots, coffret);
+  const resultat: (Breaker | null)[] = slots.map((b, i) => (i < debut || i >= fin ? (b ?? null) : null));
+  const sansPlace: Breaker[] = [];
+  let curseur = debut;
+  for (let i = debut; i < fin; i++) {
+    const b = slots[i];
+    if (!appareilPresent(b)) continue;
+    const w = largeurEn(b, i, coffret);
+    let t = Math.max(i, curseur);
+    if (t + w > finLigne(slots, t, coffret)) t = finLigne(slots, t, coffret);   // à cheval sur la fin de la ligne : on passe à la suivante
+    if (t + w > fin) { sansPlace.push(b); continue; }
+    resultat[t] = b;
+    curseur = t + w;
+  }
+  const debordement: Breaker[] = [];
+  [...sansPlace].sort((a, b) => largeurAppareil(b) - largeurAppareil(a)).forEach(b => {
+    const w = largeurAppareil(b);
+    let idx = premierEmplacementLibre(resultat, w, coffret);
+    while (idx < 0 && coffret && resultat.length < 64) {
+      for (let k = 0; k < EMPLACEMENTS_PAR_RANGEE; k++) resultat.push(null);
+      idx = premierEmplacementLibre(resultat, w, coffret);
+    }
+    if (idx < 0) debordement.push(b); else resultat[idx] = b;
+  });
+  return { slots: resultat, debordement };
+}
+
 export const CIRCUITS: Record<string, {
   label: string; icon: string; ampMax: number; dedié: boolean;
   diffType: string | null; section: string | null; category: CircuitCategory | null;
