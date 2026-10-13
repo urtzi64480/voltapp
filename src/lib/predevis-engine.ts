@@ -191,11 +191,12 @@ export const NOMENCLATURE_APPAREILLAGE: { code: string; label: string }[] = [
   ...TYPES_SAILLIE_POSSIBLE.filter(t => t in LABEL_APPAREILLAGE && t !== "point_lumineux" && t !== "applique")
     .map(t => ({ code: `${t}_saillie`, label: `${LABEL_APPAREILLAGE[t]} en saillie` })),
   { code: "prise_specialisee_saillie", label: "Prise / sortie de câble spécialisée en saillie" },
-  { code: "boite_dcl_saillie", label: "Boîtier DCL en saillie (point lumineux / applique)" },
+  { code: "point_lumineux_saillie", label: "Plafonnier DCL en saillie" },
+  { code: "applique_saillie", label: "Applique DCL en saillie" },
 ];
 
 // Points lumineux dont le luminaire peut être « à définir avec le client » (hors boîte d'encastrement DCL, qui reste chiffrée).
-const POINTS_LUMINEUX_A_DEFINIR = ["point_lumineux", "applique", "spot", "spot_etanche", "applique_exterieure", "point_lumineux_exterieur"];
+const POINTS_LUMINEUX_A_DEFINIR = ["point_lumineux", "applique", "point_lumineux_saillie", "applique_saillie", "spot", "spot_etanche", "applique_exterieure", "point_lumineux_exterieur"];
 export const estPointLumineuxADefinir = (sousCategorie: string): boolean => POINTS_LUMINEUX_A_DEFINIR.includes(sousCategorie);
 
 export const PSEUDO_TABLEAU = "Tableau électrique";
@@ -382,19 +383,15 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           poserBesoin("prise_irve", LABEL_APPAREILLAGE.prise_irve);
         } else if (LABEL_APPAREILLAGE[a.type]) {
           if (sail && (a.type === "point_lumineux" || a.type === "applique")) {
-            ajouter(`${a.type}@${dest.id}`, a.type, LABEL_APPAREILLAGE[a.type], dest.nom, 1, "u"); cleParApp.set(a.id, `${a.type}@${dest.id}`);
+            // Plafonnier / applique DCL EN SAILLIE : UN seul article (boîtier apparent compris), jamais luminaire + boîtier séparés.
+            const code = `${a.type}_saillie`;
+            ajouter(`${code}@${dest.id}`, code, a.type === "point_lumineux" ? "Plafonnier DCL en saillie" : "Applique DCL en saillie", dest.nom, 1, "u"); cleParApp.set(a.id, `${code}@${dest.id}`);
           } else poserBesoin(a.type, LABEL_APPAREILLAGE[a.type]);
         } else if (cleCircuitDedie(a) || a.type === "chauffage" || a.type === "volet_roulant") {
           poserBesoin("prise_specialisee", "Prise / sortie de câble spécialisée");
         }
-        // Tout point lumineux (plafonnier, applique…) a sa propre boîte DCL — jamais groupée avec les boîtes murales
-        // (prise/interrupteur), toujours 1 par point lumineux quel que soit le type ; en saillie : boîtier DCL apparent.
-        // Le plafonnier DCL (point_lumineux) est TOUJOURS un boîtier complet : la boîte d'encastrement est dans l'article, donc pas de ligne
-        // « boîte DCL » séparée (en saillie : boîtier apparent, inchangé). Idem pour la sortie applique intérieure (toujours un DCL).
-        if ((a.type === "point_lumineux" || a.type === "applique") && sail) {
-          if (sail) { ajouter(`boite_dcl_saillie@${dest.id}`, "boite_dcl_saillie", "Boîtier DCL en saillie", dest.nom, 1, "u"); localiser(`boite_dcl_saillie@${dest.id}`, a.id); }
-          else { ajouter(`boite_encastrement_dcl@${dest.id}`, "boite_encastrement_dcl", "Boîte d'encastrement DCL", dest.nom, 1, "u"); localiser(`boite_encastrement_dcl@${dest.id}`, a.id); }
-        }
+        // Plafonnier DCL et applique DCL (encastrés ou en saillie) sont TOUJOURS des articles complets (boîtier compris) : aucune
+        // ligne « boîte DCL » séparée.
         { // pièce et nom (donné sur le plan) de l'appareillage, pour s'y retrouver dans le pré-devis
           const cleApp = cleParApp.get(a.id);
           const besoinApp = cleApp ? cumul.get(cleApp) : undefined;
