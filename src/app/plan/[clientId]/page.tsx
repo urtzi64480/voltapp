@@ -36,7 +36,8 @@ import {
   BoiteDerivation, migrerBoitesDerivation,
   Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, nouvelleVoiture, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
   estCommande, estCommandeDouble, estCommandeService, cibleCommandeService, estLumiere, estCourantFaible, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM,
-  Escalier, EscalierType, EscalierTournant, EXTERIEUR_PIECE_ID, PhotoChantier, TYPES_SAILLIE_POSSIBLE, estSaillie} from "@/lib/maison-types";
+  Escalier, EscalierType, EscalierTournant, EXTERIEUR_PIECE_ID, PhotoChantier, TYPES_SAILLIE_POSSIBLE, estSaillie, SegmentCircuit} from "@/lib/maison-types";
+import { poserBoiteSurTroncon } from "@/lib/boites-derivation";
 
 
 import { pieceAutoDe } from "@/lib/piece-reelle";
@@ -4717,7 +4718,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const orig = origineCircuits(niveauActif);
         if (!orig) return null;
         let best: Breaker | null = null, bd = Infinity;
-        resultat.breakers.filter(x => x.niveauId === niveauActif.id && (poseParties.label == null ? circuitsVisibles.has(x.id) : x.label === poseParties.label)).forEach(x => {
+        breakersDuNiveau(resultat.breakers, niveauActif).filter(x => (poseParties.label == null ? circuitsVisibles.has(x.id) : x.label === poseParties.label)).forEach(x => {
           const pts = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === x.id);
           segmentsPourCircuit(x, pts, niveauActif, orig).forEach(sg => {
             if (sg.type === "domotique") return;
@@ -4763,27 +4764,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       const label = placingBoiteLabel;
       if (refuserVerrou(label)) { setPlacingBoiteLabel(null); setPlacingPhoto(null); return; }
       const nouvelId = uidMaison();
-      // Tronçon visé : le plus proche du clic parmi ceux du circuit ; la boîte est posée sur le tracé (projection du clic), A → boîte → B.
-      let surSegment: { a: string; b: string } | undefined;
-      let pointBoite = m;
+      // Tronçon visé : le plus proche du clic, mesuré sur le CHEMIN RÉEL du câble (coudes compris) parmi TOUS ceux du circuit — pas le
+      // premier de la liste ; la boîte est posée SUR le tracé (projection du clic) : A → boîte → B (voir lib/boites-derivation.ts).
       const bk = resultat?.breakers.find(x => x.label === label);
       const orig = niveauActif ? origineCircuits(niveauActif) : null;
+      let segs: SegmentCircuit[] = [];
       if (bk && niveauActif && orig) {
         const pts = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === bk.id);
-        const segs = segmentsPourCircuit(bk, pts, niveauActif, orig);
-        let meilleur = Infinity;
-        segs.forEach(sg => {
-          const dx = sg.bPoint.x - sg.aPoint.x, dy = sg.bPoint.y - sg.aPoint.y, l2 = dx * dx + dy * dy;
-          const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((m.x - sg.aPoint.x) * dx + (m.y - sg.aPoint.y) * dy) / l2));
-          const proj = { x: sg.aPoint.x + t * dx, y: sg.aPoint.y + t * dy };
-          const d = Math.hypot(m.x - proj.x, m.y - proj.y);
-          if (d < meilleur) { meilleur = d; surSegment = { a: sg.aId, b: sg.bId }; pointBoite = m; }
-        });
+        segs = segmentsPourCircuit(bk, pts, niveauActif, orig);
       }
-      updateNiveauActif(n => {
-        const existantes = n.boitesDerivation?.[label] ?? [];
-        return { ...n, boitesDerivation: { ...(n.boitesDerivation ?? {}), [label]: [...existantes, { id: nouvelId, nom: `Boîte ${existantes.length + 1}`, point: pointBoite, ...(surSegment ? { surSegment } : {}) }] } };
-      });
+      updateNiveauActif(n => poserBoiteSurTroncon(n, segs, label, m, nouvelId).niveau);
       setSelectedBoite({ label, boiteId: nouvelId });
       setPlacingBoiteLabel(null); setPlacingPhoto(null);
       return;

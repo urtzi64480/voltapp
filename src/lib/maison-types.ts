@@ -448,7 +448,9 @@ export interface BoiteDerivation {
   point: Point;
   // Boîte posée SUR un tronçon du circuit (câble A → B devient A → boîte → B) : ids des deux extrémités du tronçon choisi.
   // Absente = boîte « en étoile » (les appareils les plus proches s'y raccordent).
-  surSegment?: { a: string; b: string };
+  // `type` distingue deux tronçons de mêmes extrémités (ex. alimentation d'une commande et retour de cette même commande vers la lampe) :
+  // « alim » = câble d'alimentation / de circuit classique (SegmentCircuit.type absent). Absent (anciennes boîtes) = premier tronçon trouvé.
+  surSegment?: { a: string; b: string; type?: "alim" | "navette" | "retour" | "commande" };
   // Appareillages (ids) qui REPARTENT de cette boîte : un nouveau départ est tiré de la boîte vers eux (en chaîne, ou en étoile pour
   // l'éclairage) au lieu de les alimenter par leur place d'origine dans le circuit.
   departs?: number[];
@@ -1370,12 +1372,30 @@ export function construireBranchesCircuitEclairage(
   const departBoutons = (ancre: { id: string; point: Point }) => (relieAuTableau ? { id: "tableau", point: depart } : ancre);
 
   const lampesRaccordees = new Set<number>(); // lampes dont l'alimentation (via leur commande) est déjà tracée
+  const commandesAlimentees = new Set<number>(); // commandes dont l'alimentation est déjà tracée (une commande n'est alimentée qu'UNE fois)
+  // Ordre des commandes depuis une ancre : UN SEUL classement par ancre, partagé par toutes les lampes qui en dépendent. Sinon deux lampes
+  // qui n'ont pas exactement les mêmes commandes (A : C1 + C2, B : C2 seule) classeraient C1 et C2 chacune à leur façon et la commande C2
+  // serait alimentée une fois par l'ancre et une fois par la navette de C1 — un courant qui n'a plus de sens.
+  const rangsParAncre = new Map<string, Map<number, number>>();
+  const rangCommande = (ancre: { id: string; point: Point }, c: AppareillagePlace): number => {
+    let m = rangsParAncre.get(ancre.id);
+    if (!m) {
+      // La commande qui pilote le plus de lampes passe en premier (elle est alimentée par l'ancre, les autres s'y chaînent en navette) :
+      // c'est la seule façon de n'alimenter chaque commande qu'une fois quand les commandes ne pilotent pas exactement les mêmes lampes.
+      const nbLampes = (x: AppareillagePlace) => lumieres.filter(l => commandeCetteLumiere(x, l.id)).length;
+      const triees = parProximite(commandes.filter(x => pasDomo(x) && !estBP(x)), ancre.point).sort((x, y) => nbLampes(y) - nbLampes(x));
+      m = new Map(triees.map((x, i) => [x.id, i] as const));
+      rangsParAncre.set(ancre.id, m);
+    }
+    return m.get(c.id) ?? 0;
+  };
   const raccorderLampe = (l: AppareillagePlace, ancre: { id: string; point: Point }) => {
     lampesRaccordees.add(l.id);
     const pl = { x: l.x, y: l.y };
     const filaires = commandes.filter(c => commandeCetteLumiere(c, l.id) && pasDomo(c));
     const boutons = filaires.filter(estBP);
-    const chaine = pseudoALaFin(parProximite(filaires.filter(c => !estBP(c)), ancre.point));
+    const chaine = pseudoALaFin(filaires.filter(c => !estBP(c)).sort((c1, c2) => rangCommande(ancre, c1) - rangCommande(ancre, c2)));
+    chaine.forEach(c => commandesAlimentees.add(c.id));
     poserBoutons(l, boutons, departBoutons(ancre));
     if (chaine.length === 0) {
       // Aucune commande « en série » : alimentation directe (lampe seule, ou commandée par télérupteur / domotique).
@@ -1475,14 +1495,26 @@ export function construireBranchesCircuitEclairage(
       precedentId = id;
       precedentPoint = boite.point;
     });
-    lumieresLibres.forEach(l => {
+    // Les lampes qui partagent une COMMANDE (un interrupteur à plusieurs lampes, un va-et-vient en chaîne, un télérupteur…) dépendent de la MÊME
+    // boîte : l'alimentation arrive UNE fois à la commande, qui repart ensuite vers chacune de ses lampes. Raccorder chaque lampe à « sa » boîte
+    // la plus proche alimentait la même commande par plusieurs boîtes — un câblage incohérent avec la distribution du courant.
+    const racine = new Map<number, number>(lumieresLibres.map(l => [l.id, l.id] as const));
+    const trouverRacine = (i: number): number => { let r = i; while (racine.get(r) !== r) r = racine.get(r)!; racine.set(i, r); return r; };
+    commandes.filter(pasDomo).forEach(c => {
+      const liees = lumieresLibres.filter(l => commandeCetteLumiere(c, l.id));
+      for (let k = 1; k < liees.length; k++) racine.set(trouverRacine(liees[k].id), trouverRacine(liees[0].id));
+    });
+    const groupesLampes = new Map<number, AppareillagePlace[]>();
+    lumieresLibres.forEach(l => { const r = trouverRacine(l.id); (groupesLampes.get(r) ?? groupesLampes.set(r, []).get(r)!).push(l); });
+    groupesLampes.forEach(groupe => {
+      const centre = groupe.length === 1 ? { x: groupe[0].x, y: groupe[0].y } : centroidePoints(groupe.map(l => ({ x: l.x, y: l.y })));
       let plusProche = boites[0];
-      let meilleureDistance = distance(boites[0].point, l);
+      let meilleureDistance = distance(boites[0].point, centre);
       boites.forEach(boite => {
-        const d = distance(boite.point, l);
+        const d = distance(boite.point, centre);
         if (d < meilleureDistance) { meilleureDistance = d; plusProche = boite; }
       });
-      raccorderLampe(l, { id: `boite-${plusProche.id}`, point: plusProche.point });
+      groupe.forEach(l => raccorderLampe(l, { id: `boite-${plusProche.id}`, point: plusProche.point }));
     });
   }
 
@@ -1519,6 +1551,7 @@ export function construireBranchesCircuitEclairage(
     const pl = { x: l.x, y: l.y };
     const filaires = commandes.filter(c => commandeCetteLumiere(c, l.id) && pasDomo(c));
     const vaEtVient = pseudoALaFin(parProximite(filaires.filter(estVV), pl));
+    filaires.filter(c => !estBP(c)).forEach(c => commandesAlimentees.add(c.id));
     poserBoutons(l, filaires.filter(estBP), relieAuTableau ? { id: "tableau", point: depart } : { id: String(l.id), point: pl });
     vaEtVient.forEach((c, i) => {
       const pc = { x: c.x, y: c.y };
@@ -1549,9 +1582,20 @@ export function construireBranchesCircuitEclairage(
       const dern = vvO[vvO.length - 1];
       poser({ aId: String(dern.id), aPoint: { x: dern.x, y: dern.y }, bId: gaine.id, bPoint: depart, type: "retour" });
     }
+    // Boutons-poussoirs (télérupteur) d'ici dont la lampe est à un autre étage : la ligne de commande monte par la gaine, de bouton en bouton.
+    {
+      let prec = { id: gaine.id, point: depart };
+      parProximite(orphelines.filter(estBP), depart).forEach(c => {
+        const pc = { x: c.x, y: c.y };
+        poser({ aId: prec.id, aPoint: prec.point, bId: String(c.id), bPoint: pc, type: "commande" });
+        prec = { id: String(c.id), point: pc };
+      });
+    }
     parProximite(orphelines.filter(c => !estVV(c) && !estBP(c)), depart).forEach(c => {
       const pc = { x: c.x, y: c.y };
-      poser({ aId: gaine.id, aPoint: depart, bId: String(c.id), bPoint: pc, ...(estDetecteur(c) ? { detecteur: true } : {}) });
+      // Commande DÉJÀ alimentée par le circuit de ce niveau (elle commande aussi une lampe d'ici) : seul le retour monte dans la gaine —
+      // une seconde alimentation depuis la gaine la ferait alimenter deux fois.
+      if (!commandesAlimentees.has(c.id)) poser({ aId: gaine.id, aPoint: depart, bId: String(c.id), bPoint: pc, ...(estDetecteur(c) ? { detecteur: true } : {}) });
       poser({ aId: String(c.id), aPoint: pc, bId: gaine.id, bPoint: depart, type: "retour", ...(estDetecteur(c) ? { detecteur: true } : {}) });
     });
   }
