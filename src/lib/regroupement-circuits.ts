@@ -14,13 +14,15 @@
 //     recherche locale (déplacements + échanges d'appareillages, dissolution du plus petit circuit).
 //  3. On garde la solution qui a le MOINS de circuits, puis le câblage estimé le plus court (arbre couvrant minimal depuis le
 //     tableau) et le moins de pièces coupées entre deux circuits.
-// Les niveaux ne sont jamais mélangés : l'appelant regroupe niveau par niveau.
+// Plusieurs NIVEAUX qui dépendent du même tableau peuvent être regroupés ensemble (un circuit de moins plutôt qu'un circuit par étage) :
+// la distance entre deux points de niveaux différents passe par la gaine (point d'arrivée) de chaque niveau, plus une hauteur d'étage
+// (voir ParamsRegroupement.entreNiveaux). Sans niveauId sur les points, rien ne change : un seul niveau, comme avant.
 
 import type { Point, Piece } from "./maison-types";
 
 export type ClasseZone = 0 | 1 | 2; // 0 = pièces de vie, 1 = garage / annexe couverte, 2 = extérieur
 
-export interface PointZone { x: number; y: number; pieceId: number; classe: ClasseZone; }
+export interface PointZone { x: number; y: number; pieceId: number; classe: ClasseZone; /** Niveau du point (regroupement multi-niveaux) ; absent = niveau unique. */ niveauId?: number; }
 /** Unité indivisible du regroupement : un appareillage, ou plusieurs qui doivent rester ensemble (lampes d'une même commande). */
 export interface Atome { points: PointZone[]; poids: number; }
 
@@ -45,6 +47,10 @@ export interface ParamsRegroupement {
   penaliteScission: number;
   /** Équilibrer : à nombre de circuits égal (le minimum), répartir les points aussi équitablement que possible (7 + 7 plutôt que 12 + 2). */
   equilibrer?: boolean;
+  /** Regroupement MULTI-NIVEAUX : point de passage des gaines de chaque niveau (null = inconnu) et hauteur d'un étage (m, câble vertical compris). */
+  entreNiveaux?: { gaine: (niveauId: number) => Point | null; hauteurEtage: number };
+  /** Distance de chantier d'un point au tableau (m). Par défaut : Manhattan jusqu'à `tableau` ; à fournir en multi-niveaux (passage par la gaine). */
+  distTableau?: (q: PointZone) => number;
 }
 
 export function classeZoneDe(type: Piece["type"] | string | undefined): ClasseZone {
@@ -94,9 +100,32 @@ export function construireContexteZones(pieces: Pick<Piece, "id" | "contour">[])
   return { sauts: (a, b) => (a === b ? 0 : adj.has(a) ? (depuis(a).get(b) ?? -1) : -1), connue: id => adj.has(id) };
 }
 
+/**
+ * Contexte de plusieurs niveaux : les pièces de deux niveaux ne sont JAMAIS voisines (deux étages superposés se chevauchent en
+ * plan sans être contigus) ; le saut entre niveaux est traité dans distPoints (passage par la gaine), pas ici.
+ */
+export function fusionnerContextesZones(parNiveau: { niveauId: number; pieces: Pick<Piece, "id" | "contour">[]; ctx: ContexteZones }[]): ContexteZones {
+  const niveauDe = new Map<number, number>();
+  const ctxDe = new Map<number, ContexteZones>();
+  parNiveau.forEach(n => { ctxDe.set(n.niveauId, n.ctx); n.pieces.filter(p => p.contour.length >= 3).forEach(p => niveauDe.set(p.id, n.niveauId)); });
+  return {
+    sauts: (a, b) => { const na = niveauDe.get(a), nb = niveauDe.get(b); return na == null || na !== nb ? (a === b ? 0 : -1) : ctxDe.get(na)!.sauts(a, b); },
+    connue: id => niveauDe.has(id),
+  };
+}
+
 const PEN_CLASSE: number[][] = [[0, 4, 4], [4, 0, 1.5], [4, 1.5, 0]];
 
-function distPoints(a: PointZone, b: PointZone, ctx: ContexteZones): number {
+const GAINE_INCONNUE_M = 6; // niveau sans point d'arrivée des gaines : trajet moyen jusqu'à la gaine
+
+function distPoints(a: PointZone, b: PointZone, ctx: ContexteZones, entre?: ParamsRegroupement["entreNiveaux"]): number {
+  if (entre && a.niveauId != null && b.niveauId != null && a.niveauId !== b.niveauId) {
+    // Niveaux différents : a → gaine de son niveau, montée / descente, gaine de l'autre niveau → b.
+    const ga = entre.gaine(a.niveauId), gb = entre.gaine(b.niveauId);
+    const da = ga ? Math.abs(a.x - ga.x) + Math.abs(a.y - ga.y) : GAINE_INCONNUE_M;
+    const db = gb ? Math.abs(b.x - gb.x) + Math.abs(b.y - gb.y) : GAINE_INCONNUE_M;
+    return da + db + entre.hauteurEtage + (a.classe !== b.classe ? PEN_CLASSE[a.classe][b.classe] : 0);
+  }
   let d = Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
   if (a.pieceId !== b.pieceId) {
     if (ctx.connue(a.pieceId) && ctx.connue(b.pieceId)) {
@@ -125,8 +154,8 @@ export function regrouper(atomes: Atome[], ctx: ContexteZones, p: ParamsRegroupe
   atomes.forEach(a => { ptsDe.push(a.points.map(q => pts.push(q) - 1)); });
   const nP = pts.length;
   const D = new Float64Array(nP * nP);
-  for (let i = 0; i < nP; i++) for (let j = i + 1; j < nP; j++) { const d = distPoints(pts[i], pts[j], ctx); D[i * nP + j] = d; D[j * nP + i] = d; }
-  const dTab = pts.map(q => (p.tableau ? Math.abs(q.x - p.tableau.x) + Math.abs(q.y - p.tableau.y) : 0));
+  for (let i = 0; i < nP; i++) for (let j = i + 1; j < nP; j++) { const d = distPoints(pts[i], pts[j], ctx, p.entreNiveaux); D[i * nP + j] = d; D[j * nP + i] = d; }
+  const dTab = pts.map(q => (p.distTableau ? p.distTableau(q) : p.tableau ? Math.abs(q.x - p.tableau.x) + Math.abs(q.y - p.tableau.y) : 0));
 
   // distance entre atomes = moyenne des distances entre leurs points
   const dA = new Float64Array(nA * nA);
@@ -163,7 +192,7 @@ export function regrouper(atomes: Atome[], ctx: ContexteZones, p: ParamsRegroupe
       dans[u] = true; mst += dist[u]; if (dist[u] > lien) lien = dist[u];
       for (let i = 0; i < m; i++) if (!dans[i]) { const d = D[idx[u] * nP + idx[i]]; if (d < dist[i]) dist[i] = d; }
     }
-    const res = { cout: mst + (p.tableau ? Math.min(...idx.map(i => dTab[i])) : 0), lien };
+    const res = { cout: mst + (p.tableau || p.distTableau ? Math.min(...idx.map(i => dTab[i])) : 0), lien };
     coutCache.set(cle, res);
     return res;
   };

@@ -18,10 +18,11 @@ import {
   Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone, BoiteDerivation,
   CircuitManuel, familleCircuitManuelAppareillage, couleurCircuit, USAGE_DEDIE_DEFAUT,
   estCommande, estCommandeDouble, estCommandeService, cibleCommandeService, baseCommande, commandeCetteLumiere, estLumiere, lumieresCommandees,
-  SegmentCircuit, origineCircuits, pointBoiteImplicite, uidMaison, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage, ordonnerAncresParProximite, ordonnerBoitesChaine,
+  SegmentCircuit, origineCircuits, estAnnexe, pointBoiteImplicite, uidMaison, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage, ordonnerAncresParProximite, ordonnerBoitesChaine,
 } from "./maison-types";
 import { appareillagesParPieceReelle } from "./piece-reelle";
-import { regrouper, construireContexteZones, classeZoneDe, ContexteZones, PointZone } from "./regroupement-circuits";
+import { typeTroncon } from "./boites-derivation";
+import { regrouper, construireContexteZones, fusionnerContextesZones, classeZoneDe, ContexteZones, PointZone, ParamsRegroupement } from "./regroupement-circuits";
 
 // Appareillages dédiés → 1 circuit par instance (correspondance directe avec CIRCUITS).
 // Le chauffage n'en fait PAS partie : plusieurs radiateurs peuvent partager un circuit
@@ -72,11 +73,12 @@ const LABEL_NON_RACCORDE: Record<string, string> = {
 // ne doivent ni disparaître, ni se dupliquer. Repli sur les noms pour un Breaker sans niveauId (ancien format).
 export function breakersDuNiveau(breakers: Breaker[], niveau: Pick<Niveau, "id" | "pieces">): Breaker[] {
   const noms = new Set(niveau.pieces.map(p => p.nom));
-  // Un circuit d'éclairage peut aussi avoir des membres (lampes ou commandes) sur un AUTRE niveau que le sien : il compte alors
-  // aussi pour ce niveau (câblage de sa partie, métrés), sans jamais être dupliqué dans le tableau.
+  // Un circuit (éclairage, prises, chauffage… — la génération regroupe les appareillages de plusieurs étages sous un même tableau pour ne
+  // pas créer un disjoncteur de plus par étage) peut avoir des membres sur un AUTRE niveau que le sien : il compte alors aussi pour ce
+  // niveau (câblage de sa partie, métrés), sans jamais être dupliqué dans le tableau.
   const idsPresents = new Set(niveau.pieces.flatMap(p => p.appareillages).map(a => a.circuitId).filter((x): x is number => x != null));
   return breakers.filter(b => (b.niveauId != null ? b.niveauId === niveau.id : b.pieces.some(pc => noms.has(pc.nom)))
-    || (b.circuit === "lumiere" && idsPresents.has(b.id)));
+    || idsPresents.has(b.id));
 }
 
 export interface ResultatGeneration {
@@ -114,16 +116,38 @@ function clusteriser<T extends { x: number; y: number }>(items: T[], maxParClust
   return clusters;
 }
 
-interface Item { base: AppareillagePlace; pieceNom: string; piece: Piece; x: number; y: number; }
+interface Item { base: AppareillagePlace; pieceNom: string; piece: Piece; x: number; y: number; niveauId: number; }
 
 // Contexte spatial d'un niveau pour le regroupement par zones (pièces voisines, position du tableau).
-interface ContexteGen { zones: ContexteZones; tableau: Point | null; }
-const pointDe = (it: Item): PointZone => ({ x: it.x, y: it.y, pieceId: it.piece.id, classe: classeZoneDe(it.piece.type) });
+// Un contexte = un TABLEAU : tous les niveaux qui en dépendent (la maison, ou une annexe) sont regroupés ensemble — un circuit n'est jamais
+// doublé juste parce que ses appareillages sont répartis sur deux étages.
+interface ContexteGen {
+  zones: ContexteZones; tableau: Point | null;
+  /** Niveau « principal » d'un circuit : celui qui porte le plus de ses appareillages (à égalité, le premier du tableau) — il nomme et possède le circuit. */
+  principal: (cluster: { niveauId: number }[]) => { id: number; nom: string };
+  /** Regroupement multi-niveaux (absent quand le tableau ne dessert qu'un niveau). */
+  multi?: Pick<ParamsRegroupement, "entreNiveaux" | "distTableau">;
+}
+const pointDe = (it: Item): PointZone => ({ x: it.x, y: it.y, pieceId: it.piece.id, classe: classeZoneDe(it.piece.type), niveauId: it.niveauId });
 // Ordre STABLE des circuits d'une famille : du plus proche du tableau au plus éloigné (numérotation « … 1, 2, 3 » lisible au tableau).
-function ordonnerGroupes<T extends { x: number; y: number }>(groupes: T[][], tableau: Point | null): T[][] {
-  const cle = (gr: T[]) => Math.min(...gr.map(i => (tableau ? Math.abs(i.x - tableau.x) + Math.abs(i.y - tableau.y) : i.x + i.y)));
+function ordonnerGroupes<T extends Item>(groupes: T[][], g: ContexteGen): T[][] {
+  const dist = (i: T) => (g.multi?.distTableau ? g.multi.distTableau(pointDe(i)) : g.tableau ? Math.abs(i.x - g.tableau.x) + Math.abs(i.y - g.tableau.y) : i.x + i.y);
+  const cle = (gr: T[]) => Math.min(...gr.map(dist));
   const xmin = (gr: T[]) => Math.min(...gr.map(i => i.x));
   return [...groupes].sort((a, b) => cle(a) - cle(b) || xmin(a) - xmin(b));
+}
+const paramsRegroupement = (g: ContexteGen, p: Omit<ParamsRegroupement, "tableau">): ParamsRegroupement => ({ ...p, tableau: g.tableau, ...(g.multi ?? {}) });
+
+// Ajoute un circuit au tableau avec un libellé « … <niveau principal> n » UNIQUE (deux niveaux sans nom, ou de même nom, ne produisent jamais
+// deux circuits de même libellé : les données rangées par libellé — boîtes, couleurs, ordre de câblage — se mélangeraient).
+function ajouterBreaker(breakers: Breaker[], compteurs: Record<string, number>, cle: string, niveau: { id: number; nom: string }, fabrique: (idx: number) => Breaker): Breaker {
+  const k = `${cle}|${niveau.id}`;
+  let n = compteurs[k] ?? 0, b: Breaker;
+  do { n++; b = fabrique(n); } while (breakers.some(x => x.label === b.label));
+  compteurs[k] = n;
+  b.niveauId = niveau.id;
+  breakers.push(b);
+  return b;
 }
 
 function breakerFromClusterPrises(cluster: Item[], circuitKey: string, niveauNom: string, idx: number): Breaker {
@@ -183,16 +207,16 @@ function breakerFromClusterChauffage(cluster: Item[], niveauNom: string, idx: nu
   };
 }
 
-function genererBreakersChauffage(items: Item[], niveauNom: string, breakers: Breaker[], g: ContexteGen): void {
+function genererBreakersChauffage(items: Item[], breakers: Breaker[], g: ContexteGen): void {
   if (items.length === 0) return;
   // Regroupement par ZONE jusqu'à 4500 W cumulés (le calibre 16 A / 20 A est choisi ensuite d'après la puissance du groupe) :
   // le moins de circuits possible, sans jamais réunir deux zones éloignées.
   const atomes = items.map(it => ({ points: [pointDe(it)], poids: puissanceChauffage(it) }));
-  const groupes = regrouper(atomes, g.zones, { capacite: PMAX_CHAUFFAGE_20A_W, tableau: g.tableau, penaliteScission: 1.5 });
-  let idx = 1;
-  for (const cluster of ordonnerGroupes(groupes.map(ids => ids.map(i => items[i])), g.tableau)) {
-    const b = breakerFromClusterChauffage(cluster, niveauNom, idx++);
-    breakers.push(b);
+  const groupes = regrouper(atomes, g.zones, paramsRegroupement(g, { capacite: PMAX_CHAUFFAGE_20A_W, penaliteScission: 1.5 }));
+  const compteurs: Record<string, number> = {};
+  for (const cluster of ordonnerGroupes(groupes.map(ids => ids.map(i => items[i])), g)) {
+    const niveau = g.principal(cluster);
+    const b = ajouterBreaker(breakers, compteurs, "chauffage", niveau, idx => breakerFromClusterChauffage(cluster, niveau.nom, idx));
     cluster.forEach(item => { item.base.circuitId = b.id; });
   }
 }
@@ -203,7 +227,7 @@ function genererBreakersChauffage(items: Item[], niveauNom: string, breakers: Br
 // famille (circuitManuelId) et le reste, qui repart dans le clustering spatial
 // automatique habituel. Un circuitManuelId pointant vers un circuit manuel
 // supprimé ou d'une autre famille retombe silencieusement dans l'automatique.
-function genererBreakersPrises(items: Item[], circuitKey: string, niveauNom: string, breakers: Breaker[], g: ContexteGen, penaliteScission = 1.5): void {
+function genererBreakersPrises(items: Item[], circuitKey: string, breakers: Breaker[], g: ContexteGen, penaliteScission = 1.5): void {
   if (items.length === 0) return;
   const max = MAX_PAR_CIRCUIT[circuitKey] ?? 8;
   const atomes = items.map(it => ({ points: [pointDe(it)], poids: 1 }));
@@ -211,13 +235,12 @@ function genererBreakersPrises(items: Item[], circuitKey: string, niveauNom: str
   // (7 + 7 plutôt que 12 + 2) ; un circuit de 8 socles ou moins reste en 16 A / 1,5 mm². Autres familles : leur maximum normatif.
   const visee12 = circuitKey === "prise_16";
   const cap = visee12 ? (MAX_PAR_CIRCUIT.prise_20 ?? 12) : max;
-  const groupes = regrouper(atomes, g.zones, { capacite: cap, tableau: g.tableau, penaliteScission, equilibrer: true });
+  const groupes = regrouper(atomes, g.zones, paramsRegroupement(g, { capacite: cap, penaliteScission, equilibrer: true }));
   const compteurs: Record<string, number> = {};
-  for (const cluster of ordonnerGroupes(groupes.map(ids => ids.map(i => items[i])), g.tableau)) {
+  for (const cluster of ordonnerGroupes(groupes.map(ids => ids.map(i => items[i])), g)) {
     const cle = visee12 && cluster.length > max ? "prise_20" : circuitKey;
-    compteurs[cle] = (compteurs[cle] ?? 0) + 1;
-    const b = breakerFromClusterPrises(cluster, cle, niveauNom, compteurs[cle]);
-    breakers.push(b);
+    const niveau = g.principal(cluster);
+    const b = ajouterBreaker(breakers, compteurs, cle, niveau, idx => breakerFromClusterPrises(cluster, cle, niveau.nom, idx));
     cluster.forEach(item => { item.base.circuitId = b.id; });
   }
 }
@@ -285,19 +308,19 @@ function repartirLumieres<T extends Item>(lumItems: T[], tousItems: Item[], max:
   const blocs: T[][] = [];
   compParRacine.forEach(items => { if (items.length <= max) blocs.push(items); else clusteriser(items, max).forEach(c => blocs.push(c)); });
   const atomes = blocs.map(b => ({ points: b.map(pointDe), poids: b.length }));
-  const groupes = regrouper(atomes, g.zones, { capacite: max, tableau: g.tableau, minCircuits, penaliteScission: 3, equilibrer: true });
-  return ordonnerGroupes(groupes.map(ids => ids.flatMap(i => blocs[i])), g.tableau);
+  const groupes = regrouper(atomes, g.zones, paramsRegroupement(g, { capacite: max, minCircuits, penaliteScission: 3, equilibrer: true }));
+  return ordonnerGroupes(groupes.map(ids => ids.flatMap(i => blocs[i])), g);
 }
 
 function genererBreakersLumiere(
   lumItems: (Item & { typeCommande: CommandeType; nbCommandes: number })[],
-  niveauNom: string, breakers: Breaker[], tousItems: Item[], g: ContexteGen, minCircuits: number,
+  breakers: Breaker[], tousItems: Item[], g: ContexteGen, minCircuits: number,
 ): void {
   const max = MAX_PAR_CIRCUIT.lumiere ?? 8;
-  let idx = 1;
+  const compteurs: Record<string, number> = {};
   for (const cluster of repartirLumieres(lumItems, tousItems, max, g, minCircuits)) {
-    const b = breakerFromClusterLumiere(cluster, niveauNom, idx++);
-    breakers.push(b);
+    const niveau = g.principal(cluster);
+    const b = ajouterBreaker(breakers, compteurs, "lumiere", niveau, idx => breakerFromClusterLumiere(cluster, niveau.nom, idx));
     cluster.forEach(item => { item.base.circuitId = b.id; });
     rattacherRetoursLampe(tousItems, cluster, b.id);
   }
@@ -342,22 +365,12 @@ function breakerFromClusterManuel(cluster: Item[], manuel: CircuitManuel, niveau
   };
 }
 
-function genererBreakersManuels(itemsParManuel: Map<number, Item[]>, manuels: CircuitManuel[], niveauNom: string, breakers: Breaker[], tousItems: Item[]): void {
-  itemsParManuel.forEach((cluster, manuelId) => {
-    const manuel = manuels.find(m => m.id === manuelId);
-    if (!manuel || cluster.length === 0) return;
-    const b = breakerFromClusterManuel(cluster, manuel, niveauNom, tousItems);
-    breakers.push(b);
-    cluster.forEach(item => { item.base.circuitId = b.id; });
-    rattacherRetoursLampe(tousItems, cluster, b.id);
-  });
-}
-
 /**
  * Génère les circuits (Breaker[]) d'un logement complet à partir des positions
  * réelles des appareillages placés sur le plan. Règles :
- *  - Un circuit ne mélange jamais deux niveaux (frontière naturelle de
- *    regroupement — hypothèse de conception, pas une règle NFC).
+ *  - Les niveaux qui dépendent d'un même tableau (la maison, ou une annexe) sont
+ *    regroupés ENSEMBLE : un circuit peut desservir deux étages (le moins de
+ *    disjoncteurs possible), le regroupement mesurant le trajet par la gaine.
  *  - Les circuits MANUELS sont traités en premier : un appareillage rattaché à un
  *    circuit manuel (n'importe quel type — voir CircuitManuelForm, page.tsx) forme
  *    UN breaker avec exactement ses membres choisis, jamais scindé ni recomposé, et
@@ -386,30 +399,23 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     ...n,
     pieces: n.pieces.map(p => ({ ...p, appareillages: p.appareillages.map(a => ({ ...a, circuitId: undefined })) })),
   }));
+  const niveauParId = new Map(niveaux.map(n => [n.id, n] as const));
 
   // Tous les appareillages de la maison (tous niveaux) : une commande peut piloter un point lumineux d'un autre
   // étage (va-et-vient entre rez-de-chaussée et étage) — la déduction du type de commande doit donc la voir.
   // Pièce RÉELLE de chaque appareillage (voir piece-reelle.ts) : une prise posée dehors contre le mur des WC n'est pas « aux WC ».
   const reellesParNiveau = new Map(niveaux.map(n => [n.id, appareillagesParPieceReelle(n)] as const));
   const itemsMaison: Item[] = niveaux.flatMap(n => n.pieces.flatMap(piece =>
-    piece.appareillages.map(a => { const r = reellesParNiveau.get(n.id)!.vers.get(a.id) ?? piece; return { base: a, pieceNom: r.nom, piece: r, x: a.x, y: a.y } as Item; })));
+    piece.appareillages.map(a => { const r = reellesParNiveau.get(n.id)!.vers.get(a.id) ?? piece; return { base: a, pieceNom: r.nom, piece: r, x: a.x, y: a.y, niveauId: n.id } as Item; })));
 
-  // Données du LOGEMENT pour la règle « au moins 2 circuits d'éclairage au-dessus de 35 m² » (NF C 15-100) : elle ne s'applique
-  // que si un seul niveau porte de l'éclairage (sinon chaque niveau a déjà son circuit).
+  // Données du LOGEMENT pour la règle « au moins 2 circuits d'éclairage au-dessus de 35 m² » (NF C 15-100).
   const surfaceLogement = niveaux.filter(n => n.type !== "annexe" && n.type !== "garage")
     .reduce((s, n) => s + n.pieces.filter(p => p.type !== "exterieur" && p.type !== "garage").reduce((s2, p) => s2 + aireDuPolygone(p.contour), 0), 0);
-  const niveauxEclaires = niveaux.filter(n => n.pieces.some(p => p.appareillages.some(a => estLumiere(a.type)))).length;
 
-  let plafondId = -1;   // plus grand id déjà pris dans le plan (calculé à la demande, voir « boîte de dérivation systématique »)
-  for (const niveau of niveaux) {
-    const debutBreakersNiveau = breakers.length;
-    const tousItems: Item[] = [];
-    const reelles = reellesParNiveau.get(niveau.id)!;
-    niveau.pieces.forEach(piece => {
-      piece.appareillages.forEach(a => { const r = reelles.vers.get(a.id) ?? piece; tousItems.push({ base: a, pieceNom: r.nom, piece: r, x: a.x, y: a.y }); });
-    });
-    // Contrôles par pièce (minimum de prises, chauffage) : sur les appareillages RÉELLEMENT dans la pièce.
-    [...reelles.pieces.values()].forEach(({ piece, apps }) => {
+  // ─── Contrôles par pièce (minimum de prises, chauffage) ────────────────────────────────────────────────
+  niveaux.forEach(niveau => {
+    // Sur les appareillages RÉELLEMENT dans la pièce.
+    [...reellesParNiveau.get(niveau.id)!.pieces.values()].forEach(({ piece, apps }) => {
       const nbPrises = apps.filter(a => a.type === "prise" || a.type === "prise_commandee").length;
       const minFn = MIN_PRISES_PIECE[piece.type] ?? MIN_PRISES_PIECE.autre;
       const minReq = minFn(aireDuPolygone(piece.contour));
@@ -426,51 +432,86 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
         alertes.push(`"${piece.nom || piece.type}" (${niveau.nom}) : chauffage sans puissance renseignée — regroupement basé sur ${PUISSANCE_CHAUFFAGE_DEFAUT_W} W par défaut, à vérifier (calibre limité à 3500 W en 16A ou 4500 W en 20A, NF C 15-100 amdt A5). Correction : sélectionne le radiateur et renseigne sa puissance (W) dans son panneau, puis régénère les circuits.`);
       });
     });
+  });
 
-    // ─── Circuits manuels d'abord : ils retirent leurs membres du pool automatique ────
-    // Un appareillage rattaché à un circuit manuel EXISTANT (circuitManuelId valide sur ce
-    // niveau) n'entre dans AUCUNE classification automatique ci-dessous, quel que soit son
-    // type — c'est tout le sens de "la main libre" : l'utilisateur décide, la génération
-    // automatique ne revient jamais dessus. Un circuitManuelId pointant vers un circuit
-    // supprimé retombe silencieusement dans l'automatique (comportement inchangé).
-    const manuels = niveau.circuitsManuels ?? [];
-    const idsManuelsValides = new Set(manuels.map(m => m.id));
-    const itemsParManuel = new Map<number, Item[]>();
-    const reste: Item[] = [];
-    // Circuit d'éclairage manuel réparti sur plusieurs étages : le circuit est défini sur UN niveau (CircuitManuel), ses membres
-    // des autres niveaux y sont rattachés ici ; sur leur propre niveau ils n'entrent dans aucune classification automatique.
-    const idsManuelsAilleurs = new Set(niveaux.filter(n => n.id !== niveau.id).flatMap(n => (n.circuitsManuels ?? []).map(m => m.id)));
-    tousItems.forEach(item => {
-      const mid = item.base.circuitManuelId;
-      if (mid != null && idsManuelsValides.has(mid)) {
-        const arr = itemsParManuel.get(mid) ?? [];
-        arr.push(item);
-        itemsParManuel.set(mid, arr);
-      } else if (mid != null && idsManuelsAilleurs.has(mid)) {
-        // membre d'un circuit défini sur un autre niveau : pris en charge par ce niveau-là
-      } else {
-        reste.push(item);
-      }
+  // ─── Circuits manuels : ils retirent leurs membres du pool automatique ─────────────────────────────────
+  // Un appareillage rattaché à un circuit manuel EXISTANT (circuitManuelId défini sur n'importe quel niveau) n'entre dans AUCUNE classification
+  // automatique, quel que soit son type ni son niveau — c'est tout le sens de "la main libre" : l'utilisateur décide, la génération automatique ne
+  // revient jamais dessus. Le circuit est défini sur UN niveau (CircuitManuel) ; ses membres des autres niveaux (de toute famille, pas seulement
+  // l'éclairage) y sont rattachés. Un circuitManuelId pointant vers un circuit supprimé retombe dans l'automatique.
+  const manuelsConnus = new Set(niveaux.flatMap(n => (n.circuitsManuels ?? []).map(m => m.id)));
+  const itemsParManuel = new Map<number, Item[]>();
+  itemsMaison.forEach(it => {
+    const mid = it.base.circuitManuelId;
+    if (mid != null && manuelsConnus.has(mid)) (itemsParManuel.get(mid) ?? itemsParManuel.set(mid, []).get(mid)!).push(it);
+  });
+  // Exclusions explicites (Niveau.appareillagesExclus) : un appareillage exclu (un membre non recliqué en redessinant le cheminement d'un circuit
+  // AUTOMATIQUE) ne rejoint plus AUCUN pool automatique ; il reste sans circuit (garde-fou « sans circuit assigné » plus bas) tant qu'il n'est
+  // pas réinclus ou assigné à un circuit manuel.
+  const idsExclus = new Set(niveaux.flatMap(n => n.appareillagesExclus ?? []));
+  const traites = new Set<number>();   // appareillages passés par la classification automatique (base du filet de sécurité)
+
+  // ─── Un TABLEAU = un contexte de génération ──────────────────────────────────────────────────────────────
+  // La maison (tous ses niveaux) dépend d'un seul tableau ; chaque annexe a le sien. Les appareillages de TOUS les niveaux d'un même tableau sont
+  // regroupés ensemble : trois prises au rez-de-chaussée et deux à l'étage tiennent dans UN circuit (8 socles maxi), pas deux. Le regroupement
+  // mesure la distance par la gaine entre deux niveaux (voir regroupement-circuits.ts) et ne mélange jamais deux niveaux sans y gagner un circuit.
+  const groupes = new Map<string, Niveau[]>();
+  niveaux.forEach(n => {
+    const cle = estAnnexe(n) ? `annexe:${n.tableauId ?? n.id}` : "maison";
+    (groupes.get(cle) ?? groupes.set(cle, []).get(cle)!).push(n);
+  });
+
+  groupes.forEach((nivG, cleGroupe) => {
+    const estMaison = cleGroupe === "maison";
+    const idsG = new Set(nivG.map(n => n.id));
+    const tousItems = itemsMaison.filter(it => idsG.has(it.niveauId));
+    const niveauTableau = nivG.find(n => n.tableauPos) ?? nivG[0];
+    const tableau = niveauTableau.tableauPos ?? null;
+    const manh = (p: Point, q: Point) => Math.abs(p.x - q.x) + Math.abs(p.y - q.y);
+    const HAUTEUR_ETAGE_M = 3, GAINE_INCONNUE_M = 6;
+    const gen: ContexteGen = {
+      zones: nivG.length > 1
+        ? fusionnerContextesZones(nivG.map(n => ({ niveauId: n.id, pieces: n.pieces, ctx: construireContexteZones(n.pieces) })))
+        : construireContexteZones(nivG[0].pieces),
+      tableau,
+      principal: cluster => {
+        const nb = new Map<number, number>();
+        cluster.forEach(it => nb.set(it.niveauId, (nb.get(it.niveauId) ?? 0) + 1));
+        let best = nivG[0], bn = -1;
+        nivG.forEach(n => { const c = nb.get(n.id) ?? 0; if (c > bn) { bn = c; best = n; } });
+        return best;
+      },
+      multi: nivG.length > 1 ? {
+        entreNiveaux: { gaine: id => { const n = niveauParId.get(id); return n ? origineCircuits(n) ?? null : null; }, hauteurEtage: HAUTEUR_ETAGE_M },
+        distTableau: q => {
+          const n = q.niveauId != null ? niveauParId.get(q.niveauId) : undefined;
+          if (!n || n.id === niveauTableau.id) return tableau ? manh(q, tableau) : 0;
+          const g = origineCircuits(n);
+          return (g ? manh(q, g) : GAINE_INCONNUE_M) + (n.distanceArriveeGainesTableau ?? HAUTEUR_ETAGE_M);
+        },
+      } : undefined,
+    };
+
+    // Circuits manuels définis sur les niveaux de ce tableau (membres pris sur toute la maison).
+    nivG.forEach(niveau => {
+      (niveau.circuitsManuels ?? []).forEach(m => {
+        const cluster = itemsParManuel.get(m.id);
+        if (!cluster || cluster.length === 0) return;
+        const b = breakerFromClusterManuel(cluster, m, niveau.nom, itemsMaison);
+        b.niveauId = niveau.id;
+        breakers.push(b);
+        cluster.forEach(item => { item.base.circuitId = b.id; });
+        rattacherRetoursLampe(itemsMaison, cluster, b.id);
+      });
     });
-    manuels.forEach(m => {
-      if (m.famille !== "lumiere") return;
-      const exterieurs = itemsMaison.filter(it => it.base.circuitManuelId === m.id && !tousItems.some(t => t.base.id === it.base.id));
-      if (exterieurs.length > 0) itemsParManuel.set(m.id, [...(itemsParManuel.get(m.id) ?? []), ...exterieurs]);
+
+    // ─── Reste : classification automatique habituelle (prises/cuisine/extérieur/éclairage/chauffage/dédiés), inchangée à ceci près
+    // qu'elle ne porte que sur les appareillages qu'aucun circuit manuel n'a déjà pris en charge ET qui ne sont pas explicitement exclus.
+    const resteApresExclusion = tousItems.filter(a => {
+      const mid = a.base.circuitManuelId;
+      return !(mid != null && manuelsConnus.has(mid)) && !idsExclus.has(a.base.id);
     });
-    genererBreakersManuels(itemsParManuel, manuels, niveau.nom, breakers, itemsMaison);
-
-    // ─── Exclusions explicites (Niveau.appareillagesExclus) ────────────────────────
-    // Un appareillage exclu (voir terminerDessinCheminement, page.tsx — un membre non
-    // recliqué en redessinant le cheminement d'un circuit AUTOMATIQUE) ne rejoint plus
-    // AUCUN pool automatique : il reste sans circuitId (non raccordé, voir le garde-fou
-    // plus bas) tant qu'il n'est pas explicitement réinclus ou assigné à un circuit manuel.
-    const idsExclus = new Set(niveau.appareillagesExclus ?? []);
-    const resteApresExclusion = reste.filter(a => !idsExclus.has(a.base.id));
-
-    // ─── Reste : classification automatique habituelle (prises/cuisine/extérieur/────
-    // éclairage/chauffage/dédiés), inchangée à ceci près qu'elle ne porte plus que sur les
-    // appareillages qu'aucun circuit manuel n'a déjà pris en charge, ET qui ne sont pas
-    // explicitement exclus.
+    resteApresExclusion.forEach(a => traites.add(a.base.id));
     const prisesStandard = resteApresExclusion.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "prise_16");
     const prisesCuisine = resteApresExclusion.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "cuisine_prises");
     const prisesExtGarage = resteApresExclusion.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "exterieur");
@@ -479,23 +520,23 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     const volets = resteApresExclusion.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "volets_roulants");
     const dedies = resteApresExclusion.filter(a => !!cleCircuitDedie(a.base));
 
-    // Contexte spatial du niveau : pièces voisines (mur mitoyen) et position du tableau. Un niveau n'est JAMAIS regroupé avec un autre.
-    const gen: ContexteGen = { zones: construireContexteZones(niveau.pieces), tableau: niveau.tableauPos ?? null };
-    genererBreakersPrises(prisesStandard, "prise_16", niveau.nom, breakers, gen);
-    genererBreakersPrises(prisesCuisine, "cuisine_prises", niveau.nom, breakers, gen);
-    genererBreakersPrises(prisesExtGarage, "exterieur", niveau.nom, breakers, gen);
-    genererBreakersChauffage(chauffages, niveau.nom, breakers, gen);
-    genererBreakersPrises(volets, "volets_roulants", niveau.nom, breakers, gen, 1);
+    genererBreakersPrises(prisesStandard, "prise_16", breakers, gen);
+    genererBreakersPrises(prisesCuisine, "cuisine_prises", breakers, gen);
+    genererBreakersPrises(prisesExtGarage, "exterieur", breakers, gen);
+    genererBreakersChauffage(chauffages, breakers, gen);
+    genererBreakersPrises(volets, "volets_roulants", breakers, gen, 1);
 
-    // Éclairage : déduction de la commande depuis les interrupteurs/va-et-vient/télérupteurs liés
+    // Éclairage : déduction de la commande depuis les interrupteurs/va-et-vient/télérupteurs liés. Les lampes d'un même tableau sont
+    // réparties ENSEMBLE (tous niveaux) : une commande qui pilote des lampes de deux étages garde toutes ses lampes dans le même circuit.
     const lumItems = pointsLumineux.map(pl => ({ ...pl, ...deduireCommandeLumiere(itemsMaison, pl.base.id) }));
-    const minEclairage = surfaceLogement > 35 && niveauxEclaires === 1 && lumItems.length >= 2 ? 2 : 1;
-    genererBreakersLumiere(lumItems, niveau.nom, breakers, itemsMaison, gen, minEclairage);
+    const minEclairage = estMaison && surfaceLogement > 35 && lumItems.length >= 2 ? 2 : 1;
+    genererBreakersLumiere(lumItems, breakers, itemsMaison, gen, minEclairage);
 
     // Appareils dédiés : un circuit par instance
     dedies.forEach(item => {
       const circuitKey = cleCircuitDedie(item.base)!;
       const spec = CIRCUITS[circuitKey];
+      const niveau = niveauParId.get(item.niveauId)!;
       // Deux appareils dédiés de même type dans la même pièce (2 clims au salon…) auraient le MÊME libellé : le plan, le pré-devis
       // (longueurs de câble, métrage) et les noms personnalisés les confondaient en un seul circuit. Le 2ᵉ devient « … n°2 », etc.
       const libelleBase = `${spec.label} — ${item.pieceNom || niveau.nom}`;
@@ -505,6 +546,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
         id: uid(), label: libelle, circuit: circuitKey,
         amperes: spec.ampMax, type: "1P", customSection: spec.section ?? "2.5",
         pieces: [{ nom: item.pieceNom, nbPrises: 1, groupes: [{ nbPoints: 1, typeCommande: "simple", nbCommandes: 1 }] }],
+        niveauId: niveau.id,
       };
       breakers.push(b);
       item.base.circuitId = b.id;
@@ -512,47 +554,75 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
 
     // Prises RJ45 : UN circuit (de communication) par prise — une plaque « prise + RJ45 » donne donc deux circuits :
     // le circuit de puissance de la prise et le câble RJ45. Sans disjoncteur (voir CIRCUIT_COMMUNICATION).
-    let nRj45 = 0;
-    const courantsFaibles = resteApresExclusion.filter(a => a.base.type === "rj45" || a.base.type === "prise_tv");
-    const nbRj45Niveau = courantsFaibles.length;
-    courantsFaibles.forEach(item => {
-      nRj45++;
-      const spec = CIRCUITS[CIRCUIT_COMMUNICATION];
-      const nomCircuit = item.base.type === "prise_tv" ? "Antenne TV (coaxial)" : spec.label;
-      const b: Breaker = {
-        id: uid(), label: `${nomCircuit} ${nbRj45Niveau > 1 ? `n°${nRj45} ` : ""}— ${item.pieceNom || niveau.nom}`, circuit: CIRCUIT_COMMUNICATION,
-        amperes: 0, type: "1P",
-        pieces: [{ nom: item.pieceNom, nbPrises: 1, groupes: [] }],
-      };
-      breakers.push(b);
-      item.base.circuitId = b.id;
+    nivG.forEach(niveau => {
+      let nRj45 = 0;
+      const courantsFaibles = resteApresExclusion.filter(a => a.niveauId === niveau.id && (a.base.type === "rj45" || a.base.type === "prise_tv"));
+      const nbRj45Niveau = courantsFaibles.length;
+      courantsFaibles.forEach(item => {
+        nRj45++;
+        const spec = CIRCUITS[CIRCUIT_COMMUNICATION];
+        const nomCircuit = item.base.type === "prise_tv" ? "Antenne TV (coaxial)" : spec.label;
+        let libelle = `${nomCircuit} ${nbRj45Niveau > 1 ? `n°${nRj45} ` : ""}— ${item.pieceNom || niveau.nom}`;
+        for (let k = 2; breakers.some(x => x.label === libelle); k++) libelle = `${nomCircuit} n°${nRj45}.${k} — ${item.pieceNom || niveau.nom}`;
+        const b: Breaker = {
+          id: uid(), label: libelle, circuit: CIRCUIT_COMMUNICATION,
+          amperes: 0, type: "1P",
+          pieces: [{ nom: item.pieceNom, nbPrises: 1, groupes: [] }],
+          niveauId: niveau.id,
+        };
+        breakers.push(b);
+        item.base.circuitId = b.id;
+      });
     });
 
     // ─── Commandes de service (interrupteur de volet roulant / de VMC) ─────────────────────────────────────────────
     // Elles se rattachent au circuit de l'appareil qu'elles pilotent : le volet roulant (circuit volets) ou la VMC (circuit dédié) le
-    // plus proche — de préférence dans la même pièce. Elles sont câblées avec ce circuit mais ne comptent JAMAIS dans son nombre de
-    // moteurs / d'appareils (NF C 15-100 : un circuit « volets » se limite au nombre de moteurs, pas aux interrupteurs).
+    // plus proche — de préférence dans la même pièce, puis le même niveau. Elles sont câblées avec ce circuit mais ne comptent JAMAIS dans
+    // son nombre de moteurs / d'appareils (NF C 15-100 : un circuit « volets » se limite au nombre de moteurs, pas aux interrupteurs).
     resteApresExclusion.filter(a => estCommandeService(a.base.type)).forEach(cmd => {
       const cibleType = cibleCommandeService(cmd.base.type);
       let meilleur: Item | null = null, md = Infinity;
       // Cibles choisies à la main (cibleServiceIds) : elles priment ; sans lien valide, on retombe sur l'appareil le plus proche.
       const choisies = new Set(cmd.base.cibleServiceIds ?? []);
-      const liees = choisies.size > 0 && tousItems.some(t => choisies.has(t.base.id) && t.base.type === cibleType && t.base.circuitId != null);
-      tousItems.forEach(t => {
+      const liees = choisies.size > 0 && itemsMaison.some(t => choisies.has(t.base.id) && t.base.type === cibleType && t.base.circuitId != null);
+      itemsMaison.forEach(t => {
         if (t.base.type !== cibleType || t.base.circuitId == null) return;
         if (liees && !choisies.has(t.base.id)) return;
-        const d = Math.abs(t.x - cmd.x) + Math.abs(t.y - cmd.y) + (t.piece.id === cmd.piece.id ? 0 : 3);
+        const d = Math.abs(t.x - cmd.x) + Math.abs(t.y - cmd.y) + (t.piece.id === cmd.piece.id ? 0 : 3) + (t.niveauId === cmd.niveauId ? 0 : 100);
         if (d < md) { md = d; meilleur = t; }
       });
       const cible = meilleur as Item | null;
       if (cible) cmd.base.circuitId = cible.base.circuitId;
     });
+  });
 
-    // ─── Garde-fou : tout appareillage encore sans circuit après tout ce qui précède ──
-    // (typiquement un interrupteur/va-et-vient/télérupteur dont la commande ne pointe vers
-    // aucun point lumineux raccordé, ou un appareillage explicitement exclu — voir
-    // Niveau.appareillagesExclus) reste invisible sur le tracé — sans alerte, l'absence
-    // passe facilement inaperçue.
+  // ─── Filet de sécurité : AUCUN appareillage ne reste sans circuit faute de famille connue ──────────────────
+  // Tout appareillage passé par la classification automatique qui n'a trouvé aucun circuit (hors courants faibles et commandes, qui se
+  // rattachent à une lampe) reçoit un circuit « Autre » à son nom, avec une alerte : mieux vaut un circuit à vérifier qu'un appareil oublié.
+  itemsMaison.forEach(it => {
+    const a = it.base;
+    if (a.circuitId != null || !traites.has(a.id) || TYPES_SANS_CIRCUIT.includes(a.type) || estCommande(a.type) || estCommandeService(a.type)) return;
+    const spec = CIRCUITS.autre;
+    const niveau = niveauParId.get(it.niveauId)!;
+    const base = `${spec.label} — ${LABEL_NON_RACCORDE[a.type] ?? a.type} ${it.pieceNom || niveau.nom}`;
+    let libelle = base;
+    for (let k = 2; breakers.some(x => x.label === libelle); k++) libelle = `${base} n°${k}`;
+    const b: Breaker = {
+      id: uid(), label: libelle, circuit: "autre", amperes: spec.ampMax, type: "1P", customSection: spec.section ?? "2.5", niveauId: niveau.id,
+      pieces: [{ nom: it.pieceNom, nbPrises: 1, groupes: [{ nbPoints: 1, typeCommande: "simple", nbCommandes: 1 }] }],
+    };
+    breakers.push(b);
+    a.circuitId = b.id;
+    alertes.push(`"${it.pieceNom || niveau.nom}" (${niveau.nom}) : ${LABEL_NON_RACCORDE[a.type] ?? a.type} sans famille de circuit connue — circuit « Autre » créé pour ne pas l'oublier. Correction : vérifie le type de cet appareillage, ou rattache-le à un circuit manuel.`);
+  });
+
+  // ─── Garde-fou : tout appareillage encore sans circuit après tout ce qui précède ──
+  // (typiquement un interrupteur/va-et-vient/télérupteur dont la commande ne pointe vers
+  // aucun point lumineux raccordé, ou un appareillage explicitement exclu — voir
+  // Niveau.appareillagesExclus) reste invisible sur le tracé — sans alerte, l'absence
+  // passe facilement inaperçue. Passé APRÈS tous les niveaux : une commande d'un étage rattachée à la lampe d'un autre étage reçoit son
+  // circuit en traitant ce dernier — la contrôler plus tôt donnait de fausses alertes.
+  niveaux.forEach(niveau => {
     niveau.pieces.forEach(piece => {
       piece.appareillages.forEach(a => {
         if (a.circuitId == null && !TYPES_SANS_CIRCUIT.includes(a.type)) {
@@ -561,14 +631,16 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
         }
       });
     });
+  });
 
-    // ─── Garde-fou : cheminement dessiné à la main incomplet SUR UN CIRCUIT MANUEL ──
-    // Un circuit AUTOMATIQUE oublié au clic exclut désormais explicitement l'appareillage
-    // (voir Niveau.appareillagesExclus et le garde-fou "non raccordé" ci-dessus) — cette
-    // alerte-ci ne concerne donc que les circuits MANUELS, où un membre non recliqué en
-    // redessinant reste rattaché au même circuit (voir sequenceAncresCircuitOrdonnee,
-    // maison-types.ts) : sans elle, on pourrait croire avoir redessiné tout le câblage à la
-    // main alors qu'un membre suit en réalité un placement automatique par proximité.
+  // ─── Garde-fou : cheminement dessiné à la main incomplet SUR UN CIRCUIT MANUEL ──
+  // Un circuit AUTOMATIQUE oublié au clic exclut désormais explicitement l'appareillage
+  // (voir Niveau.appareillagesExclus et le garde-fou "non raccordé" ci-dessus) — cette
+  // alerte-ci ne concerne donc que les circuits MANUELS, où un membre non recliqué en
+  // redessinant reste rattaché au même circuit (voir sequenceAncresCircuitOrdonnee,
+  // maison-types.ts) : sans elle, on pourrait croire avoir redessiné tout le câblage à la
+  // main alors qu'un membre suit en réalité un placement automatique par proximité.
+  niveaux.forEach(niveau => {
     Object.entries(niveau.ordresCircuits ?? {}).forEach(([label, ordre]) => {
       const breaker = breakers.find(b => b.label === label);
       if (!breaker || breaker.manuelId == null) return; // pas de circuit manuel à ce label — rien à signaler ici
@@ -578,31 +650,31 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
         alertes.push(`"${label}" (${niveau.nom}) : cheminement redessiné incomplet — ${oublies.length} appareillage(s) non cliqué(s), resté(s) sur ce circuit en fin de tracé par proximité. Correction : repasse en mode cheminement et clique les appareillages manquants dans l'ordre du câble.`);
       }
     });
+  });
 
-    // ─── Boîte de dérivation SYSTÉMATIQUE sur chaque circuit d'éclairage (≥ 2 lampes) ──────────────────────────────────
-    // Le câble d'alimentation arrive du tableau dans UNE boîte, qui le divise en autant de départs que nécessaire (un par
-    // commande / lampe). Avant, cette boîte n'était qu'implicite : sa position se recalculait à chaque tracé, et les coudes figés
-    // d'un circuit (clés « tableau->boite », « boite->lampe », communes à TOUS les circuits) se retrouvaient appliqués à un autre
-    // → tracés en zigzag. Une boîte réelle (id propre) rend le tracé stable, visible et déplaçable.
-    //  · une boîte déjà posée sur ce circuit est conservée (posée à la main, ou d'une génération précédente) ;
-    //  · sur un circuit AUTOMATIQUE, une boîte restée de l'ancien circuit de même nom et désormais à plus de 12 m de toutes ses lampes
-    //    est abandonnée (le circuit a changé de zone), avec les coudes figés qui s'y rattachaient ;
-    //  · circuits verrouillés et circuits manuels : jamais touchés, seulement complétés d'une boîte s'ils n'en ont aucune.
-    {
+  // ─── Boîte de dérivation SYSTÉMATIQUE sur chaque circuit d'éclairage (≥ 2 lampes) ──────────────────────────────────
+  // Le câble d'alimentation arrive du tableau dans UNE boîte, qui le divise en autant de départs que nécessaire (un par
+  // commande / lampe). Avant, cette boîte n'était qu'implicite : sa position se recalculait à chaque tracé, et les coudes figés
+  // d'un circuit (clés « tableau->boite », « boite->lampe », communes à TOUS les circuits) se retrouvaient appliqués à un autre
+  // → tracés en zigzag. Une boîte réelle (id propre) rend le tracé stable, visible et déplaçable.
+  //  · une boîte déjà posée sur ce circuit est conservée (posée à la main, ou d'une génération précédente) ;
+  //  · sur un circuit AUTOMATIQUE, une boîte restée de l'ancien circuit de même nom et désormais à plus de 12 m de toutes ses lampes
+  //    est abandonnée (le circuit a changé de zone), avec les coudes figés qui s'y rattachaient ;
+  //  · circuits verrouillés et circuits manuels : jamais touchés, seulement complétés d'une boîte s'ils n'en ont aucune.
+  //  · un circuit réparti sur plusieurs étages a SA boîte sur chaque étage où il porte des lampes (le câble monte par la gaine).
+  {
+    // Id neuf JAMAIS égal à celui d'un appareillage, d'une pièce ou d'une autre boîte (le compteur peut ne pas avoir été réamorcé ici).
+    let plafondId = 0;
+    niveaux.forEach(n => {
+      n.pieces.forEach(pc => { plafondId = Math.max(plafondId, pc.id, ...pc.appareillages.map(a => Math.max(a.id, a.groupeId ?? 0))); });
+      Object.values(n.boitesDerivation ?? {}).forEach(l => l.forEach(bo => { plafondId = Math.max(plafondId, bo.id); }));
+    });
+    const idBoiteNeuf = (): number => { plafondId = Math.max(uidMaison(), plafondId + 1); return plafondId; };
+    niveaux.forEach(niveau => {
       const origine = origineCircuits(niveau);
       const verrous = new Set(niveau.circuitsVerrouilles ?? []);
-      // Id neuf JAMAIS égal à celui d'un appareillage, d'une pièce ou d'une autre boîte (le compteur peut ne pas avoir été réamorcé ici).
-      if (plafondId < 0) {
-        plafondId = 0;
-        niveaux.forEach(n => {
-          n.pieces.forEach(pc => { plafondId = Math.max(plafondId, pc.id, ...pc.appareillages.map(a => Math.max(a.id, a.groupeId ?? 0))); });
-          Object.values(n.boitesDerivation ?? {}).forEach(l => l.forEach(bo => { plafondId = Math.max(plafondId, bo.id); }));
-        });
-      }
-      const idBoiteNeuf = (): number => { plafondId = Math.max(uidMaison(), plafondId + 1); return plafondId; };
       const toutesApps = niveau.pieces.flatMap(p => p.appareillages);
-      for (let i = debutBreakersNiveau; i < breakers.length; i++) {
-        const b = breakers[i];
+      for (const b of breakers) {
         if (b.circuit !== "lumiere" || verrous.has(b.label)) continue;
         const lampes = toutesApps.filter(a => a.circuitId === b.id && estLumiere(a.type));
         if (lampes.length === 0) continue;
@@ -622,11 +694,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
           niveau.liaisonWaypoints = Object.fromEntries(Object.entries(niveau.liaisonWaypoints).filter(([cle]) => !morts.some(m => cle.startsWith(m)) && !mortsB.some(m => cle.endsWith(m))));
         }
       }
-    }
-
-    // Marque chaque circuit créé pour ce niveau : sert à le router vers le bon tableau
-    // (principal ou annexe) au moment du "Pousser" — voir Niveau.tableauId.
-    for (let i = debutBreakersNiveau; i < breakers.length; i++) breakers[i].niveauId = niveau.id;
+    });
   }
 
   // Éclairage sur plusieurs étages : repère, pour chaque circuit, les lampes commandées depuis un autre niveau et les commandes
@@ -667,7 +735,8 @@ export function construireColorMap(resultat: ResultatGeneration, niveauxVivants?
     const niveau = niveauxVivants?.find(n => n.id === niveauResultat.id) ?? niveauResultat;
     const breakersNiveau = breakersDuNiveau(resultat.breakers, niveauResultat);
     breakersNiveau.forEach(b => {
-      if (map.has(b.id)) return; // circuit d'éclairage déjà vu sur le niveau de sa lampe (membres sur plusieurs étages)
+      if (map.has(b.id)) return; // circuit déjà vu (membres sur plusieurs étages)
+      if (b.niveauId != null && b.niveauId !== niveauResultat.id) return; // sa couleur / son nom vivent sur le niveau qui le possède
       const manuel = b.manuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === b.manuelId) : undefined;
       const couleur = niveau.couleursCircuits?.[b.label] ?? manuel?.couleur ?? couleurCircuit(compteur);
       map.set(b.id, couleur);
@@ -810,7 +879,18 @@ function insererBoitesSurTroncons(segments: SegmentCircuit[], enLigne: BoiteDeri
   enLigne.forEach(bo => {
     if (res.length === 0) return;
     const ss = bo.surSegment;
-    let idx = ss ? res.findIndex(s => (s.aId === ss.a && s.bId === ss.b) || (s.aId === ss.b && s.bId === ss.a)) : -1;
+    // Le tronçon désigné : mêmes extrémités ET même genre (alimentation, navette, retour, commande) — deux câbles peuvent relier les mêmes
+    // appareils (alimenter une commande, puis son retour vers la lampe) et la boîte se posait sur le premier venu. Du plus précis au plus lâche.
+    let idx = -1;
+    if (ss) {
+      const sens = (s: SegmentCircuit) => s.aId === ss.a && s.bId === ss.b;
+      const inverse = (s: SegmentCircuit) => s.aId === ss.b && s.bId === ss.a;
+      const genre = (s: SegmentCircuit) => ss.type == null || typeTroncon(s) === ss.type;
+      for (const ok of [(s: SegmentCircuit) => sens(s) && genre(s), (s: SegmentCircuit) => inverse(s) && genre(s), sens, inverse]) {
+        idx = res.findIndex(ok);
+        if (idx >= 0) break;
+      }
+    }
     if (idx < 0) {
       let best = Infinity;
       const moi = `boite-${bo.id}`;
