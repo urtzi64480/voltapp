@@ -320,6 +320,7 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail, onCatalogueAjo
           <p className="text-sm font-medium text-ink-900">{besoin.label}</p>
           <p className="text-xs text-ink-400">{besoin.unite === "m" ? `${besoin.quantite.toFixed(2)} m` : `${besoin.quantite} ${besoin.unite === "heure" ? "h" : "u."}`}</p>
           {detail && <p className="text-[11px] text-ink-400 italic mt-0.5">{detail}</p>}
+          {besoin.note && <p className="text-[11px] text-sky-700 mt-0.5">ℹ {besoin.note}</p>}
         </div>
         {besoin.options.length === 0 && (
           <div className="flex items-center gap-1.5 flex-wrap">

@@ -96,6 +96,7 @@ export interface LigneBesoin {
   piece: string;          // pièce (nom réel) ou pseudo-pièce ("Tableau électrique", "Commun — RDC")
   quantite: number;       // en unite
   unite: UniteBesoin;
+  note?: string;          // information d'affichage (ex. boîte + plaque multiple comptées dans un autre circuit)
 }
 
 export interface OptionArticle {
@@ -345,6 +346,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       if (apps.length === 0) return;
       const clustersEncastrement: { id: number; x: number; y: number; groupeId?: number }[] = [];
       const destParId = new Map<number, { id: string; nom: string }>();
+      const cleParApp = new Map<number, string>(); // clé du besoin « appareil » de chaque appareillage (pour les notes de plaque multiple)
       apps.forEach(a => destParId.set(a.id, destDe(a, piece)));
       apps.forEach(a => {
         const dest = destParId.get(a.id)!;
@@ -352,16 +354,16 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         const estCmd = estCommande(a.type);
         if (estCmd && a.domotique && LABEL_APPAREILLAGE_DOMOTIQUE[a.type]) {
           const sousCat = `${a.type}_domotique`;
-          ajouter(`${sousCat}@${dest.id}`, sousCat, LABEL_APPAREILLAGE_DOMOTIQUE[a.type], dest.nom, 1, "u");
+          ajouter(`${sousCat}@${dest.id}`, sousCat, LABEL_APPAREILLAGE_DOMOTIQUE[a.type], dest.nom, 1, "u"); cleParApp.set(a.id, `${sousCat}@${dest.id}`);
         } else if (cleCircuitDedie(a) === "irve") {
           // Tout point de recharge (prise renforcée IRVE, borne IRVE, prise dédiée « IRVE ») = « Prise renforcée IRVE »,
           // jamais une sortie de câble spécialisée générique.
-          ajouter(`prise_irve@${dest.id}`, "prise_irve", LABEL_APPAREILLAGE.prise_irve, dest.nom, 1, "u");
+          ajouter(`prise_irve@${dest.id}`, "prise_irve", LABEL_APPAREILLAGE.prise_irve, dest.nom, 1, "u"); cleParApp.set(a.id, `prise_irve@${dest.id}`);
         } else if (LABEL_APPAREILLAGE[a.type]) {
-          ajouter(`${a.type}@${dest.id}`, a.type, LABEL_APPAREILLAGE[a.type], dest.nom, 1, "u");
+          ajouter(`${a.type}@${dest.id}`, a.type, LABEL_APPAREILLAGE[a.type], dest.nom, 1, "u"); cleParApp.set(a.id, `${a.type}@${dest.id}`);
         } else if (cleCircuitDedie(a) || a.type === "chauffage" || a.type === "volet_roulant") {
           ajouter(`prise_specialisee@${dest.id}`, "prise_specialisee", "Prise / sortie de câble spécialisée",
-            dest.nom, 1, "u");
+            dest.nom, 1, "u"); cleParApp.set(a.id, `prise_specialisee@${dest.id}`);
         }
         // Tout point lumineux (plafonnier, applique…) a sa propre boîte d'encastrement
         // DCL — jamais groupée avec les boîtes murales (prise/interrupteur), toujours 1
@@ -386,16 +388,15 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         // regroupement par proximité (≤ 20 cm, 4 postes max) comme avant. Le regroupement se fait toujours
         // par pièce réelle (une plaque est physique) ; en mode circuit, la boîte + plaque est rattachée au
         // circuit de son premier poste.
-        // Une plaque ne regroupe jamais du courant faible (RJ45, TV) avec de la puissance, ni une prise TV avec une RJ45 :
-        // chaque famille a son circuit, donc sa propre boîte + plaque (sinon elle disparaissait du circuit TV / RJ45).
-        const familleDe = (id: number) => { const t = apps.find(x => x.id === id)?.type; return t === "prise_tv" ? "tv" : t === "rj45" ? "rj45" : "puissance"; };
-        const parPlaque = new Map<string, { nb: number; dest: { id: string; nom: string } }>();
+        // Un poste multiple (plaque double / triple / quadruple) peut mêler puissance, RJ45 et TV : une seule boîte + une seule
+        // plaque pour le groupe, comptées dans le circuit du premier poste. Les autres circuits du groupe reçoivent une NOTE
+        // sur la ligne de leur appareil (« boîte + plaque N postes comptées dans … ») pour que rien ne paraisse oublié.
+        const parPlaque = new Map<number, { ids: number[]; dest: { id: string; nom: string } }>();
         const libres: { id: number; x: number; y: number }[] = [];
         clustersEncastrement.forEach(c => {
           if (c.groupeId != null) {
-            const k = `${c.groupeId}|${familleDe(c.id)}`;
-            const e = parPlaque.get(k);
-            if (e) e.nb++; else parPlaque.set(k, { nb: 1, dest: destParId.get(c.id)! });
+            const e = parPlaque.get(c.groupeId);
+            if (e) e.ids.push(c.id); else parPlaque.set(c.groupeId, { ids: [c.id], dest: destParId.get(c.id)! });
           } else libres.push(c);
         });
         // Chaque boîte d'encastrement reçoit sa plaque de finition de même taille : un poste isolé
@@ -406,10 +407,20 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           const e = parDestTaille.get(k);
           if (e) e.nb++; else parDestTaille.set(k, { dest, taille: t, nb: 1 });
         };
-        parPlaque.forEach(({ nb, dest }) => compter(Math.min(nb, MAX_POSTES_PLAQUE), dest));
-        ["puissance", "rj45", "tv"].forEach(fam => {
-          grouperParProximite(libres.filter(c => familleDe(c.id) === fam), 0.20, 4).forEach(g => compter(g.length, destParId.get(g[0])!));
-        });
+        const noterGroupe = (ids: number[], taille: number, dest: { id: string; nom: string }) => {
+          if (ids.length < 2) return;
+          const suffixe = taille === 1 ? "poste" : "postes";
+          ids.forEach(id => {
+            const d = destParId.get(id);
+            const cle = cleParApp.get(id);
+            if (!d || !cle || d.id === dest.id) return;
+            const besoin = cumul.get(cle);
+            const note = `Boîte d'encastrement + plaque ${taille} ${suffixe} comptées dans « ${dest.nom} »`;
+            if (besoin && !(besoin.note ?? "").includes(note)) besoin.note = besoin.note ? `${besoin.note} · ${note}` : note;
+          });
+        };
+        parPlaque.forEach(({ ids, dest }) => { const t = Math.min(ids.length, MAX_POSTES_PLAQUE); compter(t, dest); noterGroupe(ids, t, dest); });
+        grouperParProximite(libres, 0.20, 4).forEach(g => { const dest = destParId.get(g[0])!; compter(g.length, dest); noterGroupe(g, g.length, dest); });
         parDestTaille.forEach(({ dest, taille, nb }) => {
           const suffixe = taille === 1 ? "poste" : "postes";
           ajouter(`boite_encastrement_${taille}${suffixe}@${dest.id}`, `boite_encastrement_${taille}${suffixe}`,
