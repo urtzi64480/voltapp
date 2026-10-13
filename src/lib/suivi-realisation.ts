@@ -22,10 +22,11 @@ import {
   estCommande, estCommandeDouble, baseCommande, estLumiere, estLumierePlafond,
   commandeCetteLumiere, trouverPiece, cleSegmentLiaison, origineCircuits,
 } from "@/lib/maison-types";
-import { CIRCUITS, MAX_PAR_CIRCUIT, effectiveSection, gaineRecommandee, gaineCommunication, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
+import { BreakerRow, CIRCUITS, MAX_PAR_CIRCUIT, effectiveSection, gaineRecommandee, gaineCommunication, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
 import {
   genererCircuits, controlerCircuits, construireColorMap, breakersDuNiveau, segmentsPourCircuit,
   ProblemeCircuit,
+  appliquerReglagesTableau,
 } from "@/lib/maison-engine";
 import { appareillagesParPieceReelle } from "@/lib/piece-reelle";
 import { PREFIXE_CIRCUIT } from "@/lib/predevis-engine";
@@ -493,8 +494,14 @@ function construireGuide(ctx: Contexte, g: GroupeCommande, mode: ModeCommande, i
 
 // ─── CONSTRUCTION DU SUIVI ───────────────────────────────────────────────────────────────────────────────────
 
-export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
+export function construireSuivi(niveauxEntree: Niveau[], rowsTableau: BreakerRow[] = []): SuiviPlan {
   const resultat = genererCircuits({ niveaux: niveauxEntree });
+  // Calibre / section modifiés dans le module Tableau : le guide de chantier doit donner les valeurs du tableau enregistré.
+  if (rowsTableau.length > 0) {
+    const noms: Record<string, string> = {};
+    resultat.maison.niveaux.forEach(n => Object.assign(noms, n.nomsCircuits ?? {}));
+    resultat.breakers = appliquerReglagesTableau(resultat.breakers, rowsTableau, noms);
+  }
   const bilan = controlerCircuits(resultat);
   const couleurs = construireColorMap(resultat);
   const niveaux = [...resultat.maison.niveaux].sort((a, b) => a.ordre - b.ordre);
@@ -911,7 +918,7 @@ export function progressionElements(elements: ElementSuivi[], coches: Record<str
 
 /** Calcule le suivi depuis `projets.maison_config` (JSON brut), avec les mêmes migrations que l'éditeur de plan, dans le même ordre.
  *  null = pas de plan ; lève une exception si le JSON est illisible. */
-export function suiviDepuisConfig(raw: string | null | undefined): SuiviPlan | null {
+export function suiviDepuisConfig(raw: string | null | undefined, rowsTableau: BreakerRow[] = []): SuiviPlan | null {
   if (!raw) return null;
   const parsed = JSON.parse(raw);
   if (!Array.isArray(parsed?.niveaux) || parsed.niveaux.length === 0) return null;
@@ -919,7 +926,7 @@ export function suiviDepuisConfig(raw: string | null | undefined): SuiviPlan | n
   migrerBoitesDerivation(apresMurs);
   reamorcerCompteurId(apresMurs);
   const { niveaux } = dedupliquerIds(apresMurs);
-  return construireSuivi(niveaux);
+  return construireSuivi(niveaux, rowsTableau);
 }
 
 export function progressionPlan(suivi: SuiviPlan, coches: Record<string, string>): Progression {
