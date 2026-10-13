@@ -207,11 +207,11 @@ function genererBreakersPrises(items: Item[], circuitKey: string, niveauNom: str
   if (items.length === 0) return;
   const max = MAX_PAR_CIRCUIT[circuitKey] ?? 8;
   const atomes = items.map(it => ({ points: [pointDe(it)], poids: 1 }));
-  // Prises 16 A : on vise TOUJOURS des circuits pleins de 12 socles (20 A / 2,5 mm², NF C 15-100) tassés au maximum ; seul le reliquat
-  // (8 socles ou moins) reste en 16 A / 1,5 mm². Les autres familles (cuisine, extérieur, volets) gardent leur maximum normatif.
+  // Prises 16 A : le moins de circuits possible (jusqu'à 12 socles en 20 A / 2,5 mm², NF C 15-100), puis répartition ÉQUITABLE entre eux
+  // (7 + 7 plutôt que 12 + 2) ; un circuit de 8 socles ou moins reste en 16 A / 1,5 mm². Autres familles : leur maximum normatif.
   const visee12 = circuitKey === "prise_16";
   const cap = visee12 ? (MAX_PAR_CIRCUIT.prise_20 ?? 12) : max;
-  const groupes = regrouper(atomes, g.zones, { capacite: cap, tableau: g.tableau, penaliteScission, remplir: visee12 });
+  const groupes = regrouper(atomes, g.zones, { capacite: cap, tableau: g.tableau, penaliteScission, equilibrer: true });
   const compteurs: Record<string, number> = {};
   for (const cluster of ordonnerGroupes(groupes.map(ids => ids.map(i => items[i])), g.tableau)) {
     const cle = visee12 && cluster.length > max ? "prise_20" : circuitKey;
@@ -285,7 +285,7 @@ function repartirLumieres<T extends Item>(lumItems: T[], tousItems: Item[], max:
   const blocs: T[][] = [];
   compParRacine.forEach(items => { if (items.length <= max) blocs.push(items); else clusteriser(items, max).forEach(c => blocs.push(c)); });
   const atomes = blocs.map(b => ({ points: b.map(pointDe), poids: b.length }));
-  const groupes = regrouper(atomes, g.zones, { capacite: max, tableau: g.tableau, minCircuits, penaliteScission: 3, remplir: true });
+  const groupes = regrouper(atomes, g.zones, { capacite: max, tableau: g.tableau, minCircuits, penaliteScission: 3, equilibrer: true });
   return ordonnerGroupes(groupes.map(ids => ids.flatMap(i => blocs[i])), g.tableau);
 }
 
