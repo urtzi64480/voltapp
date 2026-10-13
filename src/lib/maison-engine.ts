@@ -400,6 +400,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     .reduce((s, n) => s + n.pieces.filter(p => p.type !== "exterieur" && p.type !== "garage").reduce((s2, p) => s2 + aireDuPolygone(p.contour), 0), 0);
   const niveauxEclaires = niveaux.filter(n => n.pieces.some(p => p.appareillages.some(a => estLumiere(a.type)))).length;
 
+  const sansCircuitDiffere: { a: AppareillagePlace; texte: string }[] = [];
   let plafondId = -1;   // plus grand id déjà pris dans le plan (calculé à la demande, voir « boîte de dérivation systématique »)
   for (const niveau of niveaux) {
     const debutBreakersNiveau = breakers.length;
@@ -555,10 +556,8 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     // passe facilement inaperçue.
     niveau.pieces.forEach(piece => {
       piece.appareillages.forEach(a => {
-        if (a.circuitId == null && !TYPES_SANS_CIRCUIT.includes(a.type)) {
-          const label = LABEL_NON_RACCORDE[a.type] ?? a.type;
-          alertes.push(`"${piece.nom || piece.type}" (${niveau.nom}) : ${label} sans circuit assigné.`);
-        }
+        // Jugé APRÈS tous les niveaux : une commande d'étage (va-et-vient) prend le circuit de sa lampe d'un autre niveau, traité plus tard.
+        if (a.circuitId == null && !TYPES_SANS_CIRCUIT.includes(a.type)) sansCircuitDiffere.push({ a, texte: `"${piece.nom || piece.type}" (${niveau.nom}) : ${LABEL_NON_RACCORDE[a.type] ?? a.type} sans circuit assigné.` });
       });
     });
 
@@ -628,6 +627,8 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     // (principal ou annexe) au moment du "Pousser" — voir Niveau.tableauId.
     for (let i = debutBreakersNiveau; i < breakers.length; i++) breakers[i].niveauId = niveau.id;
   }
+
+  sansCircuitDiffere.forEach(({ a, texte }) => { if (a.circuitId == null) alertes.push(texte); });
 
   // Éclairage sur plusieurs étages : repère, pour chaque circuit, les lampes commandées depuis un autre niveau et les commandes
   // qui pilotent une lampe du circuit située à un autre niveau (voir Breaker.lampesAilleurs).
