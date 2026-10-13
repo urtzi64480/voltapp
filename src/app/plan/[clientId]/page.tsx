@@ -1589,16 +1589,20 @@ function estDansFiltre(a: Pick<AppareillagePlace, "type" | "usageDedie">, f: Fil
 // télérupteurs…) et les autres lampes qu'elles commandent sont ajoutées d'office, et tout le câblage (alimentation, retours, navettes) est
 // généré d'après ces liens commande ↔ lampe — sans rien relier à la main.
 // Boîte de dérivation sur le plan : bien visible quel que soit le zoom — pastille 22 px, halo blanc, bornes Wago (3 leviers), nom en étiquette.
-function symboleBoitePlan(p: Point, color: string, nom: string, selectionnee: boolean): JSX.Element {
+// Boîte de dérivation : volontairement GROSSE et cerclée de la couleur du circuit — c'est le point où le câble du tableau se divise
+// en plusieurs départs (nbDeparts), et c'est elle qui structure tout le cheminement du circuit.
+function symboleBoitePlan(p: Point, color: string, nom: string, selectionnee: boolean, nbDeparts?: number): JSX.Element {
+  const etiquette = nbDeparts && nbDeparts > 0 ? `${nom} · ${nbDeparts} départ${nbDeparts > 1 ? "s" : ""}` : nom;
+  const largeur = Math.max(54, etiquette.length * 6.4 + 14);
   return (
     <g>
-      <circle cx={p.x} cy={p.y} r={19} fill={selectionnee ? "#FEF3C7" : "#ffffff"} fillOpacity={selectionnee ? 1 : 0.85} stroke="none" />
-      <rect x={p.x - 11} y={p.y - 11} width={22} height={22} rx={3} fill="#ffffff" stroke="#1c1917" strokeWidth={2.2} />
-      <rect x={p.x - 11} y={p.y - 11} width={22} height={5} rx={2} fill={color} />
-      {[-6.5, 0, 6.5].map(dx => (<g key={dx}><rect x={p.x + dx - 2.6} y={p.y - 3} width={5.2} height={9} rx={1} fill="#e7e5e4" stroke="#57534e" strokeWidth={0.8} /><rect x={p.x + dx - 2.6} y={p.y - 4.5} width={5.2} height={3} rx={1} fill="#f97316" /></g>))}
-      <rect x={p.x - Math.max(18, nom.length * 3.3 + 6)} y={p.y - 32} width={Math.max(36, nom.length * 6.6 + 12)} height={14} rx={7} fill="#1c1917" style={{ pointerEvents: "none" }} />
-      <text x={p.x} y={p.y - 22} textAnchor="middle" fontSize="9.5" fontWeight="700" fill="#ffffff" style={{ pointerEvents: "none" }}>{nom}</text>
-      {selectionnee && <circle cx={p.x} cy={p.y} r={19} fill="none" stroke="#F59E0B" strokeWidth={2} />}
+      <circle cx={p.x} cy={p.y} r={30} fill={selectionnee ? "#FEF3C7" : "#ffffff"} fillOpacity={0.92} stroke={color} strokeWidth={3.5} strokeDasharray="5 3" />
+      <rect x={p.x - 16} y={p.y - 16} width={32} height={32} rx={4} fill="#ffffff" stroke="#1c1917" strokeWidth={2.8} />
+      <rect x={p.x - 16} y={p.y - 16} width={32} height={8} rx={3} fill={color} />
+      {[-9, 0, 9].map(dx => (<g key={dx}><rect x={p.x + dx - 3.6} y={p.y - 5} width={7.2} height={13} rx={1.3} fill="#e7e5e4" stroke="#57534e" strokeWidth={1} /><rect x={p.x + dx - 3.6} y={p.y - 7} width={7.2} height={4} rx={1.3} fill="#a8a29e" /></g>))}
+      <rect x={p.x - largeur / 2} y={p.y - 52} width={largeur} height={18} rx={9} fill="#1c1917" stroke={color} strokeWidth={1.5} style={{ pointerEvents: "none" }} />
+      <text x={p.x} y={p.y - 39.5} textAnchor="middle" fontSize="11" fontWeight="700" fill="#ffffff" style={{ pointerEvents: "none" }}>{etiquette}</text>
+      {selectionnee && <circle cx={p.x} cy={p.y} r={34} fill="none" stroke="#F59E0B" strokeWidth={2.5} />}
     </g>
   );
 }
@@ -6065,7 +6069,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             elements.push(
               <g key={`boite-${breaker.label}-${boite.id}`} onPointerDown={e => onBoitePointerDown(breaker.label, boite, boite.point, e)}
                 style={{ cursor: mode === "select" ? "grab" : "default" }}>
-                {symboleBoitePlan(p, color, boite.nom, estSelBoite)}
+                {symboleBoitePlan(p, color, boite.nom, estSelBoite, segments.filter(sg => sg.aId === `boite-${boite.id}`).length)}
               </g>
             );
           });
@@ -6078,7 +6082,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           elements.push(
             <g key={`boite-${breaker.label}-implicite`} onPointerDown={e => onBoitePointerDown(breaker.label, null, boitePos, e)}
               style={{ cursor: mode === "select" ? "grab" : "default" }}>
-              {symboleBoitePlan(p, color, "Boîte", false)}
+              {symboleBoitePlan(p, color, "Boîte", false, segments.filter(sg => sg.aId === "boite").length)}
             </g>
           );
         }

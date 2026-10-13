@@ -18,7 +18,7 @@ import {
   Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone, BoiteDerivation,
   CircuitManuel, familleCircuitManuelAppareillage, couleurCircuit, USAGE_DEDIE_DEFAUT,
   estCommande, estCommandeDouble, baseCommande, commandeCetteLumiere, estLumiere, lumieresCommandees,
-  SegmentCircuit, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage, ordonnerAncresParProximite,
+  SegmentCircuit, origineCircuits, pointBoiteImplicite, uidMaison, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage, ordonnerAncresParProximite,
 } from "./maison-types";
 import { appareillagesParPieceReelle } from "./piece-reelle";
 import { regrouper, construireContexteZones, classeZoneDe, ContexteZones, PointZone } from "./regroupement-circuits";
@@ -403,6 +403,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     .reduce((s, n) => s + n.pieces.filter(p => p.type !== "exterieur" && p.type !== "garage").reduce((s2, p) => s2 + aireDuPolygone(p.contour), 0), 0);
   const niveauxEclaires = niveaux.filter(n => n.pieces.some(p => p.appareillages.some(a => estLumiere(a.type)))).length;
 
+  let plafondId = -1;   // plus grand id déjà pris dans le plan (calculé à la demande, voir « boîte de dérivation systématique »)
   for (const niveau of niveaux) {
     const debutBreakersNiveau = breakers.length;
     const tousItems: Item[] = [];
@@ -560,6 +561,51 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
         alertes.push(`"${label}" (${niveau.nom}) : cheminement redessiné incomplet — ${oublies.length} appareillage(s) non cliqué(s), resté(s) sur ce circuit en fin de tracé par proximité. Correction : repasse en mode cheminement et clique les appareillages manquants dans l'ordre du câble.`);
       }
     });
+
+    // ─── Boîte de dérivation SYSTÉMATIQUE sur chaque circuit d'éclairage (≥ 2 lampes) ──────────────────────────────────
+    // Le câble d'alimentation arrive du tableau dans UNE boîte, qui le divise en autant de départs que nécessaire (un par
+    // commande / lampe). Avant, cette boîte n'était qu'implicite : sa position se recalculait à chaque tracé, et les coudes figés
+    // d'un circuit (clés « tableau->boite », « boite->lampe », communes à TOUS les circuits) se retrouvaient appliqués à un autre
+    // → tracés en zigzag. Une boîte réelle (id propre) rend le tracé stable, visible et déplaçable.
+    //  · une boîte déjà posée sur ce circuit est conservée (posée à la main, ou d'une génération précédente) ;
+    //  · sur un circuit AUTOMATIQUE, une boîte restée de l'ancien circuit de même nom et désormais à plus de 12 m de toutes ses lampes
+    //    est abandonnée (le circuit a changé de zone), avec les coudes figés qui s'y rattachaient ;
+    //  · circuits verrouillés et circuits manuels : jamais touchés, seulement complétés d'une boîte s'ils n'en ont aucune.
+    {
+      const origine = origineCircuits(niveau);
+      const verrous = new Set(niveau.circuitsVerrouilles ?? []);
+      // Id neuf JAMAIS égal à celui d'un appareillage, d'une pièce ou d'une autre boîte (le compteur peut ne pas avoir été réamorcé ici).
+      if (plafondId < 0) {
+        plafondId = 0;
+        niveaux.forEach(n => {
+          n.pieces.forEach(pc => { plafondId = Math.max(plafondId, pc.id, ...pc.appareillages.map(a => Math.max(a.id, a.groupeId ?? 0))); });
+          Object.values(n.boitesDerivation ?? {}).forEach(l => l.forEach(bo => { plafondId = Math.max(plafondId, bo.id); }));
+        });
+      }
+      const idBoiteNeuf = (): number => { plafondId = Math.max(uidMaison(), plafondId + 1); return plafondId; };
+      const toutesApps = niveau.pieces.flatMap(p => p.appareillages);
+      for (let i = debutBreakersNiveau; i < breakers.length; i++) {
+        const b = breakers[i];
+        if (b.circuit !== "lumiere" || verrous.has(b.label)) continue;
+        const lampes = toutesApps.filter(a => a.circuitId === b.id && estLumiere(a.type));
+        if (lampes.length === 0) continue;
+        const existantes = niveau.boitesDerivation?.[b.label] ?? [];
+        const loin = (bo: BoiteDerivation) => b.manuelId == null && !lampes.some(l => Math.hypot(l.x - bo.point.x, l.y - bo.point.y) <= 12);
+        const gardees = existantes.filter(bo => !loin(bo));
+        const abandonnees = existantes.filter(bo => loin(bo));
+        if (lampes.length > 1 && !gardees.some(bo => !bo.surSegment)) {
+          gardees.push({ id: idBoiteNeuf(), nom: "Boîte de dérivation", point: pointBoiteImplicite(lampes.map(l => ({ x: l.x, y: l.y })), niveau.pieces, origine) });
+        }
+        if (abandonnees.length > 0 || gardees.length !== existantes.length) {
+          niveau.boitesDerivation = { ...(niveau.boitesDerivation ?? {}), [b.label]: gardees };
+        }
+        if (abandonnees.length > 0 && niveau.liaisonWaypoints) {
+          const morts = abandonnees.map(bo => `boite-${bo.id}->`);
+          const mortsB = abandonnees.map(bo => `->boite-${bo.id}`);
+          niveau.liaisonWaypoints = Object.fromEntries(Object.entries(niveau.liaisonWaypoints).filter(([cle]) => !morts.some(m => cle.startsWith(m)) && !mortsB.some(m => cle.endsWith(m))));
+        }
+      }
+    }
 
     // Marque chaque circuit créé pour ce niveau : sert à le router vers le bon tableau
     // (principal ou annexe) au moment du "Pousser" — voir Niveau.tableauId.
