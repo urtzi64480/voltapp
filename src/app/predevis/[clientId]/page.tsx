@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Client, Prestation, DevisLigne, Projet } from "@/types";
@@ -24,7 +24,7 @@ import ProduitPicker from "@/components/devis/ProduitPicker";
 import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { ArrowLeft, AlertTriangle, Search, Sparkles, Save, Cable, RefreshCw, Euro } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Search, Sparkles, Save, Cable, RefreshCw, Euro, ChevronDown, ChevronRight, Check } from "lucide-react";
 import { aSousCategorie, sousCategoriePrincipale} from "@/lib/sous-categories";
 import { fondModal } from "@/lib/fond-modal";
 
@@ -61,6 +61,12 @@ function etatParDefaut(besoin: BesoinApparie): EtatChoix {
     libreBranche: "materiau",
     fournisseurId: "",
   };
+}
+
+// Besoin resté « champ libre » sans rien saisi alors qu'un article du catalogue existe désormais (ajouté entre-temps) :
+// on bascule automatiquement sur cet article — jamais un choix déjà fait par l'utilisateur.
+function libreNonTouche(etat: EtatChoix | undefined, besoin: BesoinApparie): boolean {
+  return !!etat && etat.mode === "libre" && !etat.librePrix && (!etat.libreNom || etat.libreNom === besoin.label) && besoin.options.length > 0;
 }
 
 // Option réellement retenue pour un besoin, avec le fournisseur choisi : c'est elle qui sert
@@ -437,6 +443,12 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [prestations, setPrestations] = useState<Prestation[]>([]);
   const ajouterAuCatalogue = (p: Prestation) => setPrestations(prev => (prev.some(x => x.id === p.id) ? prev : [...prev, p]));
   const [profil, setProfil] = useState<any>(null);
+  // Postes (circuits / pièces) validés « devis OK » + état replié/déplié (clé = nom du poste). Le « OK » est sauvegardé avec le brouillon.
+  const [postesOk, setPostesOk] = useState<Record<string, boolean>>({});
+  const [postesOuverts, setPostesOuverts] = useState<Record<string, boolean>>({});
+  const [autoSauve, setAutoSauve] = useState<string | null>(null); // heure de la dernière sauvegarde automatique
+  const dernierContenuSauve = useRef<string | null>(null);
+  const brouillonEfface = useRef(false);
   const [rentabOuverte, setRentabOuverte] = useState(false); // panneau « rentabilité » (privé, jamais dans le devis)
   const [resultat, setResultat] = useState<ResultatPreDevis | null>(null);
   // Toutes les pièces du plan (nom + niveau), même celles sans aucun besoin — sert au contrôle « rien oublié ».
@@ -532,7 +544,8 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const { niveaux, rows, prest, brouillon } = donnees;
     const { besoins, alertes, recap } = calculerBesoinsBruts(niveaux, rows, mode);
     setRecapCircuits(recap);
-    const res = apparierCatalogue(besoins, prest);
+    // Catalogue COURANT (articles ajoutés depuis l'ouverture de la page inclus), pas celui du chargement initial.
+    const res = apparierCatalogue(besoins, prestations.length > 0 ? prestations : prest);
     setResultat(res);
     setAlertesGeometrie(alertes);
     setPiecesSelectionnees(null);
@@ -548,6 +561,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       if (brouillon.mainOeuvreHeures != null) setMainOeuvreHeures(brouillon.mainOeuvreHeures);
       // Les postes (pièces / circuits) dépendent du mode : les heures par poste ne se reprennent que dans le même mode.
       setHeuresPostes(memeMode && brouillon.heuresPostes && typeof brouillon.heuresPostes === "object" ? brouillon.heuresPostes : {});
+      setPostesOk(memeMode && brouillon.postesOk && typeof brouillon.postesOk === "object" ? brouillon.postesOk : {});
       if (brouillon.mainOeuvreIndex != null) setMainOeuvreIndex(brouillon.mainOeuvreIndex);
       if (brouillon.fraisGenerauxPct != null) setFraisGenerauxPct(brouillon.fraisGenerauxPct);
       if (brouillon.deplacementEur != null) setDeplacementEur(brouillon.deplacementEur);
@@ -610,22 +624,77 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       let changed = false;
       const next = { ...prev };
       besoinsAgreges.forEach(b => {
-        if (!(b.cle in next)) { next[b.cle] = etatParDefaut(b); changed = true; }
+        if (!(b.cle in next) || libreNonTouche(next[b.cle], b)) { next[b.cle] = etatParDefaut(b); changed = true; }
       });
       return changed ? next : prev;
     });
   }, [besoinsAgreges]);
 
+  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, heuresPostes, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
+
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
-    const contenu = JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, heuresPostes, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
+    const contenu = contenuBrouillon();
     const ok = await modifierProjet(projet.id, { predevis_config: contenu });
     setSavingDraft(false);
     if (!ok) { alert("Le brouillon n'a pas pu être enregistré."); return; }
+    dernierContenuSauve.current = contenu;
     setDraftSaved(true);
     setTimeout(() => setDraftSaved(false), 2000);
   }
 
+  // Sauvegarde AUTOMATIQUE : 2 s après la dernière modification (et dès que l'onglet passe en arrière-plan). Silencieuse.
+  // La première valeur observée (état chargé depuis le brouillon / calculé) sert de référence : rien n'est écrit tant que rien n'a changé.
+  const contenuCourant = resultat ? contenuBrouillon() : null;
+  const contenuRef = useRef<string | null>(null);
+  contenuRef.current = contenuCourant;
+  async function sauvegardeAuto() {
+    const c = contenuRef.current;
+    if (!c || brouillonEfface.current || dernierContenuSauve.current === null || c === dernierContenuSauve.current) return;
+    const ok = await modifierProjet(projet.id, { predevis_config: c });
+    if (ok) { dernierContenuSauve.current = c; setAutoSauve(new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })); }
+  }
+  useEffect(() => {
+    if (!contenuCourant) return;
+    if (dernierContenuSauve.current === null) { dernierContenuSauve.current = contenuCourant; return; }
+    if (contenuCourant === dernierContenuSauve.current) return;
+    const t = setTimeout(() => { sauvegardeAuto(); }, 2000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contenuCourant]);
+  useEffect(() => {
+    const h = () => { if (document.visibilityState === "hidden") sauvegardeAuto(); };
+    document.addEventListener("visibilitychange", h);
+    return () => document.removeEventListener("visibilitychange", h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Catalogue en temps réel : un article ajouté (ici, ou dans un autre onglet — rechargement au retour sur la page) est
+  // immédiatement proposé sur TOUS les postes concernés ; les besoins restés « champ libre » vides basculent dessus.
+  useEffect(() => {
+    if (!resultat) return;
+    const signature = (r: ResultatPreDevis) => Object.values(r.parPiece).flat().map(b => `${b.cle}:${b.options.map(o => `${o.prestation_id}@${o.prix_unitaire}`).join(",")}`).join("|");
+    const res = apparierCatalogue(Object.values(resultat.parPiece).flat(), prestations);
+    if (signature(res) === signature(resultat)) return;
+    setResultat(res);
+    setChoix(prev => {
+      const next = { ...prev };
+      Object.values(res.parPiece).flat().forEach(b => { if (libreNonTouche(next[b.cle], b)) next[b.cle] = etatParDefaut(b); });
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prestations]);
+  useEffect(() => {
+    async function recharger() {
+      if (document.visibilityState !== "visible") return;
+      const { data } = await supabase.from("prestations").select("*").eq("actif", true);
+      if (!data) return;
+      const avecFournisseurs = await attacherFournisseurs(data as Prestation[]);
+      setPrestations(avecFournisseurs);
+    }
+    document.addEventListener("visibilitychange", recharger);
+    return () => document.removeEventListener("visibilitychange", recharger);
+  }, []);
 
   const optionsMainOeuvre = optionsPourSousCategorie("main_oeuvre", prestations);
 
@@ -843,6 +912,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       echecSupabase(errCompteur, "Mise à jour du compteur de devis");
       // Le devis final matérialise le brouillon — on l'efface pour ne pas laisser un
       // brouillon obsolète si le client revient sur cette page plus tard.
+      brouillonEfface.current = true;
       await modifierProjet(projet.id, { predevis_config: null });
 
       router.push(`/devis/${devis.id}`);
@@ -1075,21 +1145,45 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
           </div>
         )}
 
-        {resultat && Object.entries(parPieceFiltre)
-          .map(([piece, besoins]) => [piece, besoins.filter(b => !estBobinable(b.sousCategorie))] as const)
-          .filter(([, besoins]) => besoins.length > 0)
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([piece, besoins]) => (
-          <div key={piece} className="card card-inner mb-4">
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <h2 className="font-semibold text-ink-800 min-w-0 break-words">{piece}{(() => {
+        {resultat && (() => {
+          const postes = Object.entries(parPieceFiltre)
+            .map(([piece, besoins]) => [piece, besoins.filter(b => !estBobinable(b.sousCategorie))] as const)
+            .filter(([, besoins]) => besoins.length > 0)
+            .sort(([a], [b]) => a.localeCompare(b));
+          const nomPoste = mode === "circuit" ? "circuit" : "pièce";
+          const ouvert = (piece: string) => postesOuverts[piece] ?? !postesOk[piece];
+          const nbOk = postes.filter(([piece]) => postesOk[piece]).length;
+          return (<>
+            {postes.length > 0 && (
+              <div className="flex items-center gap-3 mb-3 text-xs text-ink-500 flex-wrap">
+                <span className="flex items-center gap-1.5">
+                  <span className={`inline-block w-2.5 h-2.5 rounded-full ${nbOk === postes.length ? "bg-emerald-500" : "bg-ink-300"}`} />
+                  <strong className="text-ink-700">{nbOk} / {postes.length}</strong> {mode === "circuit" ? "circuits" : "pièces"} validé{nbOk > 1 ? "s" : ""} « devis OK »
+                </span>
+                <button className="text-volt-600 font-medium" onClick={() => setPostesOuverts(Object.fromEntries(postes.map(([piece]) => [piece, true])))}>Tout déplier</button>
+                <button className="text-volt-600 font-medium" onClick={() => setPostesOuverts(Object.fromEntries(postes.map(([piece]) => [piece, false])))}>Tout replier</button>
+                <span className="ml-auto text-ink-400">{autoSauve ? `Sauvegarde auto ✓ ${autoSauve}` : "Sauvegarde auto activée"}</span>
+              </div>
+            )}
+            {postes.map(([piece, besoins]) => {
+              const ok = !!postesOk[piece];
+              const ouv = ouvert(piece);
+              return (
+          <div key={piece} className={`card card-inner mb-4 ${ok ? "!border-emerald-300" : ""}`}>
+            <div className="flex items-center justify-between gap-3">
+              <button type="button" className="flex items-center gap-2 min-w-0 flex-1 text-left" aria-expanded={ouv}
+                onClick={() => setPostesOuverts(prev => ({ ...prev, [piece]: !ouv }))}>
+                {ouv ? <ChevronDown size={16} className="shrink-0 text-ink-400" /> : <ChevronRight size={16} className="shrink-0 text-ink-400" />}
+                <span className="font-semibold text-ink-800 min-w-0 break-words">{piece}{(() => {
                 // Aide au chiffrage, AFFICHAGE SEUL (le nom du poste du devis reste `piece`) : longueur de câble du circuit + nombre d'appareils.
                 if (mode !== "circuit") return null;
                 const r = recapCircuits.find(x => x.groupe === piece);
                 if (!r) return null;
                 const m = r.lignes.filter(l => l.sousCategorie.startsWith("cablage_") || l.sousCategorie === "retour_lampe" || l.sousCategorie === "navette" || l.sousCategorie === "aller_commande" || l.sousCategorie === "cable_rj45" || l.sousCategorie === "cable_coax").reduce((a, l) => a + l.quantite, 0);
                 return <span className="ml-2 text-sm font-normal text-ink-500 whitespace-nowrap">({m.toFixed(1).replace(".", ",")} m · {r.nbAppareils} appareil{r.nbAppareils > 1 ? "s" : ""})</span>;
-              })()}</h2>
+              })()}</span>
+                {ok && <span className="shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5"><span className="inline-block w-2 h-2 rounded-full bg-emerald-500" /> OK devis</span>}
+              </button>
               <label className="flex items-center gap-1.5 shrink-0 text-xs text-ink-500" title="Temps de main d'œuvre chiffré pour ce poste (facultatif) — comparé au temps passé dans le suivi de réalisation">
                 <span className="hidden sm:inline">Main d'œuvre</span>
                 <input className="input !py-1 !px-2 !w-16 text-right text-sm" type="number" inputMode="decimal" min="0" step="0.25" placeholder="0"
@@ -1098,14 +1192,28 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 <span>h</span>
               </label>
             </div>
-            <div className="flex flex-col gap-2">
+            {ouv && (<>
+            <div className="flex flex-col gap-2 mt-3">
               {besoins.map(b => (
                 <BesoinRow key={b.cle} besoin={b} etat={choix[b.cle] ?? etatParDefaut(b)}
                   onChange={e => majChoix(b.cle, e)} prestations={prestations} onCatalogueAjoute={ajouterAuCatalogue} />
               ))}
             </div>
+            <label className={`mt-3 pt-3 border-t border-ink-100 flex items-center gap-2 text-sm cursor-pointer ${ok ? "text-emerald-700 font-semibold" : "text-ink-600"}`}>
+              <input type="checkbox" className="w-4 h-4 accent-emerald-600" checked={ok}
+                onChange={e => {
+                  const v = e.target.checked;
+                  setPostesOk(prev => ({ ...prev, [piece]: v }));
+                  if (v) setPostesOuverts(prev => ({ ...prev, [piece]: false })); // validé → on replie
+                }} />
+              <Check size={14} className={ok ? "text-emerald-600" : "text-ink-300"} /> Devis OK pour ce {nomPoste}
+            </label>
+            </>)}
           </div>
-        ))}
+              );
+            })}
+          </>);
+        })()}
 
         {besoinsAgreges.length > 0 && (
           <div className="card card-inner mb-4 border-sky-200">
