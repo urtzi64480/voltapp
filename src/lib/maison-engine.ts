@@ -21,6 +21,7 @@ import {
   SegmentCircuit, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage, ordonnerAncresParProximite,
 } from "./maison-types";
 import { appareillagesParPieceReelle } from "./piece-reelle";
+import { regrouper, construireContexteZones, classeZoneDe, ContexteZones, PointZone } from "./regroupement-circuits";
 
 // Appareillages dédiés → 1 circuit par instance (correspondance directe avec CIRCUITS).
 // Le chauffage n'en fait PAS partie : plusieurs radiateurs peuvent partager un circuit
@@ -114,6 +115,16 @@ function clusteriser<T extends { x: number; y: number }>(items: T[], maxParClust
 
 interface Item { base: AppareillagePlace; pieceNom: string; piece: Piece; x: number; y: number; }
 
+// Contexte spatial d'un niveau pour le regroupement par zones (pièces voisines, position du tableau).
+interface ContexteGen { zones: ContexteZones; tableau: Point | null; }
+const pointDe = (it: Item): PointZone => ({ x: it.x, y: it.y, pieceId: it.piece.id, classe: classeZoneDe(it.piece.type) });
+// Ordre STABLE des circuits d'une famille : du plus proche du tableau au plus éloigné (numérotation « … 1, 2, 3 » lisible au tableau).
+function ordonnerGroupes<T extends { x: number; y: number }>(groupes: T[][], tableau: Point | null): T[][] {
+  const cle = (gr: T[]) => Math.min(...gr.map(i => (tableau ? Math.abs(i.x - tableau.x) + Math.abs(i.y - tableau.y) : i.x + i.y)));
+  const xmin = (gr: T[]) => Math.min(...gr.map(i => i.x));
+  return [...groupes].sort((a, b) => cle(a) - cle(b) || xmin(a) - xmin(b));
+}
+
 function breakerFromClusterPrises(cluster: Item[], circuitKey: string, niveauNom: string, idx: number): Breaker {
   const spec = CIRCUITS[circuitKey];
   const parPiece = new Map<string, number>();
@@ -153,40 +164,6 @@ function puissanceChauffage(item: Item): number {
   return item.base.puissanceW ?? PUISSANCE_CHAUFFAGE_DEFAUT_W;
 }
 
-// Même chaîne gloutonne plus-proche-voisin que clusteriser(), mais la coupure d'un
-// cluster se décide sur la puissance cumulée (maxW) plutôt que sur un nombre d'items —
-// un radiateur qui dépasserait seul ce plafond (cas extrême) reste isolé dans son
-// propre cluster plutôt que de bloquer le regroupement des autres.
-function clusteriserParPuissance(items: Item[], maxW: number): Item[][] {
-  if (items.length === 0) return [];
-  const remaining = [...items];
-  const clusters: Item[][] = [];
-  let current: Item[] = [];
-  let currentW = 0;
-  let last = remaining.shift()!;
-  current.push(last);
-  currentW += puissanceChauffage(last);
-  while (remaining.length > 0) {
-    let bestIdx = 0, bestDist = Infinity;
-    for (let i = 0; i < remaining.length; i++) {
-      const d = (remaining[i].x - last.x) ** 2 + (remaining[i].y - last.y) ** 2;
-      if (d < bestDist) { bestDist = d; bestIdx = i; }
-    }
-    const next = remaining.splice(bestIdx, 1)[0];
-    const pNext = puissanceChauffage(next);
-    if (current.length > 0 && currentW + pNext > maxW) {
-      clusters.push(current);
-      current = [];
-      currentW = 0;
-    }
-    current.push(next);
-    currentW += pNext;
-    last = next;
-  }
-  if (current.length > 0) clusters.push(current);
-  return clusters;
-}
-
 // Choisit le calibre le plus léger (16A/1,5mm²) qui suffit à la puissance cumulée du
 // cluster, et ne passe en 20A/2,5mm² que si elle dépasse 3500W — jamais l'inverse.
 function breakerFromClusterChauffage(cluster: Item[], niveauNom: string, idx: number): Breaker {
@@ -205,9 +182,14 @@ function breakerFromClusterChauffage(cluster: Item[], niveauNom: string, idx: nu
   };
 }
 
-function genererBreakersChauffage(items: Item[], niveauNom: string, breakers: Breaker[]): void {
+function genererBreakersChauffage(items: Item[], niveauNom: string, breakers: Breaker[], g: ContexteGen): void {
+  if (items.length === 0) return;
+  // Regroupement par ZONE jusqu'à 4500 W cumulés (le calibre 16 A / 20 A est choisi ensuite d'après la puissance du groupe) :
+  // le moins de circuits possible, sans jamais réunir deux zones éloignées.
+  const atomes = items.map(it => ({ points: [pointDe(it)], poids: puissanceChauffage(it) }));
+  const groupes = regrouper(atomes, g.zones, { capacite: PMAX_CHAUFFAGE_20A_W, tableau: g.tableau, penaliteScission: 1.5 });
   let idx = 1;
-  for (const cluster of clusteriserParPuissance(items, PMAX_CHAUFFAGE_20A_W)) {
+  for (const cluster of ordonnerGroupes(groupes.map(ids => ids.map(i => items[i])), g.tableau)) {
     const b = breakerFromClusterChauffage(cluster, niveauNom, idx++);
     breakers.push(b);
     cluster.forEach(item => { item.base.circuitId = b.id; });
@@ -220,11 +202,24 @@ function genererBreakersChauffage(items: Item[], niveauNom: string, breakers: Br
 // famille (circuitManuelId) et le reste, qui repart dans le clustering spatial
 // automatique habituel. Un circuitManuelId pointant vers un circuit manuel
 // supprimé ou d'une autre famille retombe silencieusement dans l'automatique.
-function genererBreakersPrises(items: Item[], circuitKey: string, niveauNom: string, breakers: Breaker[]): void {
+function genererBreakersPrises(items: Item[], circuitKey: string, niveauNom: string, breakers: Breaker[], g: ContexteGen, penaliteScission = 1.5): void {
+  if (items.length === 0) return;
   const max = MAX_PAR_CIRCUIT[circuitKey] ?? 8;
-  let idx = 1;
-  for (const cluster of clusteriser(items, max)) {
-    const b = breakerFromClusterPrises(cluster, circuitKey, niveauNom, idx++);
+  const atomes = items.map(it => ({ points: [pointDe(it)], poids: 1 }));
+  const lancer = (cap: number) => regrouper(atomes, g.zones, { capacite: cap, tableau: g.tableau, penaliteScission });
+  let groupes = lancer(max);
+  // Prises 16 A (8 socles en 1,5 mm²) : au-delà de 8, un circuit 20 A / 2,5 mm² accepte 12 socles (NF C 15-100). On l'utilise dès
+  // qu'il fait gagner au moins un disjoncteur ; les groupes de 8 socles ou moins restent en 16 A.
+  if (circuitKey === "prise_16" && items.length > max) {
+    const max20 = MAX_PAR_CIRCUIT.prise_20 ?? 12;
+    const g20 = lancer(max20);
+    if (g20.length < groupes.length) groupes = g20;
+  }
+  const compteurs: Record<string, number> = {};
+  for (const cluster of ordonnerGroupes(groupes.map(ids => ids.map(i => items[i])), g.tableau)) {
+    const cle = circuitKey === "prise_16" && cluster.length > max ? "prise_20" : circuitKey;
+    compteurs[cle] = (compteurs[cle] ?? 0) + 1;
+    const b = breakerFromClusterPrises(cluster, cle, niveauNom, compteurs[cle]);
     breakers.push(b);
     cluster.forEach(item => { item.base.circuitId = b.id; });
   }
@@ -267,13 +262,13 @@ function deduireCommandeLumiere(tousItems: Item[], pointLumineuxId: number): { t
 }
 
 // ─── RÉPARTITION LOGIQUE DE L'ÉCLAIRAGE ────────────────────────────────────────────────────────────────────
-// NF C 15-100 : 8 points d'utilisation maximum par circuit d'éclairage (16 A / 1,5 mm²). La répartition suit la LOGIQUE du
-// logement, pas seulement la proximité :
+// NF C 15-100 : 8 points d'utilisation maximum par circuit d'éclairage (16 A / 1,5 mm²), au moins 2 circuits d'éclairage dans un
+// logement de plus de 35 m². La répartition suit la LOGIQUE et l'ESPACE du logement :
 //  1. les lampes pilotées par une même commande (interrupteur à plusieurs lampes, va-et-vient en chaîne) restent dans le MÊME
-//     circuit — une commande ne peut pas basculer deux circuits ;
-//  2. une pièce n'est jamais coupée entre deux circuits tant qu'elle tient dans un circuit ;
-//  3. les pièces sont ensuite empilées de proche en proche (chaîne plus-proche-voisin) jusqu'à 8 points.
-function repartirLumieres<T extends Item>(lumItems: T[], tousItems: Item[], max: number): T[][] {
+//     circuit — une commande ne peut pas basculer deux circuits (ce sont les « atomes » du regroupement) ;
+//  2. les atomes sont regroupés par zone (pièces voisines par un mur mitoyen) jusqu'à 8 points : le moins de circuits possible,
+//     une pièce n'est coupée que si elle ne tient pas, jamais deux zones éloignées ensemble (voir regroupement-circuits.ts).
+function repartirLumieres<T extends Item>(lumItems: T[], tousItems: Item[], max: number, g: ContexteGen, minCircuits: number): T[][] {
   if (lumItems.length === 0) return [];
   // 1. composantes « même commande »
   const parent = new Map<number, number>();
@@ -289,54 +284,21 @@ function repartirLumieres<T extends Item>(lumItems: T[], tousItems: Item[], max:
   });
   const compParRacine = new Map<number, T[]>();
   lumItems.forEach(l => { const r = trouver(l.base.id); (compParRacine.get(r) ?? compParRacine.set(r, []).get(r)!).push(l); });
-  // 2. regroupement par pièce (pièce majoritaire de la composante)
-  type Bloc = { items: T[]; x: number; y: number };
-  const parPiece = new Map<string, Bloc[]>();
-  compParRacine.forEach(items => {
-    const compte = new Map<string, number>();
-    items.forEach(i => compte.set(i.pieceNom, (compte.get(i.pieceNom) ?? 0) + 1));
-    const piece = [...compte.entries()].sort((a, b) => b[1] - a[1])[0][0];
-    const x = items.reduce((s, i) => s + i.x, 0) / items.length, y = items.reduce((s, i) => s + i.y, 0) / items.length;
-    (parPiece.get(piece) ?? parPiece.set(piece, []).get(piece)!).push({ items, x, y });
-  });
-  const pieces = [...parPiece.values()].map(blocs => ({
-    blocs, n: blocs.reduce((s, b) => s + b.items.length, 0),
-    x: blocs.reduce((s, b) => s + b.x, 0) / blocs.length, y: blocs.reduce((s, b) => s + b.y, 0) / blocs.length,
-  }));
-  // 3. chaîne de proche en proche, puis empilement
-  const restantes = [...pieces];
-  const ordre: typeof pieces = [];
-  let cur = restantes.shift()!; ordre.push(cur);
-  while (restantes.length > 0) {
-    let bi = 0, bd = Infinity;
-    restantes.forEach((r, i) => { const d = (r.x - cur.x) ** 2 + (r.y - cur.y) ** 2; if (d < bd) { bd = d; bi = i; } });
-    cur = restantes.splice(bi, 1)[0]; ordre.push(cur);
-  }
-  const circuits: T[][] = [];
-  let courant: T[] = [];
-  const fermer = () => { if (courant.length > 0) { circuits.push(courant); courant = []; } };
-  ordre.forEach(pc => {
-    if (courant.length + pc.n <= max) { pc.blocs.forEach(b => courant.push(...b.items)); return; }
-    if (pc.n <= max) { fermer(); pc.blocs.forEach(b => courant.push(...b.items)); return; }
-    // pièce de plus de `max` points : on coupe entre composantes (jamais au milieu d'une commande commune)
-    pc.blocs.sort((a, b) => b.items.length - a.items.length).forEach(b => {
-      if (courant.length + b.items.length > max) fermer();
-      if (b.items.length > max) {
-        for (let i = 0; i < b.items.length; i += max) { fermer(); courant.push(...b.items.slice(i, i + max)); fermer(); }
-      } else courant.push(...b.items);
-    });
-  });
-  fermer();
-  return circuits;
+  // 2. atomes : une composante de plus de `max` lampes (cas extrême) est coupée de proche en proche
+  const blocs: T[][] = [];
+  compParRacine.forEach(items => { if (items.length <= max) blocs.push(items); else clusteriser(items, max).forEach(c => blocs.push(c)); });
+  const atomes = blocs.map(b => ({ points: b.map(pointDe), poids: b.length }));
+  const groupes = regrouper(atomes, g.zones, { capacite: max, tableau: g.tableau, minCircuits, penaliteScission: 3 });
+  return ordonnerGroupes(groupes.map(ids => ids.flatMap(i => blocs[i])), g.tableau);
 }
 
 function genererBreakersLumiere(
   lumItems: (Item & { typeCommande: CommandeType; nbCommandes: number })[],
-  niveauNom: string, breakers: Breaker[], tousItems: Item[],
+  niveauNom: string, breakers: Breaker[], tousItems: Item[], g: ContexteGen, minCircuits: number,
 ): void {
   const max = MAX_PAR_CIRCUIT.lumiere ?? 8;
   let idx = 1;
-  for (const cluster of repartirLumieres(lumItems, tousItems, max)) {
+  for (const cluster of repartirLumieres(lumItems, tousItems, max, g, minCircuits)) {
     const b = breakerFromClusterLumiere(cluster, niveauNom, idx++);
     breakers.push(b);
     cluster.forEach(item => { item.base.circuitId = b.id; });
@@ -435,6 +397,12 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
   const itemsMaison: Item[] = niveaux.flatMap(n => n.pieces.flatMap(piece =>
     piece.appareillages.map(a => { const r = reellesParNiveau.get(n.id)!.vers.get(a.id) ?? piece; return { base: a, pieceNom: r.nom, piece: r, x: a.x, y: a.y } as Item; })));
 
+  // Données du LOGEMENT pour la règle « au moins 2 circuits d'éclairage au-dessus de 35 m² » (NF C 15-100) : elle ne s'applique
+  // que si un seul niveau porte de l'éclairage (sinon chaque niveau a déjà son circuit).
+  const surfaceLogement = niveaux.filter(n => n.type !== "annexe" && n.type !== "garage")
+    .reduce((s, n) => s + n.pieces.filter(p => p.type !== "exterieur" && p.type !== "garage").reduce((s2, p) => s2 + aireDuPolygone(p.contour), 0), 0);
+  const niveauxEclaires = niveaux.filter(n => n.pieces.some(p => p.appareillages.some(a => estLumiere(a.type)))).length;
+
   for (const niveau of niveaux) {
     const debutBreakersNiveau = breakers.length;
     const tousItems: Item[] = [];
@@ -513,15 +481,18 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     const volets = resteApresExclusion.filter(a => familleCircuitManuelAppareillage(a.base.type, a.piece.type) === "volets_roulants");
     const dedies = resteApresExclusion.filter(a => !!cleCircuitDedie(a.base));
 
-    genererBreakersPrises(prisesStandard, "prise_16", niveau.nom, breakers);
-    genererBreakersPrises(prisesCuisine, "cuisine_prises", niveau.nom, breakers);
-    genererBreakersPrises(prisesExtGarage, "exterieur", niveau.nom, breakers);
-    genererBreakersChauffage(chauffages, niveau.nom, breakers);
-    genererBreakersPrises(volets, "volets_roulants", niveau.nom, breakers);
+    // Contexte spatial du niveau : pièces voisines (mur mitoyen) et position du tableau. Un niveau n'est JAMAIS regroupé avec un autre.
+    const gen: ContexteGen = { zones: construireContexteZones(niveau.pieces), tableau: niveau.tableauPos ?? null };
+    genererBreakersPrises(prisesStandard, "prise_16", niveau.nom, breakers, gen);
+    genererBreakersPrises(prisesCuisine, "cuisine_prises", niveau.nom, breakers, gen);
+    genererBreakersPrises(prisesExtGarage, "exterieur", niveau.nom, breakers, gen);
+    genererBreakersChauffage(chauffages, niveau.nom, breakers, gen);
+    genererBreakersPrises(volets, "volets_roulants", niveau.nom, breakers, gen, 1);
 
     // Éclairage : déduction de la commande depuis les interrupteurs/va-et-vient/télérupteurs liés
     const lumItems = pointsLumineux.map(pl => ({ ...pl, ...deduireCommandeLumiere(itemsMaison, pl.base.id) }));
-    genererBreakersLumiere(lumItems, niveau.nom, breakers, itemsMaison);
+    const minEclairage = surfaceLogement > 35 && niveauxEclaires === 1 && lumItems.length >= 2 ? 2 : 1;
+    genererBreakersLumiere(lumItems, niveau.nom, breakers, itemsMaison, gen, minEclairage);
 
     // Appareils dédiés : un circuit par instance
     dedies.forEach(item => {
