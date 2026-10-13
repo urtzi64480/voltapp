@@ -408,6 +408,31 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
   const itemsMaison: Item[] = niveaux.flatMap(n => n.pieces.flatMap(piece =>
     piece.appareillages.map(a => { const r = reellesParNiveau.get(n.id)!.vers.get(a.id) ?? piece; return { base: a, pieceNom: r.nom, piece: r, x: a.x, y: a.y, niveauId: n.id } as Item; })));
 
+  // ─── Commande qui ne commande AUCUN point lumineux : elle est reliée automatiquement ──────────────────────
+  // Un interrupteur / va-et-vient / télérupteur / détecteur sans lien (jamais relié, ou sa lampe supprimée) n'appartenait à aucun circuit : il
+  // disparaissait du tracé, de la liste des circuits et du pré-devis. Il est relié aux points lumineux de SA pièce qui n'ont encore aucune
+  // commande (à défaut, au plus proche de la pièce, puis du niveau) — avec une alerte, pour que tu vérifies le lien.
+  {
+    const lampesIt = itemsMaison.filter(it => estLumiere(it.base.type));
+    const idsLampes = new Set(lampesIt.map(it => it.base.id));
+    const pilotees = new Set<number>();
+    itemsMaison.filter(it => estCommande(it.base.type)).forEach(it => lumieresCommandees(it.base).forEach(id => { if (idsLampes.has(id)) pilotees.add(id); }));
+    itemsMaison.filter(it => estCommande(it.base.type) && !lumieresCommandees(it.base).some(id => idsLampes.has(id))).forEach(cmd => {
+      const dist = (l: Item) => Math.abs(l.x - cmd.x) + Math.abs(l.y - cmd.y);
+      const dansPiece = lampesIt.filter(l => l.piece.id === cmd.piece.id && l.niveauId === cmd.niveauId);
+      let cibles = dansPiece.filter(l => !pilotees.has(l.base.id));
+      if (cibles.length === 0 && dansPiece.length > 0) cibles = [dansPiece.reduce((m, l) => (dist(l) < dist(m) ? l : m))];
+      if (cibles.length === 0) {
+        const duNiveau = lampesIt.filter(l => l.niveauId === cmd.niveauId);
+        if (duNiveau.length > 0) cibles = [duNiveau.reduce((m, l) => (dist(l) < dist(m) ? l : m))];
+      }
+      if (cibles.length === 0) return;   // aucun point lumineux dans le plan : reste signalée (garde-fou plus bas)
+      cmd.base.commandePourIds = cibles.map(l => l.base.id);
+      cibles.forEach(l => pilotees.add(l.base.id));
+      alertes.push(`"${cmd.piece.nom || cmd.piece.type}" (${niveauParId.get(cmd.niveauId)?.nom ?? ""}) : ${LABEL_NON_RACCORDE[cmd.base.type] ?? cmd.base.type} ne commandait aucun point lumineux — reliée automatiquement à ${cibles.length} point(s) lumineux ${dansPiece.length > 0 ? "de la pièce" : "le plus proche"}. Correction : vérifie ce lien (sélectionne la commande, « Commande : … — modifier »).`);
+    });
+  }
+
   // Données du LOGEMENT pour la règle « au moins 2 circuits d'éclairage au-dessus de 35 m² » (NF C 15-100).
   const surfaceLogement = niveaux.filter(n => n.type !== "annexe" && n.type !== "garage")
     .reduce((s, n) => s + n.pieces.filter(p => p.type !== "exterieur" && p.type !== "garage").reduce((s2, p) => s2 + aireDuPolygone(p.contour), 0), 0);

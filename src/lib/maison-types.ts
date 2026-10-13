@@ -1582,6 +1582,15 @@ export function construireBranchesCircuitEclairage(
       const dern = vvO[vvO.length - 1];
       poser({ aId: String(dern.id), aPoint: { x: dern.x, y: dern.y }, bId: gaine.id, bPoint: depart, type: "retour" });
     }
+    // Boutons-poussoirs (télérupteur) d'ici dont la lampe est à un autre étage : la ligne de commande monte par la gaine, de bouton en bouton.
+    {
+      let prec = { id: gaine.id, point: depart };
+      parProximite(orphelines.filter(estBP), depart).forEach(c => {
+        const pc = { x: c.x, y: c.y };
+        poser({ aId: prec.id, aPoint: prec.point, bId: String(c.id), bPoint: pc, type: "commande" });
+        prec = { id: String(c.id), point: pc };
+      });
+    }
     parProximite(orphelines.filter(c => !estVV(c) && !estBP(c)), depart).forEach(c => {
       const pc = { x: c.x, y: c.y };
       // Commande DÉJÀ alimentée par le circuit de ce niveau (elle commande aussi une lampe d'ici) : seul le retour monte dans la gaine —
