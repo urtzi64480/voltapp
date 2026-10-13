@@ -12,6 +12,7 @@ import {
   calculerBesoinsBruts, ModePreDevis, RecapCircuit, apparierCatalogue, optionsPourSousCategorie, genererLignesDevis, estBobinable,
   multiplicateurPourArticle, estSousCategorieAppareillage, estPieceReelle, estPieceTableau, optionAvecOffre, prixCompagnonAuMetre,
   ResultatPreDevis, BesoinApparie, estPointLumineuxADefinir, OptionArticle, ChoixLigne, POSTE_MAIN_OEUVRE, POSTE_CABLAGE,
+  signaturePoste, signatureCablage, signaturesActuelles, postesInvalides, CLE_OK_CABLES, CLE_OK_GAINES,
 } from "@/lib/predevis-engine";
 import {
   attacherFournisseurs, libelleOffreMarque, marqueOffre, normTexte, offrePrincipale, offresTriees, prixVenteOffre,
@@ -455,6 +456,8 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [profil, setProfil] = useState<any>(null);
   // Postes (circuits / pièces) validés « devis OK » + état replié/déplié (clé = nom du poste). Le « OK » est sauvegardé avec le brouillon.
   const [postesOk, setPostesOk] = useState<Record<string, boolean>>({});
+  const [postesSig, setPostesSig] = useState<Record<string, string>>({}); // signature des besoins de chaque poste au moment de sa validation
+  const [postesModifies, setPostesModifies] = useState<string[]>([]);      // postes dont la validation est tombée (plan modifié depuis)
   const [postesOuverts, setPostesOuverts] = useState<Record<string, boolean>>({});
   const [autoSauve, setAutoSauve] = useState<string | null>(null); // heure de la dernière sauvegarde automatique
   const dernierContenuSauve = useRef<string | null>(null);
@@ -566,12 +569,31 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       initChoix[b.cle] = { ...etatParDefaut(b), ...(memeMode ? (brouillon?.choix?.[b.cle] ?? {}) : {}) };
     });
     setChoix(initChoix);
+    // Validations « devis OK » : reprises du brouillon, SAUF celles dont le poste a changé sur le plan depuis (signature différente) :
+    // elles perdent leur « OK » et se dépliiront ; les postes toujours valides restent repliés.
+    {
+      const okSauve: Record<string, boolean> = memeMode && brouillon?.postesOk && typeof brouillon.postesOk === "object" ? brouillon.postesOk : {};
+      const sigSauve: Record<string, string> = memeMode && brouillon?.postesSig && typeof brouillon.postesSig === "object" ? brouillon.postesSig : {};
+      const sigAct = signaturesActuelles(res.parPiece);
+      const invalides = postesInvalides(sigAct, okSauve, sigSauve);
+      const okFinal: Record<string, boolean> = {};
+      const sigFinal: Record<string, string> = {};
+      Object.keys(okSauve).forEach(k => {
+        if (!okSauve[k] || invalides.includes(k)) return;
+        okFinal[k] = true;
+        sigFinal[k] = sigSauve[k] ?? sigAct[k]; // validation antérieure aux signatures : on fige l'état actuel
+      });
+      setPostesOk(okFinal);
+      setPostesSig(sigFinal);
+      setPostesModifies(invalides);
+      setPostesOuverts(Object.fromEntries(invalides.map(k => [k, true])));
+    }
     setChoixAgrege(memeMode && brouillon?.choixAgrege ? brouillon.choixAgrege : {});
     if (brouillon) {
       if (brouillon.mainOeuvreHeures != null) setMainOeuvreHeures(brouillon.mainOeuvreHeures);
       // Les postes (pièces / circuits) dépendent du mode : les heures par poste ne se reprennent que dans le même mode.
       setHeuresPostes(memeMode && brouillon.heuresPostes && typeof brouillon.heuresPostes === "object" ? brouillon.heuresPostes : {});
-      setPostesOk(memeMode && brouillon.postesOk && typeof brouillon.postesOk === "object" ? brouillon.postesOk : {});
+
       if (brouillon.mainOeuvreIndex != null) setMainOeuvreIndex(brouillon.mainOeuvreIndex);
       if (brouillon.fraisGenerauxPct != null) setFraisGenerauxPct(brouillon.fraisGenerauxPct);
       if (brouillon.deplacementEur != null) setDeplacementEur(brouillon.deplacementEur);
@@ -640,7 +662,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     });
   }, [besoinsAgreges]);
 
-  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, heuresPostes, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
+  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, heuresPostes, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
 
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
@@ -1175,6 +1197,11 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 </div>
               ) : null;
             })()}
+            {postesModifies.length > 0 && (
+              <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                <AlertTriangle size={16} className="shrink-0" /> {postesModifies.length} validation{postesModifies.length > 1 ? "s" : ""} « devis OK » retirée{postesModifies.length > 1 ? "s" : ""} : le plan a changé depuis ({postesModifies.map(k => k === CLE_OK_CABLES ? "câbles" : k === CLE_OK_GAINES ? "gaines & moulures" : k).join(", ")}). À revérifier.
+              </div>
+            )}
             {postes.length > 0 && (
               <div className="flex items-center gap-3 mb-3 text-xs text-ink-500 flex-wrap">
                 <span className="flex items-center gap-1.5">
@@ -1204,6 +1231,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 const m = r.lignes.filter(l => l.sousCategorie.startsWith("cablage_") || l.sousCategorie === "retour_lampe" || l.sousCategorie === "navette" || l.sousCategorie === "aller_commande" || l.sousCategorie === "cable_rj45" || l.sousCategorie === "cable_coax").reduce((a, l) => a + l.quantite, 0);
                 return <span className="ml-2 text-sm font-normal text-ink-500 whitespace-nowrap">({m.toFixed(1).replace(".", ",")} m · {r.nbAppareils} appareil{r.nbAppareils > 1 ? "s" : ""})</span>;
               })()}</span>
+                {!ok && postesModifies.includes(piece) && <span className="shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-300 rounded-full px-2 py-0.5"><AlertTriangle size={11} /> Modifié depuis la validation</span>}
                 {nbDef > 0 && <span className="shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-300 rounded-full px-2 py-0.5"><AlertTriangle size={11} /> À définir avec le client{nbDef > 1 ? ` ×${nbDef}` : ""}</span>}
                 {ok && <span className="shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5"><span className="inline-block w-2 h-2 rounded-full bg-emerald-500" /> OK devis</span>}
               </button>
@@ -1227,6 +1255,8 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 onChange={e => {
                   const v = e.target.checked;
                   setPostesOk(prev => ({ ...prev, [piece]: v }));
+                  setPostesSig(prev => { const n = { ...prev }; if (v && resultat) n[piece] = signaturePoste(resultat.parPiece[piece] ?? []); else delete n[piece]; return n; });
+                  if (v) setPostesModifies(prev => prev.filter(x => x !== piece));
                   if (v) setPostesOuverts(prev => ({ ...prev, [piece]: false })); // validé → on replie
                 }} />
               <Check size={14} className={ok ? "text-emerald-600" : "text-ink-300"} /> Devis OK pour ce {nomPoste}
@@ -1253,11 +1283,17 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
             </div>
             {/* Validation du câblage : sert au double contrôle du plan (« Masquer OK devis ») — câbles et gaines ne se masquent que s'ils sont validés ici. */}
             <div className="mt-3 pt-3 border-t border-ink-100 flex flex-col gap-1.5">
-              {([["__cables__", "Câbles OK devis"], ["__gaines__", "Gaines & moulures OK devis"]] as const).map(([cle, libelle]) => (
+              {([[CLE_OK_CABLES, "Câbles OK devis"], [CLE_OK_GAINES, "Gaines & moulures OK devis"]] as const).map(([cle, libelle]) => (
                 <label key={cle} className={`flex items-center gap-2 text-sm cursor-pointer ${postesOk[cle] ? "text-emerald-700 font-semibold" : "text-ink-600"}`}>
                   <input type="checkbox" className="w-4 h-4 accent-emerald-600" checked={!!postesOk[cle]}
-                    onChange={e => setPostesOk(prev => ({ ...prev, [cle]: e.target.checked }))} />
+                    onChange={e => {
+                      const v = e.target.checked;
+                      setPostesOk(prev => ({ ...prev, [cle]: v }));
+                      setPostesSig(prev => { const n = { ...prev }; if (v && resultat) n[cle] = signatureCablage(resultat.parPiece, cle === CLE_OK_CABLES ? "cables" : "gaines"); else delete n[cle]; return n; });
+                      if (v) setPostesModifies(prev => prev.filter(x => x !== cle));
+                    }} />
                   <Check size={14} className={postesOk[cle] ? "text-emerald-600" : "text-ink-300"} /> {libelle}
+                  {!postesOk[cle] && postesModifies.includes(cle) && <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-300 rounded-full px-2 py-0.5"><AlertTriangle size={11} /> modifié depuis la validation</span>}
                   {postesOk[cle] && <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5"><span className="inline-block w-2 h-2 rounded-full bg-emerald-500" /> OK devis</span>}
                 </label>
               ))}

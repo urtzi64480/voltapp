@@ -70,7 +70,7 @@ import { nbConducteurs } from "./couleurs-fils";
 import {
   genererCircuits, segmentsPourCircuit, breakersDuNiveau, ResultatGeneration, cleCircuitDedie,
 } from "./maison-engine";
-import { MAX_POSTES_PLAQUE, estCommande, estLumiere } from "./maison-types";
+import { MAX_POSTES_PLAQUE, estCommande, estLumiere, estSaillie, TYPES_SAILLIE_POSSIBLE } from "./maison-types";
 import { appareillagesParPieceReelle } from "./piece-reelle";
 import {
   Breaker as TableauBreaker, BreakerRow, BREAKER_TYPES, effectiveSection, gaineRecommandee, estCircuitSansDisjoncteur, estAccessoireTableau} from "./electrical-constants";
@@ -179,13 +179,18 @@ const LABEL_APPAREILLAGE_DOMOTIQUE: Record<string, string> = {
 // Besoin d'APPAREILLAGE (prise, interrupteur, commande, variantes domotiques, plaques de finition) — par opposition aux boîtes,
 // câbles, disjoncteurs… Sert au choix « même marque partout » du pré-devis.
 export function estSousCategorieAppareillage(sousCategorie: string): boolean {
-  return sousCategorie in LABEL_APPAREILLAGE || sousCategorie.endsWith("_domotique") || sousCategorie === "prise_specialisee" || sousCategorie.startsWith("plaque_");
+  return sousCategorie in LABEL_APPAREILLAGE || sousCategorie.endsWith("_domotique") || sousCategorie === "prise_specialisee" || sousCategorie.startsWith("plaque_") || sousCategorie.endsWith("_saillie");
 }
 
 export const NOMENCLATURE_APPAREILLAGE: { code: string; label: string }[] = [
   ...Object.entries(LABEL_APPAREILLAGE).map(([code, label]) => ({ code, label })),
   ...Object.entries(LABEL_APPAREILLAGE_DOMOTIQUE).map(([type, label]) => ({ code: `${type}_domotique`, label })),
   { code: "prise_specialisee", label: "Prise / sortie de câble spécialisée" },
+  // Versions EN SAILLIE (boîtier apparent compris dans l'article — ni boîte d'encastrement ni plaque au pré-devis).
+  ...TYPES_SAILLIE_POSSIBLE.filter(t => t in LABEL_APPAREILLAGE && t !== "point_lumineux" && t !== "applique")
+    .map(t => ({ code: `${t}_saillie`, label: `${LABEL_APPAREILLAGE[t]} en saillie` })),
+  { code: "prise_specialisee_saillie", label: "Prise / sortie de câble spécialisée en saillie" },
+  { code: "boite_dcl_saillie", label: "Boîtier DCL en saillie (point lumineux / applique)" },
 ];
 
 // Points lumineux dont le luminaire peut être « à définir avec le client » (hors boîte d'encastrement DCL, qui reste chiffrée).
@@ -352,28 +357,37 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         const dest = destParId.get(a.id)!;
         if (a.dejaExistant) return; // déjà installé chez le client — jamais facturé, ni lui ni sa boîte
         const estCmd = estCommande(a.type);
+        // Pose EN SAILLIE (boîtier apparent) : article « _saillie » propre au catalogue, ni boîte d'encastrement ni plaque (le boîtier est
+        // dans l'article). Luminaires : le point lumineux / l'applique gardent leur luminaire mais prennent un boîtier DCL en saillie ; le
+        // spot est remplacé par un spot en saillie.
+        const sail = estSaillie(a);
+        const suffixeSail = sail ? " en saillie" : "";
+        const poserBesoin = (codeBase: string, label: string) => {
+          const code = sail ? `${codeBase}_saillie` : codeBase;
+          ajouter(`${code}@${dest.id}`, code, `${label}${suffixeSail}`, dest.nom, 1, "u"); cleParApp.set(a.id, `${code}@${dest.id}`);
+        };
         if (estCmd && a.domotique && LABEL_APPAREILLAGE_DOMOTIQUE[a.type]) {
           const sousCat = `${a.type}_domotique`;
           ajouter(`${sousCat}@${dest.id}`, sousCat, LABEL_APPAREILLAGE_DOMOTIQUE[a.type], dest.nom, 1, "u"); cleParApp.set(a.id, `${sousCat}@${dest.id}`);
         } else if (cleCircuitDedie(a) === "irve") {
           // Tout point de recharge (prise renforcée IRVE, borne IRVE, prise dédiée « IRVE ») = « Prise renforcée IRVE »,
           // jamais une sortie de câble spécialisée générique.
-          ajouter(`prise_irve@${dest.id}`, "prise_irve", LABEL_APPAREILLAGE.prise_irve, dest.nom, 1, "u"); cleParApp.set(a.id, `prise_irve@${dest.id}`);
+          poserBesoin("prise_irve", LABEL_APPAREILLAGE.prise_irve);
         } else if (LABEL_APPAREILLAGE[a.type]) {
-          ajouter(`${a.type}@${dest.id}`, a.type, LABEL_APPAREILLAGE[a.type], dest.nom, 1, "u"); cleParApp.set(a.id, `${a.type}@${dest.id}`);
+          if (sail && (a.type === "point_lumineux" || a.type === "applique")) {
+            ajouter(`${a.type}@${dest.id}`, a.type, LABEL_APPAREILLAGE[a.type], dest.nom, 1, "u"); cleParApp.set(a.id, `${a.type}@${dest.id}`);
+          } else poserBesoin(a.type, LABEL_APPAREILLAGE[a.type]);
         } else if (cleCircuitDedie(a) || a.type === "chauffage" || a.type === "volet_roulant") {
-          ajouter(`prise_specialisee@${dest.id}`, "prise_specialisee", "Prise / sortie de câble spécialisée",
-            dest.nom, 1, "u"); cleParApp.set(a.id, `prise_specialisee@${dest.id}`);
+          poserBesoin("prise_specialisee", "Prise / sortie de câble spécialisée");
         }
-        // Tout point lumineux (plafonnier, applique…) a sa propre boîte d'encastrement
-        // DCL — jamais groupée avec les boîtes murales (prise/interrupteur), toujours 1
-        // par point lumineux quel que soit le type.
+        // Tout point lumineux (plafonnier, applique…) a sa propre boîte DCL — jamais groupée avec les boîtes murales
+        // (prise/interrupteur), toujours 1 par point lumineux quel que soit le type ; en saillie : boîtier DCL apparent.
         if (a.type === "point_lumineux" || a.type === "applique") {
-          ajouter(`boite_encastrement_dcl@${dest.id}`, "boite_encastrement_dcl", "Boîte d'encastrement DCL",
-            dest.nom, 1, "u");
+          if (sail) ajouter(`boite_dcl_saillie@${dest.id}`, "boite_dcl_saillie", "Boîtier DCL en saillie", dest.nom, 1, "u");
+          else ajouter(`boite_encastrement_dcl@${dest.id}`, "boite_encastrement_dcl", "Boîte d'encastrement DCL", dest.nom, 1, "u");
         }
         // Un spot s'encastre directement dans le plafond : aucune boîte DCL (contrairement au plafonnier / à l'applique).
-        if (TYPES_ENCASTRABLES.includes(a.type)) clustersEncastrement.push({ id: a.id, x: a.x, y: a.y, groupeId: a.groupeId });
+        if (TYPES_ENCASTRABLES.includes(a.type) && !sail) clustersEncastrement.push({ id: a.id, x: a.x, y: a.y, groupeId: a.groupeId });
       });
       // Spot non étanche en pièce humide ou à l'extérieur : à vérifier (volumes 1 et 2 d'une salle de bains =
       // IPX4 mini, NF C 15-100). Une seule alerte par pièce, avec le nombre de spots concernés.
@@ -876,6 +890,43 @@ function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArt
     }
   }
   return lignes;
+}
+
+// ─── Signatures de validation « OK devis » ──────────────────────────────────────────────────────────
+// Quand un poste (circuit / pièce) est validé « devis OK », on mémorise la signature de ses besoins (clés, sous-catégories, quantités
+// arrondies au dixième — longueurs de câble comprises). Si le plan change ensuite, la signature diffère : la validation tombe d'elle-même.
+function hacher(texte: string): string {
+  let h = 5381;
+  for (let i = 0; i < texte.length; i++) h = ((h << 5) + h + texte.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+export function signaturePoste(besoins: { cle: string; sousCategorie: string; quantite: number }[]): string {
+  return hacher(besoins.map(b => `${b.sousCategorie}|${(Math.round(b.quantite * 10) / 10).toFixed(1)}`).sort().join(";"));
+}
+export const CLE_OK_CABLES = "__cables__";
+export const CLE_OK_GAINES = "__gaines__";
+// Câblage chiffré toutes pièces confondues : signature des totaux par sous-catégorie, par famille (fils / câbles ; gaines / moulures).
+export function signatureCablage(parPiece: Record<string, { cle: string; sousCategorie: string; quantite: number }[]>, famille: "cables" | "gaines"): string {
+  const estGaine = (c: string) => c.startsWith("gaine_irl") || c === "moulure";
+  const totaux = new Map<string, number>();
+  Object.values(parPiece).flat().forEach(b => {
+    if (!estBobinable(b.sousCategorie) || estGaine(b.sousCategorie) !== (famille === "gaines")) return;
+    totaux.set(b.sousCategorie, (totaux.get(b.sousCategorie) ?? 0) + b.quantite);
+  });
+  return signaturePoste([...totaux.entries()].map(([sousCategorie, quantite]) => ({ cle: `AGREGE_${sousCategorie}`, sousCategorie, quantite })));
+}
+// Signatures actuelles de tous les postes + du câblage, à comparer à celles enregistrées avec la validation.
+export function signaturesActuelles(parPiece: Record<string, { cle: string; sousCategorie: string; quantite: number }[]>): Record<string, string> {
+  const sig: Record<string, string> = {};
+  Object.entries(parPiece).forEach(([poste, besoins]) => { sig[poste] = signaturePoste(besoins); });
+  sig[CLE_OK_CABLES] = signatureCablage(parPiece, "cables");
+  sig[CLE_OK_GAINES] = signatureCablage(parPiece, "gaines");
+  return sig;
+}
+// Postes validés dont le contenu a changé depuis la validation (signature enregistrée différente). Une validation sans signature
+// (faite avant cette fonction) n'est pas touchée : sa signature est simplement enregistrée.
+export function postesInvalides(actuelles: Record<string, string>, postesOk: Record<string, boolean>, postesSig: Record<string, string>): string[] {
+  return Object.keys(postesOk).filter(k => postesOk[k] && postesSig[k] != null && actuelles[k] !== postesSig[k]);
 }
 
 export function estBobinable(sousCategorie: string): boolean {

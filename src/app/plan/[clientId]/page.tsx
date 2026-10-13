@@ -6,6 +6,7 @@ import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, Fra
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
+import { calculerBesoinsBruts, signaturesActuelles, postesInvalides, CLE_OK_CABLES, CLE_OK_GAINES } from "@/lib/predevis-engine";
 import Shell from "@/components/layout/Shell";
 import { useProjets, qsProjet, modifierProjet, sauverTableau, sauverAnnexes, synchroniserAnnexes, lireAnnexes, nouvelIdAnnexe, TABLEAU_PRINCIPAL, TableauAnnexe } from "@/lib/projets";
 import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
@@ -34,7 +35,7 @@ import {
   BoiteDerivation, migrerBoitesDerivation,
   Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, nouvelleVoiture, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
   estCommande, estCommandeDouble, estLumiere, estCourantFaible, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM,
-  Escalier, EscalierType, EscalierTournant, EXTERIEUR_PIECE_ID, PhotoChantier} from "@/lib/maison-types";
+  Escalier, EscalierType, EscalierTournant, EXTERIEUR_PIECE_ID, PhotoChantier, TYPES_SAILLIE_POSSIBLE, estSaillie} from "@/lib/maison-types";
 
 
 import { pieceAutoDe } from "@/lib/piece-reelle";
@@ -3887,6 +3888,22 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // circuit (tracé, génération), mais sort de la facturation du pré-devis (lui et sa boîte
   // d'encastrement) : voir predevis-engine.ts. Purement une question de facturation, aucun
   // impact électrique : aucune régénération nécessaire.
+  // Pose encastrée / en saillie d'un appareillage — purement une question de matériel (boîtier apparent au lieu de boîte
+  // d'encastrement + plaque) : voir predevis-engine.ts. Aucune régénération des circuits nécessaire. `tousDuType` : applique le même choix à tous les
+  // appareillages de ce type sur le niveau.
+  const modifierSaillie = (appareillageId: number, saillie: boolean, tousDuType = false) => {
+    updateNiveauActif(n => {
+      const type = n.pieces.flatMap(p => p.appareillages).find(a => a.id === appareillageId)?.type;
+      return {
+        ...n,
+        pieces: n.pieces.map(p => ({
+          ...p,
+          appareillages: p.appareillages.map(a => (a.id === appareillageId || (tousDuType && a.type === type && !a.dejaExistant)) ? { ...a, saillie } : a),
+        })),
+      };
+    });
+  };
+
   const modifierDejaExistant = (appareillageId: number, dejaExistant: boolean) => {
     updateNiveauActif(n => ({
       ...n,
@@ -5689,14 +5706,38 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   //  - cables / gaines : cases « Câbles OK devis » / « Gaines & moulures OK devis » du pré-devis (câblage chiffré toutes pièces confondues).
   // Sert au double contrôle « Masquer OK devis » : les appareillages d'un circuit OK disparaissent ; ses câbles ne disparaissent que si
   // les câbles sont validés, ses gaines (liseré, moulure) que si les gaines le sont — tant que ce n'est pas compté au pré-devis, ils restent visibles.
+  // Une validation « OK devis » tombe dès que le contenu du poste change sur le plan (même règle que dans le pré-devis : signature des
+  // besoins enregistrée à la validation). Recalcul différé (700 ms après la dernière modification) pour ne pas alourdir l'édition.
+  const [clesOkInvalides, setClesOkInvalides] = useState<string[]>([]);
+  useEffect(() => {
+    if (!projet.predevis_config) { setClesOkInvalides([]); return; }
+    const t = setTimeout(() => {
+      try {
+        const cfg = JSON.parse(projet.predevis_config as string);
+        const okSauve: Record<string, boolean> = cfg?.postesOk ?? {};
+        const sigSauve: Record<string, string> = cfg?.postesSig ?? {};
+        if (!Object.values(okSauve).some(Boolean) || niveaux.length === 0) { setClesOkInvalides([]); return; }
+        let rows: BreakerRow[] = [];
+        if (projet.tableau_config) { try { const parsed = JSON.parse(projet.tableau_config); if (Array.isArray(parsed)) rows = parsed; } catch {} }
+        rows = [...rows, ...lireAnnexes(projet.tableaux_annexes).flatMap(a => a.rows)];
+        const { besoins } = calculerBesoinsBruts(niveaux, rows, cfg?.mode === "circuit" ? "circuit" : "piece");
+        const parPiece: Record<string, typeof besoins> = {};
+        besoins.forEach(b => { (parPiece[b.piece] ??= []).push(b); });
+        setClesOkInvalides(postesInvalides(signaturesActuelles(parPiece), okSauve, sigSauve));
+      } catch { setClesOkInvalides([]); }
+    }, 700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [niveaux, projet.predevis_config, projet.tableau_config, projet.tableaux_annexes]);
   const okDevis = (() => {
     const circuits = new Set<number>();
     let cables = false, gaines = false;
     if (!resultat || !projet.predevis_config) return { circuits, cables, gaines };
     let cfg: any = null;
     try { cfg = JSON.parse(projet.predevis_config); } catch { return { circuits, cables, gaines }; }
-    const postesOk: Record<string, boolean> = cfg?.postesOk ?? {};
-    cables = !!postesOk["__cables__"]; gaines = !!postesOk["__gaines__"];
+    const postesOk: Record<string, boolean> = { ...(cfg?.postesOk ?? {}) };
+    clesOkInvalides.forEach(k => { postesOk[k] = false; });
+    cables = !!postesOk[CLE_OK_CABLES]; gaines = !!postesOk[CLE_OK_GAINES];
     const modeCircuit = cfg?.mode === "circuit";
     resultat.breakers.forEach(b => {
       const nv = niveaux.find(n => n.id === b.niveauId);
@@ -7104,6 +7145,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     {a.dejaExistant && (
                       <rect x={cx - demiBoite - 3} y={cy - demiBoite - 3} width={boxSize + 6} height={boxSize + 6} rx={4} fill="none" stroke="#0EA5E9" strokeWidth={1.2} strokeDasharray="2,2" style={{ pointerEvents: "none" }} />
                     )}
+                    {estSaillie(a) && (
+                      <rect x={cx - demiBoite - 2.5} y={cy - demiBoite - 2.5} width={boxSize + 5} height={boxSize + 5} rx={4} fill="#e7e5e4" stroke="#57534e" strokeWidth={1.4} style={{ pointerEvents: "none" }} />
+                    )}
                     <rect x={cx - demiBoite} y={cy - demiBoite} width={boxSize} height={boxSize} rx={3}
                       fill={fondBoite} fillOpacity={0.96} stroke={isSel ? "#F59E0B" : color} strokeWidth={isSel ? 2 : 1.2} style={{ pointerEvents: "none" }} />
                     <g transform={`translate(${cx}, ${cy})`} style={{ pointerEvents: "none" }}>
@@ -8198,6 +8242,22 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       <span>📶 Domotique (liaison sans fil — tracé en onde, pas de câble physique)</span>
                     </label>
                   </>
+                )}
+                {TYPES_SAILLIE_POSSIBLE.includes(selectedAppareillage.type) && (
+                  <div className="flex flex-col gap-1 text-xs text-ink-500 border-t border-ink-100 pt-2">
+                    <label className="flex items-center gap-2">
+                      <span className="shrink-0">Pose</span>
+                      <select className="input !text-xs !py-1 flex-1" value={selectedAppareillage.saillie ? "saillie" : "encastre"}
+                        onChange={e => modifierSaillie(selectedAppareillage.id, e.target.value === "saillie")}>
+                        <option value="encastre">Encastré (boîte d'encastrement + plaque)</option>
+                        <option value="saillie">En saillie (boîtier apparent)</option>
+                      </select>
+                    </label>
+                    <button type="button" className="text-[11px] text-volt-600 font-medium text-left"
+                      onClick={() => modifierSaillie(selectedAppareillage.id, !!selectedAppareillage.saillie, true)}>
+                      Appliquer cette pose à tous les « {labelAppareillage(selectedAppareillage.type)} » du niveau
+                    </button>
+                  </div>
                 )}
                 <label className="flex items-center gap-2 text-xs text-ink-500 cursor-pointer border-t border-ink-100 pt-2">
                   <input type="checkbox" checked={selectedAppareillage.dejaExistant ?? false}

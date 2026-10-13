@@ -103,6 +103,9 @@ export interface AppareillagePlace {
   // l'un des TYPES_USAGE_DEDIE. Détermine le circuit dédié créé (CIRCUITS[...], voir
   // cleCircuitDedie, maison-engine.ts) : calibre, section, différentiel. Défaut : "four".
   usageDedie?: AppareillageType;
+  // Pose de l'appareillage : encastré (défaut) ou EN SAILLIE (boîtier apparent vissé sur le mur — pas de boîte d'encastrement ni de plaque,
+  // article « en saillie » propre au catalogue). Voir TYPES_SAILLIE_POSSIBLE pour les types concernés.
+  saillie?: boolean;
   // Appareillage multiple (plaque double / triple / quadruple) : tous les postes d'une même
   // plaque partagent le même groupeId (id stable, voir uidMaison) et se distinguent par
   // rangPlaque (0 = poste le plus à gauche, vu de la pièce face au mur). Chaque poste reste un
@@ -838,6 +841,18 @@ export const TYPES_COURANT_FAIBLE: AppareillageType[] = ["rj45", "prise_tv"];
 export const estCourantFaible = (type: AppareillageType): boolean => TYPES_COURANT_FAIBLE.includes(type);
 
 // Appareils alimentables par une prise dédiée (un circuit dédié chacun, voir CIRCUIT_DEDIE).
+// Appareillages qui existent en version EN SAILLIE (gammes apparentes type Plexo / Mureva Styl : prise, interrupteur, va-et-vient,
+// poussoir, versions doubles, détecteur, RJ45, TV, sortie de câble / prise dédiée, prise renforcée IRVE) + luminaires dont la boîte ou
+// le corps se pose en apparent (point lumineux : boîtier DCL apparent ; applique ; spot en saillie). Les appareillages extérieurs sont déjà
+// en saillie par nature (étanches IP44/55) — ils n'ont pas cette option.
+export const TYPES_SAILLIE_POSSIBLE: AppareillageType[] = [
+  "prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur", "interrupteur_double", "va_et_vient_double", "telerupteur_double",
+  "detecteur_mouvement", "rj45", "prise_tv", "prise_dediee", "prise_irve",
+  "four", "plaque", "lave_linge", "lave_vaisselle", "seche_linge", "chauffe_eau", "clim", "seche_serviette", "congelateur",
+  "point_lumineux", "applique", "spot",
+];
+export const estSaillie = (a: { type: AppareillageType; saillie?: boolean }): boolean => !!a.saillie && TYPES_SAILLIE_POSSIBLE.includes(a.type);
+
 export const TYPES_USAGE_DEDIE: AppareillageType[] = [
   "four", "plaque", "lave_linge", "lave_vaisselle", "seche_linge", "congelateur", "chauffe_eau", "clim",
 ];

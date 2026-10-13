@@ -14,7 +14,7 @@ import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle }
 import * as THREE from "three";
 import { coudesSegment } from "@/lib/routage-circuits";
 import { conducteursSegment, COULEUR_FIL, couleurConducteur } from "@/lib/couleurs-fils";
-import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, pointBoiteImplicite, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, battantsFenetre, nbVantauxBaie, cleSegmentLiaison, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estCommande, estCommandeDouble, baseCommande, estLumiere, estLumierePlafond, estSpot, HAUTEUR_PERSONNE_M, ENTRAXE_POSTE_M, hauteurCommunePlaqueCm, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
+import { Niveau, PIECE_TYPES, hauteurOuvertureDefautCm, centroide, pointBoiteImplicite, AppareillageType, OuvertureEffective, Ouverture, UsagePorte, LABEL_USAGE_PORTE, ouverturesEffectivesMur, battantsFenetre, nbVantauxBaie, cleSegmentLiaison, pointsOndulesEntre, MeubleSimple, origineCircuits, AppareillagePlace, estSaillie, estCommande, estCommandeDouble, baseCommande, estLumiere, estLumierePlafond, estSpot, HAUTEUR_PERSONNE_M, ENTRAXE_POSTE_M, hauteurCommunePlaqueCm, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, VOITURE_HAUTEUR_M } from "@/lib/maison-types";
 import { ResultatGeneration, construireColorMap, segmentsPourCircuit } from "@/lib/maison-engine";
 import { creerModeleAppareillage, creerVoletRoulant, ModeleVolet, habillerEnSaillie, TYPES_POSE_APPARENTE } from "@/components/plan/Modeles3D";
 import { PorteRegistre, appliquerOuverturePorte, creerPorteBattante, creerPorteCoulissante, creerBaieVitree, idVantailBaie, creerPorteGarage, creerFenetreBattante } from "@/components/plan/PortesOuvrables";
@@ -874,7 +874,7 @@ const Vue3D = forwardRef<Vue3DHandle, {
         // Pose du CIRCUIT : "apparent" → boîtier en saillie + goulotte jusqu'au plafond ;
         // "encastre" (défaut) → appareil à fleur, et (circuit affiché) câble dessiné DANS le doublage
         // (ou la structure sans doublage) — masqué par le mur, visible en mode « Coupe ».
-        const apparent = appareilsApparents.has(app.id) && TYPES_POSE_APPARENTE.includes(app.type);
+        const apparent = (appareilsApparents.has(app.id) || estSaillie(liveParId.get(app.id) ?? app)) && TYPES_POSE_APPARENTE.includes(app.type);
         const racine = apparent && murPose ? habillerEnSaillie(modele, py, appareilsApparents.get(app.id) ?? hauteurGaine) : modele.groupe;
         if (apparent && murPose) habilles.add(app.id);
         racine.position.set(px, py, pz);
