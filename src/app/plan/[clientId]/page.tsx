@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, Fragment, lazy, Suspense } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
 import { calculerBesoinsBruts, signaturesActuelles, postesInvalides, CLE_OK_CABLES, CLE_OK_GAINES } from "@/lib/predevis-engine";
@@ -5185,6 +5185,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // Dernier état du plan réellement enregistré en base : sert à prévenir quand on quitte la page avec des modifications non enregistrées.
   const etatEnregistreRef = useRef<Niveau[] | null>(null);
+  const routeur = useRouter();
   const handleSave = useCallback(async () => {
     setSaving(true);
     const ok = await modifierProjet(projet.id, { maison_config: configPlan(niveaux) });
@@ -6169,7 +6170,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             ) : (
               <button onClick={() => setShowPrintForm(true)} className="btn-ghost !px-2 !py-1.5" title="Imprimer le plan" aria-label="Imprimer le plan"><Printer size={15} /></button>
             )}
-            <Link href={`/predevis/${clientId}${qsProjet(projet.id)}`} className="btn-ghost !px-2 !py-1.5" title="Pré-devis" aria-label="Pré-devis"><Receipt size={15} /></Link>
+            <Link href={`/predevis/${clientId}${qsProjet(projet.id)}`} className="btn-ghost !px-2 !py-1.5" title="Pré-devis" aria-label="Pré-devis"
+              onClick={async e => {
+                // Le pré-devis lit le plan ENREGISTRÉ : on l'enregistre d'abord (la sauvegarde auto n'a lieu que toutes les 5 actions),
+                // sinon les dernières modifications n'y apparaissent pas (ni la perte des « OK devis » qu'elles entraînent).
+                if (niveauxRef.current === etatEnregistreRef.current || niveauxRef.current.length === 0) return;
+                e.preventDefault();
+                const ok = await modifierProjet(projet.id, { maison_config: configPlan(niveauxRef.current) });
+                if (ok) etatEnregistreRef.current = niveauxRef.current;
+                else if (!confirm("Le plan n'a pas pu être enregistré : le pré-devis risque d'afficher une version ancienne. Continuer quand même ?")) return;
+                routeur.push(`/predevis/${clientId}${qsProjet(projet.id)}`);
+              }}><Receipt size={15} /></Link>
             <ReglageAimant pasCm={pasSnapCm} setPasCm={setPasSnapCm} aimant={aimantActif} setAimant={setAimantActif} murs={alignMurs} setMurs={setAlignMurs} />
             {niveauActif && niveauActif.pieces.length > 0 && (
               <select value={selectedPieceId ?? ""} onChange={e => { if (e.target.value !== "") selectionnerPiece(Number(e.target.value)); }}
