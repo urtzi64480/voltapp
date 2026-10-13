@@ -18,11 +18,16 @@ export type VerdictFusion =
 // Le chauffage (regroupé par puissance, label porteur de la puissance) et les circuits spécialisés (un appareil par circuit) sont exclus.
 const FAMILLES_FUSIONNABLES = new Set(["lumiere", "prise_16", "prise_20", "exterieur", "garage", "volets_roulants"]);
 
+/** Prises 16 A / 1,5 mm² : mêmes règles (8 socles max). Un circuit « extérieur » ou « garage » est une prise 16 A classée par pièce — le type de
+ *  pose (saillie…) n'y change rien — donc il peut se fusionner avec un circuit de prises 16 A. Le circuit conservé garde sa famille. */
+const GROUPE_16A = new Set(["prise_16", "exterieur", "garage"]);
+
 /** Famille du circuit fusionné, ou null si les deux familles ne peuvent pas se réunir. 16 A + 20 A (prises) → 20 A / 2,5 mm². */
 export function familleFusionnee(a: string, b: string): string | null {
   if (a === b) return FAMILLES_FUSIONNABLES.has(a) ? a : null;
+  if (GROUPE_16A.has(a) && GROUPE_16A.has(b)) return a;
   const paire = new Set([a, b]);
-  if (paire.size === 2 && paire.has("prise_16") && paire.has("prise_20")) return "prise_20";
+  if (paire.has("prise_20") && (GROUPE_16A.has(a) || GROUPE_16A.has(b))) return "prise_20";
   return null;
 }
 
