@@ -9218,10 +9218,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                                   <span className="relative inline-flex"><Camera size={14} />{(niveauActif?.photosChantier ?? []).filter(ph => ph.circuit === labelStockage).length > 0 && <span className="absolute -top-1.5 -right-2 bg-ink-900 text-white text-[8px] leading-none rounded-full px-1 py-0.5">{(niveauActif?.photosChantier ?? []).filter(ph => ph.circuit === labelStockage).length}</span>}</span>
                                 </button>
                                 {b && !estCircuitSansDisjoncteur(b) && circuitsNiveauActif.length > 1 && (
-                                  <button type="button" className={cls} aria-label="Fusionner avec un autre circuit"
+                                  <button type="button" className="h-6 px-2 inline-flex items-center gap-1 rounded-md border border-volt-300 bg-volt-50 text-volt-700 text-[11px] font-semibold hover:bg-volt-100" aria-label="Fusionner avec un autre circuit"
                                     onClick={e => { e.preventDefault(); e.stopPropagation(); if (refuserVerrou(b.label)) return; setFusionDe(b.id); }}
                                     title="Fusionner ce circuit avec un autre (NF C 15-100 vérifiée : 8 lampes, 8 / 12 prises…)">
-                                    <Merge size={14} />
+                                    <Merge size={13} /> Fusionner
                                   </button>
                                 )}
                                 <button type="button" className={cls} aria-label="Poser une boîte de dérivation"
