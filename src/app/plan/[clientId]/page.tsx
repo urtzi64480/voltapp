@@ -5723,6 +5723,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     return ok;
   })();
 
+  function basculerMasquerOkDevis() {
+    if (!resultat || circuitsOkDevis.size === 0) return;
+    const tous = resultat.breakers.map(b => b.id);
+    const cible = new Set(tous.filter(id => !circuitsOkDevis.has(id)));
+    const dejaMasque = tous.every(id => circuitsVisibles.has(id) === cible.has(id));
+    setShowCircuits(true);
+    setCircuitsVisibles(dejaMasque ? new Set(tous) : cible);
+  }
+
   const circuitsNiveauActif = niveauActif
     ? (resultat ? breakersDuNiveau(resultat.breakers, niveauActif) : [])
     : [];
@@ -6036,6 +6045,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             )}
             <button onClick={handleGenerer} className="btn-ghost !px-2 !py-1 !text-xs" title="Générer les circuits" aria-label="Générer les circuits"><Sparkles size={13} /></button>
             <button onClick={() => setShowCircuits(v => !v)} disabled={!resultat} className={`btn-ghost !px-2 !py-1 !text-xs disabled:opacity-40 ${resultat && showCircuits ? "!bg-ink-900 !text-volt-400" : ""}`} title="Afficher / masquer les circuits" aria-label="Afficher / masquer les circuits"><Eye size={13} /></button>
+            <button onClick={basculerMasquerOkDevis} disabled={!resultat || circuitsOkDevis.size === 0}
+              className="btn-ghost !px-2 !py-1 !text-xs disabled:opacity-40 !text-emerald-700 inline-flex items-center gap-1"
+              title={circuitsOkDevis.size === 0 ? "Double contrôle : aucun circuit « OK devis » pour l'instant (à cocher dans le pré-devis)" : `Double contrôle : masquer / réafficher les ${circuitsOkDevis.size} circuit(s) « OK devis » (câbles et appareillages compris)`}
+              aria-label="Masquer OK devis"><EyeOff size={13} />{circuitsOkDevis.size > 0 && <span className="text-[10px] font-bold">{circuitsOkDevis.size}</span>}</button>
             <button onClick={() => setVue3D(v => !v)} className={`btn-ghost !px-2 !py-1 !text-xs ${vue3D ? "!bg-ink-900 !text-volt-400" : ""}`}
               title={vue3D ? "Revenir à la vue 2D" : "Passer en vue 3D"} aria-label={vue3D ? "Vue 2D" : "Vue 3D"}>{vue3D ? <Square size={13} /> : <Box size={13} />}</button>
             {vue3D && (
@@ -8905,12 +8918,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   {resultat && (
                     <button className="text-[10px] font-semibold shrink-0 text-emerald-700 disabled:text-ink-300" disabled={circuitsOkDevis.size === 0}
                       title="Double contrôle : masque tout ce qui est « OK devis » dans le pré-devis (circuits, câbles et appareillages compris) — il ne reste que ce qui n'a pas été validé"
-                      onClick={() => {
-                        const tous = resultat.breakers.map(b => b.id);
-                        const cible = new Set(tous.filter(id => !circuitsOkDevis.has(id)));
-                        const dejaMasque = cible.size === circuitsVisibles.size && tous.every(id => circuitsVisibles.has(id) === cible.has(id));
-                        setCircuitsVisibles(dejaMasque ? new Set(tous) : cible);
-                      }}>
+                      onClick={basculerMasquerOkDevis}>
                       {circuitsOkDevis.size === 0 ? "Aucun OK devis" : `Masquer OK devis (${circuitsOkDevis.size})`}
                     </button>
                   )}
