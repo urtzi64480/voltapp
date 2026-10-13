@@ -17,7 +17,7 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   const [lignesBrutes, setLignesBrutes] = useState<any[]>([]);
   const [parFournisseur, setParFournisseur] = useState(false);
   // Pièces à acheter par offre fournisseur retenue sur les lignes (vue privée par fournisseur uniquement).
-  const [piecesParOffre, setPiecesParOffre] = useState<Record<string, { nom: string; quantite: number }[]>>({});
+  const [piecesParOffre, setPiecesParOffre] = useState<Record<string, { nom: string; quantite: number; reference?: string | null }[]>>({});
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -54,9 +54,19 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
           // l'erreur est ignorée et la liste reste celle des articles finis.
           const idsOffres = Array.from(new Set(lignes.map((l: any) => l.fournisseur_id).filter(Boolean))) as string[];
           if (idsOffres.length > 0) {
+            // Référence fournisseur de l'offre retenue sur chaque ligne (colonne `reference`), requête à part pour ne rien casser si `pieces` manque.
+            supabase.from("prestation_fournisseurs").select("id, reference").in("id", idsOffres).then(({ data: refs, error }) => {
+              if (error || !refs) return;
+              const parOffre = new Map<string, string>();
+              (refs as any[]).forEach(o => { if (String(o.reference ?? "").trim()) parOffre.set(o.id, String(o.reference).trim()); });
+              if (parOffre.size === 0) return;
+              const enrichies = lignes.map((l: any) => ({ ...l, reference_fournisseur: l.fournisseur_id ? parOffre.get(String(l.fournisseur_id)) : undefined }));
+              setLignesBrutes(enrichies);
+              setItems(buildCourseItems(enrichies));
+            });
             supabase.from("prestation_fournisseurs").select("id, pieces").in("id", idsOffres).then(({ data: offres, error }) => {
               if (error || !offres) return;
-              const m: Record<string, { nom: string; quantite: number }[]> = {};
+              const m: Record<string, { nom: string; quantite: number; reference?: string | null }[]> = {};
               (offres as any[]).forEach(o => { if (Array.isArray(o.pieces) && o.pieces.length > 0) m[o.id] = o.pieces; });
               setPiecesParOffre(m);
             });
@@ -278,6 +288,7 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
         <LigneImage url={it.image} taille={36} />
         <span className={cn("flex-1 text-sm", isChecked ? "text-ink-400 line-through" : "text-ink-800")}>
           {it.nom}
+          {it.reference && <span className="block text-[11px] text-ink-400 no-underline">Réf. {it.reference}</span>}
         </span>
         <span className={cn("text-sm font-semibold shrink-0", isChecked ? "text-ink-300" : "text-ink-900")}>
           {it.qty}{it.unite && it.unite !== "u" && it.unite !== "forfait" ? ` ${it.unite}` : "×"}
@@ -425,6 +436,7 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
                               <div key={l.cle} className="flex items-baseline gap-2 text-sm border-b border-ink-50 pb-1">
                                 <span className="flex-1 min-w-0 text-ink-800">
                                   <span className="font-semibold">{l.unite && l.unite !== "u" && l.unite !== "forfait" ? `${l.qty} ${l.unite}` : `${l.qty}×`}</span> {l.nom}
+                                  {l.reference && <span className="block text-[11px] text-ink-400">Réf. {l.reference}</span>}
                                 </span>
                                 {l.achatUnitaire != null ? (
                                   <span className="shrink-0 text-right">

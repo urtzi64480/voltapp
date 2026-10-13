@@ -27,7 +27,7 @@ export function buildCourseText(
   if (meta.objet) lines.push(meta.objet);
   lines.push("");
   for (const it of items) {
-    lines.push(`${checked[it.key] ? "☑" : "☐"} ${qtyLabel(it)} ${it.nom}`);
+    lines.push(`${checked[it.key] ? "☑" : "☐"} ${qtyLabel(it)} ${it.nom}${it.reference ? ` (réf. ${it.reference})` : ""}`);
   }
   return lines.join("\n");
 }
@@ -85,7 +85,7 @@ export async function genPDFListeCourses(
   for (const it of items) {
     const isChecked = !!checked[it.key];
     const nameLines: string[] = doc.splitTextToSize(it.nom, NAME_W);
-    const rowH = Math.max(8, nameLines.length * 5 + 3);
+    const rowH = Math.max(8, nameLines.length * 5 + 3) + (it.reference ? 4 : 0);
 
     if (y + rowH > BOTTOM) {
       doc.addPage();
@@ -109,6 +109,12 @@ export async function genPDFListeCourses(
     else doc.setTextColor(20, 20, 20);
     doc.setFont("helvetica", "normal");
     doc.text(nameLines, MARGIN + 9, y);
+    if (it.reference) {
+      doc.setFontSize(8.5); doc.setTextColor(120, 120, 120);
+      doc.text(`Réf. ${it.reference}`, MARGIN + 9, y + nameLines.length * 5 - 0.5);
+      doc.setFontSize(11);
+      if (isChecked) doc.setTextColor(150, 150, 150); else doc.setTextColor(20, 20, 20);
+    }
     doc.setFont("helvetica", "bold");
     doc.text(qtyLabel(it), RIGHT, y, { align: "right" });
 
@@ -143,7 +149,7 @@ export function buildPrixFournisseursText(c: ComparatifAchat, meta: CourseExport
     lines.push(`${g.fournisseur ?? "Fournisseur non précisé"} — ${eur(g.achat)} TTC`);
     g.lignes.forEach(l => {
       const achat = l.achatUnitaire != null ? `${eur(l.achatUnitaire)} → ${eur(l.achatTotal ?? 0)}` : "prix non renseigné";
-      lines.push(`  • ${qtyTexte(l)} ${l.nom} : ${achat}${avecComparatif && l.achatUnitaire != null ? ` (devis : ${eur(l.venteTotal)})` : ""}`);
+      lines.push(`  • ${qtyTexte(l)} ${l.nom}${l.reference ? ` (réf. ${l.reference})` : ""} : ${achat}${avecComparatif && l.achatUnitaire != null ? ` (devis : ${eur(l.venteTotal)})` : ""}`);
     });
     lines.push("");
   });
@@ -184,9 +190,10 @@ export async function genPDFPrixFournisseurs(c: ComparatifAchat, meta: CourseExp
     y += 4; doc.setFontSize(10); doc.setFont("helvetica", "normal");
     g.lignes.forEach(l => {
       const nom: string[] = doc.splitTextToSize(`${qtyTexte(l)} ${l.nom}`, NAME_W);
-      const h = Math.max(6, nom.length * 4.6 + 1.5);
+      const h = Math.max(6, nom.length * 4.6 + 1.5) + (l.reference ? 3.8 : 0);
       saut(h);
       doc.setTextColor(20, 20, 20); doc.text(nom, MARGIN, y);
+      if (l.reference) { doc.setFontSize(8); doc.setTextColor(120, 120, 120); doc.text(`Réf. ${l.reference}`, MARGIN, y + nom.length * 4.6 - 0.4); doc.setFontSize(10); doc.setTextColor(20, 20, 20); }
       if (l.achatUnitaire != null) {
         doc.text(eur(l.achatUnitaire), COL_UNIT, y, { align: "right" });
         doc.text(eur(l.achatTotal ?? 0), COL_TOTAL, y, { align: "right" });

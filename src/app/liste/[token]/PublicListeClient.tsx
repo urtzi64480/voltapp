@@ -22,8 +22,14 @@ export default function PublicListeClient({ token }: { token: string }) {
   const [info, setInfo] = useState<PublicListeRow | null>(null);
   const [items, setItems] = useState<CourseItem[]>([]);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
+  // Références chez le fournisseur (clé de l'article en minuscules → référence). Fonction SQL séparée (migration 009) :
+  // si elle n'existe pas encore, la liste s'affiche simplement sans références.
+  const [refs, setRefs] = useState<Record<string, string>>({});
 
   useEffect(() => {
+    supabase.rpc("get_devis_public_liste_refs", { p_token: token }).then(({ data, error }) => {
+      if (!error && data && typeof data === "object" && !Array.isArray(data)) setRefs(data as Record<string, string>);
+    });
     supabase
       .rpc("get_devis_public_liste", { p_token: token })
       .single()
@@ -106,6 +112,7 @@ export default function PublicListeClient({ token }: { token: string }) {
                       <LigneImage url={it.image} taille={36} />
                       <span className={cn("flex-1 text-sm", isChecked ? "text-ink-400 line-through" : "text-ink-800")}>
                         {it.nom}
+                        {(it.reference || refs[it.key]) && <span className="block text-[11px] text-ink-400 no-underline">Réf. {it.reference || refs[it.key]}</span>}
                       </span>
                       <span className={cn("text-sm font-semibold shrink-0", isChecked ? "text-ink-300" : "text-ink-900")}>
                         {it.qty}{it.unite && it.unite !== "u" && it.unite !== "forfait" ? ` ${it.unite}` : "×"}
