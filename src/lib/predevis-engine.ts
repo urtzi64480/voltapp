@@ -614,9 +614,13 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           const nbCond = estLiaisonCommande ? nbConducteurs(seg) : 3;
           const gaineLiaison = gaineRecommandee(Array(nbCond).fill(section), pose === "apparent" ? "IRL" : "ICTA");
           const diamGaine = gaineLiaison.gaine.replace(/\D/g, "");
-          const precablee = pose !== "apparent" && poseEncastre === "precablee";
-          const sousCatGaine = pose === "apparent" ? `gaine_irl${diamGaine}` : precablee ? `gaine_precablee_${nbCond}g${section}` : `gaine_icta${diamGaine}`;
-          const labelGaine = pose === "apparent" ? `Gaine ${gaineLiaison.gaine} (pose apparente)` : precablee ? `Gaine ICTA précâblée ${nbCond}G${section}` : `Gaine ${gaineLiaison.gaine}`;
+          // STRICTEMENT 3 fils communs (phase, neutre, terre) = tout sauf navette / commande / retour lampe : seuls ces tronçons existent en
+          // gaine précâblée. Dès que la liaison porte autre chose (navette, retour, commande), gaine ICTA + fils à câbler soi-même.
+          const strict3 = !estLiaisonCommande;
+          const precablee = pose !== "apparent" && poseEncastre === "precablee" && strict3;
+          const aCabler = pose !== "apparent" && poseEncastre === "precablee" && !strict3;
+          const sousCatGaine = pose === "apparent" ? `gaine_irl${diamGaine}` : precablee ? `gaine_precablee_3g${section}` : `gaine_icta${diamGaine}`;
+          const labelGaine = pose === "apparent" ? `Gaine ${gaineLiaison.gaine} (pose apparente)` : precablee ? `Gaine ICTA précâblée 3G${section} (3 fils : phase, neutre, terre)` : aCabler ? `Gaine ${gaineLiaison.gaine} — à câbler (navettes / retours / commandes)` : `Gaine ${gaineLiaison.gaine}`;
           noterCircuit(niveau, b, nomCircuit(b), sousCatGaine, labelGaine, legLength, "m");
 
           // Câblage d'une liaison d'éclairage (composition exacte : couleurs-fils.ts → conducteursSegment) :
@@ -628,10 +632,12 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           // par sa commande, 2 navettes par liaison) : chaque tronçon est donc chiffré comme le câble d'alimentation.
           // Gaine précâblée : le câblage est DANS la gaine (un seul article) — ni fils ni câble à part.
           if (!precablee) {
-            ajouter(`cablage_${section}@${nomPiece}`, `cablage_${section}`, LABEL_CABLAGE[section] ?? `Câblage ${section}mm²`,
-              nomPiece, legLength, "m", legLength * nbCond);
+            // Liaisons de commande (navette / commande / retour) : besoin de fils SÉPARÉS à part (jamais mélangé aux 3 fils communs).
+            if (strict3) ajouter(`cablage_${section}@${nomPiece}`, `cablage_${section}`, LABEL_CABLAGE[section] ?? `Câblage ${section}mm²`, nomPiece, legLength, "m", legLength * nbCond);
+            else ajouter(`cablagecmd_${section}@${nomPiece}`, `cablagecmd_${section}`, `Fils de liaison ${section}mm² — navettes / retours / commandes (à câbler dans la gaine)`, nomPiece, legLength, "m", legLength * nbCond);
           }
           ajouter(`${sousCatGaine}@${nomPiece}`, sousCatGaine, labelGaine, nomPiece, legLength, "m");
+          if (aCabler) { const bg = cumul.get(`${sousCatGaine}@${nomPiece}`); if (bg) bg.note = "Tronçons de navette / retour / commande : pas de gaine précâblée, tu câbles toi-même (gaine + fils ci-dessous)."; }
         });
       });
 
@@ -806,6 +812,10 @@ function optionsPour(sousCategorie: string, prestations: Prestation[]): OptionAr
 // à la fois. Pour tout autre type de besoin, comportement inchangé (options normales,
 // multiplicateur ×1).
 function optionsPourBesoin(sousCategorie: string, prestations: Prestation[], ratioFils = 3): OptionArticle[] {
+  if (sousCategorie.startsWith("cablagecmd_")) {
+    // Navettes / retours / commandes : fils séparés uniquement (tirés à la main dans la gaine).
+    return optionsPour(`fil_${sousCategorie.slice("cablagecmd_".length)}`, prestations).map(o => ({ ...o, quantiteMultiplicateur: ratioFils }));
+  }
   if (sousCategorie.startsWith("cablage_")) {
     const section = sousCategorie.slice("cablage_".length);
     const optsCable = optionsPour(`cable_${section}`, prestations).map(o => ({ ...o, quantiteMultiplicateur: 1 }));
@@ -962,7 +972,7 @@ export function postesInvalides(actuelles: Record<string, string>, postesOk: Rec
 }
 
 export function estBobinable(sousCategorie: string): boolean {
-  return sousCategorie.startsWith("cablage_") || sousCategorie.startsWith("fil_")
+  return sousCategorie.startsWith("cablage_") || sousCategorie.startsWith("cablagecmd_") || sousCategorie.startsWith("fil_")
     || sousCategorie.startsWith("gaine_") || sousCategorie === "moulure" || sousCategorie === "cable_rj45" || sousCategorie === "cable_coax";
 }
 
@@ -1030,7 +1040,7 @@ function ajouterLignesBesoin(
 // réelle de l'article choisi : ×3 si Ben cherche et sélectionne un article "fil_X" pour un
 // besoin "cablage_X", ×1 dans tous les autres cas.
 export function multiplicateurPourArticle(besoinSousCategorie: string, articleSousCategorie: string | null | undefined, ratioFils = 3): number {
-  if (besoinSousCategorie.startsWith("cablage_") && sousCategoriesDe(articleSousCategorie).some(c => c.startsWith("fil_"))) return ratioFils;
+  if ((besoinSousCategorie.startsWith("cablage_") || besoinSousCategorie.startsWith("cablagecmd_")) && sousCategoriesDe(articleSousCategorie).some(c => c.startsWith("fil_"))) return ratioFils;
   return 1;
 }
 

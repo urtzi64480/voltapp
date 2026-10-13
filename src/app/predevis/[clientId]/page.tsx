@@ -447,6 +447,19 @@ export default function PreDevisPage() {
   return <PreDevisEditor key={projet.id} clientId={clientId} projet={projet} projets={projets} onSelect={choisir} onChanged={choisir} />;
 }
 
+// Répartition de la gaine ENCASTRÉE d'un ensemble de besoins : mètres de gaine précâblée 3 fils (phase, neutre, terre — seuls tronçons
+// précâblables) et mètres de gaine ICTA à câbler soi-même (navettes, retours, commandes) + fils de liaison correspondants.
+function repartitionGaines(besoins: { sousCategorie: string; quantite: number; quantiteFils?: number }[]) {
+  let precablee = 0, aCabler = 0, filsLiaison = 0, icta = 0;
+  besoins.forEach(b => {
+    if (b.sousCategorie.startsWith("gaine_precablee_")) precablee += b.quantite;
+    else if (b.sousCategorie.startsWith("gaine_icta")) icta += b.quantite;
+    else if (b.sousCategorie.startsWith("cablagecmd_")) { aCabler += b.quantite; filsLiaison += b.quantiteFils ?? b.quantite * 3; }
+  });
+  return { precablee, aCabler, filsLiaison, icta };
+}
+const fm = (n: number) => `${n.toFixed(1).replace(".", ",")} m`;
+
 const VERSION_SUIVI_OK = 2; // brouillons enregistrés avec les empreintes de validation fiables
 
 function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
@@ -667,7 +680,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       quantite: e.total, unite: "m" as const,
       // Fils séparés : multiplicateur = nombre moyen de conducteurs de TOUS les besoins réunis (pondéré par les longueurs).
       quantiteFils: e.totalFils,
-      options: sousCategorie.startsWith("cablage_") ? optionsAvecRatioFils(e.options, ratioFilsDe({ quantite: e.total, quantiteFils: e.totalFils })) : e.options,
+      options: sousCategorie.startsWith("cablage") ? optionsAvecRatioFils(e.options, ratioFilsDe({ quantite: e.total, quantiteFils: e.totalFils })) : e.options,
     }));
   }, [resultat, parPieceFiltre]);
 
@@ -1299,6 +1312,17 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 <span>h</span>
               </label>
             </div>
+            {ouv && poseEncastre === "precablee" && (() => {
+              const r = repartitionGaines(besoins);
+              if (r.precablee <= 0 && r.aCabler <= 0) return null;
+              return (
+                <p className="mt-2 text-xs rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-sky-800">
+                  Pose encastrée :{" "}
+                  <strong>{fm(r.precablee)}</strong> de gaine précâblée <strong>3 fils</strong> (phase, neutre, terre)
+                  {r.aCabler > 0 && <> · <strong className="text-amber-700">{fm(r.aCabler)} à câbler toi-même</strong> (navettes / retours / commandes : gaine ICTA + {fm(r.filsLiaison)} de fils)</>}
+                </p>
+              );
+            })()}
             {ouv && (<>
             <div className="flex flex-col gap-2 mt-3">
               {besoins.map(b => (
@@ -1340,7 +1364,15 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   </label>
                 ))}
               </div>
-              <p className="text-[11px] text-ink-500 mt-1.5">Pose apparente : toujours gaine IRL + fils (aucun choix).</p>
+              <p className="text-[11px] text-ink-500 mt-1.5">Pose apparente : toujours gaine IRL + fils (aucun choix). La gaine précâblée ne couvre que les tronçons <strong>strictement 3 fils</strong> (phase, neutre, terre) ; navettes, retours et commandes restent en gaine ICTA + fils, à câbler toi-même.</p>
+              {poseEncastre === "precablee" && (() => {
+                const r = repartitionGaines(Object.values(parPieceFiltre).flat());
+                return (
+                  <p className="text-xs mt-1.5 text-sky-800">
+                    Total : <strong>{fm(r.precablee)}</strong> de gaine précâblée 3 fils · <strong className="text-amber-700">{fm(r.aCabler)}</strong> de tronçons à câbler (gaine ICTA + {fm(r.filsLiaison)} de fils de liaison).
+                  </p>
+                );
+              })()}
             </div>
             <p className="text-xs text-ink-400 mb-3">Un seul choix par section/type sur le métrage total nécessaire — la meilleure combinaison bobine + mètre linéaire se calcule sur l'ensemble, pas pièce par pièce. Le détail par pièce reste visible dans chaque besoin ci-dessous.</p>
             <div className="flex flex-col gap-2">
