@@ -23,9 +23,11 @@
 //  - La pose (encastré/apparent) d'une section suit le LiaisonWaypoint.poseType du coude où elle
 //    aboutit, ou Niveau.poseFinLiaison pour la dernière section (voir pose-circuits.ts) ; par
 //    défaut : encastré. Un même circuit peut mélanger sections encastrées et apparentes.
-//  - Un mètre de câble encastré nécessite un mètre de gaine assortie (calibrée via
-//    gaineRecommandee, comme le fait déjà le module Tableau) ; un mètre de câble apparent
-//    nécessite un mètre de moulure (article générique, non calibré).
+//  - Un mètre de câblage ENCASTRÉ nécessite un mètre de gaine ICTA (gaine_icta<diamètre>, calibrée via gaineRecommandee sur le
+//    NOMBRE RÉEL de conducteurs de la liaison) ; au choix du pré-devis (PoseEncastre), la gaine ICTA PRÉCÂBLÉE
+//    (gaine_precablee_<n>g<section>) remplace gaine + fils. Un mètre de câblage APPARENT nécessite TOUJOURS un mètre de gaine IRL
+//    (gaine_irl<diamètre>) + fils. Des fils séparés se comptent à raison du nombre de conducteurs de chaque liaison
+//    (3 pour une prise : phase + neutre + terre ; 4 à 7 pour navettes / commandes) : quantiteFils = Σ longueur × conducteurs.
 //  - La distance "point d'arrivée des gaines → tableau" (Niveau.distanceArriveeGainesTableau)
 //    est ajoutée UNE FOIS par circuit du niveau concerné, à la section propre du circuit,
 //    en pose encastrée (choix confirmé).
@@ -98,6 +100,9 @@ export interface LigneBesoin {
   unite: UniteBesoin;
   note?: string;          // information d'affichage (ex. boîte + plaque multiple comptées dans un autre circuit)
   appareils?: { piece: string; nom?: string }[]; // appareillages du plan couverts par cette ligne : pièce réelle + nom donné sur le plan (affichage)
+  // Besoins de câblage ("cablage_X") : métrage de FILS SÉPARÉS nécessaire = Σ (longueur de la liaison × nombre de conducteurs qu'elle porte).
+  // quantiteFils / quantite = nombre moyen de fils à tirer (3 pour un circuit de prises, plus avec navettes / commandes).
+  quantiteFils?: number;
 }
 
 export interface OptionArticle {
@@ -303,13 +308,15 @@ export interface RecapCircuit {
   lignes: LigneRecapCircuit[];
 }
 export type ModePreDevis = "piece" | "circuit";
+// Pose ENCASTRÉE au choix du pré-devis : gaine ICTA + fils (défaut) ou gaine ICTA précâblée. La pose apparente reste toujours IRL + fils.
+export type PoseEncastre = "icta_fils" | "precablee";
 export const PREFIXE_CIRCUIT = "Circuit · ";
 export const PREFIXE_HORS_CIRCUIT = "Hors circuit · ";
 
 // mode "piece" : les besoins sont regroupés par pièce (câbles = répartis selon les pièces traversées).
 // mode "circuit" : regroupés par CIRCUIT (un circuit de prises peut courir sur plusieurs pièces) — appareillage, boîtes et
 // câbles d'un circuit forment un seul poste. Les longueurs de câble sont strictement les mêmes dans les deux modes.
-export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[], mode: ModePreDevis = "piece"): { besoins: LigneBesoin[]; alertes: string[]; recap: RecapCircuit[] } {
+export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[], mode: ModePreDevis = "piece", poseEncastre: PoseEncastre = "icta_fils"): { besoins: LigneBesoin[]; alertes: string[]; recap: RecapCircuit[] } {
   const alertes: string[] = [];
   const recapParCircuit = new Map<string, RecapCircuit>();
   const noterCircuit = (niveau: Niveau, b: { id: number; label: string; manuelId?: number }, groupe: string, sousCategorie: string, label: string, quantite: number, unite: UniteBesoin) => {
@@ -321,11 +328,15 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
     if (l) l.quantite += quantite; else r.lignes.push({ sousCategorie, label, quantite, unite });
   };
   const cumul = new Map<string, LigneBesoin>(); // clé -> besoin (cumule les quantités)
-  const ajouter = (cle: string, sousCategorie: string, label: string, piece: string, quantite: number, unite: UniteBesoin) => {
+  const ajouter = (cle: string, sousCategorie: string, label: string, piece: string, quantite: number, unite: UniteBesoin, quantiteFils?: number) => {
     if (quantite <= 0) return;
     const existant = cumul.get(cle);
-    if (existant) { existant.quantite += quantite; return; }
-    cumul.set(cle, { cle, sousCategorie, label, piece, quantite, unite });
+    if (existant) {
+      existant.quantite += quantite;
+      if (quantiteFils != null) existant.quantiteFils = (existant.quantiteFils ?? 0) + quantiteFils;
+      return;
+    }
+    cumul.set(cle, { cle, sousCategorie, label, piece, quantite, unite, ...(quantiteFils != null ? { quantiteFils } : {}) });
   };
 
   const maison: Maison = { niveaux };
@@ -599,8 +610,14 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           noterCircuit(niveau, b, nomCircuit(b),
             estLiaisonCommande ? (seg.type === "navette" ? "navette" : seg.type === "commande" ? "aller_commande" : "retour_lampe") : estAller ? "aller_commande" : `cablage_${section}`,
             estLiaisonCommande ? (seg.type === "navette" ? `Navettes (câble ${nbConducteurs(seg)}G1.5)` : seg.type === "commande" ? `Commande boutons-poussoirs (câble ${nbConducteurs(seg)}G1.5)` : `Retour lampe (câble ${nbConducteurs(seg)}G1.5)`) : estAller ? `Aller vers commande (câble ${section} mm²)` : `Câble ${section} mm²`, legLength, "m");
-          if (pose === "apparent") noterCircuit(niveau, b, nomCircuit(b), "moulure", "Moulure (pose apparente)", legLength, "m");
-          else { const gi = gaineRecommandee([section, section, section]); noterCircuit(niveau, b, nomCircuit(b), `gaine_irl${gi.gaine.replace(/\D/g, "")}`, `Gaine ${gi.gaine}`, legLength, "m"); }
+          // Conducteurs réellement tirés dans la gaine : 3 (phase, neutre, terre) ; liaisons de commande / navette : leur composition exacte.
+          const nbCond = estLiaisonCommande ? nbConducteurs(seg) : 3;
+          const gaineLiaison = gaineRecommandee(Array(nbCond).fill(section), pose === "apparent" ? "IRL" : "ICTA");
+          const diamGaine = gaineLiaison.gaine.replace(/\D/g, "");
+          const precablee = pose !== "apparent" && poseEncastre === "precablee";
+          const sousCatGaine = pose === "apparent" ? `gaine_irl${diamGaine}` : precablee ? `gaine_precablee_${nbCond}g${section}` : `gaine_icta${diamGaine}`;
+          const labelGaine = pose === "apparent" ? `Gaine ${gaineLiaison.gaine} (pose apparente)` : precablee ? `Gaine ICTA précâblée ${nbCond}G${section}` : `Gaine ${gaineLiaison.gaine}`;
+          noterCircuit(niveau, b, nomCircuit(b), sousCatGaine, labelGaine, legLength, "m");
 
           // Câblage d'une liaison d'éclairage (composition exacte : couleurs-fils.ts → conducteursSegment) :
           //  · alimentation → commande : l'ALLER (phase), + neutre + terre qui poursuivent vers la lampe ;
@@ -609,17 +626,12 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           // Le métrage reste chiffré au prix du câble de la section (la différence de nombre de conducteurs n'est pas valorisée).
           // Compter le retour et la navette comme un simple fil sous-estimait le métrage (neutre/terre d'une lampe alimentée
           // par sa commande, 2 navettes par liaison) : chaque tronçon est donc chiffré comme le câble d'alimentation.
-          ajouter(`cablage_${section}@${nomPiece}`, `cablage_${section}`, LABEL_CABLAGE[section] ?? `Câblage ${section}mm²`,
-            nomPiece, legLength, "m");
-
-          if (pose === "apparent") {
-            ajouter(`moulure@${nomPiece}`, "moulure", "Moulure", nomPiece, legLength, "m");
-          } else {
-            const gaineInfo = gaineRecommandee([section, section, section]);
-            const chiffres = gaineInfo.gaine.replace(/\D/g, "");
-            const sousCatGaine = `gaine_irl${chiffres}`;
-            ajouter(`${sousCatGaine}@${nomPiece}`, sousCatGaine, `Gaine ${gaineInfo.gaine}`, nomPiece, legLength, "m");
+          // Gaine précâblée : le câblage est DANS la gaine (un seul article) — ni fils ni câble à part.
+          if (!precablee) {
+            ajouter(`cablage_${section}@${nomPiece}`, `cablage_${section}`, LABEL_CABLAGE[section] ?? `Câblage ${section}mm²`,
+              nomPiece, legLength, "m", legLength * nbCond);
           }
+          ajouter(`${sousCatGaine}@${nomPiece}`, sousCatGaine, labelGaine, nomPiece, legLength, "m");
         });
       });
 
@@ -638,14 +650,19 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       if (!nonRelie && niveau.type !== "annexe" && niveau.distanceArriveeGainesTableau != null && niveau.distanceArriveeGainesTableau > 0) {
         const d = niveau.distanceArriveeGainesTableau;
         const nomPiece = mode === "circuit" ? nomCircuit(b) : pseudoLiaisonVerticale(niveau.nom || niveau.type);
-        ajouter(`cablage_${sectionCircuit}@${nomPiece}`, `cablage_${sectionCircuit}`,
-          LABEL_CABLAGE[sectionCircuit] ?? `Câblage ${sectionCircuit}mm²`, nomPiece, d, "m");
-        const gaineInfo = gaineRecommandee([sectionCircuit, sectionCircuit, sectionCircuit]);
+        // Liaison verticale tableau → point d'arrivée : toujours encastrée (gaine ICTA, ou ICTA précâblée au choix).
+        const gaineInfo = gaineRecommandee([sectionCircuit, sectionCircuit, sectionCircuit], "ICTA");
         const chiffres = gaineInfo.gaine.replace(/\D/g, "");
-        const sousCatGaine = `gaine_irl${chiffres}`;
-        ajouter(`${sousCatGaine}@${nomPiece}`, sousCatGaine, `Gaine ${gaineInfo.gaine}`, nomPiece, d, "m");
+        const precabV = poseEncastre === "precablee";
+        const sousCatGaine = precabV ? `gaine_precablee_3g${sectionCircuit}` : `gaine_icta${chiffres}`;
+        const labelGaineV = precabV ? `Gaine ICTA précâblée 3G${sectionCircuit}` : `Gaine ${gaineInfo.gaine}`;
+        if (!precabV) {
+          ajouter(`cablage_${sectionCircuit}@${nomPiece}`, `cablage_${sectionCircuit}`,
+            LABEL_CABLAGE[sectionCircuit] ?? `Câblage ${sectionCircuit}mm²`, nomPiece, d, "m", d * 3);
+        }
+        ajouter(`${sousCatGaine}@${nomPiece}`, sousCatGaine, labelGaineV, nomPiece, d, "m");
         noterCircuit(niveau, b, nomCircuit(b), `cablage_${sectionCircuit}`, `Câble ${sectionCircuit} mm²`, d, "m");
-        noterCircuit(niveau, b, nomCircuit(b), sousCatGaine, `Gaine ${gaineInfo.gaine}`, d, "m");
+        noterCircuit(niveau, b, nomCircuit(b), sousCatGaine, labelGaineV, d, "m");
       }
     });
   });
@@ -788,11 +805,12 @@ function optionsPour(sousCategorie: string, prestations: Prestation[]): OptionAr
 // ×3) en UNE seule liste d'options — Ben choisit librement l'un ou l'autre, jamais les deux
 // à la fois. Pour tout autre type de besoin, comportement inchangé (options normales,
 // multiplicateur ×1).
-function optionsPourBesoin(sousCategorie: string, prestations: Prestation[]): OptionArticle[] {
+function optionsPourBesoin(sousCategorie: string, prestations: Prestation[], ratioFils = 3): OptionArticle[] {
   if (sousCategorie.startsWith("cablage_")) {
     const section = sousCategorie.slice("cablage_".length);
     const optsCable = optionsPour(`cable_${section}`, prestations).map(o => ({ ...o, quantiteMultiplicateur: 1 }));
-    const optsFil = optionsPour(`fil_${section}`, prestations).map(o => ({ ...o, quantiteMultiplicateur: 3 }));
+    // Fils séparés : autant de mètres que de conducteurs à tirer (ratioFils = quantiteFils / quantite du besoin, 3 pour un circuit de prises).
+    const optsFil = optionsPour(`fil_${section}`, prestations).map(o => ({ ...o, quantiteMultiplicateur: ratioFils }));
     return [...optsCable, ...optsFil];
   }
   const directes = optionsPour(sousCategorie, prestations);
@@ -824,7 +842,7 @@ export function apparierCatalogue(besoins: LigneBesoin[], prestations: Prestatio
   const nonIdentifies: BesoinApparie[] = [];
 
   besoins.forEach(besoin => {
-    const options = optionsPourBesoin(besoin.sousCategorie, prestations);
+    const options = optionsPourBesoin(besoin.sousCategorie, prestations, ratioFilsDe(besoin));
     const apparie: BesoinApparie = { ...besoin, options };
     (parPiece[besoin.piece] ??= []).push(apparie);
     if (options.length === 0) nonIdentifies.push(apparie);
@@ -921,7 +939,7 @@ export const CLE_OK_CABLES = "__cables__";
 export const CLE_OK_GAINES = "__gaines__";
 // Câblage chiffré toutes pièces confondues : signature des totaux par sous-catégorie, par famille (fils / câbles ; gaines / moulures).
 export function signatureCablage(parPiece: Record<string, { cle: string; sousCategorie: string; quantite: number }[]>, famille: "cables" | "gaines"): string {
-  const estGaine = (c: string) => c.startsWith("gaine_irl") || c === "moulure";
+  const estGaine = (c: string) => c.startsWith("gaine_") || c === "moulure";
   const totaux = new Map<string, number>();
   Object.values(parPiece).flat().forEach(b => {
     if (!estBobinable(b.sousCategorie) || estGaine(b.sousCategorie) !== (famille === "gaines")) return;
@@ -945,7 +963,7 @@ export function postesInvalides(actuelles: Record<string, string>, postesOk: Rec
 
 export function estBobinable(sousCategorie: string): boolean {
   return sousCategorie.startsWith("cablage_") || sousCategorie.startsWith("fil_")
-    || sousCategorie.startsWith("gaine_irl") || sousCategorie === "moulure" || sousCategorie === "cable_rj45" || sousCategorie === "cable_coax";
+    || sousCategorie.startsWith("gaine_") || sousCategorie === "moulure" || sousCategorie === "cable_rj45" || sousCategorie === "cable_coax";
 }
 
 // Poste du devis (devis_lignes.poste) porté par un besoin du pré-devis : chaque PIÈCE du plan devient un poste du
@@ -1011,9 +1029,18 @@ function ajouterLignesBesoin(
 // (recherche libre au catalogue, mode "autre" du pré-devis) — déduit de la sous_categorie
 // réelle de l'article choisi : ×3 si Ben cherche et sélectionne un article "fil_X" pour un
 // besoin "cablage_X", ×1 dans tous les autres cas.
-export function multiplicateurPourArticle(besoinSousCategorie: string, articleSousCategorie: string | null | undefined): number {
-  if (besoinSousCategorie.startsWith("cablage_") && sousCategoriesDe(articleSousCategorie).some(c => c.startsWith("fil_"))) return 3;
+export function multiplicateurPourArticle(besoinSousCategorie: string, articleSousCategorie: string | null | undefined, ratioFils = 3): number {
+  if (besoinSousCategorie.startsWith("cablage_") && sousCategoriesDe(articleSousCategorie).some(c => c.startsWith("fil_"))) return ratioFils;
   return 1;
+}
+
+// Nombre moyen de fils à tirer pour un besoin de câblage (Σ longueur × conducteurs ÷ Σ longueur) ; 3 par défaut (phase + neutre + terre).
+export function ratioFilsDe(besoin: { quantite: number; quantiteFils?: number }): number {
+  return besoin.quantiteFils != null && besoin.quantite > 0 ? Math.round((besoin.quantiteFils / besoin.quantite) * 1000) / 1000 : 3;
+}
+// Même liste d'options, avec le multiplicateur des FILS séparés recalculé (besoins agrégés : ratio pondéré de tous les besoins réunis).
+export function optionsAvecRatioFils(options: OptionArticle[], ratio: number): OptionArticle[] {
+  return options.map(o => (sousCategoriesDe(o.sousCategorieArticle).some(c => c.startsWith("fil_")) ? { ...o, quantiteMultiplicateur: ratio } : o));
 }
 
 // Un besoin est réel (attribuable à une pièce du plan) si sa "piece" n'est pas une des

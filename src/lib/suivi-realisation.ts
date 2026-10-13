@@ -784,14 +784,15 @@ export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
         const longueur = trace.jambes.reduce((s, j) => s + longueurJambe(j), 0);
         const apparent = trace.jambes.filter(j => j.pose === "apparent").reduce((s, j) => s + longueurJambe(j), 0);
         const waypoints = (niveau.liaisonWaypoints?.[cleSegmentLiaison(seg.aId, seg.bId)] ?? []).length;
-        const pose = apparent <= 0.005 ? "encastré" : apparent >= longueur - 0.005 ? "apparent (moulure)" : `mixte (${fmtM(apparent)} apparents)`;
+        const pose = apparent <= 0.005 ? "encastré" : apparent >= longueur - 0.005 ? "apparent (IRL)" : `mixte (${fmtM(apparent)} apparents)`;
         const cable = b.circuit === "communication" ? (A?.type === "prise_tv" || B?.type === "prise_tv" ? "coaxial" : "RJ45 cat.6 STP") : `${eclairage ? nbConducteurs(seg) : 3}G${fmtSection(sectionSeg)}`;
-        const gaine = pose === "apparent (moulure)" ? "moulure" : gaineRecommandee([sectionSeg, sectionSeg, sectionSeg]).gaine;
+        const nbCondSeg = eclairage ? nbConducteurs(seg) : 3;
+        const gaine = pose === "apparent (IRL)" ? gaineRecommandee(Array(nbCondSeg).fill(sectionSeg), "IRL").gaine : gaineRecommandee(Array(nbCondSeg).fill(sectionSeg), "ICTA").gaine;
         const cleK = cleLiaisonCoche(niveau.id, noeudCle(seg.aId), noeudCle(seg.bId));
         const titre = `${nomNoeud(seg.aId)} → ${nomNoeud(seg.bId)}`;
         if (eclairage) lignes.push(`Fils du câble : ${conducteursSegment(seg).map(c => c.libelle).join(", ")}.`);
         const details = [...lignes, `Longueur prévue : ${fmtM(longueur)} (montées et descentes comprises).`];
-        details.push(pose === "encastré" ? `Pose encastrée sous gaine ${gaine}.` : pose === "apparent (moulure)" ? "Pose apparente sous moulure." : `Pose ${pose} — gaine ${gaine} sur la partie encastrée.`);
+        details.push(pose === "encastré" ? `Pose encastrée sous gaine ${gaine}.` : pose === "apparent (IRL)" ? `Pose apparente sous gaine ${gaine}.` : `Pose ${pose} — gaine ${gaine} sur la partie encastrée.`);
         if (waypoints > 0) details.push(`Passe par ${pluriel(waypoints, "point de passage imposé", "points de passage imposés")} (coudes définis sur le plan).`);
         if (role === "depart" && !sansDisj && !nonRelie && !(niveau.type === "annexe") && (niveau.distanceArriveeGainesTableau ?? 0) > 0 && seg.aId === "tableau") {
           details.push(`À ce tracé s'ajoute la liaison verticale tableau → point d'arrivée des gaines : ${fmtM(niveau.distanceArriveeGainesTableau as number)} (même câble).`);

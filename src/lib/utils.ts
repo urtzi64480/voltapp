@@ -36,7 +36,7 @@ export const initiales = (nom: string, prenom?: string | null) => {
   return p ? `${p}${n}` : n.slice(0, 2);
 };
 // Nom d'un article de devis pour un article catalogue vendu en longueur fixe (câble, fil,
-// gaine, moulure — sous_categorie de la forme "cablage_X"/"fil_X"/"gaine_irlXX"/"moulure").
+// gaine, moulure — sous_categorie de la forme "cablage_X"/"fil_X"/"gaine_ictaXX"/"gaine_irlXX"/"moulure").
 // Précise le conditionnement ET la longueur unitaire directement dans le nom persisté sur
 // la ligne (devis_lignes.nom) — sans ça, la liste de courses n'affiche qu'une quantité en
 // unités ("2×") sans dire si c'est 2 bobines de 25m, de 50m... impossible à utiliser pour

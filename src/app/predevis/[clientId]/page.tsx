@@ -10,7 +10,7 @@ import { Niveau } from "@/lib/maison-types";
 import { BreakerRow } from "@/lib/electrical-constants";
 import {
   calculerBesoinsBruts, ModePreDevis, RecapCircuit, apparierCatalogue, optionsPourSousCategorie, genererLignesDevis, estBobinable,
-  multiplicateurPourArticle, estSousCategorieAppareillage, estPieceReelle, estPieceTableau, optionAvecOffre, prixCompagnonAuMetre,
+  multiplicateurPourArticle, ratioFilsDe, optionsAvecRatioFils, type PoseEncastre, estSousCategorieAppareillage, estPieceReelle, estPieceTableau, optionAvecOffre, prixCompagnonAuMetre,
   ResultatPreDevis, BesoinApparie, estPointLumineuxADefinir, OptionArticle, ChoixLigne, POSTE_MAIN_OEUVRE, POSTE_CABLAGE,
   signaturePoste, signatureCablage, signaturesActuelles, postesInvalides, CLE_OK_CABLES, CLE_OK_GAINES,
 } from "@/lib/predevis-engine";
@@ -88,7 +88,7 @@ function optionEffective(besoin: BesoinApparie, etat: EtatChoix, prestations: Pr
     const base: OptionArticle = {
       prestation_id: p.id, nom: p.nom, prix_unitaire: p.prix_unitaire, unite: p.unite,
       type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire && p.longueur_unitaire > 0 ? p.longueur_unitaire : null,
-      quantiteMultiplicateur: multiplicateurPourArticle(besoin.sousCategorie, p.sous_categorie),
+      quantiteMultiplicateur: multiplicateurPourArticle(besoin.sousCategorie, p.sous_categorie, ratioFilsDe(besoin)),
       sousCategorieArticle: aSousCategorie(p, besoin.sousCategorie) ? besoin.sousCategorie : (sousCategoriePrincipale(p) ?? besoin.sousCategorie),
       image_url: p.image_url ?? null,
     };
@@ -463,6 +463,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [postesOk, setPostesOk] = useState<Record<string, boolean>>({});
   const [postesSig, setPostesSig] = useState<Record<string, string>>({}); // signature des besoins de chaque poste au moment de sa validation
   const [postesModifies, setPostesModifies] = useState<string[]>([]);      // postes dont la validation est tombée (plan modifié depuis)
+  const [poseEncastre, setPoseEncastre] = useState<PoseEncastre>("icta_fils"); // pose encastrée : gaine ICTA + fils, ou gaine ICTA précâblée
   const [postesAnciens, setPostesAnciens] = useState<string[]>([]);        // validations faites avant le suivi des modifications : état de départ inconnu, à re-valider
   const [postesOuverts, setPostesOuverts] = useState<Record<string, boolean>>({});
   const [autoSauve, setAutoSauve] = useState<string | null>(null); // heure de la dernière sauvegarde automatique
@@ -562,7 +563,9 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   useEffect(() => {
     if (!donnees || !mode) return;
     const { niveaux, rows, prest, brouillon } = donnees;
-    const { besoins, alertes, recap } = calculerBesoinsBruts(niveaux, rows, mode);
+    const pose: PoseEncastre = brouillon?.poseEncastre === "precablee" ? "precablee" : "icta_fils";
+    setPoseEncastre(pose);
+    const { besoins, alertes, recap } = calculerBesoinsBruts(niveaux, rows, mode, pose);
     setRecapCircuits(recap);
     // Catalogue COURANT (articles ajoutés depuis l'ouverture de la page inclus), pas celui du chargement initial.
     const res = apparierCatalogue(besoins, prestations.length > 0 ? prestations : prest);
@@ -649,18 +652,22 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const besoinsAgreges: BesoinApparie[] = useMemo(() => {
     if (!resultat) return [];
-    const parSousCat = new Map<string, { label: string; total: number; options: OptionArticle[]; detail: Map<string, number> }>();
+    const parSousCat = new Map<string, { label: string; total: number; totalFils: number; options: OptionArticle[]; detail: Map<string, number> }>();
     Object.values(parPieceFiltre).flat().forEach(b => {
       if (!estBobinable(b.sousCategorie)) return;
-      const entry = parSousCat.get(b.sousCategorie) ?? { label: b.label, total: 0, options: b.options, detail: new Map() };
+      const entry = parSousCat.get(b.sousCategorie) ?? { label: b.label, total: 0, totalFils: 0, options: b.options, detail: new Map() };
       entry.total += b.quantite;
+      entry.totalFils += b.quantiteFils ?? b.quantite * 3;
       entry.detail.set(b.piece, (entry.detail.get(b.piece) ?? 0) + b.quantite);
       parSousCat.set(b.sousCategorie, entry);
     });
     return Array.from(parSousCat.entries()).map(([sousCategorie, e]) => ({
       cle: `AGREGE_${sousCategorie}`, sousCategorie, label: e.label,
       piece: Array.from(e.detail.entries()).map(([piece, q]) => `${piece} : ${q.toFixed(2)}m`).join(", "),
-      quantite: e.total, unite: "m" as const, options: e.options,
+      quantite: e.total, unite: "m" as const,
+      // Fils séparés : multiplicateur = nombre moyen de conducteurs de TOUS les besoins réunis (pondéré par les longueurs).
+      quantiteFils: e.totalFils,
+      options: sousCategorie.startsWith("cablage_") ? optionsAvecRatioFils(e.options, ratioFilsDe({ quantite: e.total, quantiteFils: e.totalFils })) : e.options,
     }));
   }, [resultat, parPieceFiltre]);
 
@@ -675,7 +682,32 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     });
   }, [besoinsAgreges]);
 
-  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, heuresPostes, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, suiviV: VERSION_SUIVI_OK, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
+  // Bascule « gaine ICTA + fils » ↔ « gaine ICTA précâblée » (pose encastrée uniquement) : recalcule les besoins en gardant les choix déjà faits ;
+  // les postes validés « devis OK » dont le contenu change perdent leur validation (et se dépliant), comme pour une modification du plan.
+  function changerPoseEncastre(nouvelle: PoseEncastre) {
+    if (!donnees || !mode || nouvelle === poseEncastre) return;
+    const { niveaux, rows, prest } = donnees;
+    const { besoins, alertes, recap } = calculerBesoinsBruts(niveaux, rows, mode, nouvelle);
+    const res = apparierCatalogue(besoins, prestations.length > 0 ? prestations : prest);
+    setPoseEncastre(nouvelle);
+    setRecapCircuits(recap);
+    setAlertesGeometrie(alertes);
+    setResultat(res);
+    setChoix(prev => {
+      const n: Record<string, EtatChoix> = {};
+      Object.values(res.parPiece).flat().forEach(b => { n[b.cle] = prev[b.cle] ?? etatParDefaut(b); });
+      return n;
+    });
+    const inv = postesInvalides(signaturesActuelles(res.parPiece), postesOk, postesSig);
+    if (inv.length > 0) {
+      setPostesOk(prev => { const n = { ...prev }; inv.forEach(k => delete n[k]); return n; });
+      setPostesSig(prev => { const n = { ...prev }; inv.forEach(k => delete n[k]); return n; });
+      setPostesModifies(prev => Array.from(new Set([...prev, ...inv])));
+      setPostesOuverts(prev => ({ ...prev, ...Object.fromEntries(inv.map(k => [k, true])) }));
+    }
+  }
+
+  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, heuresPostes, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, suiviV: VERSION_SUIVI_OK, poseEncastre, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
 
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
@@ -1297,6 +1329,18 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <div className="flex items-center gap-2 mb-1">
               <Cable size={16} className="text-sky-600" />
               <h2 className="font-semibold text-ink-800">Câbles, gaines & moulures — total toutes pièces</h2>
+            </div>
+            <div className="mb-3 rounded-xl border border-ink-200 bg-ink-50/50 p-3 text-sm">
+              <p className="font-semibold text-ink-800 mb-1.5">Pose encastrée — gaine</p>
+              <div className="flex flex-col sm:flex-row gap-2">
+                {([["icta_fils", "Gaine ICTA + fils", "Gaine ICTA au mètre, fils comptés pour chaque conducteur de la liaison"], ["precablee", "Gaine ICTA précâblée", "Un seul article : la gaine avec ses conducteurs déjà tirés"]] as const).map(([val, titre, aide]) => (
+                  <label key={val} className={`flex-1 flex items-start gap-2 rounded-lg border px-3 py-2 cursor-pointer ${poseEncastre === val ? "border-volt-400 bg-white" : "border-ink-200 bg-white/60"}`}>
+                    <input type="radio" name="pose-encastre" className="mt-1 accent-volt-600" checked={poseEncastre === val} onChange={() => changerPoseEncastre(val)} />
+                    <span><span className="block font-medium text-ink-800">{titre}</span><span className="block text-[11px] text-ink-500">{aide}</span></span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-[11px] text-ink-500 mt-1.5">Pose apparente : toujours gaine IRL + fils (aucun choix).</p>
             </div>
             <p className="text-xs text-ink-400 mb-3">Un seul choix par section/type sur le métrage total nécessaire — la meilleure combinaison bobine + mètre linéaire se calcule sur l'ensemble, pas pièce par pièce. Le détail par pièce reste visible dans chaque besoin ci-dessous.</p>
             <div className="flex flex-col gap-2">

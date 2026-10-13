@@ -177,7 +177,8 @@ export const PMAX_CHAUFFAGE_16A_W = 3500;
 export const PMAX_CHAUFFAGE_20A_W = 4500;
 export const PUISSANCE_CHAUFFAGE_DEFAUT_W = 1000;
 
-export function gaineRecommandee(sections: string[]): { gaine: string; tauxPct: number; ok: boolean } {
+// type : ICTA (gaine annelée, pose ENCASTRÉE — par défaut) ou IRL (gaine rigide, pose APPARENTE). Mêmes diamètres nominaux.
+export function gaineRecommandee(sections: string[], type: "ICTA" | "IRL" = "ICTA"): { gaine: string; tauxPct: number; ok: boolean } {
   const totalSection = sections.reduce((sum, s) => {
     const d = CABLE_DIAM_MM[s] ?? 8;
     return sum + Math.PI * (d / 2) ** 2;
@@ -185,14 +186,14 @@ export function gaineRecommandee(sections: string[]): { gaine: string; tauxPct: 
   for (const g of GAINES_IRL) {
     const sectionInt = Math.PI * (g.diamInt / 2) ** 2;
     const taux = Math.round((totalSection / sectionInt) * 100);
-    if (taux <= 33) return { gaine: g.label, tauxPct: taux, ok: true };
+    if (taux <= 33) return { gaine: g.label.replace("IRL", type), tauxPct: taux, ok: true };
   }
   const last = GAINES_IRL[GAINES_IRL.length - 1];
   const sectionInt = Math.PI * (last.diamInt / 2) ** 2;
   // Pas de mention verbale de non-conformité dans le libellé (ex. "(insuffisant)") — la
   // gaine calculée reste la plus grande disponible, et `ok: false` seul porte l'info de
   // dépassement pour un éventuel badge dans l'app ; le document imprimé reste factuel.
-  return { gaine: last.label, tauxPct: Math.round((totalSection / sectionInt) * 100), ok: false };
+  return { gaine: last.label.replace("IRL", type), tauxPct: Math.round((totalSection / sectionInt) * 100), ok: false };
 }
 
 export function cablesGroupe(groupe: GroupeLumineux, section: string): string[] {
