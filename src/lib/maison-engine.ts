@@ -353,6 +353,118 @@ function genererBreakersManuels(itemsParManuel: Map<number, Item[]>, manuels: Ci
   });
 }
 
+// ─── FILET DE SÉCURITÉ : 100 % DES APPAREILLAGES EN CIRCUIT ──────────────────────────────────────────────────────────────
+// Appelé après la génération normale. Tout appareillage resté sans circuit (hors courants faibles RJ45 / TV, qui ont leur câble de
+// communication) est raccordé ici, selon son genre, dans cet ordre :
+//  1. membre d'un circuit MANUEL défini sur un autre niveau (circuitManuelId) → ce circuit ;
+//  2. commande d'éclairage → le circuit de la lampe qu'elle pilote ; sans lampe liée, la lampe la plus proche (le lien est alors posé) ;
+//  3. commande de service (volet / VMC) → le circuit de l'appareil piloté le plus proche, sinon un circuit dédié est créé ;
+//  4. appareil d'une famille groupable (prises, éclairage, extérieur, volets) → le circuit de même famille du niveau le plus proche
+//     qui a de la place, sinon un nouveau circuit ;
+//  5. tout le reste (type inconnu, usage dédié invalide…) → un circuit « Autre » propre à l'appareil.
+// Chaque rattachement automatique est signalé dans les alertes, pour que rien ne soit silencieux.
+function raccorderOublies(niveaux: Niveau[], breakers: Breaker[], alertes: string[]): void {
+  type Ref = { a: AppareillagePlace; niveau: Niveau; piece: Piece };
+  const tous: Ref[] = niveaux.flatMap(niveau => niveau.pieces.flatMap(piece => piece.appareillages.map(a => ({ a, niveau, piece }))));
+  const parId = new Map(tous.map(r => [r.a.id, r] as const));
+  const breakerDe = (id: number | undefined) => (id == null ? undefined : breakers.find(b => b.id === id));
+  const dist = (r1: Ref, r2: Ref) => Math.hypot(r1.a.x - r2.a.x, r1.a.y - r2.a.y) + (r1.niveau.id === r2.niveau.id ? 0 : 1000) + (r1.piece.id === r2.piece.id ? 0 : 3);
+  const nomPiece = (r: Ref) => `"${r.piece.nom || r.piece.type}" (${r.niveau.nom})`;
+  const lib = (r: Ref) => LABEL_NON_RACCORDE[r.a.type] ?? r.a.type;
+  const affecter = (r: Ref, b: Breaker) => { r.a.circuitId = b.id; };
+  const libelleLibre = (base: string) => { let l = base, k = 1; while (breakers.some(x => x.label === l)) { k++; l = `${base} n°${k}`; } return l; };
+  const creer = (r: Ref, cle: string, libelleBase: string): Breaker => {
+    const spec = CIRCUITS[cle] ?? CIRCUITS.autre;
+    const b: Breaker = {
+      id: uid(), label: libelleLibre(libelleBase), circuit: CIRCUITS[cle] ? cle : "autre",
+      amperes: spec.ampMax, type: "1P", customSection: spec.section ?? "2.5",
+      pieces: [{ nom: r.piece.nom, nbPrises: spec.category === "lumiere" ? 0 : 1, groupes: spec.category === "lumiere" ? [] : [{ nbPoints: 1, typeCommande: "simple", nbCommandes: 1 }] }],
+      niveauId: r.niveau.id,
+    };
+    breakers.push(b);
+    return b;
+  };
+  const estLum = (r: Ref) => estLumiere(r.a.type);
+  const circuitsLumiere = () => tous.filter(r => estLum(r) && breakerDe(r.a.circuitId));
+
+  tous.filter(r => r.a.circuitId == null).forEach(r => {
+    const { a } = r;
+    if (a.circuitId != null) return;   // rattaché entre-temps (ex. par une commande de la même boucle)
+
+    // 1. circuit manuel d'un autre niveau
+    if (a.circuitManuelId != null) {
+      const b = breakers.find(x => x.manuelId === a.circuitManuelId);
+      if (b) { affecter(r, b); return; }
+    }
+
+    // Courant faible (RJ45 / TV) : son propre câble de communication, sans disjoncteur.
+    if (TYPES_SANS_CIRCUIT.includes(a.type)) {
+      const nom = a.type === "prise_tv" ? "Antenne TV (coaxial)" : CIRCUITS[CIRCUIT_COMMUNICATION].label;
+      const b: Breaker = {
+        id: uid(), label: libelleLibre(`${nom} — ${r.piece.nom || r.niveau.nom}`), circuit: CIRCUIT_COMMUNICATION, amperes: 0, type: "1P",
+        pieces: [{ nom: r.piece.nom, nbPrises: 1, groupes: [] }], niveauId: r.niveau.id,
+      };
+      breakers.push(b); affecter(r, b);
+      return;
+    }
+
+    // 2. commande d'éclairage
+    if (estCommande(a.type)) {
+      const cibles = [...(a.commandePourIds ?? []), ...(a.commandePourIds2 ?? [])];
+      for (const id of cibles) {
+        const b = breakerDe(parId.get(id)?.a.circuitId);
+        if (b && estLumiere(parId.get(id)!.a.type)) { affecter(r, b); return; }
+      }
+      const lampes = circuitsLumiere().filter(t => t.niveau.id === r.niveau.id).sort((x, y) => dist(r, x) - dist(r, y));
+      if (lampes.length > 0) {
+        const l = lampes[0];
+        const sansLampeLiee = !cibles.some(id => { const t = parId.get(id); return !!t && estLumiere(t.a.type); });
+        if (sansLampeLiee) a.commandePourIds = [l.a.id];
+        const b = breakerDe(l.a.circuitId)!;
+        affecter(r, b);
+        alertes.push(`${nomPiece(r)} : ${lib(r)} ${sansLampeLiee ? "sans point lumineux lié — relié à la lampe la plus proche" : "dont les lampes liées n'ont pas de circuit — rattaché au circuit de la lampe la plus proche"} (« ${b.label} »). Vérifie ce qu'il commande.`);
+        return;
+      }
+      const b = creer(r, "lumiere", `Lumière — ${r.niveau.nom || "Niveau"}`);
+      affecter(r, b);
+      alertes.push(`${nomPiece(r)} : ${lib(r)} sans aucun point lumineux dans le plan — circuit d'éclairage « ${b.label} » créé pour lui. Ajoute le(s) point(s) lumineux qu'il commande.`);
+      return;
+    }
+
+    // 3. commande de service (volet roulant / VMC)
+    if (estCommandeService(a.type)) {
+      const cibleType = cibleCommandeService(a.type);
+      const cibles = tous.filter(t => t.a.type === cibleType && t.niveau.id === r.niveau.id && breakerDe(t.a.circuitId)).sort((x, y) => dist(r, x) - dist(r, y));
+      if (cibles.length > 0) { const b = breakerDe(cibles[0].a.circuitId)!; affecter(r, b); alertes.push(`${nomPiece(r)} : ${lib(r)} rattaché à « ${b.label} » (appareil piloté le plus proche).`); return; }
+      const b = creer(r, cibleType === "vmc" ? "vmc" : "volets_roulants", `${CIRCUITS[cibleType === "vmc" ? "vmc" : "volets_roulants"].label} — ${r.piece.nom || r.niveau.nom}`);
+      affecter(r, b);
+      alertes.push(`${nomPiece(r)} : ${lib(r)} sans ${cibleType === "vmc" ? "VMC" : "volet roulant"} dans le plan — circuit « ${b.label} » créé pour lui.`);
+      return;
+    }
+
+    // 4. famille groupable : circuit de même famille du niveau, le plus proche, avec de la place
+    const famille = familleCircuitManuelAppareillage(a.type, r.piece.type);
+    if (famille) {
+      const max = famille === "lumiere" ? (MAX_PAR_CIRCUIT.lumiere ?? 8) : (MAX_PAR_CIRCUIT[famille] ?? 8);
+      const compte = (b: Breaker) => tous.filter(t => t.a.circuitId === b.id && (famille === "lumiere" ? estLum(t) : !estCommande(t.a.type) && !estCommandeService(t.a.type))).length;
+      const candidats = tous.filter(t => t.niveau.id === r.niveau.id && t.a.circuitId != null && breakerDe(t.a.circuitId)?.circuit === famille && breakerDe(t.a.circuitId)?.manuelId == null)
+        .sort((x, y) => dist(r, x) - dist(r, y));
+      for (const c of candidats) { const b = breakerDe(c.a.circuitId)!; if (compte(b) < max) { affecter(r, b); alertes.push(`${nomPiece(r)} : ${lib(r)} rattaché à « ${b.label} » (non pris en charge par la répartition).`); return; } }
+      const b = creer(r, famille, `${CIRCUITS[famille]?.label ?? "Autre"} — ${r.niveau.nom || "Niveau"}`);
+      affecter(r, b);
+      alertes.push(`${nomPiece(r)} : ${lib(r)} placé sur un nouveau circuit « ${b.label} » (aucun circuit de même famille avec de la place).`);
+      return;
+    }
+
+    // 5. tout le reste : circuit propre à l'appareil
+    const dedie = cleCircuitDedie(a);
+    const b = creer(r, dedie ?? "autre", `${CIRCUITS[dedie ?? "autre"]?.label ?? "Autre"} — ${r.piece.nom || r.niveau.nom}`);
+    affecter(r, b);
+    alertes.push(`${nomPiece(r)} : ${lib(r)} de type non géré par la répartition — circuit « ${b.label} » créé pour lui. Vérifie son calibre.`);
+  });
+
+}
+
 /**
  * Génère les circuits (Breaker[]) d'un logement complet à partir des positions
  * réelles des appareillages placés sur le plan. Règles :
@@ -372,7 +484,13 @@ function genererBreakersManuels(itemsParManuel: Map<number, Item[]>, manuels: Ci
  *    déduite des interrupteurs/va-et-vient/télérupteurs placés et liés via
  *    commandePourId, qu'il s'agisse d'un circuit manuel ou automatique.
  */
-export function genererCircuits(maisonIn: Maison): ResultatGeneration {
+export interface OptionsGeneration {
+  /** Respecter Niveau.appareillagesExclus (appareils volontairement laissés sans circuit). Faux par défaut : la génération complète raccorde
+   *  100 % des appareillages, sans exception. Vrai uniquement pour la mise à jour des circuits MANUELS seuls (genererCircuitsManuelsSeuls). */
+  respecterExclusions?: boolean;
+}
+
+export function genererCircuits(maisonIn: Maison, options: OptionsGeneration = {}): ResultatGeneration {
   const breakers: Breaker[] = [];
   const alertes: string[] = [];
 
@@ -465,7 +583,7 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     // recliqué en redessinant le cheminement d'un circuit AUTOMATIQUE) ne rejoint plus
     // AUCUN pool automatique : il reste sans circuitId (non raccordé, voir le garde-fou
     // plus bas) tant qu'il n'est pas explicitement réinclus ou assigné à un circuit manuel.
-    const idsExclus = new Set(niveau.appareillagesExclus ?? []);
+    const idsExclus = new Set(options.respecterExclusions ? (niveau.appareillagesExclus ?? []) : []);
     const resteApresExclusion = reste.filter(a => !idsExclus.has(a.base.id));
 
     // ─── Reste : classification automatique habituelle (prises/cuisine/extérieur/────
@@ -628,6 +746,12 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     for (let i = debutBreakersNiveau; i < breakers.length; i++) breakers[i].niveauId = niveau.id;
   }
 
+  // Filet de sécurité : AUCUN appareillage ne reste sans circuit (voir raccorderOublies).
+  // (Pas pour la mise à jour des circuits manuels seuls : là, les appareils non manuels restent volontairement sans circuit.)
+  if (!options.respecterExclusions) {
+    raccorderOublies(niveaux, breakers, alertes);
+    niveaux.forEach(n => { if (n.appareillagesExclus && n.appareillagesExclus.length > 0) n.appareillagesExclus = []; });
+  }
   sansCircuitDiffere.forEach(({ a, texte }) => { if (a.circuitId == null) alertes.push(texte); });
 
   // Éclairage sur plusieurs étages : repère, pour chaque circuit, les lampes commandées depuis un autre niveau et les commandes
@@ -1226,7 +1350,7 @@ export function genererCircuitsManuelsSeuls(maison: Maison, precedent?: Resultat
     const horsManuel = n.pieces.flatMap(p => p.appareillages).filter(a => a.circuitManuelId == null || !manuelsValides.has(a.circuitManuelId)).map(a => a.id);
     return { ...n, appareillagesExclus: Array.from(new Set([...(n.appareillagesExclus ?? []), ...horsManuel])) };
   });
-  const res = genererCircuits({ niveaux });
+  const res = genererCircuits({ niveaux }, { respecterExclusions: true });
   const resultat: ResultatGeneration = {
     ...res,
     alertes: [], // pas de génération automatique : « sans circuit » n'a pas de sens ici
