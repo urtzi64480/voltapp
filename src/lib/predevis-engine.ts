@@ -97,6 +97,7 @@ export interface LigneBesoin {
   quantite: number;       // en unite
   unite: UniteBesoin;
   note?: string;          // information d'affichage (ex. boîte + plaque multiple comptées dans un autre circuit)
+  appareils?: { piece: string; nom?: string }[]; // appareillages du plan couverts par cette ligne : pièce réelle + nom donné sur le plan (affichage)
 }
 
 export interface OptionArticle {
@@ -385,6 +386,11 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         if (a.type === "point_lumineux" || a.type === "applique") {
           if (sail) ajouter(`boite_dcl_saillie@${dest.id}`, "boite_dcl_saillie", "Boîtier DCL en saillie", dest.nom, 1, "u");
           else ajouter(`boite_encastrement_dcl@${dest.id}`, "boite_encastrement_dcl", "Boîte d'encastrement DCL", dest.nom, 1, "u");
+        }
+        { // pièce et nom (donné sur le plan) de l'appareillage, pour s'y retrouver dans le pré-devis
+          const cleApp = cleParApp.get(a.id);
+          const besoinApp = cleApp ? cumul.get(cleApp) : undefined;
+          if (besoinApp) (besoinApp.appareils ??= []).push({ piece: piece.nom || "Pièce", nom: a.nom?.trim() || undefined });
         }
         // Un spot s'encastre directement dans le plafond : aucune boîte DCL (contrairement au plafonnier / à l'applique).
         if (TYPES_ENCASTRABLES.includes(a.type) && !sail) clustersEncastrement.push({ id: a.id, x: a.x, y: a.y, groupeId: a.groupeId });

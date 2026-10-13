@@ -3893,12 +3893,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // appareillages de ce type sur le niveau.
   const modifierSaillie = (appareillageId: number, saillie: boolean, tousDuType = false) => {
     updateNiveauActif(n => {
-      const type = n.pieces.flatMap(p => p.appareillages).find(a => a.id === appareillageId)?.type;
+      const cible = n.pieces.flatMap(p => p.appareillages).find(a => a.id === appareillageId);
+      const type = cible?.type;
+      const groupe = cible?.groupeId; // postes d'une même plaque multiple : même pose pour tous (en saillie, plus de plaque ni de boîte d'encastrement)
       return {
         ...n,
         pieces: n.pieces.map(p => ({
           ...p,
-          appareillages: p.appareillages.map(a => (a.id === appareillageId || (tousDuType && a.type === type && !a.dejaExistant)) ? { ...a, saillie } : a),
+          appareillages: p.appareillages.map(a => (a.id === appareillageId || (groupe != null && a.groupeId === groupe && TYPES_SAILLIE_POSSIBLE.includes(a.type)) || (tousDuType && a.type === type && !a.dejaExistant)) ? { ...a, saillie } : a),
         })),
       };
     });

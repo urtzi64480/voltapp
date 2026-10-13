@@ -321,6 +321,9 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail, onCatalogueAjo
           <p className="text-sm font-medium text-ink-900">{besoin.label}</p>
           <p className="text-xs text-ink-400">{besoin.unite === "m" ? `${besoin.quantite.toFixed(2)} m` : `${besoin.quantite} ${besoin.unite === "heure" ? "h" : "u."}`}</p>
           {detail && <p className="text-[11px] text-ink-400 italic mt-0.5">{detail}</p>}
+          {besoin.appareils && besoin.appareils.length > 0 && (
+            <p className="text-[11px] text-ink-500 mt-0.5">📍 {Array.from(new Set(besoin.appareils.map(x => `${x.piece}${x.nom ? ` — « ${x.nom} »` : ""}`))).join(" · ")}</p>
+          )}
           {besoin.note && <p className="text-[11px] text-sky-700 mt-0.5">ℹ {besoin.note}</p>}
         </div>
         {besoin.options.length === 0 && (
@@ -462,6 +465,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [autoSauve, setAutoSauve] = useState<string | null>(null); // heure de la dernière sauvegarde automatique
   const dernierContenuSauve = useRef<string | null>(null);
   const brouillonEfface = useRef(false);
+  const forcerSauvegarde = useRef(false); // l'hydratation a complété / retiré des validations : à enregistrer même sans autre modification
   const [rentabOuverte, setRentabOuverte] = useState(false); // panneau « rentabilité » (privé, jamais dans le devis)
   const [resultat, setResultat] = useState<ResultatPreDevis | null>(null);
   // Toutes les pièces du plan (nom + niveau), même celles sans aucun besoin — sert au contrôle « rien oublié ».
@@ -583,6 +587,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
         okFinal[k] = true;
         sigFinal[k] = sigSauve[k] ?? sigAct[k]; // validation antérieure aux signatures : on fige l'état actuel
       });
+      if (invalides.length > 0 || Object.keys(okFinal).some(k => sigSauve[k] == null)) forcerSauvegarde.current = true;
       setPostesOk(okFinal);
       setPostesSig(sigFinal);
       setPostesModifies(invalides);
@@ -688,7 +693,11 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   }
   useEffect(() => {
     if (!contenuCourant) return;
-    if (dernierContenuSauve.current === null) { dernierContenuSauve.current = contenuCourant; return; }
+    if (dernierContenuSauve.current === null) {
+      dernierContenuSauve.current = forcerSauvegarde.current ? "" : contenuCourant; // "" : force l'enregistrement (signatures de validation, validations retirées)
+      forcerSauvegarde.current = false;
+      if (dernierContenuSauve.current !== "") return;
+    }
     if (contenuCourant === dernierContenuSauve.current) return;
     const t = setTimeout(() => { sauvegardeAuto(); }, 2000);
     return () => clearTimeout(t);
@@ -697,7 +706,8 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   useEffect(() => {
     const h = () => { if (document.visibilityState === "hidden") sauvegardeAuto(); };
     document.addEventListener("visibilitychange", h);
-    return () => document.removeEventListener("visibilitychange", h);
+    // Quitter la page (retour au plan…) dans les 2 s qui suivent une modification : on enregistre tout de suite plutôt que de la perdre.
+    return () => { document.removeEventListener("visibilitychange", h); sauvegardeAuto(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
