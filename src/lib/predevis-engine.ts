@@ -187,6 +187,10 @@ export const NOMENCLATURE_APPAREILLAGE: { code: string; label: string }[] = [
   { code: "prise_specialisee", label: "Prise / sortie de câble spécialisée" },
 ];
 
+// Points lumineux dont le luminaire peut être « à définir avec le client » (hors boîte d'encastrement DCL, qui reste chiffrée).
+const POINTS_LUMINEUX_A_DEFINIR = ["point_lumineux", "applique", "spot", "spot_etanche", "applique_exterieure", "point_lumineux_exterieur"];
+export const estPointLumineuxADefinir = (sousCategorie: string): boolean => POINTS_LUMINEUX_A_DEFINIR.includes(sousCategorie);
+
 export const PSEUDO_TABLEAU = "Tableau électrique";
 // Besoin appartenant au poste « Tableau électrique » (disjoncteurs, différentiels, goulottes de montage) — la page du
 // pré-devis le retire ou le garde selon la réponse à l'alerte « intégrer le tableau au devis ? ».
@@ -799,6 +803,8 @@ export interface ChoixLigne {
   libre?: { nom: string; prixUnitaire: number; unite: string; typeBranche: "service" | "materiau" };
   // Besoin ni exclu ni résolu (aucun produit, aucun prix) : une ligne « à compléter » à 0 € est générée.
   aCompleter?: boolean;
+  // Luminaire à choisir avec le client : ligne « À compléter — … (à définir avec le client) » à 0 € (bloque l'envoi du devis comme toute ligne à compléter).
+  aDefinir?: boolean;
 }
 
 // Fournisseur de l'option → colonnes de la ligne de devis (photo du fournisseur retenu).
@@ -878,10 +884,10 @@ export function posteDuBesoin(besoin: Pick<BesoinApparie, "cle" | "piece">): str
 
 export function genererLignesDevis(choix: ChoixLigne[], prestations: Prestation[]): Omit<DevisLigne, "devis_id" | "ordre">[] {
   const lignes: Omit<DevisLigne, "devis_id" | "ordre">[] = [];
-  choix.forEach(({ besoin, optionCatalogue, libre, aCompleter }) => {
+  choix.forEach(({ besoin, optionCatalogue, libre, aCompleter, aDefinir }) => {
     const debut = lignes.length;
     try {
-      ajouterLignesBesoin(lignes, { besoin, optionCatalogue, libre, aCompleter }, prestations);
+      ajouterLignesBesoin(lignes, { besoin, optionCatalogue, libre, aCompleter, aDefinir }, prestations);
     } finally {
       const poste = posteDuBesoin(besoin);
       for (let k = debut; k < lignes.length; k++) lignes[k].poste = poste;
@@ -891,12 +897,12 @@ export function genererLignesDevis(choix: ChoixLigne[], prestations: Prestation[
 }
 
 function ajouterLignesBesoin(
-  lignes: Omit<DevisLigne, "devis_id" | "ordre">[], { besoin, optionCatalogue, libre, aCompleter }: ChoixLigne, prestations: Prestation[],
+  lignes: Omit<DevisLigne, "devis_id" | "ordre">[], { besoin, optionCatalogue, libre, aCompleter, aDefinir }: ChoixLigne, prestations: Prestation[],
 ): void {
   {
     if (aCompleter && !libre && !optionCatalogue) {
       lignes.push({
-        nom: `${PREFIXE_A_COMPLETER}${besoin.label}`, description: besoin.piece,
+        nom: `${PREFIXE_A_COMPLETER}${besoin.label}${aDefinir ? " (à définir avec le client)" : ""}`, description: besoin.piece,
         quantite: besoin.unite === "m" ? Math.ceil(besoin.quantite) : besoin.quantite,
         prix_unitaire: 0, unite: besoin.unite === "m" ? "ml" : besoin.unite === "heure" ? "heure" : "u", type_branche: "materiau",
       });

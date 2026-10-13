@@ -11,7 +11,7 @@ import { BreakerRow } from "@/lib/electrical-constants";
 import {
   calculerBesoinsBruts, ModePreDevis, RecapCircuit, apparierCatalogue, optionsPourSousCategorie, genererLignesDevis, estBobinable,
   multiplicateurPourArticle, estSousCategorieAppareillage, estPieceReelle, estPieceTableau, optionAvecOffre, prixCompagnonAuMetre,
-  ResultatPreDevis, BesoinApparie, OptionArticle, ChoixLigne, POSTE_MAIN_OEUVRE, POSTE_CABLAGE,
+  ResultatPreDevis, BesoinApparie, estPointLumineuxADefinir, OptionArticle, ChoixLigne, POSTE_MAIN_OEUVRE, POSTE_CABLAGE,
 } from "@/lib/predevis-engine";
 import {
   attacherFournisseurs, libelleOffreMarque, marqueOffre, normTexte, offrePrincipale, offresTriees, prixVenteOffre,
@@ -36,7 +36,7 @@ function fmt(n: number): string {
 
 // ─── État de choix par besoin ───────────────────────────────────────────────
 
-type ModeChoix = "option" | "autre" | "libre" | "exclu";
+type ModeChoix = "option" | "autre" | "libre" | "exclu" | "adefinir";
 interface EtatChoix {
   mode: ModeChoix;
   optionIndex: number;
@@ -377,6 +377,15 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail, onCatalogueAjo
         {etat.mode === "autre" && autrePrestation && selecteurFournisseur(autrePrestation)}
 
         {decomposition && <p className="text-[11px] text-sky-600 font-mono ml-6">{decomposition}</p>}
+
+        {estPointLumineuxADefinir(besoin.sousCategorie) && (
+          <label className={`flex items-center gap-2 text-sm cursor-pointer ${etat.mode === "adefinir" ? "bg-red-50 border border-red-300 rounded-lg px-2 py-1.5" : ""}`}>
+            <input type="radio" checked={etat.mode === "adefinir"} onChange={() => onChange({ ...etat, mode: "adefinir" })} />
+            <span className={etat.mode === "adefinir" ? "text-red-700 font-semibold flex items-center gap-1.5" : "text-ink-500"}>
+              {etat.mode === "adefinir" && <AlertTriangle size={13} />} À définir avec le client
+            </span>
+          </label>
+        )}
 
         <label className="flex items-center gap-2 text-sm cursor-pointer">
           <input type="radio" checked={etat.mode === "libre"} onChange={() => onChange({ ...etat, mode: "libre" })} />
@@ -755,7 +764,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Total HT approximatif affiché en direct — le total exact (avec décomposition en
   // bobines) est recalculé à la génération finale.
   function totalLigneApprox(besoin: BesoinApparie, etat: EtatChoix): number {
-    if (etat.mode === "exclu") return 0;
+    if (etat.mode === "exclu" || etat.mode === "adefinir") return 0;
     if (etat.mode === "option" || etat.mode === "autre") {
       const opt = optionEffective(besoin, etat, prestations);
       if (!opt) return 0;
@@ -790,6 +799,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const tousLesBesoins = Object.values(parPieceFiltre).flat().filter(b => !estBobinable(b.sousCategorie));
     const construireChoixLigne = (besoin: BesoinApparie, etat: EtatChoix): ChoixLigne => {
     if (etat.mode === "exclu") return { besoin };
+    if (etat.mode === "adefinir") return { besoin, aCompleter: true, aDefinir: true };
     if (etat.mode === "option" || etat.mode === "autre") {
       // Option avec le fournisseur choisi (prix de vente + prix d'achat de CE fournisseur).
       const opt = optionEffective(besoin, etat, prestations);
@@ -847,13 +857,15 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
       const { lignesFinales, choixLignes } = assemblerLignes();
       // Besoins ni exclus ni résolus : on prévient, puis ils deviennent des lignes « À compléter » à 0 €.
-      const manquants = choixLignes.filter(c => c.aCompleter);
+      const manquants = choixLignes.filter(c => c.aCompleter && !c.aDefinir);
+      const nbADefinir = choixLignes.filter(c => c.aDefinir).length;
       if (manquants.length > 0) {
         const liste = manquants.slice(0, 8).map(c => `• ${c.besoin.label} (${c.besoin.piece})`).join("\n");
         const suite = manquants.length > 8 ? `\n… et ${manquants.length - 8} autre(s)` : "";
         const ok = confirm(`${manquants.length} besoin(s) sans produit ni prix :\n${liste}${suite}\n\nIls seront ajoutés au devis en lignes « À compléter » à 0 € (le devis ne pourra pas être envoyé tant qu'elles restent). Générer quand même ?`);
         if (!ok) { setGenerating(false); return; }
       }
+      if (nbADefinir > 0 && !confirm(`${nbADefinir} luminaire(s) « à définir avec le client » : ils seront ajoutés au devis en lignes « À compléter » à 0 € (envoi et signature bloqués tant qu'ils restent). Générer quand même ?`)) { setGenerating(false); return; }
       // Garde-fou : un devis sans aucune ligne (désignation) est un document invalide,
       // impossible à faire signer et faussant toute rentabilité en aval (CRM). On bloque
       // la génération AVANT de créer le moindre enregistrement en base plutôt que de
@@ -1154,6 +1166,14 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
           const ouvert = (piece: string) => postesOuverts[piece] ?? !postesOk[piece];
           const nbOk = postes.filter(([piece]) => postesOk[piece]).length;
           return (<>
+            {(() => {
+              const nb = postes.reduce((n, [, besoins]) => n + besoins.filter(b => (choix[b.cle] ?? etatParDefaut(b)).mode === "adefinir").length, 0);
+              return nb > 0 ? (
+                <div className="mb-3 flex items-center gap-2 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+                  <AlertTriangle size={16} className="shrink-0" /> {nb} luminaire{nb > 1 ? "s" : ""} à définir avec le client — le devis ne pourra pas être envoyé tant qu'il en reste.
+                </div>
+              ) : null;
+            })()}
             {postes.length > 0 && (
               <div className="flex items-center gap-3 mb-3 text-xs text-ink-500 flex-wrap">
                 <span className="flex items-center gap-1.5">
@@ -1168,6 +1188,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
             {postes.map(([piece, besoins]) => {
               const ok = !!postesOk[piece];
               const ouv = ouvert(piece);
+              const nbDef = besoins.filter(b => (choix[b.cle] ?? etatParDefaut(b)).mode === "adefinir").length;
               return (
           <div key={piece} className={`card card-inner mb-4 ${ok ? "!border-emerald-300" : ""}`}>
             <div className="flex items-center justify-between gap-3">
@@ -1182,6 +1203,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 const m = r.lignes.filter(l => l.sousCategorie.startsWith("cablage_") || l.sousCategorie === "retour_lampe" || l.sousCategorie === "navette" || l.sousCategorie === "aller_commande" || l.sousCategorie === "cable_rj45" || l.sousCategorie === "cable_coax").reduce((a, l) => a + l.quantite, 0);
                 return <span className="ml-2 text-sm font-normal text-ink-500 whitespace-nowrap">({m.toFixed(1).replace(".", ",")} m · {r.nbAppareils} appareil{r.nbAppareils > 1 ? "s" : ""})</span>;
               })()}</span>
+                {nbDef > 0 && <span className="shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-300 rounded-full px-2 py-0.5"><AlertTriangle size={11} /> À définir avec le client{nbDef > 1 ? ` ×${nbDef}` : ""}</span>}
                 {ok && <span className="shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5"><span className="inline-block w-2 h-2 rounded-full bg-emerald-500" /> OK devis</span>}
               </button>
               <label className="flex items-center gap-1.5 shrink-0 text-xs text-ink-500" title="Temps de main d'œuvre chiffré pour ce poste (facultatif) — comparé au temps passé dans le suivi de réalisation">
