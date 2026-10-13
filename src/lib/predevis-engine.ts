@@ -168,6 +168,8 @@ const LABEL_APPAREILLAGE: Record<string, string> = {
   interrupteur_exterieur: "Interrupteur extérieur (étanche IP55)",
   detecteur_mouvement: "Détecteur de mouvement",
   detecteur_mouvement_exterieur: "Détecteur de mouvement extérieur (IP55)",
+  inter_volet: "Interrupteur de volet roulant (montée / descente)",
+  inter_vmc: "Interrupteur VMC (puissance / vitesse)",
 };
 // Une commande (interrupteur/va-et-vient/télérupteur) posée en domotique (AppareillagePlace.
 // domotique) est un produit différent d'un mécanisme filaire classique — module radio/wifi
@@ -225,7 +227,7 @@ function estCommandeType(t?: AppareillageType): boolean {
 
 // Le détecteur de mouvement intérieur (type interrupteur à détection) s'encastre comme un mécanisme : boîte + plaque.
 // L'appareillage extérieur (prise, interrupteur, détecteur, applique) est étanche et posé EN SAILLIE : ni boîte ni plaque.
-const TYPES_ENCASTRABLES: AppareillageType[] = ["prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur", "interrupteur_double", "va_et_vient_double", "telerupteur_double", "detecteur_mouvement", "rj45", "prise_tv", "prise_dediee", "prise_irve",
+const TYPES_ENCASTRABLES: AppareillageType[] = ["prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur", "interrupteur_double", "va_et_vient_double", "telerupteur_double", "detecteur_mouvement", "inter_volet", "inter_vmc", "rj45", "prise_tv", "prise_dediee", "prise_irve",
   // Sorties dédiées d'un appareil (four, plaque de cuisson, lave-linge…) : encastrées comme un mécanisme → boîte + plaque
   // (sortie de câble / prise 20 A). Exclus : borne IRVE (wallbox fixée au mur), VMC, alarme, piscine, chauffage, volet roulant.
   "four", "plaque", "lave_linge", "lave_vaisselle", "seche_linge", "chauffe_eau", "congelateur", "clim", "seche_serviette"];

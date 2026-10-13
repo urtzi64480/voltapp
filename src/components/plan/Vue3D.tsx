@@ -49,6 +49,7 @@ const ID_VOIE_2 = (id: number): number => -id;
 // Commandes qui ne sont pas un simple interrupteur : leur libellé propre (au lieu de « Interrupteur ») dans le panneau de simulation.
 const LABEL_COMMANDE_SPECIALE: Partial<Record<AppareillageType, string>> = {
   interrupteur_exterieur: "Interrupteur extérieur",
+  inter_volet: "Interrupteur volet roulant", inter_vmc: "Interrupteur VMC",
   detecteur_mouvement: "Détecteur de mouvement",
   detecteur_mouvement_exterieur: "Détecteur de mouvement extérieur",
 };

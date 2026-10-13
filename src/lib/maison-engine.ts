@@ -17,7 +17,7 @@ import {
 import {
   Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone, BoiteDerivation,
   CircuitManuel, familleCircuitManuelAppareillage, couleurCircuit, USAGE_DEDIE_DEFAUT,
-  estCommande, estCommandeDouble, baseCommande, commandeCetteLumiere, estLumiere, lumieresCommandees,
+  estCommande, estCommandeDouble, estCommandeService, cibleCommandeService, baseCommande, commandeCetteLumiere, estLumiere, lumieresCommandees,
   SegmentCircuit, origineCircuits, pointBoiteImplicite, uidMaison, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage, ordonnerAncresParProximite,
 } from "./maison-types";
 import { appareillagesParPieceReelle } from "./piece-reelle";
@@ -63,6 +63,7 @@ const LABEL_NON_RACCORDE: Record<string, string> = {
   point_lumineux: "Point lumineux", applique: "Applique", spot: "Spot", spot_etanche: "Spot étanche",
   applique_exterieure: "Applique extérieure", point_lumineux_exterieur: "Point lumineux extérieur",
   interrupteur_exterieur: "Interrupteur extérieur",
+  inter_volet: "Interrupteur de volet roulant", inter_vmc: "Interrupteur VMC",
   detecteur_mouvement: "Détecteur de mouvement", detecteur_mouvement_exterieur: "Détecteur de mouvement extérieur",
 };
 
@@ -531,6 +532,22 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
       item.base.circuitId = b.id;
     });
 
+    // ─── Commandes de service (interrupteur de volet roulant / de VMC) ─────────────────────────────────────────────
+    // Elles se rattachent au circuit de l'appareil qu'elles pilotent : le volet roulant (circuit volets) ou la VMC (circuit dédié) le
+    // plus proche — de préférence dans la même pièce. Elles sont câblées avec ce circuit mais ne comptent JAMAIS dans son nombre de
+    // moteurs / d'appareils (NF C 15-100 : un circuit « volets » se limite au nombre de moteurs, pas aux interrupteurs).
+    resteApresExclusion.filter(a => estCommandeService(a.base.type)).forEach(cmd => {
+      const cibleType = cibleCommandeService(cmd.base.type);
+      let meilleur: Item | null = null, md = Infinity;
+      tousItems.forEach(t => {
+        if (t.base.type !== cibleType || t.base.circuitId == null) return;
+        const d = Math.abs(t.x - cmd.x) + Math.abs(t.y - cmd.y) + (t.piece.id === cmd.piece.id ? 0 : 3);
+        if (d < md) { md = d; meilleur = t; }
+      });
+      const cible = meilleur as Item | null;
+      if (cible) cmd.base.circuitId = cible.base.circuitId;
+    });
+
     // ─── Garde-fou : tout appareillage encore sans circuit après tout ce qui précède ──
     // (typiquement un interrupteur/va-et-vient/télérupteur dont la commande ne pointe vers
     // aucun point lumineux raccordé, ou un appareillage explicitement exclu — voir
@@ -671,9 +688,22 @@ export function construireColorMap(resultat: ResultatGeneration, niveauxVivants?
 // sequenceAncresCircuitOrdonnee) pour tout le reste (prises, chauffage, appareils dédiés,
 // manuels non-éclairage). Partagé par le rendu 2D et la vue 3D.
 export function segmentsPourCircuit(breaker: Breaker, points: AppareillagePlace[], niveau: Niveau, tableauPos: Point): SegmentCircuit[] {
-  const res = segmentsPourCircuitBrut(breaker, points, niveau, tableauPos);
+  const res = marquerCablesCommandesService(segmentsPourCircuitBrut(breaker, points, niveau, tableauPos), points);
   // Éclairage : les liaisons passent par le plafond, au plus court (voir coudesSegment, routage-circuits.ts).
   return breaker.circuit === "lumiere" ? res.map(sg => ({ ...sg, plafond: true })) : res;
+}
+
+// Câble entre un interrupteur de volet roulant (ou de VMC) et le moteur (ou la VMC) qu'il pilote : deux phases (montée / descente, ou petite /
+// grande vitesse) + neutre + terre = 4 conducteurs, et non 3 comme une simple alimentation — on le marque « avec retour » (N, P, 2ᵉ phase, T).
+function marquerCablesCommandesService(segments: SegmentCircuit[], points: AppareillagePlace[]): SegmentCircuit[] {
+  if (!points.some(a => estCommandeService(a.type))) return segments;
+  const parId = new Map(points.map(a => [String(a.id), a]));
+  return segments.map(sg => {
+    const A = parId.get(sg.aId), B = parId.get(sg.bId);
+    if (!A || !B || sg.type) return sg;
+    const lie = (c: AppareillagePlace, cible: AppareillagePlace) => estCommandeService(c.type) && cible.type === cibleCommandeService(c.type);
+    return lie(A, B) || lie(B, A) ? { ...sg, avecRetour: true } : sg;
+  });
 }
 
 function segmentsPourCircuitBrut(breaker: Breaker, points: AppareillagePlace[], niveau: Niveau, tableauPos: Point): SegmentCircuit[] {
@@ -1133,13 +1163,13 @@ export function controlerCircuits(resultat: ResultatGeneration): BilanControle {
         suggestion: `Crée un second circuit d'éclairage et déplace-y ${lampes.length - max} point(s) lumineux (ou utilise « Supprimer les ${lampes.length - max} en trop » si certains sont superflus).` });
     } else if (CIRCUITS[b.circuit]?.dedié && b.manuelId != null && !estCircuitSansDisjoncteur(b)) {
       // Circuit spécialisé composé à la main : un seul appareil par circuit (les circuits générés automatiquement le respectent déjà).
-      const appareils = membres.filter(t => !estCommande(t.a.type));
+      const appareils = membres.filter(t => !estCommande(t.a.type) && !estCommandeService(t.a.type));
       if (appareils.length > 1) problemes.push({ code: "depassement", gravite: "erreur", niveauId, appareilIds: appareils.map(t => t.a.id), enTrop: appareils.length - 1,
         message: `« ${b.label} » : ${appareils.length} appareils sur un circuit spécialisé « ${CIRCUITS[b.circuit].label} » — un seul appareil par circuit (NF C 15-100).`,
         suggestion: `Garde un seul appareil dans ce circuit et crée un circuit dédié (20 A / 2,5 mm²) pour chacun des ${appareils.length - 1} autre(s).` });
     } else if (MAX_PAR_CIRCUIT[b.circuit] != null) {
       const max = MAX_PAR_CIRCUIT[b.circuit];
-      const prises = membres.filter(t => !estCommande(t.a.type));
+      const prises = membres.filter(t => !estCommande(t.a.type) && !estCommandeService(t.a.type));
       if (prises.length > max) problemes.push({ code: "depassement", gravite: "erreur", niveauId, appareilIds: prises.map(t => t.a.id), enTrop: prises.length - max,
         message: `« ${b.label} » : ${prises.length} socles, maximum ${max} par circuit (NF C 15-100).`,
         suggestion: b.circuit === "cuisine_prises" || b.circuit === "prise_20"
@@ -1160,7 +1190,7 @@ export function messageDepassement(famille: string, appareils: Pick<Appareillage
     const n = appareils.filter(a => estLumiere(a.type)).length, max = MAX_PAR_CIRCUIT.lumiere ?? 8;
     return n > max ? `${nom}${n} points lumineux — maximum ${max} par circuit d'éclairage (NF C 15-100). Crée un second circuit.` : null;
   }
-  const membres = appareils.filter(a => !estCommande(a.type));
+  const membres = appareils.filter(a => !estCommande(a.type) && !estCommandeService(a.type));
   if (spec.dedié && membres.length > 1) return `${nom}${membres.length} appareils sur un circuit spécialisé « ${spec.label} » — un seul appareil par circuit (NF C 15-100).`;
   const max = MAX_PAR_CIRCUIT[famille];
   if (max != null && membres.length > max) return `${nom}${membres.length} socles — maximum ${max} par circuit (NF C 15-100). Crée un second circuit.`;

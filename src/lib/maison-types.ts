@@ -16,6 +16,10 @@ export type AppareillageType =
   | "chauffe_eau" | "chauffage" | "clim" | "seche_serviette" | "congelateur"
   | "irve" | "piscine" | "vmc" | "alarme"
   | "volet_roulant"
+  // Commandes « de service » : interrupteur de montée / descente d'un volet roulant et interrupteur de puissance (vitesse) de la VMC.
+  // Elles ne commandent pas de point lumineux (ce ne sont PAS des commandes d'éclairage, voir TYPES_COMMANDE) : elles se rattachent
+  // au circuit du volet / de la VMC le plus proche et ne comptent jamais dans le nombre de moteurs / d'appareils du circuit.
+  | "inter_volet" | "inter_vmc"
   | "rj45" | "prise_tv" | "prise_dediee" | "prise_exterieure"
   // Prise renforcée IRVE (recharge de véhicule électrique) : prise spéciale, ni prise de courant ni sortie de câble — circuit « irve » dédié.
   | "prise_irve"
@@ -126,6 +130,15 @@ export const TYPES_COMMANDE: AppareillageType[] = [
   "interrupteur", "va_et_vient", "telerupteur", "interrupteur_double", "va_et_vient_double", "telerupteur_double",
   "interrupteur_exterieur", "detecteur_mouvement", "detecteur_mouvement_exterieur",
 ];
+// Commandes de service : interrupteur de volet roulant (montée / descente) → pilote un « volet_roulant » ; interrupteur VMC → pilote une « vmc ».
+export const TYPES_COMMANDE_SERVICE: AppareillageType[] = ["inter_volet", "inter_vmc"];
+export function estCommandeService(type?: AppareillageType): boolean {
+  return !!type && TYPES_COMMANDE_SERVICE.includes(type);
+}
+/** Type d'appareil que pilote une commande de service (null si ce n'en est pas une). */
+export function cibleCommandeService(type?: AppareillageType): AppareillageType | null {
+  return type === "inter_volet" ? "volet_roulant" : type === "inter_vmc" ? "vmc" : null;
+}
 export function estCommande(type?: AppareillageType): boolean {
   return !!type && TYPES_COMMANDE.includes(type);
 }
@@ -847,7 +860,7 @@ export const estCourantFaible = (type: AppareillageType): boolean => TYPES_COURA
 // en saillie par nature (étanches IP44/55) — ils n'ont pas cette option.
 export const TYPES_SAILLIE_POSSIBLE: AppareillageType[] = [
   "prise", "prise_commandee", "interrupteur", "va_et_vient", "telerupteur", "interrupteur_double", "va_et_vient_double", "telerupteur_double",
-  "detecteur_mouvement", "rj45", "prise_tv", "prise_dediee", "prise_irve",
+  "detecteur_mouvement", "inter_volet", "inter_vmc", "rj45", "prise_tv", "prise_dediee", "prise_irve",
   "four", "plaque", "lave_linge", "lave_vaisselle", "seche_linge", "chauffe_eau", "clim", "seche_serviette", "congelateur",
   "point_lumineux", "applique", "spot",
 ];

@@ -34,7 +34,7 @@ import {
   pointBoiteImplicite, pointsOndulesEntre,
   BoiteDerivation, migrerBoitesDerivation,
   Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, nouvelleVoiture, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
-  estCommande, estCommandeDouble, estLumiere, estCourantFaible, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM,
+  estCommande, estCommandeDouble, estCommandeService, estLumiere, estCourantFaible, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM,
   Escalier, EscalierType, EscalierTournant, EXTERIEUR_PIECE_ID, PhotoChantier, TYPES_SAILLIE_POSSIBLE, estSaillie} from "@/lib/maison-types";
 
 
@@ -1581,7 +1581,7 @@ function estDansFiltre(a: Pick<AppareillagePlace, "type" | "usageDedie">, f: Fil
     case "prises": return a.type === "prise" || a.type === "prise_commandee" || a.type === "prise_exterieure";
     case "lumieres": return estLumiere(a.type) || estCommande(a.type);
     case "faibles": return estCourantFaible(a.type);
-    case "specialises": return !!cleCircuitDedie(a) || a.type === "chauffage" || a.type === "volet_roulant";
+    case "specialises": return !!cleCircuitDedie(a) || a.type === "chauffage" || a.type === "volet_roulant" || estCommandeService(a.type);
   }
 }
 

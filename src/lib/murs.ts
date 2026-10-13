@@ -271,6 +271,7 @@ export const HAUTEUR_DEFAUT: Partial<Record<AppareillageType, number>> = {
   four: 0.6, plaque: 0.9, lave_linge: 0.85, lave_vaisselle: 0.85, seche_linge: 0.85,
   chauffe_eau: 1.8, chauffage: 0.3, clim: 2.0, seche_serviette: 1.2, congelateur: 0.85,
   irve: 1.0, piscine: 0.3, vmc: 2.2, alarme: 2.0,
+  inter_volet: 1.1, inter_vmc: 1.1,
   volet_roulant: 2.15, // centre du coffre, juste sous le plafond (le tablier descend en dessous)
 };
 

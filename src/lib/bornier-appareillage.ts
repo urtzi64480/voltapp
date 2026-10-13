@@ -171,6 +171,25 @@ export function construireVueAppareil(e: EntreeBornier): VueAppareil | null {
       notes.push("Le moteur a deux phases (montée et descente) qui passent par l'interrupteur de volet roulant (commun + montée + descente) ; neutre et terre vont directement au moteur. Repères des fils : voir la notice du moteur.");
       return vue("autre");
     }
+    // Interrupteur de volet roulant (montée / descente) et interrupteur de puissance VMC : mécanisme à 3 bornes, la phase arrive sur le commun,
+    // les deux sorties (montée / descente, ou petite / grande vitesse) repartent vers le moteur dans le câble 4 conducteurs.
+    if (t === "inter_volet" || t === "inter_vmc") {
+      const volet = t === "inter_volet";
+      mecanismes.push({ id: "s", titre: volet ? "Interrupteur de volet roulant" : "Interrupteur VMC (vitesses)", bornes: [
+        { id: "COM", libelle: "Commun", aide: "phase d'arrivée" },
+        { id: "S1", libelle: volet ? "Montée" : "Petite vitesse", aide: volet ? "vers le moteur (phase montée)" : "vers la VMC" },
+        { id: "S2", libelle: volet ? "Descente" : "Grande vitesse", aide: volet ? "vers le moteur (phase descente)" : "vers la VMC" },
+      ] });
+      const phases = role("phase"), retours = role("retour");
+      lier("s", "COM", phases.slice(0, 1));
+      lier("s", "S1", phases.slice(1)); lier("s", "S2", retours);
+      episser("Neutre", TERRE_NEUTRE_BOITE, role("neutre"));
+      episser("Terre", TERRE_NEUTRE_BOITE, role("terre"));
+      notes.push(volet
+        ? "Un seul sens à la fois : ne jamais alimenter montée et descente ensemble. Phase d'arrivée sur le commun, fils montée et descente vers le moteur du volet ; neutre et terre passent directement jusqu'au moteur. Repères exacts sur le mécanisme (voir sa notice)."
+        : "Interrupteur à deux vitesses : phase d'arrivée sur le commun, petite et grande vitesse vers la VMC ; neutre et terre passent directement. Repères exacts sur le mécanisme et la notice de la VMC.");
+      return vue("autre");
+    }
     // Prise renforcée IRVE : socle renforcé de recharge de véhicule, sur son circuit dédié (32 A / 6 mm²) — pas une prise 2P+T ordinaire.
     if (t === "prise_irve") {
       mecanismes.push({ id: "a", titre: "Prise renforcée IRVE", bornes: [{ id: "L", libelle: "L", aide: "phase" }, { id: "N", libelle: "N", aide: "neutre" }, { id: "PE", libelle: "PE", aide: "terre" }] });

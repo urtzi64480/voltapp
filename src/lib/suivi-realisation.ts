@@ -123,7 +123,7 @@ export const LABEL_APPAREIL: Record<AppareillageType, string> = {
   four: "Four", plaque: "Plaque de cuisson", lave_linge: "Lave-linge", lave_vaisselle: "Lave-vaisselle", seche_linge: "Sèche-linge",
   chauffe_eau: "Chauffe-eau", chauffage: "Radiateur électrique", clim: "Climatisation", seche_serviette: "Sèche-serviette",
   congelateur: "Congélateur", irve: "Borne de recharge véhicule", piscine: "Piscine / pompe à chaleur", vmc: "VMC", alarme: "Alarme",
-  volet_roulant: "Volet roulant", rj45: "Prise RJ45", prise_tv: "Prise TV / antenne", prise_dediee: "Prise dédiée", prise_exterieure: "Prise extérieure (IP44)", prise_irve: "Prise renforcée IRVE",
+  inter_volet: "Interrupteur de volet roulant", inter_vmc: "Interrupteur VMC", volet_roulant: "Volet roulant", rj45: "Prise RJ45", prise_tv: "Prise TV / antenne", prise_dediee: "Prise dédiée", prise_exterieure: "Prise extérieure (IP44)", prise_irve: "Prise renforcée IRVE",
   applique_exterieure: "Applique extérieure (IP44)", point_lumineux_exterieur: "Point lumineux extérieur (IP44)",
   interrupteur_exterieur: "Interrupteur extérieur (IP55)",
   detecteur_mouvement: "Détecteur de mouvement", detecteur_mouvement_exterieur: "Détecteur de mouvement extérieur (IP55)",
@@ -672,6 +672,15 @@ export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
             const resume = cmds.map(c => `${libelleLong(ctx, c)}${c.domotique ? " (domotique)" : ""}`).join(" ; ");
             details.push(`Commandé par : ${resume}.`);
           }
+        } else if (a.type === "inter_volet" || a.type === "inter_vmc") {
+          categorie = "commande";
+          libPose = "Boîte + mécanisme posés";
+          libRac = "Raccordé selon le guide";
+          const h = cm(a);
+          badges.push(`${h} cm`);
+          details.push(`${LABEL_APPAREIL[a.type]} à ${h} cm du sol : boîte d'encastrement, mécanisme et plaque de finition. ${a.type === "inter_volet" ? "Câble de liaison vers le moteur du volet : phase montée, phase descente, neutre, terre." : "Câble de liaison vers la VMC : petite vitesse, grande vitesse, neutre, terre."}`);
+          if (plaque) details.push(plaque.detail);
+          if (h < 90 || h > 130) alertesEl.push(`Hauteur ${h} cm : en dehors de la plage 0,90 m – 1,30 m préconisée (accessibilité).`);
         } else if (estCommande(a.type)) {
           categorie = "commande";
           libPose = "Boîte + mécanisme posés";

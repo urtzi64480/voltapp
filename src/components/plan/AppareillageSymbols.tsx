@@ -20,6 +20,8 @@ export const PALETTE: { type: AppareillageType; label: string; categorie: string
   { type: "va_et_vient_double",  label: "Double va-et-vient",          categorie: "Commandes" },
   { type: "telerupteur_double",  label: "Double bouton poussoir",      categorie: "Commandes" },
   { type: "detecteur_mouvement", label: "Détecteur de mouvement (allumage auto)", categorie: "Commandes" },
+  { type: "inter_volet",     label: "Interrupteur volet roulant (montée / descente)", categorie: "Commandes" },
+  { type: "inter_vmc",       label: "Interrupteur VMC (puissance / vitesse)",         categorie: "Commandes" },
   // Extérieur : tout l'appareillage étanche au même endroit (prise, éclairage, commandes).
   { type: "prise_exterieure",         label: "Prise extérieure (étanche)",          categorie: "Extérieur" },
   { type: "applique_exterieure",      label: "Applique extérieure (étanche)",       categorie: "Extérieur" },
@@ -67,7 +69,7 @@ const INITIALES_BASE: Record<string, string> = {
   interrupteur: "I", va_et_vient: "VV", telerupteur: "BP", rj45: "RJ", prise_tv: "TV", prise_dediee: "PD", prise_exterieure: "PE", prise_irve: "EV",
   interrupteur_double: "I2", va_et_vient_double: "VV2", telerupteur_double: "BP2",
   applique_exterieure: "AE", point_lumineux_exterieur: "PLE", interrupteur_exterieur: "IE",
-  detecteur_mouvement: "DM", detecteur_mouvement_exterieur: "DME",
+  detecteur_mouvement: "DM", detecteur_mouvement_exterieur: "DME", inter_volet: "IVR", inter_vmc: "IVM",
 };
 // usageDedie : pour une prise dédiée, l'étiquette est celle de l'appareil alimenté (F, LL, LV…).
 export function initialesAppareillage(type: AppareillageType, usageDedie?: AppareillageType): string {
@@ -181,6 +183,14 @@ const SYMBOLES: Record<AppareillageType, DefSymbole> = {
   // Détecteur de mouvement extérieur (IP55) : même détecteur, lentille cerclée d'un double contour étanche.
   detecteur_mouvement_exterieur: { oriente: true, prims: [
     { k: "p", d: "M 12 15 L 4.5 4.5 Q 12 1 19.5 4.5 Z" }, { k: "c", cx: 12, cy: 18.3, r: 4.4 }, { k: "c", cx: 12, cy: 18.3, r: 2, f: true },
+  ] },
+  // Interrupteur de volet roulant : mécanisme (carré) portant les deux flèches montée ▲ / descente ▼.
+  inter_volet: { oriente: true, prims: [
+    { k: "r", x: 4, y: 4, w: 16, h: 16 }, { k: "p", d: "M 12 6.5 L 16.5 11 L 7.5 11 Z" }, { k: "p", d: "M 12 17.5 L 16.5 13 L 7.5 13 Z" },
+  ] },
+  // Interrupteur de puissance de VMC : mécanisme (carré) repéré « VMC ».
+  inter_vmc: { oriente: true, prims: [
+    { k: "r", x: 3, y: 5, w: 18, h: 14 }, { k: "t", x: 12, y: 14.2, s: 5.4, txt: "VMC" },
   ] },
   interrupteur: { oriente: true, prims: [...TIGE, L(19, 7, 21.5, 9.5)] },
   // Double allumage : une barbe au bout de CHAQUE tige.

@@ -511,7 +511,7 @@ const MONTAGE: Record<AppareillageType, Montage> = {
   rj45: "mur", prise_tv: "mur", prise_dediee: "mur", prise_exterieure: "mur", prise_irve: "mur",
   applique: "mur", point_lumineux: "plafond", spot: "plafond", spot_etanche: "plafond",
   applique_exterieure: "mur", point_lumineux_exterieur: "plafond", interrupteur_exterieur: "mur",
-  detecteur_mouvement: "mur", detecteur_mouvement_exterieur: "mur",
+  detecteur_mouvement: "mur", detecteur_mouvement_exterieur: "mur", inter_volet: "mur", inter_vmc: "mur",
   four: "sol_mur", plaque: "sol_mur", lave_linge: "sol_mur", lave_vaisselle: "sol_mur", seche_linge: "sol_mur",
   congelateur: "sol_mur", piscine: "sol_mur",
   chauffe_eau: "mur", chauffage: "mur", clim: "mur", seche_serviette: "mur", irve: "mur", vmc: "mur", alarme: "mur",
@@ -519,12 +519,12 @@ const MONTAGE: Record<AppareillageType, Montage> = {
 };
 const DEMI_HAUTEUR: Partial<Record<AppareillageType, number>> = {
   prise: 0.04, prise_commandee: 0.04, interrupteur: 0.04, va_et_vient: 0.04, telerupteur: 0.04, interrupteur_double: 0.04, va_et_vient_double: 0.04, telerupteur_double: 0.04, rj45: 0.04, prise_tv: 0.04, prise_dediee: 0.04, prise_exterieure: 0.05, prise_irve: 0.04,
-  applique_exterieure: 0.1, interrupteur_exterieur: 0.045, detecteur_mouvement: 0.05, detecteur_mouvement_exterieur: 0.07,
+  applique_exterieure: 0.1, interrupteur_exterieur: 0.045, detecteur_mouvement: 0.05, detecteur_mouvement_exterieur: 0.07, inter_volet: 0.04, inter_vmc: 0.04,
   applique: 0.075, chauffe_eau: 0.5, chauffage: 0.225, clim: 0.14, seche_serviette: 0.6, irve: 0.18, vmc: 0.08, alarme: 0.14, volet_roulant: 0.12,
 };
 const SOMMET: Partial<Record<AppareillageType, number>> = {
   prise: 0.045, prise_commandee: 0.045, interrupteur: 0.045, va_et_vient: 0.045, telerupteur: 0.045, interrupteur_double: 0.045, va_et_vient_double: 0.045, telerupteur_double: 0.045, rj45: 0.045, prise_tv: 0.045, prise_dediee: 0.045, prise_exterieure: 0.055, prise_irve: 0.045,
-  applique_exterieure: 0.1, point_lumineux_exterieur: 0, interrupteur_exterieur: 0.045, detecteur_mouvement: 0.05, detecteur_mouvement_exterieur: 0.07,
+  applique_exterieure: 0.1, point_lumineux_exterieur: 0, interrupteur_exterieur: 0.045, detecteur_mouvement: 0.05, detecteur_mouvement_exterieur: 0.07, inter_volet: 0.045, inter_vmc: 0.045,
   applique: 0.08, point_lumineux: 0, spot: 0, spot_etanche: 0, four: 1.2, plaque: 0.9, lave_linge: 0.85, lave_vaisselle: 0.82, seche_linge: 0.85,
   congelateur: 0.85, piscine: 0.7, chauffe_eau: 0.45, chauffage: 0.23, clim: 0.14, seche_serviette: 0.6,
   irve: 0.18, vmc: 0.08, alarme: 0.2, volet_roulant: 0.1,
@@ -546,6 +546,7 @@ export function creerModeleAppareillage(type: AppareillageType, couleurCircuit?:
     case "rj45": groupe = modeleRj45(couleur); break;
     case "prise_tv": groupe = modelePriseTv(couleur); break;
     case "interrupteur": case "va_et_vient": case "telerupteur": groupe = modeleInterrupteur(type, couleur); break;
+    case "inter_volet": case "inter_vmc": groupe = modeleInterrupteur("interrupteur", couleur); break;
     case "interrupteur_double": groupe = modeleInterrupteurDouble("interrupteur", couleur); break;
     case "va_et_vient_double": groupe = modeleInterrupteurDouble("va_et_vient", couleur); break;
     case "telerupteur_double": groupe = modeleInterrupteurDouble("telerupteur", couleur); break;
