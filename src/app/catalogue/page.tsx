@@ -174,6 +174,7 @@ const SOUS_CATEGORIES_CONNUES: { code: string; label: string }[] = [
   { code: "fil_4.0", label: "Fil séparé 4mm² (H07V-U)" },
   { code: "fil_6.0", label: "Fil séparé 6mm² (H07V-U)" },
   { code: "fil_10.0", label: "Fil séparé 10mm² (H07V-U)" },
+  { code: "gaine_icta_verte20", label: "Gaine ICTA verte Ø20 (courants faibles : RJ45, TV)" },
   { code: "gaine_icta16", label: "Gaine ICTA 16 (pose encastrée)" },
   { code: "gaine_icta20", label: "Gaine ICTA 20 (pose encastrée)" },
   { code: "gaine_icta25", label: "Gaine ICTA 25 (pose encastrée)" },

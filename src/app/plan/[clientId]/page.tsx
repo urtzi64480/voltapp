@@ -63,7 +63,7 @@ const Vue3D = lazy(() => import("@/components/plan/Vue3D"));
 const Vue3DMaison = lazy(() => import("@/components/plan/Vue3DMaison"));
 import { toutesBoitesNiveau, segmentsDepuisMarche } from "@/lib/maison-engine";
 import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, integrerCoffretCommunication, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, genererCircuitsManuelsSeuls, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
-import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur, estAccessoireTableau, BREAKER_TYPES, effectiveSection, gaineRecommandee } from "@/lib/electrical-constants";
+import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur, estAccessoireTableau, BREAKER_TYPES, effectiveSection, gaineRecommandee, gaineCommunication } from "@/lib/electrical-constants";
 import { verifierEclairageManuel, fermetureCircuitLumiere, commandesPartagees } from "@/lib/controle-eclairage";
 import { coudesSegment } from "@/lib/routage-circuits";
 import { natureLiaison, conducteursSegment, geometrieCable, couleurDominante, COULEUR_FIL, LEGENDE_FILS} from "@/lib/couleurs-fils";
@@ -9099,6 +9099,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                           onClick={e => e.stopPropagation()}
                           onChange={e => b ? renommerCircuit(b, e.target.value) : renommerCircuitManuelDirect(manuel!.id, e.target.value)} />
                         {lg !== null && <span className="font-mono text-ink-400 shrink-0" title={lgDetail ? `${lgDetail.horizontale.toFixed(2)} m à l'horizontale + ${lgDetail.verticale.toFixed(2)} m de montées / descentes` : undefined}>{lg.toFixed(1)}m</span>}
+                        {b && visible && circuitsVisibles.size < circuitsNiveauActif.length && estCircuitSansDisjoncteur(b) && (
+                          <span className="font-mono text-[10px] text-emerald-700 shrink-0 whitespace-nowrap" title="Courants faibles : gaine de couleur verte, séparée des gaines de puissance">🔀 {gaineCommunication()}</span>
+                        )}
                         {b && visible && circuitsVisibles.size < circuitsNiveauActif.length && !estCircuitSansDisjoncteur(b) && (() => {
                           // Gaine du circuit : seulement pour les circuits SÉLECTIONNÉS (cochés quand tous ne le sont pas) — chaque circuit part du
                           // tableau dans sa propre gaine.

@@ -22,7 +22,7 @@ import {
   estCommande, estCommandeDouble, baseCommande, estLumiere, estLumierePlafond,
   commandeCetteLumiere, trouverPiece, cleSegmentLiaison, origineCircuits,
 } from "@/lib/maison-types";
-import { CIRCUITS, MAX_PAR_CIRCUIT, effectiveSection, gaineRecommandee, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
+import { CIRCUITS, MAX_PAR_CIRCUIT, effectiveSection, gaineRecommandee, gaineCommunication, estCircuitSansDisjoncteur } from "@/lib/electrical-constants";
 import {
   genererCircuits, controlerCircuits, construireColorMap, breakersDuNiveau, segmentsPourCircuit,
   ProblemeCircuit,
@@ -787,7 +787,7 @@ export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
         const pose = apparent <= 0.005 ? "encastré" : apparent >= longueur - 0.005 ? "apparent (IRL)" : `mixte (${fmtM(apparent)} apparents)`;
         const cable = b.circuit === "communication" ? (A?.type === "prise_tv" || B?.type === "prise_tv" ? "coaxial" : "RJ45 cat.6 STP") : `${eclairage ? nbConducteurs(seg) : 3}G${fmtSection(sectionSeg)}`;
         const nbCondSeg = eclairage ? nbConducteurs(seg) : 3;
-        const gaine = pose === "apparent (IRL)" ? gaineRecommandee(Array(nbCondSeg).fill(sectionSeg), "IRL").gaine : gaineRecommandee(Array(nbCondSeg).fill(sectionSeg), "ICTA").gaine;
+        const gaine = b.circuit === "communication" ? gaineCommunication(pose === "apparent (IRL)" ? "apparent" : "encastre") : pose === "apparent (IRL)" ? gaineRecommandee(Array(nbCondSeg).fill(sectionSeg), "IRL").gaine : gaineRecommandee(Array(nbCondSeg).fill(sectionSeg), "ICTA").gaine;
         const cleK = cleLiaisonCoche(niveau.id, noeudCle(seg.aId), noeudCle(seg.bId));
         const titre = `${nomNoeud(seg.aId)} → ${nomNoeud(seg.bId)}`;
         if (eclairage) lignes.push(`Fils du câble : ${conducteursSegment(seg).map(c => c.libelle).join(", ")}.`);

@@ -140,6 +140,14 @@ export const GAINES_IRL = [
   { label: "IRL 40", diamInt: 33.0 },
 ];
 
+// COURANTS FAIBLES (RJ45 / VDI, coaxial TV, antenne) : gaine de couleur VERTE, séparée des gaines de puissance (convention normalisée des
+// réseaux de communication, NF C 15-100 / guide VDI UTE C 90-483 ; les gaines de puissance, elles, ne sont pas vertes). Un câble de
+// communication (cat. 6 STP ou coaxial, ~7 mm) passe dans sa propre gaine : ICTA verte Ø20 en pose encastrée (jamais sous le Ø20 recommandé
+// pour tirer un câble blindé sans le contraindre), IRL verte Ø20 en pose apparente.
+export const GAINE_COMMUNICATION_DIAMETRE = 20;
+export const gaineCommunication = (pose: "encastre" | "apparent" = "encastre") =>
+  `${pose === "apparent" ? "IRL" : "ICTA"} ${GAINE_COMMUNICATION_DIAMETRE} verte (courants faibles)`;
+
 export const DIFF_HIERARCHY: Record<string, number> = { AC: 0, A: 1, F: 2 };
 export const AMPERES = [2, 6, 10, 16, 20, 25, 32, 40, 63];
 // Calibres réellement commercialisés pour un interrupteur différentiel (ID) résidentiel —

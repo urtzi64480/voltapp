@@ -75,7 +75,7 @@ import {
 import { MAX_POSTES_PLAQUE, estCommande, estLumiere, estSaillie, TYPES_SAILLIE_POSSIBLE } from "./maison-types";
 import { appareillagesParPieceReelle } from "./piece-reelle";
 import {
-  Breaker as TableauBreaker, BreakerRow, BREAKER_TYPES, effectiveSection, gaineRecommandee, estCircuitSansDisjoncteur, estAccessoireTableau} from "./electrical-constants";
+  Breaker as TableauBreaker, BreakerRow, BREAKER_TYPES, effectiveSection, gaineRecommandee, gaineCommunication, GAINE_COMMUNICATION_DIAMETRE, estCircuitSansDisjoncteur, estAccessoireTableau} from "./electrical-constants";
 
 
 import {
@@ -504,6 +504,14 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           dest.nom, horizontale + verticale, "m");
         else ajouter(`cable_rj45@${dest.id}`, "cable_rj45", "Câble RJ45 cat. 6 STP (étoile vers le coffret de communication)",
           dest.nom, horizontale + verticale, "m");
+        // Gaine VERTE des courants faibles : un mètre de gaine pour chaque mètre de câble de communication (jamais de gaine de puissance).
+        {
+          const codeVerte = `gaine_icta_verte${GAINE_COMMUNICATION_DIAMETRE}`;
+          const labelVerte = `Gaine ${gaineCommunication("encastre")}`;
+          ajouter(`${codeVerte}@${dest.id}`, codeVerte, labelVerte, dest.nom, horizontale + verticale, "m");
+          if (bCF) noterCircuit(niveau, bCF, nomCircuit(bCF), codeVerte, labelVerte, horizontale + verticale, "m");
+          const bv = cumul.get(`${codeVerte}@${dest.id}`); if (bv) (bv.appareils ??= []).push({ piece: piece.nom || "Pièce", nom: a.nom?.trim() || undefined });
+        }
         { const b = cumul.get(`${tv ? "cable_coax" : "cable_rj45"}@${dest.id}`); if (b) (b.appareils ??= []).push({ piece: piece.nom || "Pièce", nom: a.nom?.trim() || undefined }); }
       });
     });
