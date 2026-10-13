@@ -452,6 +452,9 @@ export interface BoiteDerivation {
   // Appareillages (ids) qui REPARTENT de cette boîte : un nouveau départ est tiré de la boîte vers eux (en chaîne, ou en étoile pour
   // l'éclairage) au lieu de les alimenter par leur place d'origine dans le circuit.
   departs?: number[];
+  /** Boîte créée comme ÉTAPE d'un cheminement dessiné à la main (bouton « Poser une boîte » du dessin) : le câble arrive à la boîte depuis le
+   *  point précédent la 1re fois, puis chaque nouveau clic sur la boîte = nouveau départ depuis elle. */
+  etapeMarche?: boolean;
 }
 
 /** Boîtes qui structurent le circuit en étoile (hors boîtes posées sur un tronçon). */

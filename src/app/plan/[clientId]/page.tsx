@@ -2281,7 +2281,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Circuit dont on est en train de dessiner le cheminement à la main (clic sur ses
   // appareillages, dans l'ordre) — null = pas de dessin en cours. ordre est l'état de
   // travail local, appliqué (appliquerOrdreCircuit) seulement à la validation.
-  const [cheminementDessin, setCheminementDessin] = useState<{ breaker: Breaker; ordre: number[] } | null>(null);
+  const [cheminementDessin, setCheminementDessin] = useState<{ breaker: Breaker; ordre: number[]; poseBoite?: boolean } | null>(null);
   // Liaison directe entre deux points lumineux (sans boîte de dérivation) : null = pas en
   // cours ; sinon le label du circuit concerné + le premier point lumineux déjà cliqué
   // (null tant qu'aucun n'a été choisi pour cette paire).
@@ -4624,7 +4624,33 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setEditingSegment(null);
   };
 
+  // Étape « boîte de dérivation » du cheminement dessiné : crée la boîte à l'endroit cliqué et l'ajoute au tracé (le câble y arrive depuis le
+  // point précédent). Cliquer ensuite cette boîte repart d'elle : un nouveau départ, autant de fois que voulu.
+  const poserBoiteEtape = (m: Point) => {
+    if (!cheminementDessin || !niveauActif) return;
+    const label = cheminementDessin.breaker.label;
+    const id = uidMaison();
+    const existantes = niveauActif.boitesDerivation?.[label] ?? [];
+    const boite: BoiteDerivation = { id, nom: `Boîte ${existantes.length + 1}`, point: m, etapeMarche: true };
+    updateNiveauActif(n => ({ ...n, boitesDerivation: { ...(n.boitesDerivation ?? {}), [label]: [...(n.boitesDerivation?.[label] ?? []), boite] } }));
+    setCheminementDessin(cd => cd ? { ...cd, ordre: [...cd.ordre, id], poseBoite: false } : cd);
+  };
+  // « Retirer le dernier » : si c'est une boîte créée pour ce tracé et qu'elle n'y figure plus, elle est supprimée avec.
+  const retirerDernierCheminement = () => {
+    if (!cheminementDessin) return;
+    const dernier = cheminementDessin.ordre[cheminementDessin.ordre.length - 1];
+    const reste = cheminementDessin.ordre.slice(0, -1);
+    const label = cheminementDessin.breaker.label;
+    const etape = dernier != null && !reste.includes(dernier) && (niveauActif?.boitesDerivation?.[label] ?? []).some(b => b.id === dernier && b.etapeMarche);
+    if (etape) updateNiveauActif(n => ({ ...n, boitesDerivation: { ...(n.boitesDerivation ?? {}), [label]: (n.boitesDerivation?.[label] ?? []).filter(b => b.id !== dernier) } }));
+    setCheminementDessin(cd => cd ? { ...cd, ordre: reste } : cd);
+  };
   const onBackgroundPointerDown = (e: React.PointerEvent) => {
+    if (cheminementDessin?.poseBoite) {
+      const r = svgRef.current?.getBoundingClientRect();
+      if (r) { e.stopPropagation(); poserBoiteEtape(toMeters(e.clientX - r.left, e.clientY - r.top)); }
+      return;
+    }
     if (cheminementDessin || liaisonLumiereMode) return; // dessin de cheminement / liaison directe : seuls les appareillages ciblés réagissent
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -6676,7 +6702,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <svg
               ref={svgRef}
               className="w-full h-full block"
-              style={{ touchAction: "none", cursor: outilMain || espaceEnfonce ? "grab" : deplacementNiveau ? "move" : mode === "dessiner" || mode === "cloison" || mode === "zone" || mode === "mesure" || placementType || placingTableau || placingPointArrivee || placingBoiteLabel != null || placingPhoto != null || poseParties != null || placingMeuble ? "crosshair" : "grab" }}
+              style={{ touchAction: "none", cursor: outilMain || espaceEnfonce ? "grab" : deplacementNiveau ? "move" : mode === "dessiner" || mode === "cloison" || mode === "zone" || mode === "mesure" || placementType || placingTableau || placingPointArrivee || placingBoiteLabel != null || placingPhoto != null || poseParties != null || placingMeuble || cheminementDessin?.poseBoite ? "crosshair" : "grab" }}
               onPointerDown={onBackgroundPointerDown}
               // Outil cloison : le clic gauche est traité ICI, avant les pièces / appareillages / portes (un
               // appareillage posé sur le mur ne doit pas avaler le départ de la cloison).
@@ -7486,7 +7512,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   : undefined;
                 const relieAuTableau = !manuelDuCircuit?.nonRelieTableau;
                 const boitesNiv = toutesBoitesNiveau(niveauActif);
-                const marche = segmentsDepuisMarche(origineCircuits(niveauActif)!, cheminementDessin.ordre.filter(t => boitesNiv.has(t) || membres.some(m => m.id === t)), membres, boitesNiv, relieAuTableau, new Set((niveauActif.boitesDerivation?.[cheminementDessin.breaker.label] ?? []).map(b => b.id)));
+                const marche = segmentsDepuisMarche(origineCircuits(niveauActif)!, cheminementDessin.ordre.filter(t => boitesNiv.has(t) || membres.some(m => m.id === t)), membres, boitesNiv, relieAuTableau, new Set((niveauActif.boitesDerivation?.[cheminementDessin.breaker.label] ?? []).filter(b => !b.etapeMarche).map(b => b.id)));
                 const d = marche.map(sg => { const a = toScreen(sg.aPoint), b = toScreen(sg.bPoint); return `M ${a.x.toFixed(1)} ${a.y.toFixed(1)} L ${b.x.toFixed(1)} ${b.y.toFixed(1)}`; }).join(" ");
                 return (
                   <>
@@ -9070,7 +9096,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 className="bg-ink-900 text-volt-400 text-xs font-semibold p-3 rounded-lg shadow-lg flex items-center gap-3 flex-wrap justify-center max-w-[92vw]">
                 <span>Cheminement « {nomAffiche(cheminementDessin.breaker)} » : clique ses appareillages dans l'ordre voulu ({cheminementDessin.ordre.length} placé{cheminementDessin.ordre.length > 1 ? "s" : ""}). Clique une boîte de ce circuit puis l'appareillage à relier : il part de la boîte. Une boîte d'un autre circuit se traverse (le câble y passe) ; reclique une boîte déjà passée pour REPARTIR d'elle.</span>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <button onClick={() => setCheminementDessin(cd => cd ? { ...cd, ordre: cd.ordre.slice(0, -1) } : cd)} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">↶ Retirer le dernier</button>
+                  <button onClick={() => setCheminementDessin(cd => cd ? { ...cd, poseBoite: !cd.poseBoite } : cd)}
+                    className={`${cheminementDessin.poseBoite ? "btn-volt" : "btn-ghost !text-white !border-white/30"} !text-[11px] !px-2 !py-1`}
+                    title="Pose une boîte de dérivation là où tu cliques sur le plan, comme étape du tracé. Reclique ensuite cette boîte pour repartir d'elle (autant de départs que voulu).">
+                    <Box size={11} /> {cheminementDessin.poseBoite ? "Clique sur le plan…" : "Poser une boîte"}
+                  </button>
+                  <button onClick={retirerDernierCheminement} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">↶ Retirer le dernier</button>
                   <button onClick={terminerDessinCheminement} className="btn-volt !text-[11px] !px-2 !py-1"><Save size={11} /> Terminer</button>
                   <button onClick={reinitialiserDessinCheminement} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">Auto</button>
                   <button onClick={annulerDessinCheminement} className="btn-ghost !text-[11px] !px-2 !py-1 !text-white !border-white/30">Annuler</button>

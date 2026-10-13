@@ -717,7 +717,7 @@ function segmentsPourCircuitBrut(breaker: Breaker, points: AppareillagePlace[], 
       const manuel = breaker.manuelId != null ? (niveau.circuitsManuels ?? []).find(m => m.id === breaker.manuelId) : undefined;
       // Une boîte déjà posée SUR le câblage de ce circuit en fait partie : la cliquer = repartir d'elle (elle reste insérée sur son tronçon).
       // Toute boîte de CE circuit (posée sur un tronçon ou non) en fait partie ; sans tronçon mémorisé, elle se pose sur le tronçon le plus proche.
-      const surCircuit = new Set(toutes.map(b => b.id));
+      const surCircuit = new Set(toutes.filter(b => !b.etapeMarche).map(b => b.id));
       const marche = segmentsDepuisMarche(tableauPos, ordreManuel, points, boitesNiveau, !manuel?.nonRelieTableau, surCircuit);
       return insererBoitesSurTroncons(marche, toutes);
     }
@@ -809,6 +809,8 @@ function insererBoitesSurTroncons(segments: SegmentCircuit[], enLigne: BoiteDeri
   };
   enLigne.forEach(bo => {
     if (res.length === 0) return;
+    // Boîte déjà reliée par le tracé (étape d'un cheminement dessiné, ou point de départ d'une branche) : elle fait déjà partie du câblage.
+    if (res.some(s => s.aId === `boite-${bo.id}` || s.bId === `boite-${bo.id}`)) return;
     const ss = bo.surSegment;
     let idx = ss ? res.findIndex(s => (s.aId === ss.a && s.bId === ss.b) || (s.aId === ss.b && s.bId === ss.a)) : -1;
     if (idx < 0) {
