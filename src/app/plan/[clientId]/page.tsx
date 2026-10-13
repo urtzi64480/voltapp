@@ -5698,6 +5698,31 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (rect) { const z = Math.max(zoom, 1.6); setZoom(z); setPan({ x: rect.width / 2 - cible.x * PX_PER_M * z, y: rect.height / 2 - cible.y * PX_PER_M * z }); }
   };
 
+  // « OK devis » : circuits validés dans le pré-devis (case « Devis OK pour ce circuit / cette pièce », enregistrée dans le brouillon).
+  // Mode circuit : le poste du pré-devis EST le circuit. Mode pièce : un circuit est OK quand tous ses appareillages sont dans des pièces OK.
+  // Sert à l'outil de double contrôle « Masquer OK devis » : il ne reste affiché que ce qui n'a pas encore été validé.
+  const circuitsOkDevis: Set<number> = (() => {
+    const ok = new Set<number>();
+    if (!resultat || !projet.predevis_config) return ok;
+    let cfg: any = null;
+    try { cfg = JSON.parse(projet.predevis_config); } catch { return ok; }
+    const postesOk: Record<string, boolean> = cfg?.postesOk ?? {};
+    if (!Object.values(postesOk).some(Boolean)) return ok;
+    const modeCircuit = cfg?.mode === "circuit";
+    resultat.breakers.forEach(b => {
+      const nv = niveaux.find(n => n.id === b.niveauId);
+      if (!nv) return;
+      if (modeCircuit) {
+        const nom = b.manuelId != null ? b.label : (nv.nomsCircuits?.[b.label] ?? b.label);
+        if (postesOk[`Circuit · ${nom} (${nv.nom || nv.type})`]) ok.add(b.id);
+      } else {
+        const pieces = nv.pieces.filter(pc => pc.appareillages.some(a => a.circuitId === b.id));
+        if (pieces.length > 0 && pieces.every(pc => postesOk[pc.nom || "Pièce"])) ok.add(b.id);
+      }
+    });
+    return ok;
+  })();
+
   const circuitsNiveauActif = niveauActif
     ? (resultat ? breakersDuNiveau(resultat.breakers, niveauActif) : [])
     : [];
@@ -8875,8 +8900,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
             {circuitsAffiches.length > 0 && (
               <DraggablePanel corner="br" className="card card-inner !p-3 max-w-[260px] max-h-56 overflow-y-auto shadow-lg">
-                <div className="flex items-center justify-between mb-1.5 gap-2">
+                <div className="flex items-center justify-between mb-1.5 gap-x-2 gap-y-0.5 flex-wrap">
                   <p className="text-[10px] font-semibold text-ink-400 uppercase tracking-wide">Circuits</p>
+                  {resultat && (
+                    <button className="text-[10px] font-semibold shrink-0 text-emerald-700 disabled:text-ink-300" disabled={circuitsOkDevis.size === 0}
+                      title="Double contrôle : masque tout ce qui est « OK devis » dans le pré-devis (circuits, câbles et appareillages compris) — il ne reste que ce qui n'a pas été validé"
+                      onClick={() => {
+                        const tous = resultat.breakers.map(b => b.id);
+                        const cible = new Set(tous.filter(id => !circuitsOkDevis.has(id)));
+                        const dejaMasque = cible.size === circuitsVisibles.size && tous.every(id => circuitsVisibles.has(id) === cible.has(id));
+                        setCircuitsVisibles(dejaMasque ? new Set(tous) : cible);
+                      }}>
+                      {circuitsOkDevis.size === 0 ? "Aucun OK devis" : `Masquer OK devis (${circuitsOkDevis.size})`}
+                    </button>
+                  )}
                   {circuitsNiveauActif.length > 0 && (
                     <button className="text-[10px] text-volt-600 font-semibold shrink-0"
                       onClick={() => {
