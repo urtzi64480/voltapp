@@ -1,5 +1,6 @@
 "use client";
 
+import { SECTIONS_CABLE } from "@/lib/electrical-constants";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -10,7 +11,7 @@ import { Niveau } from "@/lib/maison-types";
 import { BreakerRow } from "@/lib/electrical-constants";
 import {
   calculerBesoinsBruts, ModePreDevis, RecapCircuit, apparierCatalogue, optionsPourSousCategorie, genererLignesDevis, estBobinable,
-  multiplicateurPourArticle, ratioFilsDe, optionsAvecRatioFils, type PoseEncastre, estSousCategorieAppareillage, estPieceReelle, estPieceTableau, optionAvecOffre, prixCompagnonAuMetre,
+  articleAuMetre, type Conditionnement, multiplicateurPourArticle, ratioFilsDe, optionsAvecRatioFils, type PoseEncastre, estSousCategorieAppareillage, estPieceReelle, estPieceTableau, optionAvecOffre, prixCompagnonAuMetre,
   ResultatPreDevis, BesoinApparie, estPointLumineuxADefinir, OptionArticle, ChoixLigne, POSTE_MAIN_OEUVRE, POSTE_CABLAGE,
   signaturePoste, signatureCablage, signaturesActuelles, postesInvalides, CLE_OK_CABLES, CLE_OK_GAINES,
 } from "@/lib/predevis-engine";
@@ -49,6 +50,8 @@ interface EtatChoix {
   // Fournisseur retenu pour l'article choisi (id d'une offre de prestation_fournisseurs).
   // "" = offre principale du produit. S'applique à l'option cochée / à l'article « autre ».
   fournisseurId: string;
+  // Bobinable (câble, fils, gaine) : « auto » (défaut) = bobines + reliquat au mètre ; « metre » = tout au mètre.
+  conditionnement?: Conditionnement;
 }
 
 function etatParDefaut(besoin: BesoinApparie): EtatChoix {
@@ -104,7 +107,11 @@ function optionEffective(besoin: BesoinApparie, etat: EtatChoix, prestations: Pr
 // proche et peut faire disparaître un reliquat important de l'affichage (ex. 29m avec des
 // bobines de 25m arrondissait à "1" au lieu de facturer les 4m restants) — d'où cette version
 // qui ne sous-estime jamais.
-function totalBobinable(besoin: BesoinApparie, option: { longueur_unitaire?: number | null; quantiteMultiplicateur?: number; prix_unitaire: number; gamme?: OptionArticle["gamme"]; sousCategorieArticle?: string; fournisseur_nom?: string | null }, prestations: Prestation[]): number {
+function totalBobinable(besoin: BesoinApparie, option: { longueur_unitaire?: number | null; quantiteMultiplicateur?: number; prix_unitaire: number; gamme?: OptionArticle["gamme"]; sousCategorieArticle?: string; fournisseur_nom?: string | null }, prestations: Prestation[], conditionnement?: Conditionnement): number {
+  if (conditionnement === "metre" && option.longueur_unitaire && option.longueur_unitaire > 0) {
+    const am = articleAuMetre(option.sousCategorieArticle ?? besoin.sousCategorie, option.gamme, prestations);
+    if (am) return Math.ceil(besoin.quantite * (option.quantiteMultiplicateur ?? 1)) * prixCompagnonAuMetre(am, option.fournisseur_nom);
+  }
   const quantiteReelle = besoin.quantite * (option.quantiteMultiplicateur ?? 1);
   if (!option.longueur_unitaire || option.longueur_unitaire <= 0) {
     const q = besoin.unite === "m" ? Math.ceil(quantiteReelle) : quantiteReelle;
@@ -124,7 +131,12 @@ function totalBobinable(besoin: BesoinApparie, option: { longueur_unitaire?: num
 
 // ─── Ligne d'un besoin ───────────────────────────────────────────────────────
 
-function decompositionLabel(besoin: BesoinApparie, option: { longueur_unitaire?: number | null; quantiteMultiplicateur?: number; gamme?: OptionArticle["gamme"]; sousCategorieArticle?: string }, prestations: Prestation[]): string | null {
+function decompositionLabel(besoin: BesoinApparie, option: { longueur_unitaire?: number | null; quantiteMultiplicateur?: number; gamme?: OptionArticle["gamme"]; sousCategorieArticle?: string }, prestations: Prestation[], conditionnement?: Conditionnement): string | null {
+  if (conditionnement === "metre" && option.longueur_unitaire && option.longueur_unitaire > 0 && besoin.unite === "m") {
+    const am = articleAuMetre(option.sousCategorieArticle ?? besoin.sousCategorie, option.gamme, prestations);
+    const q = besoin.quantite * (option.quantiteMultiplicateur ?? 1);
+    return am ? `→ ${Math.ceil(q)} m au mètre, sans bobine (${am.nom})` : `→ aucun article au mètre au catalogue pour ce besoin : ajoute-en un, sinon les bobines sont gardées`;
+  }
   if (!(besoin.unite === "m" && estBobinable(besoin.sousCategorie) && option.longueur_unitaire && option.longueur_unitaire > 0)) return null;
   const quantiteReelle = besoin.quantite * (option.quantiteMultiplicateur ?? 1);
   const L = option.longueur_unitaire;
@@ -312,7 +324,7 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail, onCatalogueAjo
     ? prestations.find(p => p.id === besoin.options[etat.optionIndex]?.prestation_id)
     : undefined;
   const decomposition = (etat.mode === "option" || etat.mode === "autre") && effective
-    ? decompositionLabel(besoin, effective, prestations) : null;
+    ? decompositionLabel(besoin, effective, prestations, etat.conditionnement) : null;
 
   return (
     <div className="border border-ink-100 rounded-xl p-3 flex flex-col gap-2">
@@ -382,6 +394,16 @@ function BesoinRow({ besoin, etat, onChange, prestations, detail, onCatalogueAjo
         {etat.mode === "autre" && autrePrestation && selecteurFournisseur(autrePrestation)}
 
         {decomposition && <p className="text-[11px] text-sky-600 font-mono ml-6">{decomposition}</p>}
+        {(etat.mode === "option" || etat.mode === "autre") && effective?.longueur_unitaire && effective.longueur_unitaire > 0 && besoin.unite === "m" && (
+          <div className="ml-6 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-600">
+            <span className="shrink-0 font-medium">Achat :</span>
+            <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={etat.conditionnement !== "metre"} onChange={() => onChange({ ...etat, conditionnement: "auto" })} /> Bobines + reliquat au mètre</label>
+            <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={etat.conditionnement === "metre"} onChange={() => onChange({ ...etat, conditionnement: "metre" })} /> Tout au mètre (pas de bobine)</label>
+            {etat.conditionnement === "metre" && !articleAuMetre(effective.sousCategorieArticle ?? besoin.sousCategorie, effective.gamme, prestations) && (
+              <span className="text-amber-700 font-medium">Aucun article « au mètre » au catalogue pour cette sous-catégorie.</span>
+            )}
+          </div>
+        )}
 
         {estPointLumineuxADefinir(besoin.sousCategorie) && (
           <label className={`flex items-center gap-2 text-sm cursor-pointer ${etat.mode === "adefinir" ? "bg-red-50 border border-red-300 rounded-lg px-2 py-1.5" : ""}`}>
@@ -477,6 +499,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [postesSig, setPostesSig] = useState<Record<string, string>>({}); // signature des besoins de chaque poste au moment de sa validation
   const [postesModifies, setPostesModifies] = useState<string[]>([]);      // postes dont la validation est tombée (plan modifié depuis)
   const [poseEncastre, setPoseEncastre] = useState<PoseEncastre>("icta_fils"); // pose encastrée : gaine ICTA + fils, ou gaine ICTA précâblée
+  const [posesSection, setPosesSection] = useState<Record<string, PoseEncastre>>({}); // choix propre à une section (sinon : choix global ci-dessus)
   const [postesAnciens, setPostesAnciens] = useState<string[]>([]);        // validations faites avant le suivi des modifications : état de départ inconnu, à re-valider
   const [postesOuverts, setPostesOuverts] = useState<Record<string, boolean>>({});
   const [autoSauve, setAutoSauve] = useState<string | null>(null); // heure de la dernière sauvegarde automatique
@@ -578,7 +601,12 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const { niveaux, rows, prest, brouillon } = donnees;
     const pose: PoseEncastre = brouillon?.poseEncastre === "precablee" ? "precablee" : "icta_fils";
     setPoseEncastre(pose);
-    const { besoins, alertes, recap } = calculerBesoinsBruts(niveaux, rows, mode, pose);
+    const parSection: Record<string, PoseEncastre> = {};
+    if (brouillon?.posesSection && typeof brouillon.posesSection === "object") {
+      Object.entries(brouillon.posesSection as Record<string, unknown>).forEach(([sec, v]) => { if (v === "precablee" || v === "icta_fils") parSection[sec] = v; });
+    }
+    setPosesSection(parSection);
+    const { besoins, alertes, recap } = calculerBesoinsBruts(niveaux, rows, mode, sec => parSection[sec] ?? pose);
     setRecapCircuits(recap);
     // Catalogue COURANT (articles ajoutés depuis l'ouverture de la page inclus), pas celui du chargement initial.
     const res = apparierCatalogue(besoins, prestations.length > 0 ? prestations : prest);
@@ -697,10 +725,12 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   // Bascule « gaine ICTA + fils » ↔ « gaine ICTA précâblée » (pose encastrée uniquement) : recalcule les besoins en gardant les choix déjà faits ;
   // les postes validés « devis OK » dont le contenu change perdent leur validation (et se dépliant), comme pour une modification du plan.
-  function changerPoseEncastre(nouvelle: PoseEncastre) {
-    if (!donnees || !mode || nouvelle === poseEncastre) return;
+  function changerPoseEncastre(nouvelle: PoseEncastre, sections: Record<string, PoseEncastre> = posesSection) {
+    if (!donnees || !mode) return;
+    if (nouvelle === poseEncastre && sections === posesSection) return;
     const { niveaux, rows, prest } = donnees;
-    const { besoins, alertes, recap } = calculerBesoinsBruts(niveaux, rows, mode, nouvelle);
+    const { besoins, alertes, recap } = calculerBesoinsBruts(niveaux, rows, mode, sec => sections[sec] ?? nouvelle);
+    setPosesSection(sections);
     const res = apparierCatalogue(besoins, prestations.length > 0 ? prestations : prest);
     setPoseEncastre(nouvelle);
     setRecapCircuits(recap);
@@ -720,7 +750,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
   }
 
-  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, heuresPostes, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, suiviV: VERSION_SUIVI_OK, poseEncastre, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
+  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, heuresPostes, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, suiviV: VERSION_SUIVI_OK, poseEncastre, posesSection, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
 
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
@@ -854,7 +884,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (etat.mode === "option" || etat.mode === "autre") {
       const opt = optionEffective(besoin, etat, prestations);
       if (!opt) return 0;
-      if (besoin.unite === "m" && estBobinable(besoin.sousCategorie)) return totalBobinable(besoin, opt, prestations);
+      if (besoin.unite === "m" && estBobinable(besoin.sousCategorie)) return totalBobinable(besoin, opt, prestations, etat.conditionnement);
       return besoin.quantite * (opt.quantiteMultiplicateur ?? 1) * opt.prix_unitaire;
     }
     const prix = parseFloat(etat.librePrix) || 0;
@@ -889,7 +919,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (etat.mode === "option" || etat.mode === "autre") {
       // Option avec le fournisseur choisi (prix de vente + prix d'achat de CE fournisseur).
       const opt = optionEffective(besoin, etat, prestations);
-      return opt ? { besoin, optionCatalogue: opt } : { besoin, aCompleter: true };
+      return opt ? { besoin, optionCatalogue: opt, conditionnement: etat.conditionnement } : { besoin, aCompleter: true };
     }
     const prix = parseFloat(etat.librePrix) || 0;
     if (!etat.libreNom.trim() || prix <= 0) return { besoin, aCompleter: true };
@@ -1312,7 +1342,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 <span>h</span>
               </label>
             </div>
-            {ouv && poseEncastre === "precablee" && (() => {
+            {ouv && (poseEncastre === "precablee" || Object.values(posesSection).includes("precablee")) && (() => {
               const r = repartitionGaines(besoins);
               if (r.precablee <= 0 && r.aCabler <= 0) return null;
               return (
@@ -1365,7 +1395,38 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 ))}
               </div>
               <p className="text-[11px] text-ink-500 mt-1.5">Pose apparente : toujours gaine IRL + fils (aucun choix). La gaine précâblée ne couvre que les tronçons <strong>strictement 3 fils</strong> (phase, neutre, terre) ; navettes, retours et commandes restent en gaine ICTA + fils, à câbler toi-même.</p>
-              {poseEncastre === "precablee" && (() => {
+              {(() => {
+                // Choix section par section (ex. 6 mm² en précâblé parce que 20 m seulement, 1,5 mm² en fils) ; vide = suit le choix global.
+                const tous = Object.values(parPieceFiltre).flat();
+                const lignes = SECTIONS_CABLE.map(sec => {
+                  const m = tous.filter(b => b.sousCategorie === `cablage_${sec}` || b.sousCategorie === `gaine_precablee_3g${sec}`).reduce((t, b) => t + b.quantite, 0);
+                  return { sec, m };
+                }).filter(x => x.m > 0);
+                if (lignes.length === 0) return null;
+                return (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-[11px] font-medium text-ink-600">Par section (tronçons 3 fils) :</p>
+                    {lignes.map(({ sec, m }) => (
+                      <label key={sec} className="flex items-center gap-2 text-xs text-ink-700">
+                        <span className="w-28 shrink-0 font-medium">{parseFloat(sec)} mm² · {fm(m)}</span>
+                        <select className="text-xs border border-ink-200 rounded-lg py-1 px-1.5 bg-white" value={posesSection[sec] ?? ""}
+                          onChange={e => {
+                            const v = e.target.value as "" | PoseEncastre;
+                            const suite = { ...posesSection };
+                            if (v) suite[sec] = v; else delete suite[sec];
+                            changerPoseEncastre(poseEncastre, suite);
+                          }}>
+                          <option value="">Suivre le choix ci-dessus</option>
+                          <option value="icta_fils">Gaine ICTA + fils</option>
+                          <option value="precablee">Gaine ICTA précâblée</option>
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                );
+              })()}
+              {(() => {
+                if (poseEncastre !== "precablee" && !Object.values(posesSection).includes("precablee")) return null;
                 const r = repartitionGaines(Object.values(parPieceFiltre).flat());
                 return (
                   <p className="text-xs mt-1.5 text-sky-800">

@@ -5740,7 +5740,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         let rows: BreakerRow[] = [];
         if (projet.tableau_config) { try { const parsed = JSON.parse(projet.tableau_config); if (Array.isArray(parsed)) rows = parsed; } catch {} }
         rows = [...rows, ...lireAnnexes(projet.tableaux_annexes).flatMap(a => a.rows)];
-        const { besoins } = calculerBesoinsBruts(niveaux, rows, cfg?.mode === "circuit" ? "circuit" : "piece", cfg?.poseEncastre === "precablee" ? "precablee" : "icta_fils");
+        const { besoins } = calculerBesoinsBruts(niveaux, rows, cfg?.mode === "circuit" ? "circuit" : "piece", (sec: string) => { const v = cfg?.posesSection?.[sec] ?? cfg?.poseEncastre; return v === "precablee" ? "precablee" : "icta_fils"; });
         const parPiece: Record<string, typeof besoins> = {};
         besoins.forEach(b => { (parPiece[b.piece] ??= []).push(b); });
         setClesOkInvalides(postesInvalides(signaturesActuelles(parPiece), okSauve, sigSauve));

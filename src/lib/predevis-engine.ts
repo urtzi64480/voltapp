@@ -316,8 +316,10 @@ export const PREFIXE_HORS_CIRCUIT = "Hors circuit · ";
 // mode "piece" : les besoins sont regroupés par pièce (câbles = répartis selon les pièces traversées).
 // mode "circuit" : regroupés par CIRCUIT (un circuit de prises peut courir sur plusieurs pièces) — appareillage, boîtes et
 // câbles d'un circuit forment un seul poste. Les longueurs de câble sont strictement les mêmes dans les deux modes.
-export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[], mode: ModePreDevis = "piece", poseEncastre: PoseEncastre = "icta_fils"): { besoins: LigneBesoin[]; alertes: string[]; recap: RecapCircuit[] } {
+export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[], mode: ModePreDevis = "piece", poseEncastreParam: PoseEncastre | ((section: string) => PoseEncastre) = "icta_fils"): { besoins: LigneBesoin[]; alertes: string[]; recap: RecapCircuit[] } {
   const alertes: string[] = [];
+  // Pose encastrée au choix : une valeur pour tout, ou une fonction (section → choix) pour décider section par section.
+  const poseEncastreDe = (section: string): PoseEncastre => (typeof poseEncastreParam === "function" ? poseEncastreParam(section) : poseEncastreParam);
   const recapParCircuit = new Map<string, RecapCircuit>();
   const noterCircuit = (niveau: Niveau, b: { id: number; label: string; manuelId?: number }, groupe: string, sousCategorie: string, label: string, quantite: number, unite: UniteBesoin) => {
     if (quantite <= 0) return;
@@ -617,8 +619,8 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           // STRICTEMENT 3 fils communs (phase, neutre, terre) = tout sauf navette / commande / retour lampe : seuls ces tronçons existent en
           // gaine précâblée. Dès que la liaison porte autre chose (navette, retour, commande), gaine ICTA + fils à câbler soi-même.
           const strict3 = !estLiaisonCommande;
-          const precablee = pose !== "apparent" && poseEncastre === "precablee" && strict3;
-          const aCabler = pose !== "apparent" && poseEncastre === "precablee" && !strict3;
+          const precablee = pose !== "apparent" && poseEncastreDe(section) === "precablee" && strict3;
+          const aCabler = pose !== "apparent" && poseEncastreDe(section) === "precablee" && !strict3;
           const sousCatGaine = pose === "apparent" ? `gaine_irl${diamGaine}` : precablee ? `gaine_precablee_3g${section}` : `gaine_icta${diamGaine}`;
           const labelGaine = pose === "apparent" ? `Gaine ${gaineLiaison.gaine} (pose apparente)` : precablee ? `Gaine ICTA précâblée 3G${section} (3 fils : phase, neutre, terre)` : aCabler ? `Gaine ${gaineLiaison.gaine} — à câbler (navettes / retours / commandes)` : `Gaine ${gaineLiaison.gaine}`;
           noterCircuit(niveau, b, nomCircuit(b), sousCatGaine, labelGaine, legLength, "m");
@@ -659,7 +661,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         // Liaison verticale tableau → point d'arrivée : toujours encastrée (gaine ICTA, ou ICTA précâblée au choix).
         const gaineInfo = gaineRecommandee([sectionCircuit, sectionCircuit, sectionCircuit], "ICTA");
         const chiffres = gaineInfo.gaine.replace(/\D/g, "");
-        const precabV = poseEncastre === "precablee";
+        const precabV = poseEncastreDe(sectionCircuit) === "precablee";
         const sousCatGaine = precabV ? `gaine_precablee_3g${sectionCircuit}` : `gaine_icta${chiffres}`;
         const labelGaineV = precabV ? `Gaine ICTA précâblée 3G${sectionCircuit}` : `Gaine ${gaineInfo.gaine}`;
         if (!precabV) {
@@ -872,6 +874,16 @@ export interface ChoixLigne {
   aCompleter?: boolean;
   // Luminaire à choisir avec le client : ligne « À compléter — … (à définir avec le client) » à 0 € (bloque l'envoi du devis comme toute ligne à compléter).
   aDefinir?: boolean;
+  // Câbles / fils / gaines vendus en bobine : « auto » (défaut) = bobines entières + reliquat au mètre ; « metre » = TOUT au mètre
+  // (article de même sous-catégorie sans longueur fixe) — évite d'acheter 50 ou 100 m pour 20 m de besoin.
+  conditionnement?: Conditionnement;
+}
+export type Conditionnement = "auto" | "metre";
+
+// Article vendu AU MÈTRE (sans longueur de bobine) pour une sous-catégorie : même gamme de préférence, sinon n'importe laquelle.
+export function articleAuMetre(sousCategorie: string, gamme: Gamme | null | undefined, prestations: Prestation[]): Prestation | undefined {
+  const candidats = prestations.filter(p => p.actif !== false && aSousCategorie(p, sousCategorie) && !p.longueur_unitaire);
+  return candidats.find(p => (p.gamme ?? null) === (gamme ?? null)) ?? candidats[0];
 }
 
 // Fournisseur de l'option → colonnes de la ligne de devis (photo du fournisseur retenu).
@@ -885,8 +897,20 @@ function champsLigneDepuisOption(o: Pick<OptionArticle, "fournisseur_id" | "four
 // quantité RÉELLE à commander est besoin.quantite × option.quantiteMultiplicateur (1 pour
 // un câble tout-en-un ou tout besoin non-"cablage_X", 3 pour des fils séparés) — jamais
 // besoin.quantite brut, qui n'est que la longueur géométrique de base.
-function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArticle, prestations: Prestation[]): Omit<DevisLigne, "devis_id" | "ordre">[] {
+function genererLignesQuantiteBobinable(besoin: BesoinApparie, option: OptionArticle, prestations: Prestation[], conditionnement: Conditionnement = "auto"): Omit<DevisLigne, "devis_id" | "ordre">[] {
   const quantiteReelle = besoin.quantite * (option.quantiteMultiplicateur ?? 1);
+  if (conditionnement === "metre" && option.longueur_unitaire && option.longueur_unitaire > 0) {
+    // Tout au mètre : l'article « au mètre » prend la place de la bobine pour TOUTE la longueur.
+    const auMetre = articleAuMetre(option.sousCategorieArticle ?? besoin.sousCategorie, option.gamme, prestations);
+    if (auMetre) {
+      const offre = offreCompagnon(auMetre, option.fournisseur_nom);
+      return [{
+        nom: designationProduit(auMetre, offre), description: besoin.piece, quantite: Math.ceil(quantiteReelle),
+        prix_unitaire: prixVenteOffre(auMetre, offre), unite: auMetre.unite, type_branche: auMetre.type_branche,
+        prestation_id: auMetre.id, ...champsLigneDepuisOption({ ...champsFournisseurOption(offre), image_url: imageOffre(auMetre, offre) }),
+      }];
+    }
+  }
   if (!option.longueur_unitaire || option.longueur_unitaire <= 0) {
     return [{
       nom: option.nom, description: besoin.piece, quantite: Math.ceil(quantiteReelle),
@@ -988,10 +1012,10 @@ export function posteDuBesoin(besoin: Pick<BesoinApparie, "cle" | "piece">): str
 
 export function genererLignesDevis(choix: ChoixLigne[], prestations: Prestation[]): Omit<DevisLigne, "devis_id" | "ordre">[] {
   const lignes: Omit<DevisLigne, "devis_id" | "ordre">[] = [];
-  choix.forEach(({ besoin, optionCatalogue, libre, aCompleter, aDefinir }) => {
+  choix.forEach(({ besoin, optionCatalogue, libre, aCompleter, aDefinir, conditionnement }) => {
     const debut = lignes.length;
     try {
-      ajouterLignesBesoin(lignes, { besoin, optionCatalogue, libre, aCompleter, aDefinir }, prestations);
+      ajouterLignesBesoin(lignes, { besoin, optionCatalogue, libre, aCompleter, aDefinir, conditionnement }, prestations);
     } finally {
       const poste = posteDuBesoin(besoin);
       for (let k = debut; k < lignes.length; k++) lignes[k].poste = poste;
@@ -1001,7 +1025,7 @@ export function genererLignesDevis(choix: ChoixLigne[], prestations: Prestation[
 }
 
 function ajouterLignesBesoin(
-  lignes: Omit<DevisLigne, "devis_id" | "ordre">[], { besoin, optionCatalogue, libre, aCompleter, aDefinir }: ChoixLigne, prestations: Prestation[],
+  lignes: Omit<DevisLigne, "devis_id" | "ordre">[], { besoin, optionCatalogue, libre, aCompleter, aDefinir, conditionnement }: ChoixLigne, prestations: Prestation[],
 ): void {
   {
     if (aCompleter && !libre && !optionCatalogue) {
@@ -1022,7 +1046,7 @@ function ajouterLignesBesoin(
     }
     if (!optionCatalogue) return; // besoin non résolu, ignoré (reste signalé côté UI)
     if (besoin.unite === "m" && estBobinable(besoin.sousCategorie)) {
-      lignes.push(...genererLignesQuantiteBobinable(besoin, optionCatalogue, prestations));
+      lignes.push(...genererLignesQuantiteBobinable(besoin, optionCatalogue, prestations, conditionnement));
     } else {
       lignes.push({
         nom: optionCatalogue.nom, description: besoin.piece,
