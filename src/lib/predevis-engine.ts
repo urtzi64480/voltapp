@@ -152,7 +152,7 @@ const LABEL_APPAREILLAGE: Record<string, string> = {
   prise: "Prise de courant", prise_commandee: "Prise commandée",
   interrupteur: "Interrupteur simple", va_et_vient: "Va-et-vient", telerupteur: "Bouton télérupteur",
   interrupteur_double: "Double interrupteur", va_et_vient_double: "Double va-et-vient", telerupteur_double: "Double bouton télérupteur",
-  point_lumineux: "Plafonnier DCL (boîtier d'encastrement compris)", applique: "Sortie applique",
+  point_lumineux: "Plafonnier DCL (boîtier d'encastrement compris)", applique: "Sortie applique DCL (boîtier d'encastrement compris)",
   spot: "Spot encastré", spot_etanche: "Spot encastré étanche (IP65)",
   rj45: "Prise RJ45 (communication)",
   prise_tv: "Prise TV / antenne (coaxiale)",
@@ -390,8 +390,8 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         // Tout point lumineux (plafonnier, applique…) a sa propre boîte DCL — jamais groupée avec les boîtes murales
         // (prise/interrupteur), toujours 1 par point lumineux quel que soit le type ; en saillie : boîtier DCL apparent.
         // Le plafonnier DCL (point_lumineux) est TOUJOURS un boîtier complet : la boîte d'encastrement est dans l'article, donc pas de ligne
-        // « boîte DCL » séparée (en saillie : boîtier apparent, inchangé). L'applique garde sa boîte DCL.
-        if ((a.type === "point_lumineux" && sail) || a.type === "applique") {
+        // « boîte DCL » séparée (en saillie : boîtier apparent, inchangé). Idem pour la sortie applique intérieure (toujours un DCL).
+        if ((a.type === "point_lumineux" || a.type === "applique") && sail) {
           if (sail) { ajouter(`boite_dcl_saillie@${dest.id}`, "boite_dcl_saillie", "Boîtier DCL en saillie", dest.nom, 1, "u"); localiser(`boite_dcl_saillie@${dest.id}`, a.id); }
           else { ajouter(`boite_encastrement_dcl@${dest.id}`, "boite_encastrement_dcl", "Boîte d'encastrement DCL", dest.nom, 1, "u"); localiser(`boite_encastrement_dcl@${dest.id}`, a.id); }
         }
