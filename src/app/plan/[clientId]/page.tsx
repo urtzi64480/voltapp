@@ -2315,6 +2315,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     return JSON.stringify(r && r.breakers.length > 0 ? { niveaux: nv, circuitsGeneres: { breakers: r.breakers, alertes: r.alertes } } : { niveaux: nv });
   };
   const [showCircuits, setShowCircuits] = useState(false);
+  const [masquerOkDevis, setMasquerOkDevis] = useState(false); // double contrôle : masque ce qui est « OK devis » au pré-devis
   // Cotes d'implantation : par défaut aucune (plan propre) ; l'appareillage sélectionné affiche
   // toujours les siennes ; ce bouton affiche une cote par appareillage mural (lisibilité filtrée).
   const [showCotes, setShowCotes] = useState(false);
@@ -5683,11 +5684,40 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     return v.bloquants.length > 0 ? [{ niveauId: n.id, niveauNom: n.nom, manuel: m, messages: v.bloquants.map(b => b.message) }] : [];
   }));
   const bilanControle = resultat ? controlerCircuits({ ...resultat, maison: { niveaux } }) : null;
+  // « OK devis » : éléments validés dans le pré-devis (cases « Devis OK » enregistrées dans le brouillon).
+  //  - circuits : mode circuit → le poste EST le circuit ; mode pièce → circuit OK quand tous ses appareillages sont dans des pièces OK.
+  //  - cables / gaines : cases « Câbles OK devis » / « Gaines & moulures OK devis » du pré-devis (câblage chiffré toutes pièces confondues).
+  // Sert au double contrôle « Masquer OK devis » : les appareillages d'un circuit OK disparaissent ; ses câbles ne disparaissent que si
+  // les câbles sont validés, ses gaines (liseré, moulure) que si les gaines le sont — tant que ce n'est pas compté au pré-devis, ils restent visibles.
+  const okDevis = (() => {
+    const circuits = new Set<number>();
+    let cables = false, gaines = false;
+    if (!resultat || !projet.predevis_config) return { circuits, cables, gaines };
+    let cfg: any = null;
+    try { cfg = JSON.parse(projet.predevis_config); } catch { return { circuits, cables, gaines }; }
+    const postesOk: Record<string, boolean> = cfg?.postesOk ?? {};
+    cables = !!postesOk["__cables__"]; gaines = !!postesOk["__gaines__"];
+    const modeCircuit = cfg?.mode === "circuit";
+    resultat.breakers.forEach(b => {
+      const nv = niveaux.find(n => n.id === b.niveauId);
+      if (!nv) return;
+      if (modeCircuit) {
+        const nom = b.manuelId != null ? b.label : (nv.nomsCircuits?.[b.label] ?? b.label);
+        if (postesOk[`Circuit · ${nom} (${nv.nom || nv.type})`]) circuits.add(b.id);
+      } else {
+        const pieces = nv.pieces.filter(pc => pc.appareillages.some(a => a.circuitId === b.id));
+        if (pieces.length > 0 && pieces.every(pc => postesOk[pc.nom || "Pièce"])) circuits.add(b.id);
+      }
+    });
+    return { circuits, cables, gaines };
+  })();
+  const circuitsOkDevis = okDevis.circuits;
+
   // Masquer un circuit (case de la palette « Circuits ») masque AUSSI les appareillages qui lui sont raccordés : il ne reste à
   // l'écran que ce qui n'est pas encore câblé — pratique pour suivre l'avancée. (Les appareillages sans circuit restent visibles,
   // sauf si on décoche « Sans circuit » dans la palette ; le sélectionné reste toujours visible.)
   const masquerAppareilParCircuit = (a: AppareillagePlace): boolean =>
-    showCircuits && !!resultat && (a.circuitId != null ? !circuitsVisibles.has(a.circuitId) : !afficherSansCircuit);
+    showCircuits && !!resultat && ((masquerOkDevis && a.circuitId != null && circuitsOkDevis.has(a.circuitId)) || (a.circuitId != null ? !circuitsVisibles.has(a.circuitId) : !afficherSansCircuit));
   const idsProblemes = new Set<number>(controleOuvert && bilanControle ? bilanControle.problemes.flatMap(pb => pb.appareilIds) : []);
   const allerAuProbleme = (pb: ProblemeCircuit) => {
     if (pb.niveauId !== niveauActifId) changerNiveau(pb.niveauId);
@@ -5698,38 +5728,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (rect) { const z = Math.max(zoom, 1.6); setZoom(z); setPan({ x: rect.width / 2 - cible.x * PX_PER_M * z, y: rect.height / 2 - cible.y * PX_PER_M * z }); }
   };
 
-  // « OK devis » : circuits validés dans le pré-devis (case « Devis OK pour ce circuit / cette pièce », enregistrée dans le brouillon).
-  // Mode circuit : le poste du pré-devis EST le circuit. Mode pièce : un circuit est OK quand tous ses appareillages sont dans des pièces OK.
-  // Sert à l'outil de double contrôle « Masquer OK devis » : il ne reste affiché que ce qui n'a pas encore été validé.
-  const circuitsOkDevis: Set<number> = (() => {
-    const ok = new Set<number>();
-    if (!resultat || !projet.predevis_config) return ok;
-    let cfg: any = null;
-    try { cfg = JSON.parse(projet.predevis_config); } catch { return ok; }
-    const postesOk: Record<string, boolean> = cfg?.postesOk ?? {};
-    if (!Object.values(postesOk).some(Boolean)) return ok;
-    const modeCircuit = cfg?.mode === "circuit";
-    resultat.breakers.forEach(b => {
-      const nv = niveaux.find(n => n.id === b.niveauId);
-      if (!nv) return;
-      if (modeCircuit) {
-        const nom = b.manuelId != null ? b.label : (nv.nomsCircuits?.[b.label] ?? b.label);
-        if (postesOk[`Circuit · ${nom} (${nv.nom || nv.type})`]) ok.add(b.id);
-      } else {
-        const pieces = nv.pieces.filter(pc => pc.appareillages.some(a => a.circuitId === b.id));
-        if (pieces.length > 0 && pieces.every(pc => postesOk[pc.nom || "Pièce"])) ok.add(b.id);
-      }
-    });
-    return ok;
-  })();
-
   function basculerMasquerOkDevis() {
     if (!resultat || circuitsOkDevis.size === 0) return;
-    const tous = resultat.breakers.map(b => b.id);
-    const cible = new Set(tous.filter(id => !circuitsOkDevis.has(id)));
-    const dejaMasque = tous.every(id => circuitsVisibles.has(id) === cible.has(id));
     setShowCircuits(true);
-    setCircuitsVisibles(dejaMasque ? new Set(tous) : cible);
+    setMasquerOkDevis(v => !v);
   }
 
   const circuitsNiveauActif = niveauActif
@@ -5805,6 +5807,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       if (!breaker) return [];
       if (!points.some(a => estDansFiltre(a, filtreAffichage))) return [];
       const color = colorMap.get(circuitId) ?? "#666";
+      // Double contrôle « OK devis » : fils / gaine masqués seulement si validés au pré-devis (sinon ils restent visibles).
+      const okMasque = masquerOkDevis && circuitsOkDevis.has(circuitId);
+      const masquerFils = okMasque && okDevis.cables, masquerGaine = okMasque && okDevis.gaines;
+      if (masquerFils && masquerGaine) return [];
       // Pendant le dessin du cheminement de CE circuit, le câble réel suit déjà l'ordre en cours de clic (et pas l'ancien tracé).
       const niveauTrace = cheminementDessin && cheminementDessin.breaker.id === breaker.id
         ? { ...niveauActif, ordresCircuits: { ...(niveauActif.ordresCircuits ?? {}), [breaker.label]: cheminementDessin.ordre } }
@@ -5836,7 +5842,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           const sectionSel = selectedTroncon?.cle === cle && selectedTroncon?.index === j;
           // Section APPARENTE (le câble sort du mur) : trait plein sur une bande grise = moulure.
           // Section ENCASTRÉE : pointillé, comme avant (câble caché dans le mur).
-          if (apparente && visuel) {
+          if (apparente && visuel && !masquerGaine) {
             elements.push(<line key={`${cle}-${j}-moulure`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#d6d3d1" strokeWidth={8} strokeLinecap="round" opacity={0.9} style={{ pointerEvents: "none" }} />);
           }
           const hSec = hauteursTroncons(niveauActif, cle, coudes)[j];
@@ -5864,13 +5870,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             const larg = (apparente ? 1.9 : 1.6) * ez, ecart = larg + 0.5 * ez;
             const traits = geometrieCable(aPx, bPx, conducteursSegment(seg), ecart);
             const largTotale = ecart * (traits.length - 1) + larg;
-            if (teinteCircuit) {
+            if (masquerGaine) {
+              // gaine validée au pré-devis : masquée
+            } else if (teinteCircuit) {
               // Gaine : liseré plein dans la couleur choisie pour le circuit, autour des fils.
               elements.push(<line key={`${cle}-${j}-gaine`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={color} strokeWidth={largTotale + 4 * ez} strokeLinecap="round" opacity={opaciteSeg} />);
             } else {
               elements.push(<line key={`${cle}-${j}-halo`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#fff" strokeWidth={largTotale + 1.8 * ez} strokeLinecap="round" opacity={0.78 * opaciteSeg} />);
             }
-            traits.forEach((t, k) => {
+            if (!masquerFils) traits.forEach((t, k) => {
               elements.push(<line key={`${cle}-${j}-f${k}`} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke={t.couleur} strokeWidth={larg} strokeLinecap="round" opacity={opaciteSeg} />);
               if (t.couleur2) elements.push(<line key={`${cle}-${j}-f${k}b`} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke={t.couleur2} strokeWidth={larg} strokeDasharray={`${3 * ez} ${3 * ez}`} opacity={opaciteSeg} />);
             });
@@ -5933,7 +5941,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         }
         // Extrémités du câble : il part du tableau et vient mourir DANS LE MUR, juste derrière l'appareillage
         // (pied sur l'axe du mur) — petit retour du point enregistré jusqu'à ce pied + pastille d'arrivée.
-        if (visuel && !estDomotique) {
+        if (visuel && !estDomotique && !masquerFils) {
           [{ id: seg.aId, pt: seg.aPoint }, { id: seg.bId, pt: seg.bPoint }].forEach(({ id, pt }, k) => {
             const pPx = toScreen(pt);
             if (id === "tableau" || id.startsWith("boite")) {
@@ -6046,8 +6054,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <button onClick={handleGenerer} className="btn-ghost !px-2 !py-1 !text-xs" title="Générer les circuits" aria-label="Générer les circuits"><Sparkles size={13} /></button>
             <button onClick={() => setShowCircuits(v => !v)} disabled={!resultat} className={`btn-ghost !px-2 !py-1 !text-xs disabled:opacity-40 ${resultat && showCircuits ? "!bg-ink-900 !text-volt-400" : ""}`} title="Afficher / masquer les circuits" aria-label="Afficher / masquer les circuits"><Eye size={13} /></button>
             <button onClick={basculerMasquerOkDevis} disabled={!resultat || circuitsOkDevis.size === 0}
-              className="btn-ghost !px-2 !py-1 !text-xs disabled:opacity-40 !text-emerald-700 inline-flex items-center gap-1"
-              title={circuitsOkDevis.size === 0 ? "Double contrôle : aucun circuit « OK devis » pour l'instant (à cocher dans le pré-devis)" : `Double contrôle : masquer / réafficher les ${circuitsOkDevis.size} circuit(s) « OK devis » (câbles et appareillages compris)`}
+              className={`btn-ghost !px-2 !py-1 !text-xs disabled:opacity-40 inline-flex items-center gap-1 ${masquerOkDevis ? "!bg-emerald-600 !text-white" : "!text-emerald-700"}`}
+              title={circuitsOkDevis.size === 0 ? "Double contrôle : aucun circuit « OK devis » pour l'instant (à cocher dans le pré-devis)" : `Double contrôle : masquer / réafficher les appareillages des ${circuitsOkDevis.size} circuit(s) « OK devis » — leurs câbles et gaines ne disparaissent que s'ils sont aussi validés au pré-devis`}
               aria-label="Masquer OK devis"><EyeOff size={13} />{circuitsOkDevis.size > 0 && <span className="text-[10px] font-bold">{circuitsOkDevis.size}</span>}</button>
             <button onClick={() => setVue3D(v => !v)} className={`btn-ghost !px-2 !py-1 !text-xs ${vue3D ? "!bg-ink-900 !text-volt-400" : ""}`}
               title={vue3D ? "Revenir à la vue 2D" : "Passer en vue 3D"} aria-label={vue3D ? "Vue 2D" : "Vue 3D"}>{vue3D ? <Square size={13} /> : <Box size={13} />}</button>
@@ -8917,9 +8925,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   <p className="text-[10px] font-semibold text-ink-400 uppercase tracking-wide">Circuits</p>
                   {resultat && (
                     <button className="text-[10px] font-semibold shrink-0 text-emerald-700 disabled:text-ink-300" disabled={circuitsOkDevis.size === 0}
-                      title="Double contrôle : masque tout ce qui est « OK devis » dans le pré-devis (circuits, câbles et appareillages compris) — il ne reste que ce qui n'a pas été validé"
+                      title="Double contrôle : masque les appareillages des circuits « OK devis » ; leurs câbles / gaines ne disparaissent que s'ils sont aussi validés au pré-devis"
                       onClick={basculerMasquerOkDevis}>
-                      {circuitsOkDevis.size === 0 ? "Aucun OK devis" : `Masquer OK devis (${circuitsOkDevis.size})`}
+                      {circuitsOkDevis.size === 0 ? "Aucun OK devis" : masquerOkDevis ? `Réafficher OK devis (${circuitsOkDevis.size})` : `Masquer OK devis (${circuitsOkDevis.size})`}
                     </button>
                   )}
                   {circuitsNiveauActif.length > 0 && (

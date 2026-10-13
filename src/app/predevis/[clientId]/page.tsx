@@ -1251,6 +1251,17 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   onChange={e => setChoixAgrege(prev => ({ ...prev, [b.cle]: e }))} prestations={prestations} detail={b.piece} onCatalogueAjoute={ajouterAuCatalogue} />
               ))}
             </div>
+            {/* Validation du câblage : sert au double contrôle du plan (« Masquer OK devis ») — câbles et gaines ne se masquent que s'ils sont validés ici. */}
+            <div className="mt-3 pt-3 border-t border-ink-100 flex flex-col gap-1.5">
+              {([["__cables__", "Câbles OK devis"], ["__gaines__", "Gaines & moulures OK devis"]] as const).map(([cle, libelle]) => (
+                <label key={cle} className={`flex items-center gap-2 text-sm cursor-pointer ${postesOk[cle] ? "text-emerald-700 font-semibold" : "text-ink-600"}`}>
+                  <input type="checkbox" className="w-4 h-4 accent-emerald-600" checked={!!postesOk[cle]}
+                    onChange={e => setPostesOk(prev => ({ ...prev, [cle]: e.target.checked }))} />
+                  <Check size={14} className={postesOk[cle] ? "text-emerald-600" : "text-ink-300"} /> {libelle}
+                  {postesOk[cle] && <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5"><span className="inline-block w-2 h-2 rounded-full bg-emerald-500" /> OK devis</span>}
+                </label>
+              ))}
+            </div>
           </div>
         )}
 
