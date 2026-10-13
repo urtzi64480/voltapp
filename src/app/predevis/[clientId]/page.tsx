@@ -447,6 +447,8 @@ export default function PreDevisPage() {
   return <PreDevisEditor key={projet.id} clientId={clientId} projet={projet} projets={projets} onSelect={choisir} onChanged={choisir} />;
 }
 
+const VERSION_SUIVI_OK = 2; // brouillons enregistrés avec les empreintes de validation fiables
+
 function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   clientId: string; projet: Projet; projets: Projet[];
   onSelect: (id: string) => Promise<void> | void; onChanged: (id: string | null) => Promise<void> | void;
@@ -461,6 +463,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [postesOk, setPostesOk] = useState<Record<string, boolean>>({});
   const [postesSig, setPostesSig] = useState<Record<string, string>>({}); // signature des besoins de chaque poste au moment de sa validation
   const [postesModifies, setPostesModifies] = useState<string[]>([]);      // postes dont la validation est tombée (plan modifié depuis)
+  const [postesAnciens, setPostesAnciens] = useState<string[]>([]);        // validations faites avant le suivi des modifications : état de départ inconnu, à re-valider
   const [postesOuverts, setPostesOuverts] = useState<Record<string, boolean>>({});
   const [autoSauve, setAutoSauve] = useState<string | null>(null); // heure de la dernière sauvegarde automatique
   const dernierContenuSauve = useRef<string | null>(null);
@@ -577,9 +580,13 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     // elles perdent leur « OK » et se dépliiront ; les postes toujours valides restent repliés.
     {
       const okSauve: Record<string, boolean> = memeMode && brouillon?.postesOk && typeof brouillon.postesOk === "object" ? brouillon.postesOk : {};
+      // Brouillon antérieur au suivi (pas de version) : on ne sait pas dans quel état était le plan à la validation → impossible de dire
+      // si des modifications ont eu lieu depuis. Par prudence ces validations tombent UNE fois (dépliées, à re-cocher) ; les suivantes sont suivies.
+      const suiviOk = brouillon?.suiviV === VERSION_SUIVI_OK;
+      const anciens = suiviOk ? [] : Object.keys(okSauve).filter(k => okSauve[k]);
       const sigSauve: Record<string, string> = memeMode && brouillon?.postesSig && typeof brouillon.postesSig === "object" ? brouillon.postesSig : {};
       const sigAct = signaturesActuelles(res.parPiece);
-      const invalides = postesInvalides(sigAct, okSauve, sigSauve);
+      const invalides = [...new Set([...postesInvalides(sigAct, okSauve, sigSauve), ...anciens])];
       const okFinal: Record<string, boolean> = {};
       const sigFinal: Record<string, string> = {};
       Object.keys(okSauve).forEach(k => {
@@ -587,10 +594,11 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
         okFinal[k] = true;
         sigFinal[k] = sigSauve[k] ?? sigAct[k]; // validation antérieure aux signatures : on fige l'état actuel
       });
-      if (invalides.length > 0 || Object.keys(okFinal).some(k => sigSauve[k] == null)) forcerSauvegarde.current = true;
+      if (invalides.length > 0 || !suiviOk || Object.keys(okFinal).some(k => sigSauve[k] == null)) forcerSauvegarde.current = true;
       setPostesOk(okFinal);
       setPostesSig(sigFinal);
-      setPostesModifies(invalides);
+      setPostesAnciens(anciens);
+      setPostesModifies(invalides.filter(k => !anciens.includes(k)));
       setPostesOuverts(Object.fromEntries(invalides.map(k => [k, true])));
     }
     setChoixAgrege(memeMode && brouillon?.choixAgrege ? brouillon.choixAgrege : {});
@@ -667,7 +675,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     });
   }, [besoinsAgreges]);
 
-  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, heuresPostes, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
+  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, heuresPostes, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, suiviV: VERSION_SUIVI_OK, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
 
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
@@ -1212,6 +1220,11 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 <AlertTriangle size={16} className="shrink-0" /> {postesModifies.length} validation{postesModifies.length > 1 ? "s" : ""} « devis OK » retirée{postesModifies.length > 1 ? "s" : ""} : le plan a changé depuis ({postesModifies.map(k => k === CLE_OK_CABLES ? "câbles" : k === CLE_OK_GAINES ? "gaines & moulures" : k).join(", ")}). À revérifier.
               </div>
             )}
+            {postesAnciens.length > 0 && (
+              <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                <AlertTriangle size={16} className="shrink-0" /> {postesAnciens.length} validation{postesAnciens.length > 1 ? "s" : ""} « devis OK » faite{postesAnciens.length > 1 ? "s" : ""} avant le suivi des modifications : impossible de savoir si le plan a bougé depuis, donc {postesAnciens.length > 1 ? "elles sont retirées" : "elle est retirée"} une seule fois. Revérifie puis recoche : dès maintenant, toute modification du plan retire le « OK » automatiquement.
+              </div>
+            )}
             {postes.length > 0 && (
               <div className="flex items-center gap-3 mb-3 text-xs text-ink-500 flex-wrap">
                 <span className="flex items-center gap-1.5">
@@ -1220,7 +1233,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 </span>
                 <button className="text-volt-600 font-medium" onClick={() => setPostesOuverts(Object.fromEntries(postes.map(([piece]) => [piece, true])))}>Tout déplier</button>
                 <button className="text-volt-600 font-medium" onClick={() => setPostesOuverts(Object.fromEntries(postes.map(([piece]) => [piece, false])))}>Tout replier</button>
-                <span className="ml-auto text-ink-400">{autoSauve ? `Sauvegarde auto ✓ ${autoSauve}` : "Sauvegarde auto activée"}</span>
+                <span className="ml-auto text-ink-400">{autoSauve ? `Sauvegarde auto ✓ ${autoSauve}` : "Sauvegarde auto activée"} · v{process.env.NEXT_PUBLIC_BUILD}</span>
               </div>
             )}
             {postes.map(([piece, besoins]) => {
@@ -1241,6 +1254,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 const m = r.lignes.filter(l => l.sousCategorie.startsWith("cablage_") || l.sousCategorie === "retour_lampe" || l.sousCategorie === "navette" || l.sousCategorie === "aller_commande" || l.sousCategorie === "cable_rj45" || l.sousCategorie === "cable_coax").reduce((a, l) => a + l.quantite, 0);
                 return <span className="ml-2 text-sm font-normal text-ink-500 whitespace-nowrap">({m.toFixed(1).replace(".", ",")} m · {r.nbAppareils} appareil{r.nbAppareils > 1 ? "s" : ""})</span>;
               })()}</span>
+                {!ok && postesAnciens.includes(piece) && <span className="shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-300 rounded-full px-2 py-0.5"><AlertTriangle size={11} /> À revalider</span>}
                 {!ok && postesModifies.includes(piece) && <span className="shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-300 rounded-full px-2 py-0.5"><AlertTriangle size={11} /> Modifié depuis la validation</span>}
                 {nbDef > 0 && <span className="shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-300 rounded-full px-2 py-0.5"><AlertTriangle size={11} /> À définir avec le client{nbDef > 1 ? ` ×${nbDef}` : ""}</span>}
                 {ok && <span className="shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5"><span className="inline-block w-2 h-2 rounded-full bg-emerald-500" /> OK devis</span>}
@@ -1266,7 +1280,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   const v = e.target.checked;
                   setPostesOk(prev => ({ ...prev, [piece]: v }));
                   setPostesSig(prev => { const n = { ...prev }; if (v && resultat) n[piece] = signaturePoste(resultat.parPiece[piece] ?? []); else delete n[piece]; return n; });
-                  if (v) setPostesModifies(prev => prev.filter(x => x !== piece));
+                  if (v) { setPostesModifies(prev => prev.filter(x => x !== piece)); setPostesAnciens(prev => prev.filter(x => x !== piece)); }
                   if (v) setPostesOuverts(prev => ({ ...prev, [piece]: false })); // validé → on replie
                 }} />
               <Check size={14} className={ok ? "text-emerald-600" : "text-ink-300"} /> Devis OK pour ce {nomPoste}
@@ -1300,9 +1314,10 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       const v = e.target.checked;
                       setPostesOk(prev => ({ ...prev, [cle]: v }));
                       setPostesSig(prev => { const n = { ...prev }; if (v && resultat) n[cle] = signatureCablage(resultat.parPiece, cle === CLE_OK_CABLES ? "cables" : "gaines"); else delete n[cle]; return n; });
-                      if (v) setPostesModifies(prev => prev.filter(x => x !== cle));
+                      if (v) { setPostesModifies(prev => prev.filter(x => x !== cle)); setPostesAnciens(prev => prev.filter(x => x !== cle)); }
                     }} />
                   <Check size={14} className={postesOk[cle] ? "text-emerald-600" : "text-ink-300"} /> {libelle}
+                  {!postesOk[cle] && postesAnciens.includes(cle) && <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-300 rounded-full px-2 py-0.5"><AlertTriangle size={11} /> à revalider</span>}
                   {!postesOk[cle] && postesModifies.includes(cle) && <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-300 rounded-full px-2 py-0.5"><AlertTriangle size={11} /> modifié depuis la validation</span>}
                   {postesOk[cle] && <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5"><span className="inline-block w-2 h-2 rounded-full bg-emerald-500" /> OK devis</span>}
                 </label>

@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  env: { NEXT_PUBLIC_BUILD: (process.env.VERCEL_GIT_COMMIT_SHA || "local").slice(0, 7) }, // affiché discrètement dans le pré-devis : permet de vérifier quelle version est déployée
   async headers() {
     return [
       {

@@ -5256,6 +5256,23 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     return () => window.removeEventListener("beforeunload", avant);
   }, []);
 
+  // Plan modifié mais pas encore enregistré (moins de 5 actions depuis la dernière sauvegarde auto) : enregistré en quittant la page
+  // ou l'onglet, pour que le pré-devis voie TOUJOURS le dernier état (et retire les « OK devis » des circuits touchés).
+  const projetIdRef = useRef(projet.id);
+  projetIdRef.current = projet.id;
+  useEffect(() => {
+    const enregistrerSiBesoin = () => {
+      const etat = niveauxRef.current;
+      if (etatEnregistreRef.current === null || etat === etatEnregistreRef.current || etat.length === 0) return;
+      etatEnregistreRef.current = etat;
+      void modifierProjet(projetIdRef.current, { maison_config: configPlan(etat) });
+    };
+    const visibilite = () => { if (document.visibilityState === "hidden") enregistrerSiBesoin(); };
+    document.addEventListener("visibilitychange", visibilite);
+    window.addEventListener("pagehide", enregistrerSiBesoin);
+    return () => { document.removeEventListener("visibilitychange", visibilite); window.removeEventListener("pagehide", enregistrerSiBesoin); enregistrerSiBesoin(); };
+  }, []);
+
   // Remplace tout le plan par un état de l'historique, et referme tout ce qui dépendait de l'ancien (sélections, circuits générés).
   const restaurerEtat = (etat: Niveau[]) => {
     dernierEtatRef.current = etat;
