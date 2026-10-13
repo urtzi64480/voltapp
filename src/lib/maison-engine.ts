@@ -539,8 +539,12 @@ export function genererCircuits(maisonIn: Maison): ResultatGeneration {
     resteApresExclusion.filter(a => estCommandeService(a.base.type)).forEach(cmd => {
       const cibleType = cibleCommandeService(cmd.base.type);
       let meilleur: Item | null = null, md = Infinity;
+      // Cibles choisies à la main (cibleServiceIds) : elles priment ; sans lien valide, on retombe sur l'appareil le plus proche.
+      const choisies = new Set(cmd.base.cibleServiceIds ?? []);
+      const liees = choisies.size > 0 && tousItems.some(t => choisies.has(t.base.id) && t.base.type === cibleType && t.base.circuitId != null);
       tousItems.forEach(t => {
         if (t.base.type !== cibleType || t.base.circuitId == null) return;
+        if (liees && !choisies.has(t.base.id)) return;
         const d = Math.abs(t.x - cmd.x) + Math.abs(t.y - cmd.y) + (t.piece.id === cmd.piece.id ? 0 : 3);
         if (d < md) { md = d; meilleur = t; }
       });
@@ -1081,7 +1085,7 @@ export function genererGainesNiveaux(resultat: ResultatGeneration): TronconGaine
 // ─── CONTRÔLE « RIEN OUBLIÉ » ────────────────────────────────────────────────────────────────────────────────
 // Passe en revue TOUS les appareillages et circuits (générés ou saisis à la main) et remonte ce qui cloche, avec les ids
 // à surligner sur le plan. Ne modifie rien.
-export type CodeProbleme = "non_raccorde" | "commande_sans_lampe" | "lampe_sans_commande" | "va_et_vient_seul" | "commande_multi_circuits" | "commande_hors_circuit" | "depassement";
+export type CodeProbleme = "non_raccorde" | "commande_sans_lampe" | "lampe_sans_commande" | "va_et_vient_seul" | "commande_multi_circuits" | "commande_hors_circuit" | "commande_service_sans_cible" | "depassement";
 export interface ProblemeCircuit { code: CodeProbleme; gravite: "erreur" | "avertissement"; message: string; /** Modification proposée pour corriger. */ suggestion: string; niveauId: number; appareilIds: number[]; /** Dépassement : nombre d'appareils en trop. */ enTrop?: number }
 export interface BilanControle { problemes: ProblemeCircuit[]; total: number; raccordes: number }
 
@@ -1103,6 +1107,17 @@ export function controlerCircuits(resultat: ResultatGeneration): BilanControle {
     else problemes.push({ code: "non_raccorde", gravite: "erreur", niveauId: niveau.id, appareilIds: [a.id],
       message: `${nom(t)} — ${niveau.nom} : aucun circuit (oublié ou exclu).`,
       suggestion: "Clique sur « Générer les circuits » pour le rattacher automatiquement, ou sélectionne-le et choisis son circuit. S'il est exclu volontairement, utilise « Réinclure »." });
+  });
+
+  // Commandes de service : une cible choisie à la main qui n'existe plus / n'est plus du bon type → avertissement (le rattachement auto prend le relais).
+  tous.filter(t => estCommandeService(t.a.type)).forEach(t => {
+    const cibleType = cibleCommandeService(t.a.type);
+    const choisies = t.a.cibleServiceIds ?? [];
+    if (choisies.length > 0 && !choisies.some(id => parId.get(id)?.a.type === cibleType)) {
+      problemes.push({ code: "commande_service_sans_cible", gravite: "avertissement", niveauId: t.niveau.id, appareilIds: [t.a.id],
+        message: `${nom(t)} — ${t.niveau.nom} : l'appareil qu'elle pilotait n'existe plus.`,
+        suggestion: "Sélectionne-la et coche le volet roulant (ou la VMC) qu'elle pilote." });
+    }
   });
 
   commandes.forEach(t => {

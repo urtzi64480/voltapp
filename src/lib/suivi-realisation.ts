@@ -679,6 +679,8 @@ export function construireSuivi(niveauxEntree: Niveau[]): SuiviPlan {
           const h = cm(a);
           badges.push(`${h} cm`);
           details.push(`${LABEL_APPAREIL[a.type]} à ${h} cm du sol : boîte d'encastrement, mécanisme et plaque de finition. ${a.type === "inter_volet" ? "Câble de liaison vers le moteur du volet : phase montée, phase descente, neutre, terre." : "Câble de liaison vers la VMC : petite vitesse, grande vitesse, neutre, terre."}`);
+          const cibles = (a.cibleServiceIds ?? []).map(id => ctx.tous.find(t => t.a.id === id)).filter((t): t is NonNullable<typeof t> => !!t);
+          if (cibles.length > 0) details.push(`Pilote : ${cibles.map(t => libelleLong(ctx, t.a)).join(", ")}.`);
           if (plaque) details.push(plaque.detail);
           if (h < 90 || h > 130) alertesEl.push(`Hauteur ${h} cm : en dehors de la plage 0,90 m – 1,30 m préconisée (accessibilité).`);
         } else if (estCommande(a.type)) {

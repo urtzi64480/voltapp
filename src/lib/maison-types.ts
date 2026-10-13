@@ -85,6 +85,9 @@ export interface AppareillagePlace {
   // points lumineux, éventuellement sur deux circuits différents). Pour lire « tout ce que
   // commande ce mécanisme », toujours passer par lumieresCommandees() — jamais un seul des deux champs.
   commandePourIds2?: number[];
+  // Pour inter_volet / inter_vmc : ids des volets roulants (resp. de la VMC) pilotés, choisis à la main. Vide / absent = rattachement
+  // automatique à l'appareil le plus proche. Voir cibleCommandeService().
+  cibleServiceIds?: number[];
   // Pour interrupteur / va_et_vient / telerupteur : commande domotique (module radio/wifi),
   // sans câblage physique retour/navette vers le(s) point(s) lumineux commandé(s). Affecte
   // uniquement la visualisation du cheminement (voir SegmentCircuit.type "domotique" et
@@ -792,6 +795,7 @@ export function dedupliquerIds(niveaux: Niveau[]): { niveaux: Niveau[]; correcti
         ...a,
         commandePourIds: a.commandePourIds?.map(id => remapApp.get(id) ?? id),
         commandePourIds2: a.commandePourIds2?.map(id => remapApp.get(id) ?? id),
+        cibleServiceIds: a.cibleServiceIds?.map(id => remapApp.get(id) ?? id),
         circuitManuelId: a.circuitManuelId != null ? (remapManuel.get(a.circuitManuelId) ?? a.circuitManuelId) : a.circuitManuelId,
       })),
     })),

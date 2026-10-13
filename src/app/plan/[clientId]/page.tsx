@@ -34,7 +34,7 @@ import {
   pointBoiteImplicite, pointsOndulesEntre,
   BoiteDerivation, migrerBoitesDerivation,
   Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, nouvelleVoiture, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES,
-  estCommande, estCommandeDouble, estCommandeService, estLumiere, estCourantFaible, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM,
+  estCommande, estCommandeDouble, estCommandeService, cibleCommandeService, estLumiere, estCourantFaible, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM,
   Escalier, EscalierType, EscalierTournant, EXTERIEUR_PIECE_ID, PhotoChantier, TYPES_SAILLIE_POSSIBLE, estSaillie} from "@/lib/maison-types";
 
 
@@ -3532,8 +3532,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const ancien = niveauActif?.pieces.flatMap(p => p.appareillages).find(a => a.id === appareillageId);
     if (!ancien || ancien.type === type) return;
     // Calculé HORS de l'updater (setNiveaux est différé) : le même objet sert à la mise à jour et à la fenêtre de commande.
-    const { commandePourIds, commandePourIds2, domotique, usageDedie, circuitManuelId, circuitId, ...reste } = ancien;
-    void circuitId;
+    const { commandePourIds, commandePourIds2, domotique, usageDedie, circuitManuelId, circuitId, cibleServiceIds, ...reste } = ancien;
+    void circuitId; void cibleServiceIds;
     const maj: AppareillagePlace = { ...reste, type, ...(type === "prise_dediee" ? { usageDedie: usageDedie ?? USAGE_DEDIE_DEFAUT } : {}) };
     const controleVersControle = estCommande(type) && estCommande(ancien.type);
     if (controleVersControle) {
@@ -3573,8 +3573,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       pieces: n.pieces.map(p => ({
         ...p,
         appareillages: (n.id === niveauActifId ? p.appareillages.filter(a => !ids.has(a.id)) : p.appareillages)
-          .map(a => (a.commandePourIds?.some(id => ids.has(id)) || a.commandePourIds2?.some(id => ids.has(id)))
-            ? { ...a, commandePourIds: a.commandePourIds?.filter(id => !ids.has(id)), commandePourIds2: a.commandePourIds2?.filter(id => !ids.has(id)) } : a),
+          .map(a => (a.commandePourIds?.some(id => ids.has(id)) || a.commandePourIds2?.some(id => ids.has(id)) || a.cibleServiceIds?.some(id => ids.has(id)))
+            ? { ...a, commandePourIds: a.commandePourIds?.filter(id => !ids.has(id)), commandePourIds2: a.commandePourIds2?.filter(id => !ids.has(id)), cibleServiceIds: a.cibleServiceIds?.filter(id => !ids.has(id)) } : a),
       })),
     })));
     setSelectedAppareillageId(null);
@@ -3593,8 +3593,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           ...p,
           appareillages: p.appareillages
             .filter(a => !aSupprimer.has(a.id))
-            .map(a => (a.commandePourIds?.some(id => aSupprimer.has(id)) || a.commandePourIds2?.some(id => aSupprimer.has(id)))
-              ? { ...a, commandePourIds: a.commandePourIds?.filter(id => !aSupprimer.has(id)), commandePourIds2: a.commandePourIds2?.filter(id => !aSupprimer.has(id)) }
+            .map(a => (a.commandePourIds?.some(id => aSupprimer.has(id)) || a.commandePourIds2?.some(id => aSupprimer.has(id)) || a.cibleServiceIds?.some(id => aSupprimer.has(id)))
+              ? { ...a, commandePourIds: a.commandePourIds?.filter(id => !aSupprimer.has(id)), commandePourIds2: a.commandePourIds2?.filter(id => !aSupprimer.has(id)), cibleServiceIds: a.cibleServiceIds?.filter(id => !aSupprimer.has(id)) }
               : a),
         };
         // Plaque multiple : les postes restants se re-serrent (et un poste seul redevient simple).
@@ -3878,6 +3878,22 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // télérupteur — n'affecte que la visualisation du cheminement (symbole d'onde à la place
   // du trait plein retour/navette), jamais la composition électrique du circuit : aucune
   // régénération nécessaire.
+  // Interrupteur de volet roulant / de VMC : coche / décoche l'appareil qu'il pilote (couplage manuel). Le circuit est regénéré à la prochaine génération.
+  const basculerCibleService = (commandeId: number, cibleId: number) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({
+        ...p,
+        appareillages: p.appareillages.map(a => {
+          if (a.id !== commandeId) return a;
+          const actuel = a.cibleServiceIds ?? [];
+          return { ...a, cibleServiceIds: actuel.includes(cibleId) ? actuel.filter(i => i !== cibleId) : [...actuel, cibleId] };
+        }),
+      })),
+    }));
+    invalidateResultat();
+  };
+
   const modifierDomotique = (appareillageId: number, domotique: boolean) => {
     updateNiveauActif(n => ({
       ...n,
@@ -8277,6 +8293,30 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     </label>
                   </>
                 )}
+                {estCommandeService(selectedAppareillage.type) && (() => {
+                  const cibleType = cibleCommandeService(selectedAppareillage.type);
+                  const cibles = (niveauActif?.pieces ?? []).flatMap(p => p.appareillages.filter(a => a.type === cibleType).map(a => ({ a, piece: p })));
+                  const choisies = selectedAppareillage.cibleServiceIds ?? [];
+                  const nomCible = cibleType === "vmc" ? "la VMC" : "le(s) volet(s) roulant(s)";
+                  return (
+                    <div className="flex flex-col gap-1 text-xs text-ink-500 border-t border-ink-100 pt-2">
+                      <span className="font-medium text-ink-700">Commande : {choisies.length > 0 ? `${choisies.length} cible(s)` : "automatique (le plus proche)"}</span>
+                      {cibles.length === 0 ? (
+                        <span className="text-amber-700">Aucun appareil à piloter sur ce niveau — place-le d'abord.</span>
+                      ) : (
+                        <div className="flex flex-col gap-0.5 max-h-40 overflow-y-auto">
+                          {cibles.map(({ a, piece }) => (
+                            <label key={a.id} className="flex items-center gap-2 cursor-pointer">
+                              <input type="checkbox" checked={choisies.includes(a.id)} onChange={() => basculerCibleService(selectedAppareillage.id, a.id)} />
+                              <span className="truncate">{a.nom || labelAppareillage(a.type)} — {piece.nom || piece.type}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                      <span className="text-[11px] text-ink-400">Coche {nomCible} que cet interrupteur pilote. Sans choix, il se rattache au plus proche à la génération.</span>
+                    </div>
+                  );
+                })()}
                 {TYPES_SAILLIE_POSSIBLE.includes(selectedAppareillage.type) && (
                   <div className="flex flex-col gap-1 text-xs text-ink-500 border-t border-ink-100 pt-2">
                     <label className="flex items-center gap-2">
