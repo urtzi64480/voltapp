@@ -354,6 +354,12 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       const destParId = new Map<number, { id: string; nom: string }>();
       const cleParApp = new Map<number, string>(); // clé du besoin « appareil » de chaque appareillage (pour les notes de plaque multiple)
       apps.forEach(a => destParId.set(a.id, destDe(a, piece)));
+      // Pièce réelle + nom donné sur le plan, rattachés à N'IMPORTE QUEL besoin (appareil, boîte, plaque, boîtier DCL, câble) : affichage seul.
+      const localiser = (cleBesoin: string, ...ids: number[]) => {
+        const besoin = cumul.get(cleBesoin);
+        if (!besoin) return;
+        ids.forEach(id => { const x = apps.find(ap => ap.id === id); if (x) (besoin.appareils ??= []).push({ piece: piece.nom || "Pièce", nom: x.nom?.trim() || undefined }); });
+      };
       apps.forEach(a => {
         const dest = destParId.get(a.id)!;
         if (a.dejaExistant) return; // déjà installé chez le client — jamais facturé, ni lui ni sa boîte
@@ -384,8 +390,8 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         // Tout point lumineux (plafonnier, applique…) a sa propre boîte DCL — jamais groupée avec les boîtes murales
         // (prise/interrupteur), toujours 1 par point lumineux quel que soit le type ; en saillie : boîtier DCL apparent.
         if (a.type === "point_lumineux" || a.type === "applique") {
-          if (sail) ajouter(`boite_dcl_saillie@${dest.id}`, "boite_dcl_saillie", "Boîtier DCL en saillie", dest.nom, 1, "u");
-          else ajouter(`boite_encastrement_dcl@${dest.id}`, "boite_encastrement_dcl", "Boîte d'encastrement DCL", dest.nom, 1, "u");
+          if (sail) { ajouter(`boite_dcl_saillie@${dest.id}`, "boite_dcl_saillie", "Boîtier DCL en saillie", dest.nom, 1, "u"); localiser(`boite_dcl_saillie@${dest.id}`, a.id); }
+          else { ajouter(`boite_encastrement_dcl@${dest.id}`, "boite_encastrement_dcl", "Boîte d'encastrement DCL", dest.nom, 1, "u"); localiser(`boite_encastrement_dcl@${dest.id}`, a.id); }
         }
         { // pièce et nom (donné sur le plan) de l'appareillage, pour s'y retrouver dans le pré-devis
           const cleApp = cleParApp.get(a.id);
@@ -421,11 +427,11 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         });
         // Chaque boîte d'encastrement reçoit sa plaque de finition de même taille : un poste isolé
         // = 1 mécanisme + 1 boîte simple + 1 plaque simple ; double/triple/quadruple = idem à N postes.
-        const parDestTaille = new Map<string, { dest: { id: string; nom: string }; taille: number; nb: number }>();
-        const compter = (t: number, dest: { id: string; nom: string }) => {
+        const parDestTaille = new Map<string, { dest: { id: string; nom: string }; taille: number; nb: number; ids: number[] }>();
+        const compter = (t: number, dest: { id: string; nom: string }, ids: number[]) => {
           const k = `${dest.id}|${t}`;
           const e = parDestTaille.get(k);
-          if (e) e.nb++; else parDestTaille.set(k, { dest, taille: t, nb: 1 });
+          if (e) { e.nb++; e.ids.push(...ids); } else parDestTaille.set(k, { dest, taille: t, nb: 1, ids: [...ids] });
         };
         const noterGroupe = (ids: number[], taille: number, dest: { id: string; nom: string }) => {
           if (ids.length < 2) return;
@@ -439,14 +445,16 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
             if (besoin && !(besoin.note ?? "").includes(note)) besoin.note = besoin.note ? `${besoin.note} · ${note}` : note;
           });
         };
-        parPlaque.forEach(({ ids, dest }) => { const t = Math.min(ids.length, MAX_POSTES_PLAQUE); compter(t, dest); noterGroupe(ids, t, dest); });
-        grouperParProximite(libres, 0.20, 4).forEach(g => { const dest = destParId.get(g[0])!; compter(g.length, dest); noterGroupe(g, g.length, dest); });
-        parDestTaille.forEach(({ dest, taille, nb }) => {
+        parPlaque.forEach(({ ids, dest }) => { const t = Math.min(ids.length, MAX_POSTES_PLAQUE); compter(t, dest, ids); noterGroupe(ids, t, dest); });
+        grouperParProximite(libres, 0.20, 4).forEach(g => { const dest = destParId.get(g[0])!; compter(g.length, dest, g); noterGroupe(g, g.length, dest); });
+        parDestTaille.forEach(({ dest, taille, nb, ids }) => {
           const suffixe = taille === 1 ? "poste" : "postes";
           ajouter(`boite_encastrement_${taille}${suffixe}@${dest.id}`, `boite_encastrement_${taille}${suffixe}`,
             `Boîte d'encastrement ${LABEL_POSTES(taille)}`, dest.nom, nb, "u");
           const codePlaque = `plaque_${taille}${suffixe}`;
           ajouter(`${codePlaque}@${dest.id}`, codePlaque, `Plaque de finition ${LABEL_POSTES(taille)}`, dest.nom, nb, "u");
+          localiser(`boite_encastrement_${taille}${suffixe}@${dest.id}`, ...ids);
+          localiser(`${codePlaque}@${dest.id}`, ...ids);
         });
       }
     });
@@ -484,6 +492,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           dest.nom, horizontale + verticale, "m");
         else ajouter(`cable_rj45@${dest.id}`, "cable_rj45", "Câble RJ45 cat. 6 STP (étoile vers le coffret de communication)",
           dest.nom, horizontale + verticale, "m");
+        { const b = cumul.get(`${tv ? "cable_coax" : "cable_rj45"}@${dest.id}`); if (b) (b.appareils ??= []).push({ piece: piece.nom || "Pièce", nom: a.nom?.trim() || undefined }); }
       });
     });
 
