@@ -27,7 +27,13 @@ export interface Atome { points: PointZone[]; poids: number; }
 export interface ContexteZones {
   /** Nombre de pièces à franchir de a à b (0 = même pièce, 1 = mur mitoyen) ; -1 = pas de lien connu (extérieur, pièce isolée). */
   sauts(a: number, b: number): number;
+  /** La pièce figure-t-elle dans le plan du niveau ? (faux pour la pièce virtuelle « Extérieur »). */
+  connue(id: number): boolean;
 }
+
+/** Plus long maillon admis entre deux appareillages d'un même circuit (m, distance de chantier). Au-delà, JAMAIS ensemble : un circuit
+ *  reste d'un seul tenant, on n'envoie pas un câble à l'autre bout du terrain pour économiser un disjoncteur. */
+export const LIEN_MAX_M = 9;
 
 export interface ParamsRegroupement {
   capacite: number;
@@ -82,7 +88,7 @@ export function construireContexteZones(pieces: Pick<Piece, "id" | "contour">[])
     memo.set(s, m);
     return m;
   };
-  return { sauts: (a, b) => (a === b ? 0 : adj.has(a) ? (depuis(a).get(b) ?? -1) : -1) };
+  return { sauts: (a, b) => (a === b ? 0 : adj.has(a) ? (depuis(a).get(b) ?? -1) : -1), connue: id => adj.has(id) };
 }
 
 const PEN_CLASSE: number[][] = [[0, 4, 4], [4, 0, 1.5], [4, 1.5, 0]];
@@ -90,8 +96,10 @@ const PEN_CLASSE: number[][] = [[0, 4, 4], [4, 0, 1.5], [4, 1.5, 0]];
 function distPoints(a: PointZone, b: PointZone, ctx: ContexteZones): number {
   let d = Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
   if (a.pieceId !== b.pieceId) {
-    const s = ctx.sauts(a.pieceId, b.pieceId);
-    d += s < 0 ? 8 : s <= 1 ? 0 : 1.5 * (s - 1);   // mur mitoyen : on traverse la cloison ; sinon détour par les pièces intermédiaires
+    if (ctx.connue(a.pieceId) && ctx.connue(b.pieceId)) {
+      const s = ctx.sauts(a.pieceId, b.pieceId);
+      d += s < 0 ? 8 : s <= 1 ? 0 : 1.5 * (s - 1);
+    }   // mur mitoyen : on traverse la cloison ; sinon détour par les pièces intermédiaires
   }
   if (a.classe !== b.classe) d += PEN_CLASSE[a.classe][b.classe];
   return d;
@@ -125,12 +133,18 @@ export function regrouper(atomes: Atome[], ctx: ContexteZones, p: ParamsRegroupe
     const d = s / (ptsDe[i].length * ptsDe[j].length);
     dA[i * nA + j] = d; dA[j * nA + i] = d;
   }
+  const dMin = new Float64Array(nA * nA);
+  for (let i = 0; i < nA; i++) for (let j = i + 1; j < nA; j++) {
+    let m = Infinity;
+    for (const u of ptsDe[i]) for (const v of ptsDe[j]) if (D[u * nP + v] < m) m = D[u * nP + v];
+    dMin[i * nA + j] = m; dMin[j * nA + i] = m;
+  }
   const dTabA = atomes.map((_, i) => ptsDe[i].reduce((s, u) => s + dTab[u], 0) / ptsDe[i].length);
 
   // coût d'un circuit : arbre couvrant minimal de ses points (câble réel approché) + liaison au tableau
-  const coutCache = new Map<string, number>();
-  const cout = (ids: number[]): number => {
-    if (ids.length === 0) return 0;
+  const coutCache = new Map<string, { cout: number; lien: number }>();
+  const analyse = (ids: number[]): { cout: number; lien: number } => {
+    if (ids.length === 0) return { cout: 0, lien: 0 };
     const cle = [...ids].sort((a, b) => a - b).join(",");
     const c = coutCache.get(cle);
     if (c != null) return c;
@@ -139,17 +153,19 @@ export function regrouper(atomes: Atome[], ctx: ContexteZones, p: ParamsRegroupe
     const m = idx.length;
     const dist = new Array<number>(m).fill(Infinity), dans = new Array<boolean>(m).fill(false);
     dist[0] = 0;
-    let mst = 0;
+    let mst = 0, lien = 0;
     for (let k = 0; k < m; k++) {
       let u = -1;
       for (let i = 0; i < m; i++) if (!dans[i] && (u < 0 || dist[i] < dist[u])) u = i;
-      dans[u] = true; mst += dist[u];
+      dans[u] = true; mst += dist[u]; if (dist[u] > lien) lien = dist[u];
       for (let i = 0; i < m; i++) if (!dans[i]) { const d = D[idx[u] * nP + idx[i]]; if (d < dist[i]) dist[i] = d; }
     }
-    const res = mst + (p.tableau ? Math.min(...idx.map(i => dTab[i])) : 0);
+    const res = { cout: mst + (p.tableau ? Math.min(...idx.map(i => dTab[i])) : 0), lien };
     coutCache.set(cle, res);
     return res;
   };
+  const cout = (ids: number[]): number => analyse(ids).cout;
+  const connexe = (ids: number[]): boolean => analyse(ids).lien <= LIEN_MAX_M + 1e-9;
 
   const pieceDeAtome = atomes.map(a => a.points.map(q => q.pieceId));
   const scission = (clusterDe: number[]): number => {
@@ -176,10 +192,14 @@ export function regrouper(atomes: Atome[], ctx: ContexteZones, p: ParamsRegroupe
       for (let a = 0; a < nA; a++) {
         const u = cd[a];
         let meilleur = { v: -1, gain: 1e-9, cu: 0, cv: 0, sc: 0 };
-        const cu = cout(C[u].filter(x => x !== a));
+        const reste = C[u].filter(x => x !== a);
+        if (!connexe(reste)) continue;                         // retirer cet appareillage couperait le circuit en deux morceaux
+        const cu = cout(reste);
         for (let v = 0; v < C.length; v++) {
           if (v === u || W[v] + poids[a] > cap + 1e-9) continue;
-          const cv = cout([...C[v], a]);
+          const nv = [...C[v], a];
+          if (!connexe(nv)) continue;                          // trop loin du circuit visé
+          const cv = cout(nv);
           // borne : le terme « pièces coupées » ne peut pas rattraper une perte de câblage plus grande que ce plafond
           if ((K[u] + K[v]) - (cu + cv) + p.penaliteScission * pieceDeAtome[a].length <= meilleur.gain) continue;
           cd[a] = v; const sc2 = scission(cd); cd[a] = u;
@@ -200,6 +220,7 @@ export function regrouper(atomes: Atome[], ctx: ContexteZones, p: ParamsRegroupe
         if (u === v) continue;
         if (W[u] - poids[a] + poids[b] > cap + 1e-9 || W[v] - poids[b] + poids[a] > cap + 1e-9) continue;
         const nu = [...C[u].filter(x => x !== a), b], nv = [...C[v].filter(x => x !== b), a];
+        if (!connexe(nu) || !connexe(nv)) continue;
         const cu = cout(nu), cv = cout(nv);
         if ((K[u] + K[v]) - (cu + cv) + p.penaliteScission * (pieceDeAtome[a].length + pieceDeAtome[b].length) <= 1e-9) continue;
         cd[a] = v; cd[b] = u; const sc2 = scission(cd);
@@ -224,7 +245,7 @@ export function regrouper(atomes: Atome[], ctx: ContexteZones, p: ParamsRegroupe
       for (const a of [...C[i]].sort((x, y) => poids[y] - poids[x])) {
         let bv = -1, bc = Infinity;
         for (let v = 0; v < reste.length; v++) {
-          if (W[v] + poids[a] > cap + 1e-9) continue;
+          if (W[v] + poids[a] > cap + 1e-9 || !connexe([...reste[v], a])) continue;
           const dc = cout([...reste[v], a]) - cout(reste[v]);
           if (dc < bc) { bc = dc; bv = v; }
         }
@@ -255,18 +276,20 @@ export function regrouper(atomes: Atome[], ctx: ContexteZones, p: ParamsRegroupe
     let cl: number[][] = atomes.map((_, i) => [i]);
     let w = cl.map(poidsDe);
     const L: number[][] = cl.map((_, i) => cl.map((__, j) => dA[i * nA + j]));
+    const S: number[][] = cl.map((_, i) => cl.map((__, j) => dMin[i * nA + j]));   // lien le plus court entre deux circuits (liaison simple)
     let actifs = cl.map((_, i) => i);
     for (;;) {
       let bi = -1, bj = -1, bd = Infinity;
       for (let x = 0; x < actifs.length; x++) for (let y = x + 1; y < actifs.length; y++) {
         const i = actifs[x], j = actifs[y];
-        if (w[i] + w[j] > cap + 1e-9) continue;
+        if (w[i] + w[j] > cap + 1e-9 || S[i][j] > LIEN_MAX_M) continue;
         // à distance égale, on préfère remplir un circuit déjà bien rempli
         const d = L[i][j] - 0.01 * (w[i] + w[j]);
         if (d < bd) { bd = d; bi = i; bj = j; }
       }
       if (bi < 0) break;
       const ni = cl[bi].length, nj = cl[bj].length;
+      actifs.forEach(k => { if (k !== bi && k !== bj) { const m = Math.min(S[bi][k], S[bj][k]); S[bi][k] = m; S[k][bi] = m; }});
       actifs.forEach(k => { if (k !== bi && k !== bj) { const v = (L[bi][k] * ni + L[bj][k] * nj) / (ni + nj); L[bi][k] = v; L[k][bi] = v; } });
       cl[bi] = [...cl[bi], ...cl[bj]]; w[bi] += w[bj];
       actifs = actifs.filter(k => k !== bj);
@@ -285,7 +308,7 @@ export function regrouper(atomes: Atome[], ctx: ContexteZones, p: ParamsRegroupe
     }
     const cl: number[][] = [];
     let cur: number[] = [], wc = 0;
-    ordre.forEach(a => { if (cur.length > 0 && wc + poids[a] > cap + 1e-9) { cl.push(cur); cur = []; wc = 0; } cur.push(a); wc += poids[a]; });
+    ordre.forEach(a => { if (cur.length > 0 && (wc + poids[a] > cap + 1e-9 || dMin[cur[cur.length - 1] * nA + a] > LIEN_MAX_M)) { cl.push(cur); cur = []; wc = 0; } cur.push(a); wc += poids[a]; });
     if (cur.length > 0) cl.push(cur);
     return cl;
   };
@@ -311,7 +334,8 @@ export function regrouper(atomes: Atome[], ctx: ContexteZones, p: ParamsRegroupe
       while (reste.size > 0) {
         let ba = -1, bregret = -Infinity, bv = -1;
         reste.forEach(a => {
-          const cand = seeds.map((s, v) => ({ v, d: dA[a * nA + s] })).filter(x => w[x.v] + poids[a] <= cap + 1e-9).sort((x, y) => x.d - y.d);
+          const cand = seeds.map((s, v) => ({ v, d: dA[a * nA + s] }))
+            .filter(x => w[x.v] + poids[a] <= cap + 1e-9 && (cl[x.v].length === 0 || cl[x.v].some(m => dMin[a * nA + m] <= LIEN_MAX_M))).sort((x, y) => x.d - y.d);
           if (cand.length === 0) { ba = a; bregret = Infinity; bv = -1; return; }
           const regret = cand.length > 1 ? cand[1].d - cand[0].d : 1e6;
           if (bregret !== Infinity && regret > bregret) { bregret = regret; ba = a; bv = cand[0].v; }
