@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { fmt, cn } from "@/lib/utils";
 import { nouvelleOffreDraft, nouvellePieceDraft, totalPiecesDrafts, OffreDraft, PieceDraft } from "@/lib/fournisseurs";
-import { Plus, Trash2, AlertCircle, TrendingUp, Gift } from "lucide-react";
+import { Plus, Trash2, AlertCircle, TrendingUp, Gift, ScanSearch, Loader2 } from "lucide-react";
 
 export function calcMarge(prixAchat: number, prixVente: number): number | null {
   if (!prixAchat || prixAchat <= 0) return null;
@@ -179,6 +179,50 @@ export function MargeFields({ prixAchat, prixVente, onPrixAchatChange, onPrixVen
   );
 }
 
+// Bouton « Lire la réf. » : demande au serveur de lire la fiche produit (lien ci-dessus) et remplit la référence.
+// Plusieurs candidats (réf. fabricant, SKU du vendeur…) : le premier est appliqué, les autres restent cliquables.
+function LireReference({ url, reference, onReference }: { url: string; reference: string; onReference: (ref: string) => void }) {
+  const [etat, setEtat] = useState<"repos" | "charge">("repos");
+  const [message, setMessage] = useState<{ texte: string; ok: boolean } | null>(null);
+  const [candidats, setCandidats] = useState<{ valeur: string; type: string }[]>([]);
+  async function lire() {
+    setEtat("charge"); setMessage(null); setCandidats([]);
+    try {
+      const rep = await fetch("/api/fournisseurs/reference", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
+      const d = await rep.json().catch(() => null);
+      if (!d) throw new Error("Réponse illisible.");
+      if (d.reference) {
+        onReference(d.reference);
+        setCandidats((d.candidats ?? []).filter((c: { valeur: string }) => c.valeur !== d.reference));
+        setMessage({ texte: `Référence trouvée : ${d.reference}${d.candidats?.[0]?.type ? ` (${d.candidats[0].type})` : ""}`, ok: true });
+      } else setMessage({ texte: d.error || "Aucune référence trouvée.", ok: false });
+    } catch (e) {
+      setMessage({ texte: e instanceof Error ? e.message : "Lecture impossible.", ok: false });
+    } finally { setEtat("repos"); }
+  }
+  return (
+    <div className="shrink-0 relative">
+      <button type="button" onClick={lire} disabled={!url.trim() || etat === "charge"} className="btn-ghost !px-3 text-xs whitespace-nowrap disabled:opacity-40"
+        title={reference.trim() ? "Relire la référence sur la page (remplace la référence actuelle)" : "Lire la référence sur la page du fournisseur"}>
+        {etat === "charge" ? <Loader2 size={13} className="animate-spin" /> : <ScanSearch size={13} />} Lire la réf.
+      </button>
+      {(message || candidats.length > 0) && (
+        <div className="absolute right-0 top-full mt-1 z-10 w-72 rounded-lg border border-ink-200 bg-white p-2 shadow-lg text-xs space-y-1">
+          {message && <p className={message.ok ? "text-emerald-700 font-medium" : "text-amber-700"}>{message.texte}</p>}
+          {candidats.length > 0 && <p className="text-ink-400">Autres références sur la page :</p>}
+          {candidats.map(c => (
+            <button key={c.valeur} type="button" className="block w-full text-left text-volt-600 hover:underline"
+              onClick={() => { onReference(c.valeur); setMessage({ texte: `Référence choisie : ${c.valeur}`, ok: true }); setCandidats([]); }}>
+              {c.valeur} <span className="text-ink-400">— {c.type}</span>
+            </button>
+          ))}
+          <button type="button" className="text-ink-400 hover:text-ink-600" onClick={() => { setMessage(null); setCandidats([]); }}>Fermer</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Plusieurs offres pour un même produit : une par marque (et par fournisseur), chacune avec sa
 // référence, son lien et ses propres prix d'achat / de vente — on ne recrée pas le produit pour
 // changer de marque. L'offre « principale » donne le prix par défaut (recopié dans le produit et
@@ -243,8 +287,11 @@ export function FournisseursEditor({ offres, setOffres, fournisseursConnus, marq
           </div>
           <div>
             <label className="label">Lien du produit chez ce fournisseur</label>
-            <input className="input text-sm" placeholder="https://www.leroymerlin.fr/…"
-              value={o.url} onChange={e => maj(o.cle, { url: e.target.value })} />
+            <div className="flex items-center gap-2">
+              <input className="input text-sm flex-1" placeholder="https://www.leroymerlin.fr/…"
+                value={o.url} onChange={e => maj(o.cle, { url: e.target.value })} />
+              <LireReference url={o.url} reference={o.reference} onReference={ref => maj(o.cle, { reference: ref })} />
+            </div>
           </div>
           <div>
             <label className="label">Image de cette marque (URL)</label>
