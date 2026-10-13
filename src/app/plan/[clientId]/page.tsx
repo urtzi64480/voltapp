@@ -5360,7 +5360,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   }, [compterAction]);
 
   const handleGenerer = () => {
-    const res = genererCircuits({ niveaux });
+    // « Générer » recalcule TOUT le plan : les appareillages exclus par un ancien « supprimer le circuit » ou un cheminement redessiné
+    // incomplet sont réinclus — sinon ils restaient ignorés à chaque génération, même après avoir effacé tous les circuits.
+    const nbExclus = niveaux.reduce((s, n) => s + (n.appareillagesExclus?.length ?? 0), 0);
+    const res = genererCircuits({ niveaux: niveaux.map(n => (n.appareillagesExclus?.length ? { ...n, appareillagesExclus: [] } : n)) });
+    if (nbExclus > 0) res.alertes.unshift(`${nbExclus} appareillage(s) précédemment exclus des circuits ont été réinclus par cette génération.`);
+    res.maison.niveaux.forEach(n => { n.appareillagesExclus = []; });
     resultatPerimeRef.current = false;
     setResultat(res);
     setNiveaux(res.maison.niveaux);
