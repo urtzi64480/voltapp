@@ -207,18 +207,14 @@ function genererBreakersPrises(items: Item[], circuitKey: string, niveauNom: str
   if (items.length === 0) return;
   const max = MAX_PAR_CIRCUIT[circuitKey] ?? 8;
   const atomes = items.map(it => ({ points: [pointDe(it)], poids: 1 }));
-  const lancer = (cap: number) => regrouper(atomes, g.zones, { capacite: cap, tableau: g.tableau, penaliteScission });
-  let groupes = lancer(max);
-  // Prises 16 A (8 socles en 1,5 mm²) : au-delà de 8, un circuit 20 A / 2,5 mm² accepte 12 socles (NF C 15-100). On l'utilise dès
-  // qu'il fait gagner au moins un disjoncteur ; les groupes de 8 socles ou moins restent en 16 A.
-  if (circuitKey === "prise_16" && items.length > max) {
-    const max20 = MAX_PAR_CIRCUIT.prise_20 ?? 12;
-    const g20 = lancer(max20);
-    if (g20.length < groupes.length) groupes = g20;
-  }
+  // Prises 16 A : on vise TOUJOURS des circuits pleins de 12 socles (20 A / 2,5 mm², NF C 15-100) tassés au maximum ; seul le reliquat
+  // (8 socles ou moins) reste en 16 A / 1,5 mm². Les autres familles (cuisine, extérieur, volets) gardent leur maximum normatif.
+  const visee12 = circuitKey === "prise_16";
+  const cap = visee12 ? (MAX_PAR_CIRCUIT.prise_20 ?? 12) : max;
+  const groupes = regrouper(atomes, g.zones, { capacite: cap, tableau: g.tableau, penaliteScission, remplir: visee12 });
   const compteurs: Record<string, number> = {};
   for (const cluster of ordonnerGroupes(groupes.map(ids => ids.map(i => items[i])), g.tableau)) {
-    const cle = circuitKey === "prise_16" && cluster.length > max ? "prise_20" : circuitKey;
+    const cle = visee12 && cluster.length > max ? "prise_20" : circuitKey;
     compteurs[cle] = (compteurs[cle] ?? 0) + 1;
     const b = breakerFromClusterPrises(cluster, cle, niveauNom, compteurs[cle]);
     breakers.push(b);
@@ -289,7 +285,7 @@ function repartirLumieres<T extends Item>(lumItems: T[], tousItems: Item[], max:
   const blocs: T[][] = [];
   compParRacine.forEach(items => { if (items.length <= max) blocs.push(items); else clusteriser(items, max).forEach(c => blocs.push(c)); });
   const atomes = blocs.map(b => ({ points: b.map(pointDe), poids: b.length }));
-  const groupes = regrouper(atomes, g.zones, { capacite: max, tableau: g.tableau, minCircuits, penaliteScission: 3 });
+  const groupes = regrouper(atomes, g.zones, { capacite: max, tableau: g.tableau, minCircuits, penaliteScission: 3, remplir: true });
   return ordonnerGroupes(groupes.map(ids => ids.flatMap(i => blocs[i])), g.tableau);
 }
 

@@ -42,6 +42,8 @@ export interface ParamsRegroupement {
   minCircuits?: number;
   /** Pénalité (m équivalents) par pièce coupée entre deux circuits : plus elle est haute, plus les pièces restent entières. */
   penaliteScission: number;
+  /** Tasser : à nombre de circuits égal, remplir au maximum les circuits (12 prises, 8 lampes…) plutôt que les répartir en parts égales. */
+  remplir?: boolean;
 }
 
 export function classeZoneDe(type: Piece["type"] | string | undefined): ClasseZone {
@@ -366,5 +368,37 @@ export function regrouper(atomes: Atome[], ctx: ContexteZones, p: ParamsRegroupe
     const cand = { cl, n: cl.length, obj: objectif(cl) };
     if (!meilleur || cand.n < meilleur.n || (cand.n === meilleur.n && cand.obj < meilleur.obj - 1e-9)) meilleur = cand;
   }
-  return meilleur!.cl;
+  let res = meilleur!.cl;
+  if (p.remplir) res = tasser(res);
+  return res;
+
+  // Tassement : on vide les circuits les moins remplis dans les plus remplis, tant que la capacité, la continuité du circuit (maillon
+  // ≤ LIEN_MAX_M) et le nombre de pièces coupées le permettent. Le nombre de circuits ne change jamais.
+  function tasser(cl0: number[][]): number[][] {
+    let C = cl0.map(c => [...c]);
+    for (let passe = 0; passe < 200; passe++) {
+      const W = C.map(poidsDe);
+      const scAvant = scission(clusterDeDepuis(C));
+      let meilleurGain: { a: number; de: number; vers: number; d: number } | null = null;
+      for (let j = 0; j < C.length; j++) for (let i = 0; i < C.length; i++) {
+        if (i === j || W[i] < W[j] || C[j].length <= 1 && W[i] === W[j]) continue;
+        for (const a of C[j]) {
+          if (W[i] + poids[a] > cap + 1e-9) continue;
+          const dist = Math.min(...C[i].map(m => dMin[a * nA + m]));
+          if (dist > LIEN_MAX_M) continue;
+          if (!connexe([...C[i], a])) continue;
+          const reste = C[j].filter(x => x !== a);
+          if (reste.length > 0 && !connexe(reste)) continue;
+          const nouveau = C.map((c, k) => (k === i ? [...c, a] : k === j ? reste : c)).filter(c => c.length > 0);
+          if (nouveau.length < C.length) { /* un circuit disparaît : toujours bon */ }
+          else if (scission(clusterDeDepuis(nouveau)) > scAvant + 1e-9) continue;
+          if (!meilleurGain || dist < meilleurGain.d) meilleurGain = { a, de: j, vers: i, d: dist };
+        }
+      }
+      if (!meilleurGain) break;
+      const { a, de, vers } = meilleurGain;
+      C = C.map((c, k) => (k === vers ? [...c, a] : k === de ? c.filter(x => x !== a) : c)).filter(c => c.length > 0);
+    }
+    return C;
+  }
 }
