@@ -15,13 +15,14 @@ import SchemaTechniqueCircuit, { libelleTroncon } from "@/components/plan/Schema
 import PhotosChantier from "@/components/plan/PhotosChantier";
 import { BUCKET_PHOTOS, cheminPhoto, compresserImage, grouperPhotos, projeterSurCircuit, tronconDePhoto, mursProches, deplacerADistanceDuMur, texteCoordonnees } from "@/lib/photos-chantier";
 import { construireSchemaTechnique } from "@/lib/schema-technique";
+import { verifierFusion, fusionnerCircuits } from "@/lib/fusion-circuits";
 import { construireVueAppareil } from "@/lib/bornier-appareillage";
 import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MousePointer2, Hand, X,
   Zap, Sparkles, Eye, EyeOff, ArrowRightCircle, AlertTriangle, Search, Route,
   GripHorizontal, ChevronUp, ChevronDown, ArrowDownToLine, Link2, Receipt, Box,
-  Lightbulb, Network, Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, Footprints, Move, SlidersHorizontal, Plug, MoveHorizontal, Tag, ArrowLeftRight, Magnet, Layers, Brush, Square, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler, ShieldCheck, Camera,
+  Lightbulb, Network, Lock, Unlock, Maximize2, Minimize2, ChevronLeft, ChevronRight, PanelTopClose, PanelTopOpen, Footprints, Move, SlidersHorizontal, Plug, MoveHorizontal, Tag, ArrowLeftRight, Magnet, Layers, Brush, Square, Merge, SplitSquareHorizontal, BoxSelect, Undo2, Redo2, Ruler, ShieldCheck, Camera,
 } from "lucide-react";
 import {
   Point, Piece, Niveau, PieceType, NiveauType, AppareillagePlace, AppareillageType,
@@ -62,7 +63,7 @@ import type { Vue3DHandle } from "@/components/plan/Vue3D";
 const Vue3D = lazy(() => import("@/components/plan/Vue3D"));
 const Vue3DMaison = lazy(() => import("@/components/plan/Vue3DMaison"));
 import { toutesBoitesNiveau, segmentsDepuisMarche } from "@/lib/maison-engine";
-import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, integrerCoffretCommunication, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, genererCircuitsManuelsSeuls, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
+import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, integrerCoffretCommunication, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, cleCircuitDedie, genererCircuitsManuelsSeuls, appliquerReglagesTableau, segmentsPourCircuit, ResultatGeneration, TronconGaine } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur, estAccessoireTableau, BREAKER_TYPES, effectiveSection, gaineRecommandee, gaineCommunication } from "@/lib/electrical-constants";
 import { verifierEclairageManuel, fermetureCircuitLumiere, commandesPartagees } from "@/lib/controle-eclairage";
 import { coudesSegment } from "@/lib/routage-circuits";
@@ -2242,6 +2243,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Photos de chantier : « placingPhoto » = l'emplacement sur le tracé du circuit reste à cliquer (files = photos à envoyer, deplacer = photos à déplacer).
   const [placingPhoto, setPlacingPhoto] = useState<{ label: string; files?: File[]; deplacer?: number[] } | null>(null);
   const [photosModal, setPhotosModal] = useState<{ label: string | null; ouvrirId?: number } | null>(null);
+  const [fusionDe, setFusionDe] = useState<number | null>(null);   // id du circuit « conservé » dont on ouvre la fenêtre de fusion
   const [photoEnvoi, setPhotoEnvoi] = useState<string | null>(null);
   // Tableau tel qu'il est enregistré dans le module Tableau (section / calibre réglés là-bas) : relu à chaque ouverture d'un schéma technique.
   const [tableauPourSchema, setTableauPourSchema] = useState<BreakerRow[] | null>(null);
@@ -2311,7 +2313,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [filtreAffichage, setFiltreAffichage] = useState<FiltreAffichage>("tout");
   const [afficherSansCircuit, setAfficherSansCircuit] = useState(true);
 
-  const [resultat, setResultat] = useState<ResultatGeneration | null>(null);
+  const [resultatBrut, setResultat] = useState<ResultatGeneration | null>(null);
+  // Tableau(x) enregistré(s) : calibre et section modifiés dans le module Tableau s'appliquent à tout le plan (voir appliquerReglagesTableau).
+  const [rowsTableauxSauves, setRowsTableauxSauves] = useState<BreakerRow[]>(() => {
+    let rows: BreakerRow[] = [];
+    try { if (projet.tableau_config) { const parsed = JSON.parse(projet.tableau_config); if (Array.isArray(parsed)) rows = parsed; } } catch {}
+    return [...rows, ...lireAnnexes(projet.tableaux_annexes).flatMap(a => a.rows ?? [])];
+  });
+  const resultat = useMemo<ResultatGeneration | null>(() => {
+    if (!resultatBrut) return null;
+    const noms: Record<string, string> = {};
+    niveaux.forEach(n => Object.assign(noms, n.nomsCircuits ?? {}));
+    const br = appliquerReglagesTableau(resultatBrut.breakers, rowsTableauxSauves, noms);
+    return br === resultatBrut.breakers ? resultatBrut : { ...resultatBrut, breakers: br };
+  }, [resultatBrut, rowsTableauxSauves, niveaux]);
   // Les circuits générés sont enregistrés AVEC le plan (maison_config.circuitsGeneres) : on les retrouve tels quels à la réouverture.
   const resultatRef = useRef<ResultatGeneration | null>(null);
   resultatRef.current = resultat;
@@ -4202,6 +4217,24 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     recalculerCircuits(nv);
     if (principal.id !== niveauActif.id) changerNiveau(principal.id);
   };
+  // ── Fusion de deux circuits ──────────────────────────────────────────────────────────────────────────────────────────────
+  // `garde` conserve son nom, sa couleur et ses boîtes ; `absorbe` disparaît. Le circuit résultant est un circuit manuel (voir fusion-circuits.ts).
+  const verdictFusion = (garde: Breaker, absorbe: Breaker) => {
+    if (!niveauActif) return null;
+    const labelsPris = [...circuitsNiveauActif.map(x => x.label), ...Object.values(niveauActif.nomsCircuits ?? {}), ...(niveauActif.circuitsManuels ?? []).map(m => m.nom)];
+    return verifierFusion(garde, absorbe, niveauActif.pieces.flatMap(p => p.appareillages), nomAffiche(garde), labelsPris, [...verrous]);
+  };
+  const appliquerFusion = (garde: Breaker, absorbe: Breaker) => {
+    const verdict = verdictFusion(garde, absorbe);
+    if (!niveauActif || !verdict || !verdict.ok) return;
+    const { niveau: fusionne, label } = fusionnerCircuits(niveauActif, garde, absorbe, verdict, uidMaison);
+    const res = recalculerCircuits(niveaux.map(n => n.id === niveauActifId ? fusionne : n));
+    setFusionDe(null);
+    const nouveau = res.breakers.find(x => x.manuelId != null && x.label === label);
+    if (nouveau) setCircuitsVisibles(v => new Set([...Array.from(v).filter(id => id !== garde.id && id !== absorbe.id), nouveau.id]));
+    setPlacementError(`✓ Circuits fusionnés en « ${label} ». ${verdict.avertissements.join(" ")} Clique « Pousser vers le tableau » pour mettre le tableau à jour.`);
+    setTimeout(() => setPlacementError(null), 9000);
+  };
   const supprimerCircuitManuelEtFermer = (manuelId: number) => {
     supprimerCircuitManuel(manuelId);
     setCircuitManuelForm(null);
@@ -5500,6 +5533,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
     let nbRangeesAnnexes = 0;
     let nbCircuitsAnnexes = 0;
+    let annexesPourEtat: TableauAnnexe[] = [];
     if (annexes.length > 0) {
       // On repart de la version en base (elle peut avoir été modifiée dans l'éditeur de
       // tableau) ; une annexe créée ici mais absente de la base est reprise de l'état local.
@@ -5515,8 +5549,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       });
       if (!(await sauverAnnexes(projet.id, annexesFinales))) throw new Error("tableaux annexes non enregistrés");
       setAnnexes(annexesFinales);
+      annexesPourEtat = annexesFinales;
     }
 
+    setRowsTableauxSauves([...resPrincipal.rowsFinal, ...annexesPourEtat.flatMap(a => a.rows ?? [])]);
     setPushing(false);
     setPushMsg(
       `${resPrincipal.nbRangees} rangée(s) et ${groupes[TABLEAU_PRINCIPAL].length} circuit(s) mis à jour dans le tableau principal.` +
@@ -9181,6 +9217,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                                   title="Photos de chantier : à retrouver après la fermeture des cloisons, avec leur emplacement sur le tracé">
                                   <span className="relative inline-flex"><Camera size={14} />{(niveauActif?.photosChantier ?? []).filter(ph => ph.circuit === labelStockage).length > 0 && <span className="absolute -top-1.5 -right-2 bg-ink-900 text-white text-[8px] leading-none rounded-full px-1 py-0.5">{(niveauActif?.photosChantier ?? []).filter(ph => ph.circuit === labelStockage).length}</span>}</span>
                                 </button>
+                                {b && !estCircuitSansDisjoncteur(b) && circuitsNiveauActif.length > 1 && (
+                                  <button type="button" className="h-6 px-2 inline-flex items-center gap-1 rounded-md border border-volt-300 bg-volt-50 text-volt-700 text-[11px] font-semibold hover:bg-volt-100" aria-label="Fusionner avec un autre circuit"
+                                    onClick={e => { e.preventDefault(); e.stopPropagation(); if (refuserVerrou(b.label)) return; setFusionDe(b.id); }}
+                                    title="Fusionner ce circuit avec un autre (NF C 15-100 vérifiée : 8 lampes, 8 / 12 prises…)">
+                                    <Merge size={13} /> Fusionner
+                                  </button>
+                                )}
                                 <button type="button" className={cls} aria-label="Poser une boîte de dérivation"
                                   onClick={e => { e.preventDefault(); e.stopPropagation(); setPlacingBoiteLabel(labelStockage); setMode("select"); setPlacementType(null); }}
                                   title="Boîte de dérivation (Wago) : clique ensuite sur le plan, sur le tronçon où la poser">
@@ -9480,6 +9523,44 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             onLegende={(id, texte) => updateNiveauActif(n => ({ ...n, photosChantier: (n.photosChantier ?? []).map(ph => ph.id === id ? { ...ph, legende: texte } : ph) }))}
             onDeplacer={ids => { const l = tousPhotos.find(ph => ph.id === ids[0])?.circuit; if (l != null) { setPlacingPhoto({ label: l, deplacer: ids }); setPhotosModal(null); setMode("select"); setPlacementType(null); } }}
             onRattacher={(id, label) => updateNiveauActif(n => ({ ...n, photosChantier: (n.photosChantier ?? []).map(ph => ph.id === id ? { ...ph, circuit: label } : ph) }))} />
+        );
+      })()}
+      {fusionDe != null && niveauActif && (() => {
+        const garde = circuitsNiveauActif.find(x => x.id === fusionDe);
+        if (!garde) return null;
+        const autres = circuitsNiveauActif.filter(x => x.id !== garde.id && !estCircuitSansDisjoncteur(x));
+        const nbPoints = (x: Breaker) => niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === x.id && !estCommande(a.type)).length;
+        return (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-ink-900/70 backdrop-blur-sm p-4" role="dialog" aria-modal="true" onClick={() => setFusionDe(null)}>
+            <div className="card w-full max-w-lg max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+              <div className="p-4 border-b border-ink-200">
+                <p className="font-bold text-ink-900">Fusionner « {nomAffiche(garde)} »</p>
+                <p className="text-xs text-ink-500 mt-1">Choisis le circuit à absorber : il disparaît, ses points rejoignent « {nomAffiche(garde)} » (nom, couleur et boîtes conservés). Le tracé est recalculé.</p>
+              </div>
+              <div className="p-3 overflow-y-auto flex-1 space-y-1.5">
+                {autres.length === 0 && <p className="text-xs text-ink-500 p-2">Aucun autre circuit sur ce niveau.</p>}
+                {autres.map(x => {
+                  const v = verdictFusion(garde, x);
+                  const ok = !!v && v.ok;
+                  return (
+                    <div key={x.id} className={`rounded-lg border px-2.5 py-2 ${ok ? "border-ink-200" : "border-ink-100 bg-ink-50"}`}>
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: colorMap.get(x.id) ?? "#78716c" }} />
+                        <span className={`text-sm font-semibold flex-1 truncate ${ok ? "text-ink-900" : "text-ink-400"}`}>{nomAffiche(x)}</span>
+                        <span className="text-[11px] text-ink-400 shrink-0">{nbPoints(x)} pt · {x.amperes} A</span>
+                        <button type="button" disabled={!ok} className="btn-volt !text-xs !py-1 disabled:opacity-40" onClick={() => appliquerFusion(garde, x)}>Fusionner</button>
+                      </div>
+                      {v && !v.ok && <p className="text-[11px] text-ink-500 mt-1">{v.raison}</p>}
+                      {v && v.ok && v.avertissements.length > 0 && <p className="text-[11px] text-amber-600 mt-1">{v.avertissements.join(" ")}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="p-3 border-t border-ink-200 flex justify-end">
+                <button type="button" className="btn-ghost" onClick={() => setFusionDe(null)}>Annuler</button>
+              </div>
+            </div>
+          </div>
         );
       })()}
       {circuitLumiereForm && niveauActif && (

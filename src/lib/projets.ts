@@ -83,6 +83,13 @@ export function lireAnnexes(raw: string | null | undefined): TableauAnnexe[] {
   } catch { return []; }
 }
 
+/** Toutes les rangées enregistrées d'un projet (tableau principal + annexes) — pour reprendre calibres et sections du module Tableau. */
+export function rowsTableauProjet(p: { tableau_config?: string | null; tableaux_annexes?: string | null }): BreakerRow[] {
+  let rows: BreakerRow[] = [];
+  try { if (p.tableau_config) { const parsed = JSON.parse(p.tableau_config); if (Array.isArray(parsed)) rows = parsed; } } catch {}
+  return [...rows, ...lireAnnexes(p.tableaux_annexes).flatMap(a => a.rows)];
+}
+
 export function nouvelIdAnnexe(): string {
   return `annexe-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }

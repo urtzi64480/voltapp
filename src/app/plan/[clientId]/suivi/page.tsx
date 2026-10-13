@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
-import { useProjets, qsProjet } from "@/lib/projets";
+import { useProjets, qsProjet, rowsTableauProjet } from "@/lib/projets";
 import Shell from "@/components/layout/Shell";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import SchemaCommande from "@/components/plan/SchemaCommande";
@@ -407,7 +407,7 @@ function Suivi({ clientId, projet, projets, onSelect, onChanged }: { clientId: s
   // Circuits recalculés depuis le plan enregistré — mêmes migrations que l'éditeur de plan, dans le même ordre.
   const calcul: Calcul = useMemo(() => {
     try {
-      const suivi = suiviDepuisConfig(projet.maison_config);
+      const suivi = suiviDepuisConfig(projet.maison_config, rowsTableauProjet(projet));
       return suivi ? { suivi } : { vide: true };
     } catch (e) {
       return { erreur: e instanceof Error ? e.message : String(e) };

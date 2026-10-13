@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
 import { suiviDepuisConfig, progressionPlan, Progression } from "@/lib/suivi-realisation";
 import { lireSuivi } from "@/lib/suivi-persistance";
-import { qsProjet, supprimerProjet, viderDonneesHistoriques, listerProjets, creerProjet, modifierProjet } from "@/lib/projets";
+import { qsProjet, supprimerProjet, viderDonneesHistoriques, listerProjets, creerProjet, modifierProjet, rowsTableauProjet } from "@/lib/projets";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
@@ -129,7 +129,7 @@ interface PlanEntry {
 
 function calculerAvancement(p: Projet): Progression | null {
   try {
-    const suivi = suiviDepuisConfig(p.maison_config);
+    const suivi = suiviDepuisConfig(p.maison_config, rowsTableauProjet(p));
     return suivi ? progressionPlan(suivi, lireSuivi(p.suivi_realisation).coches) : null;
   } catch { return null; }
 }

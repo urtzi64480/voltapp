@@ -1090,6 +1090,20 @@ export function ordonnerAncresParProximite(depart: Point, items: AncrePoint[]): 
   return ordered;
 }
 
+/**
+ * Ordre de câblage des boîtes de dérivation « en étoile » d'un circuit : tableau → boîte la plus proche → la suivante la plus proche… (plus
+ * proche voisin), et non l'ordre dans lequel l'utilisateur les a posées — sinon le câble fait des allers-retours dès qu'on pose la boîte du
+ * fond avant celle de l'entrée. Circuit non relié au tableau : la première boîte posée reste l'origine, les autres s'enchaînent depuis elle.
+ */
+export function ordonnerBoitesChaine(depart: Point, boites: BoiteDerivation[], relieAuTableau: boolean): BoiteDerivation[] {
+  if (boites.length <= 1) return boites;
+  const ancres = (liste: BoiteDerivation[]) => liste.map(b => ({ id: String(b.id), point: b.point }));
+  const parId = new Map(boites.map(b => [String(b.id), b] as const));
+  const reordonner = (origine: Point, liste: BoiteDerivation[]) => ordonnerAncresParProximite(origine, ancres(liste)).map(a => parId.get(a.id)!);
+  if (relieAuTableau) return reordonner(depart, boites);
+  return [boites[0], ...reordonner(boites[0].point, boites.slice(1))];
+}
+
 export function cleSegmentLiaison(idA: string, idB: string): string {
   return `${idA}->${idB}`;
 }
@@ -1451,6 +1465,7 @@ export function construireBranchesCircuitEclairage(
     // Relié : chaîne complète tableau -> boîte 1 -> boîte 2 -> …
     // Non relié : la première boîte devient elle-même l'origine, aucun segment vers
     // l'extérieur pour l'atteindre — seul le chaînage boîte à boîte suivant reste tracé.
+    boites = ordonnerBoitesChaine(depart, boites, relieAuTableau);
     let precedentId = relieAuTableau ? "tableau" : `boite-${boites[0].id}`;
     let precedentPoint = relieAuTableau ? depart : boites[0].point;
     const boitesAChainer = relieAuTableau ? boites : boites.slice(1);

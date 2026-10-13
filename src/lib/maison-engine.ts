@@ -18,7 +18,7 @@ import {
   Maison, Niveau, Piece, Point, AppareillagePlace, aireDuPolygone, BoiteDerivation,
   CircuitManuel, familleCircuitManuelAppareillage, couleurCircuit, USAGE_DEDIE_DEFAUT,
   estCommande, estCommandeDouble, estCommandeService, cibleCommandeService, baseCommande, commandeCetteLumiere, estLumiere, lumieresCommandees,
-  SegmentCircuit, origineCircuits, pointBoiteImplicite, uidMaison, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage, ordonnerAncresParProximite,
+  SegmentCircuit, origineCircuits, pointBoiteImplicite, uidMaison, sequenceAncresCircuit, sequenceAncresCircuitOrdonnee, construireBranchesCircuitEclairage, ordonnerAncresParProximite, ordonnerBoitesChaine,
 } from "./maison-types";
 import { appareillagesParPieceReelle } from "./piece-reelle";
 import { regrouper, construireContexteZones, classeZoneDe, ContexteZones, PointZone } from "./regroupement-circuits";
@@ -849,7 +849,7 @@ function segmentsDeBase(breaker: Breaker, points: AppareillagePlace[], niveau: N
   // Boîtes de dérivation posées à la main sur un circuit NON éclairage (prises, chauffage, dédiés, manuels) :
   // tableau → boîte 1 → boîte 2 … (câble d'alimentation), puis chaque appareil est rattaché à la boîte la plus proche
   // et les appareils d'une même boîte restent en chaîne (ordre manuel conservé, sinon plus proche voisin depuis la boîte).
-  const boitesPosees = boitesPourBase;
+  const boitesPosees = ordonnerBoitesChaine(tableauPos, boitesPourBase, relieAuTableau);
   if (boitesPosees.length > 0) {
     const segments: SegmentCircuit[] = [];
     let precId = relieAuTableau ? "tableau" : `boite-${boitesPosees[0].id}`;
@@ -1262,4 +1262,37 @@ export function genererCircuitsManuelsSeuls(maison: Maison, precedent?: Resultat
   const vivants = autoPrec.filter(b => resultat.maison.niveaux.some(n => n.pieces.some(p => p.appareillages.some(a => a.circuitId === b.id))));
   vivants.forEach(b => { b.pieces = b.pieces.filter(pc => pc.nbPrises > 0 || pc.groupes.length > 0); });
   return { ...resultat, breakers: [...vivants, ...resultat.breakers], alertes: precedent.alertes };
+}
+
+// ─── Réglages faits dans le TABLEAU → repris par le plan ─────────────────────────────────────────────────────────────────────
+// Le plan génère ses disjoncteurs avec le calibre et la section PAR DÉFAUT de la famille. Si l'utilisateur les a modifiés dans le
+// module Tableau (ex. 16 A → 20 A, 1,5 → 2,5 mm²), ces valeurs doivent s'appliquer partout : panneau du plan, suivi de chantier,
+// gaines tableau→niveau, contrôles, et ne PAS être écrasées au prochain « Pousser vers le tableau ».
+// Règle : on ne reprend que ce qui diffère du défaut de la famille (c'est une modification volontaire) et seulement si le circuit du
+// tableau est de la même famille que celui du plan (sinon le plan a changé de nature : le défaut de la nouvelle famille l'emporte).
+export function appliquerReglagesTableau(
+  breakers: Breaker[], rows: BreakerRow[], nomsCircuits?: Record<string, string>,
+): Breaker[] {
+  if (rows.length === 0 || breakers.length === 0) return breakers;
+  const parLabel = new Map<string, Breaker>();
+  rows.forEach(r => (r.slots ?? []).forEach(s => {
+    if (!s || !s.label) return;
+    if (s.type.startsWith("diff-") || s.circuit === "general" || s.circuit === "parafoudre") return;
+    if (!parLabel.has(s.label)) parLabel.set(s.label, s);
+  }));
+  let change = false;
+  const res = breakers.map(b => {
+    if (estCircuitSansDisjoncteur(b)) return b;
+    const label = b.manuelId != null ? b.label : (nomsCircuits?.[b.label] ?? b.label);
+    const t = parLabel.get(label);
+    if (!t || t.circuit !== b.circuit) return b;
+    const spec = CIRCUITS[b.circuit];
+    if (!spec) return b;
+    const ampModif = typeof t.amperes === "number" && t.amperes > 0 && t.amperes !== spec.ampMax && t.amperes !== b.amperes;
+    const secModif = !!t.customSection && t.customSection !== (spec.section ?? "1.5") && t.customSection !== b.customSection;
+    if (!ampModif && !secModif) return b;
+    change = true;
+    return { ...b, ...(ampModif ? { amperes: t.amperes } : {}), ...(secModif ? { customSection: t.customSection } : {}) };
+  });
+  return change ? res : breakers;
 }
