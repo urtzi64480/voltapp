@@ -32,8 +32,9 @@ export interface ContexteZones {
 }
 
 /** Plus long maillon admis entre deux appareillages d'un même circuit (m, distance de chantier). Au-delà, JAMAIS ensemble : un circuit
- *  reste d'un seul tenant, on n'envoie pas un câble à l'autre bout du terrain pour économiser un disjoncteur. */
-export const LIEN_MAX_M = 9;
+ *  reste d'un seul tenant, on n'envoie pas un câble à l'autre bout du terrain pour économiser un disjoncteur. 20 m : assez large pour qu'un
+ *  logement (même sur un étage entier) ne soit pas éclaté en petits circuits de 4 prises juste parce que deux groupes sont à 10 m l'un de l'autre. */
+export const LIEN_MAX_M = 20;
 
 export interface ParamsRegroupement {
   capacite: number;
@@ -42,8 +43,8 @@ export interface ParamsRegroupement {
   minCircuits?: number;
   /** Pénalité (m équivalents) par pièce coupée entre deux circuits : plus elle est haute, plus les pièces restent entières. */
   penaliteScission: number;
-  /** Tasser : à nombre de circuits égal, remplir au maximum les circuits (12 prises, 8 lampes…) plutôt que les répartir en parts égales. */
-  remplir?: boolean;
+  /** Équilibrer : à nombre de circuits égal (le minimum), répartir les points aussi équitablement que possible (7 + 7 plutôt que 12 + 2). */
+  equilibrer?: boolean;
 }
 
 export function classeZoneDe(type: Piece["type"] | string | undefined): ClasseZone {
@@ -369,35 +370,34 @@ export function regrouper(atomes: Atome[], ctx: ContexteZones, p: ParamsRegroupe
     if (!meilleur || cand.n < meilleur.n || (cand.n === meilleur.n && cand.obj < meilleur.obj - 1e-9)) meilleur = cand;
   }
   let res = meilleur!.cl;
-  if (p.remplir) res = tasser(res);
+  if (p.equilibrer) res = equilibrerCircuits(res);
   return res;
 
-  // Tassement : on vide les circuits les moins remplis dans les plus remplis, tant que la capacité, la continuité du circuit (maillon
-  // ≤ LIEN_MAX_M) et le nombre de pièces coupées le permettent. Le nombre de circuits ne change jamais.
-  function tasser(cl0: number[][]): number[][] {
+  // Équilibrage : on déplace un point d'un circuit plus chargé vers un circuit moins chargé tant que cela réduit l'écart (somme des carrés des
+  // charges), que le circuit reste d'un seul tenant (maillon ≤ LIEN_MAX_M) et qu'aucune pièce n'est coupée en plus. Le nombre de circuits
+  // ne change pas. On prend à chaque fois le point le plus proche du circuit receveur (câble le plus court).
+  function equilibrerCircuits(cl0: number[][]): number[][] {
     let C = cl0.map(c => [...c]);
-    for (let passe = 0; passe < 200; passe++) {
+    for (let passe = 0; passe < 300; passe++) {
       const W = C.map(poidsDe);
       const scAvant = scission(clusterDeDepuis(C));
       let meilleurGain: { a: number; de: number; vers: number; d: number } | null = null;
       for (let j = 0; j < C.length; j++) for (let i = 0; i < C.length; i++) {
-        if (i === j || W[i] < W[j] || C[j].length <= 1 && W[i] === W[j]) continue;
+        if (i === j) continue;
         for (const a of C[j]) {
-          if (W[i] + poids[a] > cap + 1e-9) continue;
+          if (W[j] - W[i] < 2 * poids[a] - 1e-9 || W[i] + poids[a] > cap + 1e-9) continue;
           const dist = Math.min(...C[i].map(m => dMin[a * nA + m]));
-          if (dist > LIEN_MAX_M) continue;
-          if (!connexe([...C[i], a])) continue;
+          if (dist > LIEN_MAX_M || !connexe([...C[i], a])) continue;
           const reste = C[j].filter(x => x !== a);
-          if (reste.length > 0 && !connexe(reste)) continue;
-          const nouveau = C.map((c, k) => (k === i ? [...c, a] : k === j ? reste : c)).filter(c => c.length > 0);
-          if (nouveau.length < C.length) { /* un circuit disparaît : toujours bon */ }
-          else if (scission(clusterDeDepuis(nouveau)) > scAvant + 1e-9) continue;
+          if (reste.length === 0 || !connexe(reste)) continue;
+          const nouveau = C.map((c, k) => (k === i ? [...c, a] : k === j ? reste : c));
+          if (scission(clusterDeDepuis(nouveau)) > scAvant + 1e-9) continue;
           if (!meilleurGain || dist < meilleurGain.d) meilleurGain = { a, de: j, vers: i, d: dist };
         }
       }
       if (!meilleurGain) break;
       const { a, de, vers } = meilleurGain;
-      C = C.map((c, k) => (k === vers ? [...c, a] : k === de ? c.filter(x => x !== a) : c)).filter(c => c.length > 0);
+      C = C.map((c, k) => (k === vers ? [...c, a] : k === de ? c.filter(x => x !== a) : c));
     }
     return C;
   }
