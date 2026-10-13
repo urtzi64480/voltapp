@@ -9,7 +9,7 @@ import { qsProjet, supprimerProjet, viderDonneesHistoriques, listerProjets, cree
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { LayoutTemplate, ListChecks, FilePlus2, Pencil, ChevronDown, Plus, Search, ChevronRight, X, Trash2 } from "lucide-react";
+import { LayoutTemplate, ListChecks, FilePlus2, Pencil, ChevronDown, Plus, Search, ChevronRight, X, Trash2, Receipt } from "lucide-react";
 import { fondModal } from "@/lib/fond-modal";
 
 interface Niveau { id: number; nom: string; type: string; pieces: { id: number }[]; }
@@ -373,6 +373,9 @@ export default function PlansPage() {
                         </Link>
                         <Link href={`/plan/${entry.clientId}/suivi${qsProjet(entry.projetId)}`} className="btn-ghost !py-1.5 !text-xs" title="Suivi de réalisation des circuits">
                           <ListChecks size={12} /> Suivi
+                        </Link>
+                        <Link href={`/predevis/${entry.clientId}${qsProjet(entry.projetId)}`} className="btn-ghost !py-1.5 !text-xs" title="Pré-devis de ce projet">
+                          <Receipt size={12} /> Pré-devis
                         </Link>
                         <button onClick={() => setASupprimer(entry)} className="btn-ghost !py-1.5 !text-xs text-red-500 ml-auto" title="Supprimer ce plan">
                           <Trash2 size={12} /> Supprimer
