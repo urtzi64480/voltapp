@@ -4442,30 +4442,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
   const terminerDessinCheminement = () => {
     if (!cheminementDessin) return;
-    // Appareillage du circuit non recliqué en dessinant : pour un circuit MANUEL, reste
-    // rattaché au même circuit (comportement historique, voir sequenceAncresCircuitOrdonnee)
-    // — un simple avertissement suffit. Pour un circuit AUTOMATIQUE en revanche, "oublier"
-    // un appareillage au clic doit vraiment l'EXCLURE de ce circuit (pas le rattacher quand
-    // même en silence) — pour pouvoir librement le réaffecter ailleurs ensuite ; il devient
-    // alors non raccordé, et une alerte le signale nommément après régénération.
-    const estManuel = cheminementDessin.breaker.manuelId != null;
     const membres = niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === cheminementDessin.breaker.id) ?? [];
     const oublies = membres.filter(a => !cheminementDessin.ordre.includes(a.id));
+    // Appareillage du circuit non recliqué : il RESTE dans le circuit (jamais exclu, jamais oublié), placé en fin de tracé par proximité.
     if (oublies.length > 0) {
-      if (estManuel) {
-        setPlacementError(`${oublies.length} appareillage(s) non cliqué(s) — resté(s) sur ce circuit, en fin de tracé.`);
-      } else {
-        updateNiveauActif(n => ({
-          ...n,
-          appareillagesExclus: Array.from(new Set([...(n.appareillagesExclus ?? []), ...oublies.map(a => a.id)])),
-        }));
-        setPlacementError(`${oublies.length} appareillage(s) exclu(s) de ce circuit — non raccordé(s) tant que tu ne les réaffectes pas.`);
-      }
+      setPlacementError(`${oublies.length} appareillage(s) non cliqué(s) — resté(s) sur ce circuit, en fin de tracé.`);
       setTimeout(() => setPlacementError(null), 3500);
     }
     appliquerOrdreCircuit(cheminementDessin.breaker.label, cheminementDessin.ordre);
     setCheminementDessin(null);
-    if (!estManuel && oublies.length > 0) invalidateResultat();
   };
   const annulerDessinCheminement = () => setCheminementDessin(null);
   const reinitialiserDessinCheminement = () => {

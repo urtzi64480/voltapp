@@ -357,8 +357,8 @@ function genererBreakersManuels(itemsParManuel: Map<number, Item[]>, manuels: Ci
 // Appelé après la génération normale. Tout appareillage resté sans circuit (hors courants faibles RJ45 / TV, qui ont leur câble de
 // communication) est raccordé ici, selon son genre, dans cet ordre :
 //  1. membre d'un circuit MANUEL défini sur un autre niveau (circuitManuelId) → ce circuit ;
-//  2. commande d'éclairage → le circuit de la lampe qu'elle pilote ; sans lampe liée, la lampe la plus proche (le lien est alors posé) ;
-//  3. commande de service (volet / VMC) → le circuit de l'appareil piloté le plus proche, sinon un circuit dédié est créé ;
+//  2. commande d'éclairage → le circuit de la lampe qu'elle pilote ; SANS lampe liée elle reste hors circuit (alerte), jamais rattachée au hasard ;
+//  3. commande de service (volet / VMC) → le circuit de l'appareil piloté de son niveau ; sinon hors circuit (alerte) ;
 //  4. appareil d'une famille groupable (prises, éclairage, extérieur, volets) → le circuit de même famille du niveau le plus proche
 //     qui a de la place, sinon un nouveau circuit ;
 //  5. tout le reste (type inconnu, usage dédié invalide…) → un circuit « Autre » propre à l'appareil.
@@ -385,9 +385,11 @@ function raccorderOublies(niveaux: Niveau[], breakers: Breaker[], alertes: strin
     return b;
   };
   const estLum = (r: Ref) => estLumiere(r.a.type);
-  const circuitsLumiere = () => tous.filter(r => estLum(r) && breakerDe(r.a.circuitId));
 
-  tous.filter(r => r.a.circuitId == null).forEach(r => {
+  const exclus = new Set(niveaux.flatMap(n => n.appareillagesExclus ?? []));
+  // Les commandes en dernier : elles suivent le circuit de leur lampe, qui doit avoir été raccordée avant.
+  const ordreTraitement = (r: Ref) => (estCommande(r.a.type) || estCommandeService(r.a.type) ? 1 : 0);
+  tous.filter(r => r.a.circuitId == null && !exclus.has(r.a.id)).sort((x, y) => ordreTraitement(x) - ordreTraitement(y)).forEach(r => {
     const { a } = r;
     if (a.circuitId != null) return;   // rattaché entre-temps (ex. par une commande de la même boucle)
 
@@ -408,37 +410,23 @@ function raccorderOublies(niveaux: Niveau[], breakers: Breaker[], alertes: strin
       return;
     }
 
-    // 2. commande d'éclairage
+    // 2. commande d'éclairage : uniquement le circuit de la lampe QU'ELLE PILOTE (même sur un autre niveau). Une commande reliée à aucun point
+    //    lumineux n'est PAS rattachée au hasard : elle reste hors circuit et une alerte le dit (voir l'alerte « non reliée à un point lumineux »).
     if (estCommande(a.type)) {
       const cibles = [...(a.commandePourIds ?? []), ...(a.commandePourIds2 ?? [])];
       for (const id of cibles) {
-        const b = breakerDe(parId.get(id)?.a.circuitId);
-        if (b && estLumiere(parId.get(id)!.a.type)) { affecter(r, b); return; }
+        const t = parId.get(id);
+        const b = breakerDe(t?.a.circuitId);
+        if (b && t && estLumiere(t.a.type)) { affecter(r, b); return; }
       }
-      const lampes = circuitsLumiere().filter(t => t.niveau.id === r.niveau.id).sort((x, y) => dist(r, x) - dist(r, y));
-      if (lampes.length > 0) {
-        const l = lampes[0];
-        const sansLampeLiee = !cibles.some(id => { const t = parId.get(id); return !!t && estLumiere(t.a.type); });
-        if (sansLampeLiee) a.commandePourIds = [l.a.id];
-        const b = breakerDe(l.a.circuitId)!;
-        affecter(r, b);
-        alertes.push(`${nomPiece(r)} : ${lib(r)} ${sansLampeLiee ? "sans point lumineux lié — relié à la lampe la plus proche" : "dont les lampes liées n'ont pas de circuit — rattaché au circuit de la lampe la plus proche"} (« ${b.label} »). Vérifie ce qu'il commande.`);
-        return;
-      }
-      const b = creer(r, "lumiere", `Lumière — ${r.niveau.nom || "Niveau"}`);
-      affecter(r, b);
-      alertes.push(`${nomPiece(r)} : ${lib(r)} sans aucun point lumineux dans le plan — circuit d'éclairage « ${b.label} » créé pour lui. Ajoute le(s) point(s) lumineux qu'il commande.`);
       return;
     }
 
-    // 3. commande de service (volet roulant / VMC)
+    // 3. commande de service (volet / VMC) : le circuit de l'appareil piloté de son niveau ; sinon hors circuit + alerte.
     if (estCommandeService(a.type)) {
       const cibleType = cibleCommandeService(a.type);
       const cibles = tous.filter(t => t.a.type === cibleType && t.niveau.id === r.niveau.id && breakerDe(t.a.circuitId)).sort((x, y) => dist(r, x) - dist(r, y));
-      if (cibles.length > 0) { const b = breakerDe(cibles[0].a.circuitId)!; affecter(r, b); alertes.push(`${nomPiece(r)} : ${lib(r)} rattaché à « ${b.label} » (appareil piloté le plus proche).`); return; }
-      const b = creer(r, cibleType === "vmc" ? "vmc" : "volets_roulants", `${CIRCUITS[cibleType === "vmc" ? "vmc" : "volets_roulants"].label} — ${r.piece.nom || r.niveau.nom}`);
-      affecter(r, b);
-      alertes.push(`${nomPiece(r)} : ${lib(r)} sans ${cibleType === "vmc" ? "VMC" : "volet roulant"} dans le plan — circuit « ${b.label} » créé pour lui.`);
+      if (cibles.length > 0) { const b = breakerDe(cibles[0].a.circuitId)!; affecter(r, b); alertes.push(`${nomPiece(r)} : ${lib(r)} rattaché à « ${b.label} » (appareil piloté le plus proche).`); }
       return;
     }
 
@@ -484,13 +472,7 @@ function raccorderOublies(niveaux: Niveau[], breakers: Breaker[], alertes: strin
  *    déduite des interrupteurs/va-et-vient/télérupteurs placés et liés via
  *    commandePourId, qu'il s'agisse d'un circuit manuel ou automatique.
  */
-export interface OptionsGeneration {
-  /** Respecter Niveau.appareillagesExclus (appareils volontairement laissés sans circuit). Faux par défaut : la génération complète raccorde
-   *  100 % des appareillages, sans exception. Vrai uniquement pour la mise à jour des circuits MANUELS seuls (genererCircuitsManuelsSeuls). */
-  respecterExclusions?: boolean;
-}
-
-export function genererCircuits(maisonIn: Maison, options: OptionsGeneration = {}): ResultatGeneration {
+export function genererCircuits(maisonIn: Maison): ResultatGeneration {
   const breakers: Breaker[] = [];
   const alertes: string[] = [];
 
@@ -519,6 +501,14 @@ export function genererCircuits(maisonIn: Maison, options: OptionsGeneration = {
   const niveauxEclaires = niveaux.filter(n => n.pieces.some(p => p.appareillages.some(a => estLumiere(a.type)))).length;
 
   const sansCircuitDiffere: { a: AppareillagePlace; texte: string }[] = [];
+  const exclusGlobal = new Set(niveaux.flatMap(n => n.appareillagesExclus ?? []));
+  const texteSansCircuit = (a: AppareillagePlace, piece: Piece, niveau: Niveau): string => {
+    const lieu = `"${piece.nom || piece.type}" (${niveau.nom})`, lib = LABEL_NON_RACCORDE[a.type] ?? a.type;
+    if (exclusGlobal.has(a.id)) return `${lieu} : ${lib} retiré d'un circuit supprimé — hors circuit. Réinclus-le ou assigne-le à un circuit.`;
+    if (estCommande(a.type)) return `${lieu} : ${lib} non relié à un point lumineux — HORS circuit (non rattaché au hasard). Relie-le à son/ses point(s) lumineux, puis régénère.`;
+    if (estCommandeService(a.type)) return `${lieu} : ${lib} sans ${a.type === "inter_vmc" ? "VMC" : "volet roulant"} à piloter sur ce niveau — HORS circuit. Ajoute l'appareil ou supprime l'interrupteur.`;
+    return `${lieu} : ${lib} sans circuit assigné.`;
+  };
   let plafondId = -1;   // plus grand id déjà pris dans le plan (calculé à la demande, voir « boîte de dérivation systématique »)
   for (const niveau of niveaux) {
     const debutBreakersNiveau = breakers.length;
@@ -576,6 +566,15 @@ export function genererCircuits(maisonIn: Maison, options: OptionsGeneration = {
       const exterieurs = itemsMaison.filter(it => it.base.circuitManuelId === m.id && !tousItems.some(t => t.base.id === it.base.id));
       if (exterieurs.length > 0) itemsParManuel.set(m.id, [...(itemsParManuel.get(m.id) ?? []), ...exterieurs]);
     });
+    // Un circuit manuel d'éclairage qui ne contient QUE des commandes (aucun point lumineux) ne crée pas de petit circuit « vide » : une commande
+    // fait toujours partie du circuit des lampes qu'elle pilote (même à un autre étage) — elle y est rattachée plus bas (raccorderOublies).
+    manuels.forEach(m => {
+      const c = itemsParManuel.get(m.id);
+      if (CIRCUITS[m.famille]?.category !== "lumiere" || !c || c.length === 0) return;
+      if (c.some(it => estLumiere(it.base.type)) || !c.every(it => estCommande(it.base.type))) return;
+      itemsParManuel.delete(m.id);
+      alertes.push(`Circuit manuel « ${m.nom} » (${niveau.nom}) : il ne contient que des commandes, sans point lumineux — aucun circuit créé. Ses commandes suivent le circuit des lampes qu'elles pilotent.`);
+    });
     genererBreakersManuels(itemsParManuel, manuels, niveau.nom, breakers, itemsMaison);
 
     // ─── Exclusions explicites (Niveau.appareillagesExclus) ────────────────────────
@@ -583,7 +582,7 @@ export function genererCircuits(maisonIn: Maison, options: OptionsGeneration = {
     // recliqué en redessinant le cheminement d'un circuit AUTOMATIQUE) ne rejoint plus
     // AUCUN pool automatique : il reste sans circuitId (non raccordé, voir le garde-fou
     // plus bas) tant qu'il n'est pas explicitement réinclus ou assigné à un circuit manuel.
-    const idsExclus = new Set(options.respecterExclusions ? (niveau.appareillagesExclus ?? []) : []);
+    const idsExclus = new Set(niveau.appareillagesExclus ?? []);
     const resteApresExclusion = reste.filter(a => !idsExclus.has(a.base.id));
 
     // ─── Reste : classification automatique habituelle (prises/cuisine/extérieur/────
@@ -675,7 +674,7 @@ export function genererCircuits(maisonIn: Maison, options: OptionsGeneration = {
     niveau.pieces.forEach(piece => {
       piece.appareillages.forEach(a => {
         // Jugé APRÈS tous les niveaux : une commande d'étage (va-et-vient) prend le circuit de sa lampe d'un autre niveau, traité plus tard.
-        if (a.circuitId == null && !TYPES_SANS_CIRCUIT.includes(a.type)) sansCircuitDiffere.push({ a, texte: `"${piece.nom || piece.type}" (${niveau.nom}) : ${LABEL_NON_RACCORDE[a.type] ?? a.type} sans circuit assigné.` });
+        if (a.circuitId == null && !TYPES_SANS_CIRCUIT.includes(a.type)) sansCircuitDiffere.push({ a, texte: texteSansCircuit(a, piece, niveau) });
       });
     });
 
@@ -747,11 +746,7 @@ export function genererCircuits(maisonIn: Maison, options: OptionsGeneration = {
   }
 
   // Filet de sécurité : AUCUN appareillage ne reste sans circuit (voir raccorderOublies).
-  // (Pas pour la mise à jour des circuits manuels seuls : là, les appareils non manuels restent volontairement sans circuit.)
-  if (!options.respecterExclusions) {
-    raccorderOublies(niveaux, breakers, alertes);
-    niveaux.forEach(n => { if (n.appareillagesExclus && n.appareillagesExclus.length > 0) n.appareillagesExclus = []; });
-  }
+  raccorderOublies(niveaux, breakers, alertes);
   sansCircuitDiffere.forEach(({ a, texte }) => { if (a.circuitId == null) alertes.push(texte); });
 
   // Éclairage sur plusieurs étages : repère, pour chaque circuit, les lampes commandées depuis un autre niveau et les commandes
@@ -1350,7 +1345,7 @@ export function genererCircuitsManuelsSeuls(maison: Maison, precedent?: Resultat
     const horsManuel = n.pieces.flatMap(p => p.appareillages).filter(a => a.circuitManuelId == null || !manuelsValides.has(a.circuitManuelId)).map(a => a.id);
     return { ...n, appareillagesExclus: Array.from(new Set([...(n.appareillagesExclus ?? []), ...horsManuel])) };
   });
-  const res = genererCircuits({ niveaux }, { respecterExclusions: true });
+  const res = genererCircuits({ niveaux });
   const resultat: ResultatGeneration = {
     ...res,
     alertes: [], // pas de génération automatique : « sans circuit » n'a pas de sens ici
