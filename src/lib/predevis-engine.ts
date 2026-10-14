@@ -322,7 +322,7 @@ export const PREFIXE_HORS_CIRCUIT = "Hors circuit · ";
 // mode "piece" : les besoins sont regroupés par pièce (câbles = répartis selon les pièces traversées).
 // mode "circuit" : regroupés par CIRCUIT (un circuit de prises peut courir sur plusieurs pièces) — appareillage, boîtes et
 // câbles d'un circuit forment un seul poste. Les longueurs de câble sont strictement les mêmes dans les deux modes.
-export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[], mode: ModePreDevis = "piece", poseEncastreParam: PoseEncastre | ((section: string) => PoseEncastre) = "icta_fils"): { besoins: LigneBesoin[]; alertes: string[]; recap: RecapCircuit[] } {
+export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[], mode: ModePreDevis = "piece", poseEncastreParam: PoseEncastre | ((section: string) => PoseEncastre) = "icta_fils", gainesOptimiseesForcees?: boolean): { besoins: LigneBesoin[]; alertes: string[]; recap: RecapCircuit[] } {
   const alertes: string[] = [];
   // Pose encastrée au choix : une valeur pour tout, ou une fonction (section → choix) pour décider section par section.
   const poseEncastreDe = (section: string): PoseEncastre => (typeof poseEncastreParam === "function" ? poseEncastreParam(section) : poseEncastreParam);
@@ -357,7 +357,8 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
   // Actif : la 1re liaison de chaque circuit (tableau / point d'arrivée → 1er appareillage) ne compte plus UNE gaine par circuit mais les tronçons
   // de l'arbre de gaines partagé ; le câble de ces circuits suit le tronc puis sa branche (un peu plus long qu'en ligne droite).
   const reglagesGaines = niveaux.find(n => n.reglagesGaines)?.reglagesGaines;
-  const paramsGaines = fusionnerParamsGaines(reglagesGaines?.params);
+  // gainesOptimiseesForcees : le pré-devis chiffre les DEUX variantes (gaines classiques / optimisées), quel que soit l'état de l'option sur le plan.
+  const paramsGaines = { ...fusionnerParamsGaines(reglagesGaines?.params), ...(gainesOptimiseesForcees != null ? { actif: gainesOptimiseesForcees } : {}) };
   let gainesOpt: Record<number, GainesNiveau> | null = null;
   if (paramsGaines.actif) {
     try { gainesOpt = optimiserGainesMaison(resultat, resultat.maison.niveaux, paramsGaines, fusionnerForcages(reglagesGaines?.forcages)); }
