@@ -6063,7 +6063,6 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         if (chemin && entreeGn && premierSeg && Math.hypot(entreeGn.x - premierSeg.bPoint.x, entreeGn.y - premierSeg.bPoint.y) < 0.05) {
           if (visuel && !masquerGaine) {
             const ez2 = Math.max(0.8, Math.min(1.6, zoom));
-            const pas = 3.4 * ez2;
             const cableDe = (cleC: string, pts: Point[]) => {
               for (let i = 0; i < pts.length - 1; i++) {
                 const a1 = toScreen(pts[i]), b1 = toScreen(pts[i + 1]);
@@ -6079,25 +6078,20 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               chemin.forEach((et, k) => {
                 const a0 = toScreen(et.de), b0 = toScreen(et.vers);
                 const len = Math.hypot(b0.x - a0.x, b0.y - a0.y) || 1;
-                const nx = -(b0.y - a0.y) / len, ny = (b0.x - a0.x) / len;
                 const n = et.circuits.length;
                 const cleEt = `${breaker.id}-gn-${et.tronconId}`;
                 if (k === chemin.length - 1) { cableDe(cleEt, [et.de, et.vers]); return; }
-                // tronçon commun : la gaine (liseré de la couleur du groupe) contient un fil par circuit, à la couleur du circuit
+                // tronçon commun : UNE gaine à la couleur du groupe (plus épaisse quand elle porte plus de circuits), sans les fils de chaque circuit
+                if (tronconsFaits.has(et.tronconId)) return;
+                tronconsFaits.add(et.tronconId);
                 const coulGaine = couleurGroupe(et.groupeIndex, et.courantFaible);
-                const dec = (et.rang - (n - 1) / 2) * pas;
-                const aPx = { x: a0.x + nx * dec, y: a0.y + ny * dec }, bPx = { x: b0.x + nx * dec, y: b0.y + ny * dec };
-                const larg = n * pas + 5 * ez2;
-                if (!tronconsFaits.has(et.tronconId)) {
-                  tronconsFaits.add(et.tronconId);
-                  tubesGn.push(<line key={`${cleEt}-tube0`} x1={a0.x} y1={a0.y} x2={b0.x} y2={b0.y} stroke="#fff" strokeWidth={larg + 3} strokeLinecap="round" opacity={0.9} />);
-                  tubesGn.push(<line key={`${cleEt}-tube`} x1={a0.x} y1={a0.y} x2={b0.x} y2={b0.y} stroke={coulGaine} strokeWidth={larg} strokeLinecap="round" opacity={0.35} strokeDasharray={et.courantFaible ? "7 4" : undefined} />);
-                  if (len > 70) {
-                    const mx = (a0.x + b0.x) / 2, my = (a0.y + b0.y) / 2;
-                    etiquettesGn.push(<text key={`${cleEt}-lab`} x={mx} y={my - larg / 2 - 4} textAnchor="middle" fontSize={9} fontWeight={700} fill="#1c1917" stroke="#fff" strokeWidth={3} paintOrder="stroke">{et.gaine.replace(/ verte.*/, "")} ×{n}</text>);
-                  }
+                const larg = (4 + Math.min(8, n * 1.1)) * ez2;
+                tubesGn.push(<line key={`${cleEt}-tube0`} x1={a0.x} y1={a0.y} x2={b0.x} y2={b0.y} stroke="#fff" strokeWidth={larg + 3} strokeLinecap="round" opacity={0.95} />);
+                tubesGn.push(<line key={`${cleEt}-tube`} x1={a0.x} y1={a0.y} x2={b0.x} y2={b0.y} stroke={coulGaine} strokeWidth={larg} strokeLinecap="round" opacity={0.9} strokeDasharray={et.courantFaible ? "7 4" : undefined} />);
+                if (len > 60) {
+                  const mx = (a0.x + b0.x) / 2, my = (a0.y + b0.y) / 2;
+                  etiquettesGn.push(<text key={`${cleEt}-lab`} x={mx} y={my - larg / 2 - 5} textAnchor="middle" fontSize={10} fontWeight={800} fill="#1c1917" stroke="#fff" strokeWidth={3} paintOrder="stroke">{et.gaine.replace(/ verte.*/, "")} · {n} circ.</text>);
                 }
-                if (!masquerFils) elements.push(<line key={`${cleEt}-fil`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={color} strokeWidth={2 * ez2} strokeLinecap="round" />);
               });
             } else {
               const coudesDepuisEntree = coudesSegment({ ...niveauActif, liaisonWaypoints: undefined }, { ...seg, aPoint: entreeGn }).map(c => c.point);
