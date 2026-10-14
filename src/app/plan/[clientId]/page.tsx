@@ -7554,24 +7554,33 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               {/* Circuits : tracé VISIBLE, toujours au-dessus de tout (murs, appareillages, meubles…), sans capter la souris. */}
               <g style={{ pointerEvents: "none" }}>{rendreCircuitsPlan("visuel")}</g>
 
-              {/* Gaines optimisées : tronc commun + branches, une couleur par gaine de départ (vert pointillé = courants faibles). */}
+              {/* Gaines optimisées : une couleur par gaine de départ (tireté vert = courants faibles), un seul libellé par gaine sur son tronc,
+                  une boîte de dérivation (carré nommé BD1, BD2…) à chaque séparation. */}
               {calqueGaines && niveauActif && gainesMaison?.[niveauActif.id] && (
                 <g style={{ pointerEvents: "none" }}>
                   {gainesMaison[niveauActif.id].groupes.flatMap((gr, gi) => gr.troncons.map(t => {
                     const a = toScreen(t.de), b = toScreen(t.vers);
                     const coul = couleurGroupe(gi, gr.courantFaible);
-                    const w = Math.min(9, 2.5 + t.circuits.length * 0.7);
+                    const w = 2 + Math.min(2.5, t.circuits.length * 0.3);
                     return (
                       <g key={t.id}>
-                        <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#ffffff" strokeWidth={w + 3} strokeLinecap="round" opacity={0.85} />
-                        <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={coul} strokeWidth={w} strokeLinecap="round" opacity={0.8} strokeDasharray={gr.courantFaible ? "7 4" : undefined} />
-                        {t.circuits.length > 1 && (
-                          <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 5} textAnchor="middle" fontSize={10} fontWeight={700} fill={coul} stroke="#ffffff" strokeWidth={3} paintOrder="stroke">{t.circuits.length}× {t.gaine.replace(/ verte.*/, "")}</text>
-                        )}
-                        {t.parent === null && <circle cx={b.x} cy={b.y} r={4} fill={coul} stroke="#ffffff" strokeWidth={1.5} />}
+                        <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#ffffff" strokeWidth={w + 2.5} strokeLinecap="round" opacity={0.9} />
+                        <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={coul} strokeWidth={w} strokeLinecap="round" strokeDasharray={gr.courantFaible ? "7 4" : undefined} />
                       </g>
                     );
                   }))}
+                  {gainesMaison[niveauActif.id].boites.map(bt => {
+                    const q = toScreen(bt.point);
+                    const gi = gainesMaison[niveauActif.id].groupes.findIndex(g => g.id === bt.groupeId);
+                    const coul = couleurGroupe(gi < 0 ? 0 : gi, bt.courantFaible);
+                    return (
+                      <g key={bt.id}>
+                        <rect x={q.x - 7} y={q.y - 7} width={14} height={14} rx={2} fill="#ffffff" stroke={coul} strokeWidth={2.5} />
+                        <text x={q.x} y={q.y + 3} textAnchor="middle" fontSize={8} fontWeight={800} fill="#1c1917">B</text>
+                        <text x={q.x + 10} y={q.y - 8} fontSize={10} fontWeight={700} fill="#1c1917" stroke="#ffffff" strokeWidth={3} paintOrder="stroke">{bt.nom}</text>
+                      </g>
+                    );
+                  })}
                 </g>
               )}
 

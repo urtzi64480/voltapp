@@ -60,6 +60,8 @@ export interface SyntheseGaines {
   departsApres: number;
   gaineAvantM: number;
   gaineApresM: number;
+  /** Boîtes de dérivation créées (avant : aucune). */
+  boites: number;
   cableAvantM: number;
   cableApresM: number;
   /** Montées tableau → autre niveau (inchangées par l'optimisation). */
@@ -68,8 +70,9 @@ export interface SyntheseGaines {
 
 /** Bilan global : les gaines qui partent du tableau (niveaux qui portent un tableau) + les montées vers les autres niveaux de la maison. */
 export function syntheseGaines(resultat: ResultatGeneration, gaines: Record<number, GainesNiveau>): SyntheseGaines {
-  const s: SyntheseGaines = { departsAvant: 0, departsApres: 0, gaineAvantM: 0, gaineApresM: 0, cableAvantM: 0, cableApresM: 0, montees: [] };
+  const s: SyntheseGaines = { departsAvant: 0, departsApres: 0, gaineAvantM: 0, gaineApresM: 0, boites: 0, cableAvantM: 0, cableApresM: 0, montees: [] };
   Object.values(gaines).forEach(g => {
+    s.boites += g.boites.length;
     s.gaineAvantM += g.avant.gaineM; s.gaineApresM += g.apres.gaineM; s.cableAvantM += g.avant.cableM; s.cableApresM += g.apres.cableM;
     if (g.porteTableau) { s.departsAvant += g.avant.departs; s.departsApres += g.apres.departs; }
   });

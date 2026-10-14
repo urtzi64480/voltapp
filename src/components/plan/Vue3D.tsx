@@ -1028,10 +1028,18 @@ const Vue3D = forwardRef<Vue3DHandle, {
             tube.position.copy(p0).add(p1).multiplyScalar(0.5);
             tube.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), p1.clone().sub(p0).normalize());
             scene.add(tube);
-            const noeud = new THREE.Mesh(new THREE.SphereGeometry(rayon * 1.3, 10, 8), new THREE.MeshStandardMaterial({ color: couleurGn }));
-            noeud.position.copy(p1);
-            scene.add(noeud);
           });
+        });
+        // Boîtes de dérivation aux séparations de gaines : petit coffret carré (≈ 10 cm) à la hauteur de la gaine.
+        gainesNiv.boites.forEach(bt => {
+          const gi = gainesNiv ? gainesNiv.groupes.findIndex(g => g.id === bt.groupeId) : 0;
+          const coul = new THREE.Color(couleurGroupe(Math.max(0, gi), bt.courantFaible));
+          const boite = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.12), new THREE.MeshStandardMaterial({ color: 0xf5f5f4 }));
+          boite.position.set(bt.point.x, hauteurGaine, bt.point.y);
+          scene.add(boite);
+          const liseré = new THREE.Mesh(new THREE.BoxGeometry(0.125, 0.012, 0.125), new THREE.MeshStandardMaterial({ color: coul, emissive: coul, emissiveIntensity: 0.4 }));
+          liseré.position.set(bt.point.x, hauteurGaine + 0.03, bt.point.y);
+          scene.add(liseré);
         });
       }
       /** Coudes imposés à la 1re liaison d'un circuit regroupé : les jonctions de l'arbre entre l'origine et son point d'entrée. */

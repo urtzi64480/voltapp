@@ -10,7 +10,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import type { Point } from "@/lib/maison-types";
 import type { ParamsTableauReel, ResultatTableauReel } from "@/lib/tableau-reel";
 import { agencerGtl } from "@/lib/gtl-agencement";
-import { couleurGroupe, type GroupeGaines } from "@/lib/gaines-optimisees";
+import { couleurGroupe, type BoiteGaine, type GroupeGaines } from "@/lib/gaines-optimisees";
 
 export const COULEUR_ID: Record<string, string> = { AC: "#64748b", A: "#2563eb", F: "#7c3aed" };
 export const COULEURS_PHASE: Record<string, string> = { rouge: "#dc2626", marron: "#92400e", noir: "#1c1917", gris: "#94a3b8", bleu: "#2563eb", "vert/jaune": "#16a34a" };
@@ -366,44 +366,53 @@ export interface GainesPlanProps {
   pieces: PieceDessin[];
   origine: Point;
   groupes: GroupeGaines[];
+  boites: BoiteGaine[];
   selectionBreakerId: number | null;
   groupeSurvole: string | null;
+  boiteActive: string | null;
   onSurvol: (id: string | null) => void;
   onSelectBreaker: (id: number | null) => void;
+  onBoite: (id: string | null) => void;
 }
-export function GainesPlan({ pieces, origine, groupes, selectionBreakerId, groupeSurvole, onSurvol, onSelectBreaker }: GainesPlanProps) {
+export function GainesPlan({ pieces, origine, groupes, boites, selectionBreakerId, groupeSurvole, boiteActive, onSurvol, onSelectBreaker, onBoite }: GainesPlanProps) {
   const pts: Point[] = [origine, ...pieces.flatMap(p => p.contour), ...groupes.flatMap(g => g.troncons.flatMap(t => [t.de, t.vers]))];
   const minX = Math.min(...pts.map(p => p.x)) - 1, maxX = Math.max(...pts.map(p => p.x)) + 3;
   const minY = Math.min(...pts.map(p => p.y)) - 1, maxY = Math.max(...pts.map(p => p.y)) + 0.8;
   const W = Math.max(1, maxX - minX), H = Math.max(1, maxY - minY);
-  const fs = Math.max(W, H) / 70;                  // taille de texte relative à l'emprise du plan
+  const fs = Math.max(W, H) / 60;                  // taille de texte relative à l'emprise du plan
   const ns = { vectorEffect: "non-scaling-stroke" } as const;
   const centre = (c: Point[]): Point => ({ x: c.reduce((s, p) => s + p.x, 0) / Math.max(1, c.length), y: c.reduce((s, p) => s + p.y, 0) / Math.max(1, c.length) });
-  const idx = new Map(groupes.map((g, i) => [g.id, i]));
+  const indexDe = new Map(groupes.map((g, i) => [g.id, i]));
+  const grActif = (id: string) => groupeSurvole === id || (boiteActive != null && boites.find(b => b.id === boiteActive)?.groupeId === id);
+  const filtre = groupeSurvole != null || boiteActive != null;
   return (
     <svg viewBox={`${minX} ${minY} ${W} ${H}`} className="w-full h-full" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Plan des gaines optimisées">
       {pieces.map(p => {
         const c = centre(p.contour);
         return (
           <g key={p.id}>
-            <polygon points={p.contour.map(q => `${q.x},${q.y}`).join(" ")} fill="#fffdf8" stroke="#78716c" strokeWidth={2} {...ns} />
-            <text x={c.x} y={c.y} textAnchor="middle" fontSize={fs * 1.1} fill="#a8a29e">{p.nom}</text>
+            <polygon points={p.contour.map(q => `${q.x},${q.y}`).join(" ")} fill="#fffdf8" stroke="#a8a29e" strokeWidth={1.5} {...ns} />
+            <text x={c.x} y={c.y} textAnchor="middle" fontSize={fs} fill="#c7c3bd">{p.nom}</text>
           </g>
         );
       })}
       {groupes.map((gr, gi) => {
         const coul = couleurGroupe(gi, gr.courantFaible);
-        const actif = groupeSurvole === gr.id;
-        const dim = groupeSurvole != null && !actif;
+        const actif = grActif(gr.id);
+        const dim = filtre && !actif;
         return (
-          <g key={gr.id} opacity={dim ? 0.25 : 1} onMouseEnter={() => onSurvol(gr.id)} onMouseLeave={() => onSurvol(null)}>
+          <g key={gr.id} opacity={dim ? 0.2 : 1} onMouseEnter={() => onSurvol(gr.id)} onMouseLeave={() => onSurvol(null)}>
             {gr.troncons.map(t => {
-              const w = Math.min(9, 2.5 + t.circuits.length * 0.8);
+              const w = 2 + Math.min(2.5, t.circuits.length * 0.3);
               return (
                 <g key={t.id}>
-                  <line x1={t.de.x} y1={t.de.y} x2={t.vers.x} y2={t.vers.y} stroke="#fff" strokeWidth={w + 3} strokeLinecap="round" {...ns} />
-                  <line x1={t.de.x} y1={t.de.y} x2={t.vers.x} y2={t.vers.y} stroke={coul} strokeWidth={actif ? w + 2 : w} strokeLinecap="round" strokeDasharray={gr.courantFaible ? "8 5" : undefined} {...ns} />
-                  {t.circuits.length > 1 && <text x={t.de.x + (t.vers.x - t.de.x) * 0.6} y={t.de.y + (t.vers.y - t.de.y) * 0.6 - fs * 0.5} textAnchor="middle" fontSize={fs} fontWeight={700} fill={coul} stroke="#fff" strokeWidth={fs * 0.25} paintOrder="stroke">{t.circuits.length}× {t.gaine.replace(/ verte.*/, "")}</text>}
+                  <line x1={t.de.x} y1={t.de.y} x2={t.vers.x} y2={t.vers.y} stroke="#fff" strokeWidth={w + 2.5} strokeLinecap="round" {...ns} />
+                  <line x1={t.de.x} y1={t.de.y} x2={t.vers.x} y2={t.vers.y} stroke={coul} strokeWidth={actif ? w + 1.5 : w} strokeLinecap="round" strokeDasharray={gr.courantFaible ? "8 5" : undefined} {...ns} />
+                  {actif && (
+                    <text x={(t.de.x + t.vers.x) / 2} y={(t.de.y + t.vers.y) / 2 - fs * 0.5} textAnchor="middle" fontSize={fs * 0.9} fontWeight={700} fill={coul} stroke="#fff" strokeWidth={fs * 0.25} paintOrder="stroke">
+                      {t.gaine.replace(/ verte.*/, "")}
+                    </text>
+                  )}
                 </g>
               );
             })}
@@ -411,19 +420,31 @@ export function GainesPlan({ pieces, origine, groupes, selectionBreakerId, group
               const sel = c.breakerId === selectionBreakerId;
               return (
                 <g key={c.cle} onClick={() => onSelectBreaker(sel ? null : c.breakerId)} style={{ cursor: "pointer" }}>
-                  <circle cx={c.entree.x} cy={c.entree.y} r={fs * (sel ? 0.9 : 0.55)} fill={sel ? "#f59e0b" : "#fff"} stroke={coul} strokeWidth={2} {...ns} />
-                  <text x={c.entree.x + fs * 0.8} y={c.entree.y + fs * 0.35} fontSize={fs * 0.85} fill="#1c1917" stroke="#fff" strokeWidth={fs * 0.2} paintOrder="stroke">{court(c.label, 18)}</text>
+                  <circle cx={c.entree.x} cy={c.entree.y} r={fs * (sel ? 0.8 : 0.4)} fill={sel ? "#f59e0b" : "#fff"} stroke={coul} strokeWidth={2} {...ns} />
+                  {(sel || actif) && <text x={c.entree.x + fs * 0.7} y={c.entree.y + fs * 0.3} fontSize={fs * 0.8} fill="#1c1917" stroke="#fff" strokeWidth={fs * 0.2} paintOrder="stroke">{court(c.label, 22)}</text>}
                 </g>
               );
             })}
-            {void idx}
+          </g>
+        );
+      })}
+      {boites.map(b => {
+        const coul = couleurGroupe(indexDe.get(b.groupeId) ?? 0, b.courantFaible);
+        const act = boiteActive === b.id;
+        const dim = filtre && !grActif(b.groupeId);
+        return (
+          <g key={b.id} opacity={dim ? 0.25 : 1} onClick={() => onBoite(act ? null : b.id)} style={{ cursor: "pointer" }}>
+            <title>{`${b.nom} — boîte de dérivation : ${b.entrant.gaine} → ${b.sorties.map(x => x.gaine).join(" + ")}`}</title>
+            <rect x={b.point.x - fs * 0.8} y={b.point.y - fs * 0.8} width={fs * 1.6} height={fs * 1.6} rx={fs * 0.2} fill={act ? "#fde68a" : "#fff"} stroke={coul} strokeWidth={act ? 4 : 2.5} {...ns} />
+            <text x={b.point.x} y={b.point.y + fs * 0.3} textAnchor="middle" fontSize={fs * 0.9} fontWeight={800} fill="#1c1917">B</text>
+            <text x={b.point.x + fs} y={b.point.y - fs * 0.9} fontSize={fs * 0.95} fontWeight={700} fill="#1c1917" stroke="#fff" strokeWidth={fs * 0.25} paintOrder="stroke">{b.nom}</text>
           </g>
         );
       })}
       <g>
         <rect x={origine.x - fs * 0.9} y={origine.y - fs * 0.9} width={fs * 1.8} height={fs * 1.8} rx={fs * 0.3} fill="#1c1917" />
         <text x={origine.x} y={origine.y + fs * 0.5} textAnchor="middle" fontSize={fs * 1.4} fill="#fbbf24">⚡</text>
-        <text x={origine.x + fs * 1.2} y={origine.y - fs * 1.1} textAnchor="start" fontSize={fs} fontWeight={700} fill="#1c1917" stroke="#fff" strokeWidth={fs * 0.25} paintOrder="stroke">Tableau / arrivée des gaines</text>
+        <text x={origine.x + fs * 1.2} y={origine.y - fs * 1.1} textAnchor="start" fontSize={fs} fontWeight={700} fill="#1c1917" stroke="#fff" strokeWidth={fs * 0.25} paintOrder="stroke">Tableau</text>
       </g>
     </svg>
   );

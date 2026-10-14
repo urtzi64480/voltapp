@@ -363,8 +363,8 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
     catch { alertes.push("Gaines optimisées : calcul impossible, le pré-devis garde une gaine par circuit."); }
     if (gainesOpt) {
       const n = Object.values(gainesOpt);
-      const avant = n.reduce((t, g) => t + g.avant.departs, 0), apres = n.reduce((t, g) => t + g.apres.departs, 0);
-      alertes.push(`Gaines optimisées actives : ${apres} gaine(s) de départ au lieu de ${avant} (une par circuit). Gaines partagées chiffrées une seule fois (« Commun — Gaines au départ du tableau »), câble rallongé du détour par le tronc.`);
+      const avant = n.reduce((t, g) => t + g.avant.departs, 0), apres = n.reduce((t, g) => t + g.apres.departs, 0), nbBoitesGn = n.reduce((t, g) => t + g.boites.length, 0);
+      alertes.push(`Gaines optimisées actives : ${apres} gaine(s) de départ au lieu de ${avant} (une par circuit), ${nbBoitesGn} boîte(s) de dérivation aux séparations. Gaines partagées chiffrées une seule fois (« Commun — Gaines au départ du tableau »), câble rallongé du détour par le tronc.`);
     }
   }
 
@@ -758,6 +758,15 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           if (b) noterCircuit(niveau, b, nomCircuit(b), code, libelle, longueur / t.circuits.length, "m");
         });
       }));
+      // Boîtes de dérivation : une à chaque endroit où une gaine commune se sépare (les câbles y passent sans être coupés : pas de bornes).
+      if (gn.boites.length > 0) {
+        const libBoite = "Boîte de dérivation (séparation de gaines)";
+        ajouter(`boite_derivation@gaines:${niveau.id}`, "boite_derivation", libBoite, nomGaines, gn.boites.length, "u");
+        gn.boites.forEach(bt => bt.circuits.forEach(cle => {
+          const b = breakersNiveau.find(x => x.label === cle);
+          if (b) noterCircuit(niveau, b, nomCircuit(b), "boite_derivation", libBoite, 1 / bt.circuits.length, "u");
+        }));
+      }
     }
   });
 
