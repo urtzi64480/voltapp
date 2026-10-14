@@ -5646,10 +5646,11 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     return nvs.map(n => ({ ...n, reglagesGaines: nv }));
   });
   const [tableauReelId, setTableauReelId] = useState<string>(TABLEAU_PRINCIPAL);
-  const [ongletTableauReel, setOngletTableauReel] = useState<OngletTableauReel>("tableau");
+  const [ongletTableauReel, setOngletTableauReel] = useState<OngletTableauReel>("ensemble");
   const [recalculGaines, setRecalculGaines] = useState(0);
   const [rowsEnregistres, setRowsEnregistres] = useState<BreakerRow[]>([]);
-  const panneauTableauOuvert = !!reglagesTR.actif;
+  // Ouverture du panneau plein écran : état de session (jamais enregistré avec le plan, sinon il se rouvrirait à chaque chargement).
+  const [panneauTableauOuvert, setPanneauTableauOuvert] = useState(false);
   const paramsGaines = fusionnerParamsGaines(reglagesGn.params);
   const forcagesGaines = fusionnerForcages(reglagesGn.forcages);
   const calqueGaines = paramsGaines.actif && reglagesGn.calque !== false;
@@ -5693,6 +5694,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     });
     return { gaineDeBreaker, diametreGaines, supplementaires };
   }, [gainesMaison, syntheseGainesMaison, resultat, niveaux]);
+
+  // Couleur de chaque gaine de départ (même palette que le tracé sur le plan) ; montées et gaines individuelles : gris.
+  const couleurGaineDe = useMemo(() => {
+    const m = new Map<string, string>();
+    Object.values(gainesMaison ?? {}).forEach(g => g.groupes.forEach((gr, gi) => m.set(`${g.niveauId}:${gr.id}`, couleurGroupe(gi, gr.courantFaible))));
+    return (id: string) => m.get(id) ?? (id.startsWith("montee") ? "#64748b" : "#a8a29e");
+  }, [gainesMaison]);
 
   // Tableau enregistré (module Tableau) : relu à la demande, sans toucher au plan.
   useEffect(() => {
@@ -6734,7 +6742,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
           {resultat && (
             <>
-              <button onClick={() => { setOngletTableauReel("tableau"); majReglagesTR({ actif: !panneauTableauOuvert }); }}
+              <button onClick={() => { setOngletTableauReel("ensemble"); setPanneauTableauOuvert(o => !o); }}
                 title="Tableau virtuel comme si tu l'avais devant toi : rails, différentiels, réserve, GTL, raccordement, connexions et contrôles NF C 15-100"
                 className={`btn-ghost !text-xs ${panneauTableauOuvert ? "!bg-ink-100" : ""}`}>
                 <Zap size={13} /> Tableau réaliste
@@ -6742,7 +6750,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
               <button onClick={() => {
                   const actif = !paramsGaines.actif;
                   majReglagesGn({ params: { ...reglagesGn.params, actif } });
-                  if (actif) { setOngletTableauReel("gaines"); majReglagesTR({ actif: true }); }
+                  if (actif) { setOngletTableauReel("gaines"); setPanneauTableauOuvert(true); }
                 }}
                 title="Option : regroupe les circuits qui partent dans la même direction dans des gaines communes au départ du tableau (au lieu d'une gaine par circuit)"
                 className={`btn-ghost !text-xs ${paramsGaines.actif ? "!bg-ink-100" : ""}`}>
@@ -6790,10 +6798,12 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 diametreGaines={entreesGaines.diametreGaines}
                 gainesSupplementairesMm={entreesGaines.supplementaires}
                 couleurDe={id => colorMap.get(id) ?? "#78716c"}
+                pieces={niveauActif?.pieces.map(pc => ({ id: pc.id, nom: pc.nom, contour: pc.contour }))}
+                couleurGaine={couleurGaineDe}
                 breakerSelectionneId={breakerPanneauId}
                 onSelectBreaker={selectionnerBreakerPanneau}
                 onRecalculerGaines={() => setRecalculGaines(t => t + 1)}
-                onFermer={() => majReglagesTR({ actif: false })}
+                onFermer={() => setPanneauTableauOuvert(false)}
               />
             )}
             {!vue3D && (
