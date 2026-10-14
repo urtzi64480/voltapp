@@ -2,10 +2,81 @@
 // Schéma technique des gaines optimisées : tableau → gaines → boîtes de dérivation → TOUS les circuits, niveau par niveau.
 // Lecture de gauche à droite ; chaque circuit est une ligne à droite (disjoncteur, section, longueur de câble).
 
-import { couleurGroupe, type BoiteGaine, type CircuitGaine, type GroupeGaines, type TronconArbre } from "@/lib/gaines-optimisees";
+import { couleurGroupe, diametreGaineDepuisLibelle, type BoiteGaine, type CircuitGaine, type GroupeGaines, type TronconArbre } from "@/lib/gaines-optimisees";
 import type { GainesNiveau } from "@/lib/gaines-optimisees-plan";
 
 const fmt = (v: number, d = 1) => v.toFixed(d).replace(".", ",");
+const LIB_PASSAGE: Record<string, string> = { murs: "dans les murs", plafond: "au plafond", direct: "en ligne droite" };
+
+/** Positions (centre ± rayon) de n câbles rangés en couronnes à l'intérieur d'un cercle de rayon R. */
+function positionsCables(n: number, R: number): { x: number; y: number; r: number }[] {
+  if (n <= 0) return [];
+  if (n === 1) return [{ x: 0, y: 0, r: R * 0.62 }];
+  const r = Math.min(R * 0.5, (R * 0.92) / (Math.sqrt(n) + 0.9));
+  const couronnes: number[] = []; let reste = n, rayonC = 0;
+  if (n > 3) { couronnes.push(1); reste -= 1; }
+  while (reste > 0) { rayonC += 2 * r * 1.02; const cap = Math.max(1, Math.floor((2 * Math.PI * rayonC) / (2 * r * 1.04))); const k = Math.min(cap, reste); couronnes.push(k); reste -= k; }
+  const out: { x: number; y: number; r: number }[] = [];
+  let rc = 0;
+  couronnes.forEach((k, ci) => {
+    if (ci === 0 && n > 3) { out.push({ x: 0, y: 0, r }); return; }
+    rc = rc === 0 ? (n > 3 ? 2 * r * 1.02 : (k === 2 ? r * 1.05 : r * 1.2)) : rc + 2 * r * 1.02;
+    for (let i = 0; i < k; i++) { const a = (2 * Math.PI * i) / k - Math.PI / 2; out.push({ x: Math.cos(a) * rc, y: Math.sin(a) * rc, r }); }
+  });
+  return out;
+}
+
+/** Coupes : pour chaque gaine (et chaque grosse gaine après une boîte), ce qu'elle contient — un rond par câble, à la couleur du circuit. */
+function CoupesNiveau({ nom, g, couleurDe, breakerSelectionneId, onSelectBreaker }: { nom: string; g: GainesNiveau } & Omit<Props, "niveaux">) {
+  return (
+    <section className="mb-6">
+      <h3 className="text-sm font-bold text-ink-900 mb-1">Coupes des gaines — niveau « {nom} »</h3>
+      <div className="flex flex-col gap-3">
+        {g.groupes.map((gr, gi) => {
+          const coul = couleurGroupe(gi, gr.courantFaible);
+          const troncs = gr.troncons.filter(t => t.circuits.length > 1 || gr.circuits.length === 1);
+          return (
+            <div key={gr.id} className="rounded-lg border border-ink-200 bg-white p-2">
+              <p className="text-xs font-bold text-ink-900 mb-1.5 flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm" style={{ background: coul }} />{gr.nom} — {gr.circuits.length} circuit{gr.circuits.length > 1 ? "s" : ""}</p>
+              <div className="flex flex-wrap gap-3">
+                {troncs.map(t => {
+                  const diam = diametreGaineDepuisLibelle(t.gaine);
+                  const R = Math.max(26, Math.min(52, 14 + diam * 1.1));
+                  const pos = positionsCables(t.circuits.length, R - 3);
+                  const taille = R * 2 + 6;
+                  return (
+                    <div key={t.id} className="flex gap-2 items-start rounded-md border border-ink-100 p-2" style={{ minWidth: 230 }}>
+                      <svg width={taille} height={taille} viewBox={`${-taille / 2} ${-taille / 2} ${taille} ${taille}`} role="img" aria-label={`Coupe ${t.gaine}, ${t.circuits.length} câbles`}>
+                        <circle r={R} fill="#fff" stroke={coul} strokeWidth={4} strokeDasharray={gr.courantFaible ? "6 3" : undefined} />
+                        {t.circuits.map((cle, i) => {
+                          const c = gr.circuits.find(x => x.cle === cle); const p = pos[i];
+                          if (!c || !p) return null;
+                          const sel = c.breakerId === breakerSelectionneId;
+                          return <circle key={cle} cx={p.x} cy={p.y} r={p.r} fill={couleurDe(c.breakerId)} stroke={sel ? "#F59E0B" : "#44403c"} strokeWidth={sel ? 2.5 : 0.8} style={{ cursor: "pointer" }} onClick={() => onSelectBreaker(sel ? null : c.breakerId)}><title>{c.label} — {c.section} mm²</title></circle>;
+                        })}
+                      </svg>
+                      <div className="text-[11px] leading-snug text-ink-700 min-w-0">
+                        <p className="font-bold text-ink-900">{t.gaine.replace(/ verte.*/, "")} · {t.circuits.length} câble{t.circuits.length > 1 ? "s" : ""}</p>
+                        <p className="text-ink-500">{t.id === gr.tronc.id ? "tronc au départ du tableau" : `tronçon ${t.id}`} · remplissage {t.tauxPct} % · {fmt(t.longueurM)} m{t.passage ? ` · ${LIB_PASSAGE[t.passage]}` : ""}</p>
+                        <ul className="mt-0.5">
+                          {t.circuits.map(cle => {
+                            const c = gr.circuits.find(x => x.cle === cle);
+                            if (!c) return null;
+                            return <li key={cle} className="truncate cursor-pointer" onClick={() => onSelectBreaker(c.breakerId === breakerSelectionneId ? null : c.breakerId)}><span className="inline-block w-2 h-2 rounded-full mr-1 align-baseline" style={{ background: couleurDe(c.breakerId) }} />{c.label} <span className="text-ink-400">· {c.section} mm²</span></li>;
+                          })}
+                        </ul>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
 const LIGNE = 38, X_TABLEAU = 8, W_TABLEAU = 74, X_ARBRE = 110, DX = 200, X_FEUILLE_MINI = 380, W_LABEL = 300, ENTETE = 30;
 
 interface Noeud { id: string; t: TronconArbre; enfants: Noeud[]; y: number; x: number; feuille?: CircuitGaine; boite?: BoiteGaine }
@@ -79,7 +150,7 @@ function SchemaNiveau({ nom, g, couleurDe, breakerSelectionneId, onSelectBreaker
             const lx = n.enfants.length > 0 ? xc - 18 : xc - 8;
             if (!sansLabel) parcours.push(
               <text key={`l-${t.id}`} x={lx} y={yc - epais / 2 - 4} textAnchor="end" fontSize={10} fill="#44403c" stroke="#fff" strokeWidth={3} paintOrder="stroke">
-                {t.gaine.replace(/ verte.*/, "")} · {t.longueurM < 0.05 ? "sur place" : `${fmt(t.longueurM)} m`}{t.circuits.length > 1 ? ` · ${t.circuits.length} circuits` : ""}
+                {t.gaine.replace(/ verte.*/, "")} · {t.longueurM < 0.05 ? "sur place" : `${fmt(t.longueurM)} m`}{t.passage === "plafond" ? " (plafond)" : ""}{t.circuits.length > 1 ? ` · ${t.circuits.length} circuits` : ""}
               </text>,
             );
             n.enfants.forEach(e => tube(e, n));
@@ -136,9 +207,14 @@ export function SchemaGaines({ niveaux, couleurDe, breakerSelectionneId, onSelec
     <div>
       <p className="text-xs text-ink-600 mb-2">
         Lecture de gauche à droite : <b>tableau → gaine → boîte de dérivation (B) → circuit</b>. L&apos;épaisseur d&apos;une gaine suit le nombre de circuits qu&apos;elle porte ; tireté = courants faibles.
-        Clique un circuit pour le retrouver sur le plan. Longueurs à vol d&apos;oiseau, hors montées verticales.
+        Clique un circuit pour le retrouver sur le plan. Longueurs suivant le tracé réel (murs, plafond si plus court), hors montées verticales. Sous le schéma : la <b>coupe</b> de chaque gaine et de chaque grosse gaine (un rond par câble).
       </p>
-      {niveaux.map(n => <SchemaNiveau key={n.nom} nom={n.nom} g={n.gaines} couleurDe={couleurDe} breakerSelectionneId={breakerSelectionneId} onSelectBreaker={onSelectBreaker} />)}
+      {niveaux.map(n => (
+        <div key={n.nom}>
+          <SchemaNiveau nom={n.nom} g={n.gaines} couleurDe={couleurDe} breakerSelectionneId={breakerSelectionneId} onSelectBreaker={onSelectBreaker} />
+          <CoupesNiveau nom={n.nom} g={n.gaines} couleurDe={couleurDe} breakerSelectionneId={breakerSelectionneId} onSelectBreaker={onSelectBreaker} />
+        </div>
+      ))}
     </div>
   );
 }

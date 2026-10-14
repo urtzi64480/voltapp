@@ -587,7 +587,9 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         const c = gn.groupes.flatMap(g => g.circuits).find(x => x.cle === b.label);
         if (c) { mesure += h; direct += Math.hypot(c.entree.x - gn.origine.x, c.entree.y - gn.origine.y); }
       });
-      if (direct > 0.5) facteurChemin = Math.max(1, mesure / direct);
+      // Tronçons déjà tracés dans les murs / au plafond (longueurs réelles) : aucun calage à appliquer.
+      const tracees = gn.groupes.every(gr => gr.troncons.every(t => !!t.chemin));
+      if (!tracees && direct > 0.5) facteurChemin = Math.max(1, mesure / direct);
     }
 
     breakersNiveau.forEach(b => {

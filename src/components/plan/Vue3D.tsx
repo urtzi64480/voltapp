@@ -30,7 +30,7 @@ import { cheminGaineAttente, gaineDeAttente, HAUTEUR_ATTENTE_DEFAUT_CM } from "@
 import { construireChemin3D, hauteurGaineNiveau } from "@/lib/chemin-3d";
 import { HAUTEUR_TABLEAU_DEFAUT, creerContexteLongueurs } from "@/lib/longueurs-circuits";
 import { couleurGroupe, diametreGaineDepuisLibelle, fusionnerForcages, fusionnerParamsGaines, jonctionsVersCircuit, optimiserGaines, type ResultatGainesOptimisees } from "@/lib/gaines-optimisees";
-import { circuitsGainesNiveau } from "@/lib/gaines-optimisees-plan";
+import { acheminerGaines, circuitsGainesNiveau } from "@/lib/gaines-optimisees-plan";
 
 // Hauteur du tableau par défaut (HAUTEUR_TABLEAU_DEFAUT) : définie dans lib/longueurs-circuits.ts, partagée avec le calcul des longueurs.
 
@@ -1013,22 +1013,25 @@ const Vue3D = forwardRef<Vue3DHandle, {
       if (paramsGn.actif) {
         try {
           const c = circuitsGainesNiveau({ ...resultat, maison: { niveaux: [{ ...niveau, pieces: niveauResultat.pieces }] } }, { ...niveau, pieces: niveauResultat.pieces });
-          if (c && c.circuits.length > 0) gainesNiv = optimiserGaines(c.circuits, c.origine, paramsGn, fusionnerForcages(niveau.reglagesGaines?.forcages));
+          if (c && c.circuits.length > 0) { gainesNiv = optimiserGaines(c.circuits, c.origine, paramsGn, fusionnerForcages(niveau.reglagesGaines?.forcages)); try { acheminerGaines(gainesNiv, { ...niveau, pieces: niveauResultat.pieces }, c.origine, c.circuits); } catch { /* tracé droit */ } }
         } catch { gainesNiv = null; }
       }
       if (gainesNiv) {
         gainesNiv.groupes.forEach((gr, gi) => {
           const couleurGn = new THREE.Color(couleurGroupe(gi, gr.courantFaible));
           gr.troncons.forEach(t => {
-            const p0 = new THREE.Vector3(t.de.x, hauteurGaine, t.de.y), p1 = new THREE.Vector3(t.vers.x, hauteurGaine, t.vers.y);
-            const longueur = p0.distanceTo(p1);
-            if (longueur < 0.01) return;
             const rayon = Math.max(0.008, diametreGaineDepuisLibelle(t.gaine) / 2000);
-            const tube = new THREE.Mesh(new THREE.CylinderGeometry(rayon, rayon, longueur, 12),
-              new THREE.MeshStandardMaterial({ color: couleurGn, transparent: true, opacity: 0.4, emissive: couleurGn, emissiveIntensity: 0.25 }));
-            tube.position.copy(p0).add(p1).multiplyScalar(0.5);
-            tube.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), p1.clone().sub(p0).normalize());
-            scene.add(tube);
+            const poly = t.chemin && t.chemin.length >= 2 ? t.chemin : [t.de, t.vers];
+            for (let i = 0; i < poly.length - 1; i++) {
+              const p0 = new THREE.Vector3(poly[i].x, hauteurGaine, poly[i].y), p1 = new THREE.Vector3(poly[i + 1].x, hauteurGaine, poly[i + 1].y);
+              const longueur = p0.distanceTo(p1);
+              if (longueur < 0.01) continue;
+              const tube = new THREE.Mesh(new THREE.CylinderGeometry(rayon, rayon, longueur, 12),
+                new THREE.MeshStandardMaterial({ color: couleurGn, transparent: true, opacity: 0.4, emissive: couleurGn, emissiveIntensity: 0.25 }));
+              tube.position.copy(p0).add(p1).multiplyScalar(0.5);
+              tube.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), p1.clone().sub(p0).normalize());
+              scene.add(tube);
+            }
           });
         });
         // Boîtes de dérivation aux séparations de gaines : petit coffret carré (≈ 10 cm) à la hauteur de la gaine.

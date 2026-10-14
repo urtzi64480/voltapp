@@ -64,6 +64,9 @@ export interface TronconArbre {
   boiteVers?: string;
   /** Tronçon très court dont l'extrémité est fusionnée dans la boîte d'amont (pas de seconde boîte à moins de DISTANCE_MINI_BOITES_M) : id de cette boîte. */
   dansBoite?: string;
+  /** Tracé réel du tronçon (de → vers, coudes compris) : dans l'épaisseur des murs, ou au plafond si c'est beaucoup plus court. Absent = ligne droite. */
+  chemin?: Point[];
+  passage?: "murs" | "plafond" | "direct";
 }
 
 /** Deux séparations de gaine plus proches que ça (m) partagent une seule boîte de dérivation. */
@@ -356,7 +359,13 @@ export function jonctionsVersCircuit(res: ResultatGainesOptimisees, cleCircuit: 
   const chaine: TronconArbre[] = [];
   let t = gr.troncons.find(x => x.circuits.length === 1 && x.circuits[0] === cleCircuit);
   while (t) { chaine.unshift(t); const par: string | null = t.parent; t = par ? gr.troncons.find(x => x.id === par) : undefined; }
-  return chaine.slice(0, -1).map(x => ({ x: x.vers.x, y: x.vers.y }));
+  // jonctions + coudes de chaque tronçon (le câble suit la gaine dans les murs), point d'entrée exclu
+  const pts: Point[] = [];
+  chaine.forEach((x, i) => {
+    (x.chemin ?? []).slice(1, -1).forEach(q => pts.push({ x: q.x, y: q.y }));
+    if (i < chaine.length - 1) pts.push({ x: x.vers.x, y: x.vers.y });
+  });
+  return pts;
 }
 
 /** Une étape du trajet d'un circuit regroupé : un tronçon de gaine du tronc vers sa feuille. */
@@ -372,6 +381,8 @@ export interface EtapeChemin {
   groupeIndex: number;
   courantFaible: boolean;
   longueurM: number;
+  chemin?: Point[];
+  passage?: "murs" | "plafond" | "direct";
   /** Boîte de dérivation à l'arrivée de l'étape (absent sur la dernière). */
   boiteVers?: string;
 }
@@ -393,5 +404,6 @@ export function cheminCircuitGaine(res: ResultatGainesOptimisees, cleCircuit: st
     tronconId: x.id, de: x.de, vers: x.vers, gaine: x.gaine, circuits: x.circuits,
     rang: Math.max(0, gr.circuits.filter(c => x.circuits.includes(c.cle)).findIndex(c => c.cle === cleCircuit)),
     groupeIndex, courantFaible: gr.courantFaible, longueurM: x.longueurM, boiteVers: x.dansBoite ?? x.boiteVers,
+    chemin: x.chemin, passage: x.passage,
   }));
 }
