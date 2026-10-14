@@ -70,6 +70,7 @@ import {
 
 import { nbConducteurs } from "./couleurs-fils";
 import { fusionnerForcages, fusionnerParamsGaines } from "./gaines-optimisees";
+import { gaineDeAttente, libelleSection, longueursGaineAttente } from "./gaines-attente";
 import { optimiserGainesMaison, type GainesNiveau } from "./gaines-optimisees-plan";
 import {
   genererCircuits, segmentsPourCircuit, breakersDuNiveau, ResultatGeneration, cleCircuitDedie,
@@ -768,6 +769,25 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         }));
       }
     }
+
+    // ─── Gaines en attente (pré-câblées ou non) : gaine jusqu'au tableau (sans y être raccordée) + obturateur posé au mur ───────────
+    // Même logique qu'un appareillage : boîte d'encastrement + (ici) obturateur + plaque de finition. Une gaine précâblée porte son câble ;
+    // une gaine vide est comptée avec la gaine ICTA de la section choisie (le câble sera tiré plus tard, donc non compté).
+    (niveau.gainesAttente ?? []).forEach(g => {
+      const lg = longueursGaineAttente(niveau, g);
+      if (!lg) return;
+      const ga = gaineDeAttente(g);
+      const nom = g.nom?.trim() || "Gaine en attente";
+      const piece = mode === "circuit" ? `Attente — ${nom}` : pseudoCommun(`Gaines en attente — ${niveau.nom || niveau.type}`);
+      const suffixe = mode === "circuit" ? `@attente:${niveau.id}:${g.id}` : `@attente:${niveau.id}`;
+      const etat = g.precable ? `précâblée 3G${libelleSection(g.section)}` : `vide, câble 3G${libelleSection(g.section)} à tirer`;
+      ajouter(`${ga.code}${suffixe}`, ga.code, `${ga.libelle}`, piece, lg.totaleM, "m");
+      ajouter(`boite_encastrement_1poste${suffixe}`, "boite_encastrement_1poste", "Boîte d'encastrement simple (obturateur de gaine en attente)", piece, 1, "u");
+      ajouter(`obturateur_attente${suffixe}`, "obturateur_attente", "Obturateur de gaine en attente (à poser au mur)", piece, 1, "u");
+      ajouter(`plaque_1poste${suffixe}`, "plaque_1poste", "Plaque de finition simple (obturateur de gaine en attente)", piece, 1, "u");
+      const lb = cumul.get(`${ga.code}${suffixe}`);
+      if (lb) (lb.appareils ??= []).push({ piece: niveau.nom || "Niveau", nom: `${nom} — ${etat}` });
+    });
   });
 
   // ─── Disjoncteurs et différentiels (tableau — une seule fois, pas par niveau) ─────
