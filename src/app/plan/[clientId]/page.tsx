@@ -9,7 +9,7 @@ import { Client, Projet } from "@/types";
 import { calculerBesoinsBruts, signaturesActuelles, postesInvalides, CLE_OK_CABLES, CLE_OK_GAINES } from "@/lib/predevis-engine";
 import Shell from "@/components/layout/Shell";
 import TableauReelPanel, { type Onglet as OngletTableauReel } from "@/components/plan/TableauReelPanel";
-import { couleurGroupe, fusionnerForcages, fusionnerParamsGaines, diametreGaineDepuisLibelle } from "@/lib/gaines-optimisees";
+import { couleurGroupe, cheminCircuitGaine, fusionnerForcages, fusionnerParamsGaines, diametreGaineDepuisLibelle } from "@/lib/gaines-optimisees";
 import { optimiserGainesMaison, syntheseGaines, type GainesNiveau } from "@/lib/gaines-optimisees-plan";
 import type { ReglagesGaines, ReglagesTableauReel } from "@/lib/maison-types";
 import { useProjets, qsProjet, modifierProjet, sauverTableau, sauverAnnexes, synchroniserAnnexes, lireAnnexes, nouvelIdAnnexe, TABLEAU_PRINCIPAL, TableauAnnexe } from "@/lib/projets";
@@ -6033,7 +6033,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       arr.push(a);
       parCircuit.set(a.circuitId, arr);
     });
-    return Array.from(parCircuit.entries()).flatMap(([circuitId, points]) => {
+    // Gaines optimisées : liserés des gaines communes (dessous) et étiquettes (dessus), dessinés une seule fois par tronçon, hors de l'ordre des circuits.
+    const tubesGn: ReactNode[] = [], etiquettesGn: ReactNode[] = [], tronconsFaits = new Set<string>();
+    const traceCircuits = Array.from(parCircuit.entries()).flatMap(([circuitId, points]) => {
       const breaker = resultat.breakers.find(b => b.id === circuitId);
       if (!breaker) return [];
       if (!points.some(a => estDansFiltre(a, filtreAffichage))) return [];
@@ -6051,7 +6053,59 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       // Longueur RÉELLE de chaque section (horizontale + montée de départ, + descente finale pour la dernière).
       const ctxLg = creerContexteLongueurs(niveauActif);
       const hAncreLg = hauteurAncreFn(ctxLg);
+      const gainesNivPlan = calqueGaines ? gainesMaison?.[niveauActif.id] : undefined;
       segments.forEach(seg => {
+        // Gaines optimisées : tout départ du tableau suit la gaine commune (tronc → boîtes de dérivation → entrée du circuit), en faisceau ;
+        // les autres câbles du circuit qui partaient du tableau (ex. chaque lampe d'un circuit d'éclairage) repartent ensuite de cette entrée.
+        const chemin = gainesNivPlan && seg.aId === "tableau" && seg.type !== "domotique" ? cheminCircuitGaine(gainesNivPlan, breaker.label) : null;
+        const premierSeg = segments.find(sg => sg.aId === "tableau" && sg.type !== "domotique");
+        const entreeGn = chemin ? chemin[chemin.length - 1].vers : null;
+        if (chemin && entreeGn && premierSeg && Math.hypot(entreeGn.x - premierSeg.bPoint.x, entreeGn.y - premierSeg.bPoint.y) < 0.05) {
+          if (visuel && !masquerGaine) {
+            const ez2 = Math.max(0.8, Math.min(1.6, zoom));
+            const pas = 3.4 * ez2;
+            const cableDe = (cleC: string, pts: Point[]) => {
+              for (let i = 0; i < pts.length - 1; i++) {
+                const a1 = toScreen(pts[i]), b1 = toScreen(pts[i + 1]);
+                const traits = geometrieCable(a1, b1, conducteursSegment(seg), (1.6 + 0.5) * ez2);
+                elements.push(<line key={`${cleC}-${i}-halo`} x1={a1.x} y1={a1.y} x2={b1.x} y2={b1.y} stroke="#fff" strokeWidth={6 * ez2} strokeLinecap="round" opacity={0.8} />);
+                if (!masquerFils) traits.forEach((t, k) => {
+                  elements.push(<line key={`${cleC}-${i}-f${k}`} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke={t.couleur} strokeWidth={1.6 * ez2} strokeLinecap="round" />);
+                  if (t.couleur2) elements.push(<line key={`${cleC}-${i}-f${k}b`} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke={t.couleur2} strokeWidth={1.6 * ez2} strokeDasharray={`${3 * ez2} ${3 * ez2}`} />);
+                });
+              }
+            };
+            if (seg === premierSeg) {
+              chemin.forEach((et, k) => {
+                const a0 = toScreen(et.de), b0 = toScreen(et.vers);
+                const len = Math.hypot(b0.x - a0.x, b0.y - a0.y) || 1;
+                const nx = -(b0.y - a0.y) / len, ny = (b0.x - a0.x) / len;
+                const n = et.circuits.length;
+                const cleEt = `${breaker.id}-gn-${et.tronconId}`;
+                if (k === chemin.length - 1) { cableDe(cleEt, [et.de, et.vers]); return; }
+                // tronçon commun : la gaine (liseré de la couleur du groupe) contient un fil par circuit, à la couleur du circuit
+                const coulGaine = couleurGroupe(et.groupeIndex, et.courantFaible);
+                const dec = (et.rang - (n - 1) / 2) * pas;
+                const aPx = { x: a0.x + nx * dec, y: a0.y + ny * dec }, bPx = { x: b0.x + nx * dec, y: b0.y + ny * dec };
+                const larg = n * pas + 5 * ez2;
+                if (!tronconsFaits.has(et.tronconId)) {
+                  tronconsFaits.add(et.tronconId);
+                  tubesGn.push(<line key={`${cleEt}-tube0`} x1={a0.x} y1={a0.y} x2={b0.x} y2={b0.y} stroke="#fff" strokeWidth={larg + 3} strokeLinecap="round" opacity={0.9} />);
+                  tubesGn.push(<line key={`${cleEt}-tube`} x1={a0.x} y1={a0.y} x2={b0.x} y2={b0.y} stroke={coulGaine} strokeWidth={larg} strokeLinecap="round" opacity={0.35} strokeDasharray={et.courantFaible ? "7 4" : undefined} />);
+                  if (len > 70) {
+                    const mx = (a0.x + b0.x) / 2, my = (a0.y + b0.y) / 2;
+                    etiquettesGn.push(<text key={`${cleEt}-lab`} x={mx} y={my - larg / 2 - 4} textAnchor="middle" fontSize={9} fontWeight={700} fill="#1c1917" stroke="#fff" strokeWidth={3} paintOrder="stroke">{et.gaine.replace(/ verte.*/, "")} ×{n}</text>);
+                  }
+                }
+                if (!masquerFils) elements.push(<line key={`${cleEt}-fil`} x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={color} strokeWidth={2 * ez2} strokeLinecap="round" />);
+              });
+            } else {
+              const coudesDepuisEntree = coudesSegment({ ...niveauActif, liaisonWaypoints: undefined }, { ...seg, aPoint: entreeGn }).map(c => c.point);
+              cableDe(`${breaker.id}-gn-${String(seg.bId)}`, [entreeGn, ...coudesDepuisEntree, seg.bPoint]);
+            }
+          }
+          return;
+        }
         const sectionsLg = showLongueurs && seg.type !== "domotique" ? tracerLiaison(ctxLg, breaker, segments, seg, hAncreLg).sections : null;
         const cle = cleSegmentLiaison(seg.aId, seg.bId);
         const coudes = coudesSegment(niveauActif, seg);
@@ -6255,6 +6309,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       }
       return elements;
     });
+    return [...tubesGn, ...traceCircuits, ...etiquettesGn];
   };
 
   return (
@@ -6756,6 +6811,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 className={`btn-ghost !text-xs ${paramsGaines.actif ? "!bg-ink-100" : ""}`}>
                 <Network size={13} /> Gaines optimisées{paramsGaines.actif ? " ✓" : ""}
               </button>
+              {paramsGaines.actif && (
+                <button onClick={() => { setOngletTableauReel("schema"); setPanneauTableauOuvert(true); }}
+                  title="Schéma technique : tableau → gaines → boîtes de dérivation → tous les circuits"
+                  className="btn-ghost !text-xs">
+                  <Network size={13} /> Schéma technique
+                </button>
+              )}
             </>
           )}
 
@@ -6792,6 +6854,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 reglagesGaines={reglagesGn}
                 onReglagesGaines={majReglagesGn}
                 gaines={niveauActif ? gainesMaison?.[niveauActif.id] ?? null : null}
+                gainesNiveaux={niveaux.filter(n => gainesMaison?.[n.id]).map(n => ({ nom: n.nom || NIVEAU_TYPES[n.type], gaines: gainesMaison![n.id] }))}
                 niveauNom={niveauActif ? (niveauActif.nom || NIVEAU_TYPES[niveauActif.type]) : ""}
                 synthese={syntheseGainesMaison}
                 gaineDeBreaker={entreesGaines.gaineDeBreaker}
@@ -7558,7 +7621,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   une boîte de dérivation (carré nommé BD1, BD2…) à chaque séparation. */}
               {calqueGaines && niveauActif && gainesMaison?.[niveauActif.id] && (
                 <g style={{ pointerEvents: "none" }}>
-                  {gainesMaison[niveauActif.id].groupes.flatMap((gr, gi) => gr.troncons.map(t => {
+                  {!showCircuits && gainesMaison[niveauActif.id].groupes.flatMap((gr, gi) => gr.troncons.map(t => {
                     const a = toScreen(t.de), b = toScreen(t.vers);
                     const coul = couleurGroupe(gi, gr.courantFaible);
                     const w = 2 + Math.min(2.5, t.circuits.length * 0.3);

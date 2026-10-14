@@ -15,13 +15,14 @@ import { couleurGroupe, deplacerCircuitGaine, fusionnerForcages, fusionnerParams
 import type { GainesNiveau, SyntheseGaines } from "@/lib/gaines-optimisees-plan";
 import type { ReglagesGaines, ReglagesTableauReel } from "@/lib/maison-types";
 import { agencerGtl } from "@/lib/gtl-agencement";
+import { SchemaGaines } from "./SchemaGaines";
 import { GainesPlan, GtlElevation, TableauDetail, ZoneZoom, COULEURS_PHASE, ratioElevation, ratioTableau, type PieceDessin } from "./TableauReelVisuels";
 
-export type Onglet = "ensemble" | "tableau" | "gtl" | "connexions" | "raccordement" | "controles" | "gaines";
+export type Onglet = "ensemble" | "tableau" | "gtl" | "connexions" | "raccordement" | "controles" | "gaines" | "schema";
 const ONGLETS: { id: Onglet; label: string; icone: string }[] = [
   { id: "ensemble", label: "Vue d'ensemble", icone: "▦" }, { id: "tableau", label: "Tableau", icone: "⚡" }, { id: "gtl", label: "GTL", icone: "▥" },
   { id: "connexions", label: "Connexions", icone: "⤳" }, { id: "raccordement", label: "Raccordement", icone: "⎓" },
-  { id: "controles", label: "Contrôles NF", icone: "✓" }, { id: "gaines", label: "Gaines", icone: "⑂" },
+  { id: "controles", label: "Contrôles NF", icone: "✓" }, { id: "gaines", label: "Gaines", icone: "⑂" }, { id: "schema", label: "Schéma technique", icone: "⌘" },
 ];
 
 const fmt = (v: number, d = 1) => v.toFixed(d).replace(".", ",");
@@ -76,6 +77,8 @@ export interface TableauReelPanelProps {
   reglagesGaines: ReglagesGaines;
   onReglagesGaines: (patch: Partial<ReglagesGaines>) => void;
   gaines: GainesNiveau | null;
+  /** Gaines optimisées de tous les niveaux (schéma technique). */
+  gainesNiveaux?: { nom: string; gaines: GainesNiveau }[];
   niveauNom: string;
   synthese: SyntheseGaines | null;
   /** breakerId → id de gaine (gaines optimisées actives), sinon undefined. */
@@ -325,6 +328,16 @@ export default function TableauReelPanel(p: TableauReelPanelProps) {
           )}
 
           {onglet === "gaines" && <GainesOnglet {...p} />}
+
+          {onglet === "schema" && (
+            <Carte titre="Schéma technique — tous les circuits (gaines optimisées)" className="h-full">
+              <div className="overflow-auto flex-1">
+                {fusionnerParamsGaines(p.reglagesGaines.params).actif
+                  ? <SchemaGaines niveaux={p.gainesNiveaux ?? []} couleurDe={p.couleurDe} breakerSelectionneId={p.breakerSelectionneId} onSelectBreaker={p.onSelectBreaker} />
+                  : <p className="text-sm text-ink-600">Le schéma technique décrit les gaines optimisées : active-les dans l&apos;onglet « Gaines ».</p>}
+              </div>
+            </Carte>
+          )}
         </main>
       </div>
     </div>
