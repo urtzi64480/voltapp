@@ -148,12 +148,17 @@ export interface GtlReelle {
   largeurGainesMm: number;
 }
 
+/** Une gaine qui arrive à la GTL : position dans la zone de passage (x depuis le bord gauche de la zone), couche (0 = devant). */
+export interface GaineGtl { id: string; diametreMm: number; couche: number; xMm: number; nbCircuits: number; depart: boolean }
+
 export interface CoffretReel { largeurMm: number; hauteurMm: number; nbRangees: number; modulesParRail: number }
 
 export interface ResultatTableauReel {
   rails: RailReel[];
   coffret: CoffretReel;
   gtl: GtlReelle;
+  /** Gaines de la GTL, positionnées (voir GtlReelle.largeurGainesMm). */
+  gaines: GaineGtl[];
   liaisons: LiaisonReelle[];
   raccordement: ResultatRaccordement;
   controles: ControleNF[];
@@ -263,12 +268,22 @@ export function calculerTableauReel(rows: BreakerRow[], opts: OptionsCalculTable
   const nbGaines = gainesIds.size + (opts.gainesSupplementairesMm?.length ?? 0);
   const nbCircuitsTotal = rails.reduce((s, r) => s + r.nbCircuits, 0);
   let largeurGainesMm = 0;
+  const gaines: GaineGtl[] = [];
   {
-    const diametres = [...[...gainesIds].map(g => opts.diametreGaines?.[g] ?? p.gtl.diametreGaineMm), ...(opts.gainesSupplementairesMm ?? [])].sort((a, b) => b - a);
+    const nbParGaine = new Map<string, number>();
+    rails.forEach(r => r.departs.forEach(d => { if (!d.accessoire) nbParGaine.set(d.gaineId, (nbParGaine.get(d.gaineId) ?? 0) + 1); }));
+    const liste = [
+      ...[...gainesIds].map(g => ({ id: g, diametreMm: opts.diametreGaines?.[g] ?? p.gtl.diametreGaineMm, nbCircuits: nbParGaine.get(g) ?? 0, depart: true })),
+      ...(opts.gainesSupplementairesMm ?? []).map((dm, i) => ({ id: `montee-sup-${i}`, diametreMm: dm, nbCircuits: 0, depart: false })),
+    ].sort((a, b) => b.diametreMm - a.diametreMm);
     const couches = Math.max(1, p.gtl.couchesGaines);
     const colonnes: number[] = Array(couches).fill(0);
     // remplissage glouton : chaque gaine va sur la couche la moins large
-    diametres.forEach(d => { let k = 0; colonnes.forEach((c, i) => { if (c < colonnes[k]) k = i; }); colonnes[k] += d + p.gtl.jeuMm / 4; });
+    liste.forEach(g => {
+      let k = 0; colonnes.forEach((c, i) => { if (c < colonnes[k]) k = i; });
+      gaines.push({ ...g, couche: k, xMm: colonnes[k] });
+      colonnes[k] += g.diametreMm + p.gtl.jeuMm / 4;
+    });
     largeurGainesMm = Math.ceil(Math.max(0, ...colonnes));
   }
 
@@ -383,5 +398,5 @@ export function calculerTableauReel(rows: BreakerRow[], opts: OptionsCalculTable
   raccordement.alertes.forEach((a, i) => add({ id: `rac-${i}`, niveau: /Aucune section|n'est pas protégée|> calibre|au-dessus de/.test(a) ? "avertissement" : "info", titre: "Raccordement", detail: a, source: "Calcul de la liaison (voir onglet Raccordement)", statut: "a_verifier" }));
 
   const totaux = { circuits: nbCircuitsTotal, differentiels: nbId, modulesUtilises: utilises, modulesLibres: libres, capacite, reservePct, reserveRequisePct };
-  return { rails, coffret, gtl, liaisons, raccordement, controles, totaux, gainesParDepart: nbCircuitsTotal > 0 ? nbGaines / nbCircuitsTotal : 0, nbRangeesConseille: conseil };
+  return { rails, coffret, gtl, gaines, liaisons, raccordement, controles, totaux, gainesParDepart: nbCircuitsTotal > 0 ? nbGaines / nbCircuitsTotal : 0, nbRangeesConseille: conseil };
 }
