@@ -563,6 +563,10 @@ export interface Niveau {
   // dépendent tous du tableau principal.
   tableauId?: string;
   tableauPos?: Point; // position du tableau électrique / GTL sur ce niveau
+  // Réglages communs à toute la maison (recopiés sur chaque niveau, comme orientationNord) : tableau réaliste / GTL / raccordement et gaines optimisées.
+  // Types complets : lib/tableau-reel.ts, lib/raccordement-agcp.ts, lib/gaines-optimisees.ts (les valeurs absentes retombent sur les défauts).
+  reglagesTableauReel?: ReglagesTableauReel;
+  reglagesGaines?: ReglagesGaines;
   tableauHauteur?: number; // cm — hauteur d'installation du tableau (vue 3D), 150 par défaut
   tableauRotation?: number; // degrés — orientation du tableau (aligné sur le mur porteur), 0 par défaut
   // Boîte(s) de dérivation d'un circuit d'éclairage — indexé par le label du disjoncteur
@@ -1700,3 +1704,22 @@ export interface MurSpec { type?: MurType; epaisseur: number; doublage: number; 
 export const MUR_DEFAUT: MurSpec = { epaisseur: 10, doublage: 0, finition: 0 };
 export const PRESETS_MUR: { nom: string; spec: MurSpec }[] = [
 ];
+
+// ─── Réglages enregistrés avec le plan (tous optionnels : une valeur absente retombe sur le défaut du moteur) ──────────────────────────
+export interface ReglagesTableauReel {
+  /** Panneau « Tableau réaliste » affiché. */
+  actif?: boolean;
+  params?: Partial<import("./tableau-reel").ParamsTableauReel>;
+  raccordement?: Partial<import("./raccordement-agcp").ParamsRaccordement>;
+  /** Source des rangées : circuits du plan (toujours à jour) ou tableau enregistré dans le module Tableau. */
+  source?: "plan" | "enregistre";
+}
+export interface ReglagesGaines {
+  params?: Partial<import("./gaines-optimisees").ParamsGainesOptimisees>;
+  forcages?: Partial<import("./gaines-optimisees").ForcagesGaines>;
+  /** Afficher le tracé des gaines sur le plan. */
+  calque?: boolean;
+  /** Prix unitaires pour l'estimation avant / après (€ HT, à ajuster). */
+  prixGaineEuroM?: number;
+  prixCableEuroM?: number;
+}

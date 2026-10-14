@@ -1041,16 +1041,18 @@ function entrelacerParCategorie(breakers: Breaker[]): Breaker[] {
 //    40A/63A (25A n'est en pratique quasiment jamais utilisé pour une rangée de tableau
 //    principal — réservé aux tableaux divisionnaires légers).
 function calibreDifferentiel(list: Breaker[], premiereRangee: boolean): number {
-  if (premiereRangee) return 63;
   const charge = list.reduce((somme, b) => {
-    const estChauffage = CIRCUITS[b.circuit]?.category === "chauffage";
-    return somme + (estChauffage ? b.amperes : b.amperes * 0.5);
+    // Infographie Legrand : chauffage, chauffe-eau et recharge VE comptés à 100 %, tous les autres circuits à 50 %.
+    const pleineCharge = CIRCUITS[b.circuit]?.category === "chauffage" || b.circuit === "chauffe_eau" || b.circuit === "irve";
+    return somme + (pleineCharge ? b.amperes : b.amperes * 0.5);
   }, 0);
   // Le plus petit calibre standard (AMPERES_DIFFERENTIEL, electrical-constants.ts) qui
   // couvre la charge calculée, jamais en dessous de 40A pour une rangée de tableau
   // principal (25A n'est en pratique quasiment jamais utilisé ici) — reste modifiable à la
   // main ensuite dans le module Tableau si ce choix automatique ne convient pas.
-  return AMPERES_DIFFERENTIEL.find(a => a >= 40 && a >= charge) ?? AMPERES_DIFFERENTIEL[AMPERES_DIFFERENTIEL.length - 1];
+  // Première rangée (tête de tableau) : 63 A au minimum, davantage si la charge calculée l'exige (même règle que les autres rangées).
+  const mini = premiereRangee ? 63 : 40;
+  return AMPERES_DIFFERENTIEL.find(a => a >= mini && a >= charge) ?? AMPERES_DIFFERENTIEL[AMPERES_DIFFERENTIEL.length - 1];
 }
 
 export function assemblerTableau(breakers: Breaker[]): BreakerRow[] {
@@ -1084,6 +1086,16 @@ export function assemblerTableau(breakers: Breaker[]): BreakerRow[] {
       rows.length = 0;
       rows.push(mkRow("Rangée 1", nonDiff.slice(0, half), dt, true), mkRow("Rangée 2", nonDiff.slice(half), dt, false));
     }
+  }
+
+  // NF C 15-100 : au moins un interrupteur différentiel de type A. Si aucun circuit n'en impose un, la rangée qui porte le plus de circuits
+  // dédiés (sinon la dernière) passe en type A — alerte jamais bloquante, mais un tableau neuf doit déjà être conforme.
+  if (rows.length > 0 && !rows.some(r => { const t = r.slots[0]?.type; return t === "diff-A" || t === "diff-F"; })) {
+    const dedies = (r: BreakerRow) => r.slots.slice(1).filter(b => b && CIRCUITS[b.circuit]?.dedié).length;
+    let idx = rows.length - 1;
+    rows.forEach((r, i) => { if (dedies(r) > dedies(rows[idx])) idx = i; });
+    const tete = rows[idx].slots[0];
+    if (tete) rows[idx] = { ...rows[idx], slots: rows[idx].slots.map((sl, i) => (i === 0 ? { ...tete, type: "diff-A" } : sl)) };
   }
 
   return rows;
