@@ -256,3 +256,15 @@ export function deuxPointsSurMurs(a: Point, b: Point, pieces: Piece[]): boolean 
   if (r === undefined) { try { r = construire(pieces); } catch { r = null; } caches.set(pieces, r); }
   return !!r && !!murProche(r, pieces, a) && !!murProche(r, pieces, b);
 }
+
+/** Point de la ligne de câbles du mur le plus proche (à moins de `maxM`) : sert à poser une boîte de dérivation DANS un mur ; null = aucun mur assez proche. */
+export function accrocherAuMur(pt: Point, pieces: Piece[], maxM = 3): Point | null {
+  let r = caches.get(pieces);
+  if (r === undefined) { try { r = construire(pieces); } catch { r = null; } caches.set(pieces, r); }
+  if (!r) return null;
+  const sur = murProche(r, pieces, pt);
+  if (sur) return sur.pt;
+  let best: Point | null = null, bd = maxM;
+  r.murs.forEach(m => { const pr = projeter(pt, m.p, m.q); if (pr.d < bd) { bd = pr.d; best = pr.pt; } });
+  return best;
+}

@@ -2391,7 +2391,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // (voir handleGenerer) ; n'affecte jamais l'impression, qui inclut toujours tous les circuits.
   const [circuitsVisibles, setCircuitsVisibles] = useState<Set<number>>(new Set());
   // Gaines optimisées : afficher aussi le câblage des circuits à l'intérieur des pièces (sinon seules les gaines regroupées sont tracées).
-  const [cablagePiecesGn, setCablagePiecesGn] = useState(false);
+  const [cablagePiecesGn, setCablagePiecesGn] = useState(true);
   // Gaines optimisées : circuits vus INDIVIDUELLEMENT (tracé classique complet, avec ses boîtes), en plus du tracé regroupé des autres.
   const [circuitsDetailles, setCircuitsDetailles] = useState<Set<number>>(new Set());
   const [showPrintForm, setShowPrintForm] = useState(false);
@@ -6118,21 +6118,34 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             };
             if (seg === premierSeg) {
               chemin.forEach((et, k) => {
-                const a0 = toScreen(et.de), b0 = toScreen(et.vers);
-                const len = Math.hypot(b0.x - a0.x, b0.y - a0.y) || 1;
+                const poly = (et.chemin && et.chemin.length >= 2 ? et.chemin : [et.de, et.vers]);
+                const sp = poly.map(toScreen);
                 const n = et.circuits.length;
                 const cleEt = `${breaker.id}-gn-${et.tronconId}`;
-                if (k === chemin.length - 1) { cableDe(cleEt, [et.de, et.vers]); return; }
-                // tronçon commun : UNE gaine à la couleur du groupe (plus épaisse quand elle porte plus de circuits), sans les fils de chaque circuit
+                if (k === chemin.length - 1) { cableDe(cleEt, poly); return; }
+                // tronçon commun : UNE gaine (suit les murs / le plafond) à la couleur du groupe, qui contient le fil de chaque circuit côte à côte
+                const pas = Math.min(3.4, 22 / Math.max(1, n)) * ez2;
+                // fil de CE circuit à l'intérieur de la gaine (décalé selon sa place dans le faisceau), toujours visible
+                if (!masquerFils) {
+                  const dec = (et.rang - (n - 1) / 2) * pas;
+                  for (let i = 0; i < sp.length - 1; i++) {
+                    const dx = sp[i + 1].x - sp[i].x, dy = sp[i + 1].y - sp[i].y, l = Math.hypot(dx, dy) || 1;
+                    const ox = (-dy / l) * dec, oy = (dx / l) * dec;
+                    elements.push(<line key={`${cleEt}-w${i}`} x1={sp[i].x + ox} y1={sp[i].y + oy} x2={sp[i + 1].x + ox} y2={sp[i + 1].y + oy} stroke={color} strokeWidth={Math.max(1.6, pas * 0.75)} strokeLinecap="round" />);
+                  }
+                }
                 if (tronconsFaits.has(et.tronconId)) return;
                 tronconsFaits.add(et.tronconId);
                 const coulGaine = couleurGroupe(et.groupeIndex, et.courantFaible);
-                const larg = (4 + Math.min(8, n * 1.1)) * ez2;
-                tubesGn.push(<line key={`${cleEt}-tube0`} x1={a0.x} y1={a0.y} x2={b0.x} y2={b0.y} stroke="#fff" strokeWidth={larg + 3} strokeLinecap="round" opacity={0.95} />);
-                tubesGn.push(<line key={`${cleEt}-tube`} x1={a0.x} y1={a0.y} x2={b0.x} y2={b0.y} stroke={coulGaine} strokeWidth={larg} strokeLinecap="round" opacity={0.9} strokeDasharray={et.courantFaible ? "7 4" : undefined} />);
-                if (len > 60) {
-                  const mx = (a0.x + b0.x) / 2, my = (a0.y + b0.y) / 2;
-                  etiquettesGn.push(<text key={`${cleEt}-lab`} x={mx} y={my - larg / 2 - 5} textAnchor="middle" fontSize={10} fontWeight={800} fill="#1c1917" stroke="#fff" strokeWidth={3} paintOrder="stroke">{et.gaine.replace(/ verte.*/, "")} · {n} circ.</text>);
+                const larg = n * pas + 4 * ez2;
+                const pts = sp.map(q => `${q.x},${q.y}`).join(" ");
+                tubesGn.push(<polyline key={`${cleEt}-tube0`} points={pts} fill="none" stroke="#fff" strokeWidth={larg + 3} strokeLinecap="round" strokeLinejoin="round" opacity={0.95} />);
+                tubesGn.push(<polyline key={`${cleEt}-tube`} points={pts} fill="none" stroke={coulGaine} strokeWidth={larg} strokeLinecap="round" strokeLinejoin="round" opacity={0.55} strokeDasharray={et.courantFaible ? "7 4" : undefined} />);
+                let iMax = 0, lMax = 0;
+                for (let i = 0; i < sp.length - 1; i++) { const l = Math.hypot(sp[i + 1].x - sp[i].x, sp[i + 1].y - sp[i].y); if (l > lMax) { lMax = l; iMax = i; } }
+                if (lMax > 60) {
+                  const mx = (sp[iMax].x + sp[iMax + 1].x) / 2, my = (sp[iMax].y + sp[iMax + 1].y) / 2;
+                  etiquettesGn.push(<text key={`${cleEt}-lab`} x={mx} y={my - larg / 2 - 5} textAnchor="middle" fontSize={10} fontWeight={800} fill="#1c1917" stroke="#fff" strokeWidth={3} paintOrder="stroke">{et.gaine.replace(/ verte.*/, "")} · {n} circ.{et.passage === "plafond" ? " · plafond" : ""}</text>);
                 }
               });
             } else {
@@ -9513,7 +9526,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   </div>
                 )}
                 {calqueGaines && niveauActif && gainesMaison?.[niveauActif.id] && (
-                  <label className="flex items-center gap-1.5 text-[10px] text-ink-500 mb-1.5 cursor-pointer" title="Gaines optimisées : par défaut seules les gaines regroupées sont tracées ; coche pour voir aussi le câblage de chaque circuit dans les pièces">
+                  <label className="flex items-center gap-1.5 text-[10px] text-ink-500 mb-1.5 cursor-pointer" title="Gaines optimisées : décoche pour ne voir que les gaines regroupées (chaque circuit reste visible dans sa gaine)">
                     <input type="checkbox" checked={cablagePiecesGn} onChange={e => setCablagePiecesGn(e.target.checked)} />
                     Voir le câblage dans les pièces
                   </label>

@@ -7,7 +7,9 @@ import type { Niveau, Point } from "./maison-types";
 import { estAnnexe, origineCircuits } from "./maison-types";
 import { breakersDuNiveau, genererGainesNiveaux, segmentsPourCircuit, type ResultatGeneration } from "./maison-engine";
 import { effectiveSection, estCircuitSansDisjoncteur } from "./electrical-constants";
-import { optimiserGaines, type CircuitGaine, type ForcagesGaines, type ParamsGainesOptimisees, type ResultatGainesOptimisees } from "./gaines-optimisees";
+import { accrocherAuMur, routeDansMurs } from "./routage-murs";
+import { routeDansPieces } from "./routage-circuits";
+import { optimiserGaines, type CircuitGaine, type ForcagesGaines, type ParamsGainesOptimisees, type ResultatGainesOptimisees, type TronconArbre } from "./gaines-optimisees";
 
 export interface GainesNiveau extends ResultatGainesOptimisees {
   niveauId: number;
@@ -41,6 +43,66 @@ export function circuitsGainesNiveau(resultat: ResultatGeneration, niveau: Nivea
   return { origine, circuits, ignores };
 }
 
+const longueurLigne = (pts: Point[]): number => pts.reduce((t, q, i) => (i ? t + Math.hypot(q.x - pts[i - 1].x, q.y - pts[i - 1].y) : 0), 0);
+const memePoint = (a: Point, b: Point): boolean => Math.hypot(a.x - b.x, a.y - b.y) < 0.02;
+
+/**
+ * Fait passer l'arbre de gaines là où passent vraiment les câbles : les boîtes de dérivation sont posées DANS un mur (au plus près du point
+ * optimal), chaque tronçon suit l'épaisseur des murs, et ne passe au plafond (plus court) que si les murs imposent un gros détour.
+ * Met à jour tracés, longueurs de tronçons / gaines et bilan « après ».
+ */
+export function acheminerGaines(g: ResultatGainesOptimisees, niveau: Niveau, origine: Point, circuits: CircuitGaine[]): void {
+  const pieces = niveau.pieces;
+  if (pieces.length === 0) return;
+  // 1) boîtes dans un mur : tous les nœuds intermédiaires (point d'arrivée d'un tronçon qui a des enfants)
+  const cle = (q: Point) => `${q.x.toFixed(4)},${q.y.toFixed(4)}`;
+  const accroche = new Map<string, Point>();
+  g.groupes.forEach(gr => gr.troncons.forEach(t => {
+    if (!gr.troncons.some(x => x.parent === t.id) || accroche.has(cle(t.vers))) return;
+    const a = accrocherAuMur(t.vers, pieces, 3);
+    if (a) accroche.set(cle(t.vers), a);
+  }));
+  const pt = (q: Point): Point => accroche.get(cle(q)) ?? q;
+  g.boites.forEach(b => { b.point = { ...pt(b.point) }; });
+  g.groupes.forEach(gr => gr.troncons.forEach(t => { t.vers = { ...pt(t.vers) }; if (t.parent) t.de = { ...pt(t.de) }; }));
+  // 2) tracé de chaque tronçon
+  g.groupes.forEach(gr => {
+    gr.troncons.forEach(t => {
+      const aMur = t.parent ? t.de : (accrocherAuMur(t.de, pieces, 3) ?? t.de);
+      const feuille = !gr.troncons.some(x => x.parent === t.id);
+      const bMur = feuille ? (accrocherAuMur(t.vers, pieces, 3) ?? t.vers) : t.vers;
+      let murs: Point[] | null = null;
+      try { const r = routeDansMurs(aMur, bMur, pieces); murs = r ? [aMur, ...r.map(w => w.point), bMur] : null; } catch { murs = null; }
+      if (murs && !memePoint(murs[murs.length - 1], t.vers)) murs.push(t.vers);
+      if (murs && !memePoint(murs[0], t.de)) murs.unshift(t.de);
+      let plafond: Point[] = [t.de, t.vers];
+      try { plafond = [t.de, ...routeDansPieces(t.de, t.vers, pieces), t.vers]; } catch { /* ligne droite */ }
+      const lm = murs ? longueurLigne(murs) : Infinity, lp = longueurLigne(plafond);
+      if (murs && lm <= lp * 1.5 + 1) { t.chemin = murs; t.passage = "murs"; t.longueurM = lm; }
+      else { t.chemin = plafond; t.passage = lp > 0 && plafond.length > 2 ? "plafond" : "direct"; t.longueurM = lp; }
+    });
+    gr.longueurM = gr.troncons.reduce((s, t) => s + t.longueurM, 0);
+  });
+  // 3) bilan : câble (chaque circuit suit sa chaîne de tronçons) et gaine
+  let cable = 0;
+  g.groupes.forEach(gr => gr.circuits.forEach(c => {
+    let t: TronconArbre | undefined = gr.troncons.find(x => x.circuits.length === 1 && x.circuits[0] === c.cle);
+    while (t) { cable += t.longueurM; const par: string | null = t.parent; t = par ? gr.troncons.find(x => x.id === par) : undefined; }
+  }));
+  g.apres = { departs: g.groupes.length, gaineM: g.groupes.reduce((s, x) => s + x.longueurM, 0), cableM: cable };
+  // « avant » : départs individuels tracés de la même façon (murs / plafond) pour une comparaison honnête
+  let avant = 0;
+  circuits.forEach(c => {
+    const aMur = accrocherAuMur(origine, pieces, 3) ?? origine, bMur = accrocherAuMur(c.entree, pieces, 3) ?? c.entree;
+    let lm = Infinity;
+    try { const r = routeDansMurs(aMur, bMur, pieces); if (r) lm = longueurLigne([origine, aMur, ...r.map(w => w.point), bMur, c.entree]); } catch { /* */ }
+    let lp = Math.hypot(origine.x - c.entree.x, origine.y - c.entree.y);
+    try { lp = longueurLigne([origine, ...routeDansPieces(origine, c.entree, pieces), c.entree]); } catch { /* */ }
+    avant += lm <= lp * 1.5 + 1 ? lm : lp;
+  });
+  g.avant = { departs: circuits.length, gaineM: avant, cableM: avant };
+}
+
 /** Optimise les gaines de chaque niveau qui a une origine. */
 export function optimiserGainesMaison(
   resultat: ResultatGeneration, niveaux: Niveau[], params: ParamsGainesOptimisees, forcages: ForcagesGaines,
@@ -49,7 +111,9 @@ export function optimiserGainesMaison(
   niveaux.forEach(n => {
     const c = circuitsGainesNiveau(resultat, n);
     if (!c || c.circuits.length === 0) return;
-    res[n.id] = { ...optimiserGaines(c.circuits, c.origine, params, forcages), niveauId: n.id, origine: c.origine, ignores: c.ignores, porteTableau: !!n.tableauPos };
+    const opt = optimiserGaines(c.circuits, c.origine, params, forcages);
+    try { acheminerGaines(opt, n, c.origine, c.circuits); } catch { /* tracé en ligne droite en repli */ }
+    res[n.id] = { ...opt, niveauId: n.id, origine: c.origine, ignores: c.ignores, porteTableau: !!n.tableauPos };
   });
   return res;
 }
