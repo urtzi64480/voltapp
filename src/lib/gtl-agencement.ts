@@ -28,7 +28,7 @@ export interface AgencementGtl {
   /** Largeur de la GTL + ETEL (null si pas d'ETEL). */
   largeurEtelMm: number | null;
   elements: ElementGtl[];
-  /** Zone de passage des gaines (x, largeur) à droite de la GTL. */
+  /** Passage des gaines : elles arrivent par le plafond, au-dessus du coffret (x = bord gauche de la rangée, w = largeur de la rangée la plus large). */
   zoneGaines: { x: number; w: number };
   /** Vrai si les éléments + gaines dépassent la largeur de la GTL. */
   debordeLargeur: boolean;
@@ -73,6 +73,6 @@ export function agencerGtl(res: ResultatTableauReel, p: ParamsTableauReel): Agen
   const xMax = els.reduce((m, e) => Math.max(m, e.x + e.w), 0);
   return {
     largeurMm: largeurGtl, hauteurMm: H, largeurEtelMm: g.largeurEtelMm, elements: els,
-    zoneGaines: { x: zoneX, w: zoneW }, debordeLargeur: xMax + jeu + zoneW > largeurGtl + 1e-9,
+    zoneGaines: { x: zoneX, w: zoneW }, debordeLargeur: Math.max(xMax + jeu, zoneW) > largeurGtl + 1e-9,
   };
 }

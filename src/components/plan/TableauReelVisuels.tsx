@@ -74,7 +74,7 @@ export function GtlElevation({ res, params, couleurGaine }: GtlElevationProps) {
       {ag.largeurEtelMm != null && <rect x={X(0)} y={Y(H)} width={ag.largeurEtelMm} height={H} fill="none" stroke="#2563eb" strokeDasharray="14 8" strokeWidth={2} {...ns} />}
       {/* GTL */}
       <rect x={X(0)} y={Y(H)} width={W} height={H} fill="#fdfcfa" stroke="#1c1917" strokeWidth={2.5} {...ns} />
-      <text x={X(14)} y={Y(H) + 55} textAnchor="start" fontSize={T * 0.85} fontWeight={700} fill="#44403c">GTL {Math.round(W)}{ag.largeurEtelMm != null ? ` · ETEL ${Math.round(ag.largeurEtelMm)}` : ""} mm</text>
+      <text x={X(14)} y={Y(0) - 22} textAnchor="start" fontSize={T * 0.85} fontWeight={700} fill="#44403c">GTL {Math.round(W)}{ag.largeurEtelMm != null ? ` · ETEL ${Math.round(ag.largeurEtelMm)}` : ""} mm</text>
       {g.largeurRequiseMm > g.largeurRetenueMm && (
         <rect x={X(W)} y={Y(H)} width={g.largeurRequiseMm - W} height={H} fill="#fee2e2" stroke="#dc2626" strokeDasharray="10 6" strokeWidth={1.5} {...ns} opacity={0.8} />
       )}
@@ -87,23 +87,26 @@ export function GtlElevation({ res, params, couleurGaine }: GtlElevationProps) {
         </g>
       ))}
 
-      {/* gaines (zone de passage) : vue de face — les couches se recouvrent, la coupe à droite les sépare */}
-      {ag.zoneGaines.w > 0 && (
-        <g>
-          <rect x={X(ag.zoneGaines.x)} y={Y(H)} width={ag.zoneGaines.w} height={H} fill="#dbeafe" opacity={0.35} />
-          {[...res.gaines].sort((a, b) => b.couche - a.couche).map((ga, i) => {
-            const cx = ag.zoneGaines.x + ga.xMm + ga.diametreMm / 2;
-            const y0 = cof ? cof.y + cof.h / 2 : H * 0.4;
-            const coul = ga.depart ? couleurGaine(ga.id) : "#64748b";
-            return (
-              <g key={`${ga.id}-${i}`} opacity={ga.couche === 0 ? 1 : 0.65}>
-                <title>{`${ga.depart ? "Gaine" : "Montée"} ⌀ ${ga.diametreMm} mm${ga.nbCircuits ? ` — ${ga.nbCircuits} circuit(s)` : ""}`}</title>
-                <rect x={X(cx - ga.diametreMm / 2)} y={Y(H)} width={ga.diametreMm} height={H - y0} fill={coul} stroke="#1c1917" strokeWidth={1} {...ns} />
-              </g>
-            );
-          })}
-        </g>
-      )}
+      {/* gaines : elles ARRIVENT PAR LE HAUT (plafond) et descendent jusqu'au coffret — diamètres réels, à l'échelle ; les couches du fond sont en transparence */}
+      {ag.zoneGaines.w > 0 && cof && (() => {
+        const yCoffret = cof.y + cof.h;                            // haut du coffret (mm depuis le sol)
+        const x0 = Math.max(10, cof.x + (cof.w - ag.zoneGaines.w) / 2);
+        const tri = [...res.gaines].sort((a, b) => b.couche - a.couche);
+        return (
+          <g>
+            {tri.map((ga, i) => {
+              const cx = x0 + ga.xMm + ga.diametreMm / 2;
+              const coul = ga.depart ? couleurGaine(ga.id) : "#64748b";
+              return (
+                <g key={`${ga.id}-${i}`} opacity={ga.couche === 0 ? 1 : 0.6}>
+                  <title>{`${ga.depart ? "Gaine" : "Montée / attente / courants faibles"} ⌀ ${ga.diametreMm} mm${ga.nbCircuits ? ` — ${ga.nbCircuits} circuit(s)` : ""}`}</title>
+                  <rect x={X(cx - ga.diametreMm / 2)} y={Y(H)} width={ga.diametreMm} height={H - yCoffret + 18} fill={coul} stroke="#1c1917" strokeWidth={1} {...ns} />
+                </g>
+              );
+            })}
+          </g>
+        );
+      })()}
 
       {/* coupe horizontale du passage des gaines (vue de dessus, grossie ×2,2) */}
       {ag.zoneGaines.w > 0 && (() => {
@@ -114,7 +117,7 @@ export function GtlElevation({ res, params, couleurGaine }: GtlElevationProps) {
         const ww = ag.zoneGaines.w * k, hh = prof * k;
         return (
           <g>
-            <text x={x0} y={y0 - 44} fontSize={T * 0.9} fontWeight={700} fill="#1c1917">Coupe des gaines (dessus)</text>
+            <text x={x0} y={y0 - 44} fontSize={T * 0.9} fontWeight={700} fill="#1c1917">Coupe des gaines (vue de dessus)</text>
             <rect x={x0} y={y0} width={Math.max(ww, 140)} height={hh} fill="#fafaf9" stroke="#1c1917" strokeWidth={1.5} {...ns} />
             <rect x={x0} y={y0 - 14} width={Math.max(ww, 140)} height={14} fill="#a8a29e" />
             <text x={x0 + Math.max(ww, 140) + 14} y={y0 - 2} fontSize={T * 0.75} fill="#78716c">mur du fond</text>
@@ -139,12 +142,6 @@ export function GtlElevation({ res, params, couleurGaine }: GtlElevationProps) {
           </g>
         );
       })()}
-
-      {/* départs : chaque rangée envoie son faisceau vers la zone des gaines */}
-      {cof && ag.zoneGaines.w > 0 && res.rails.map((r, i) => {
-        const yr = Y(cof.y + cof.h - 50 - params.pasRangeeMm / 2 - i * params.pasRangeeMm);
-        return <path key={r.rangeeId} d={`M ${X(cof.x + cof.w)} ${yr} H ${X(ag.zoneGaines.x - 10)}`} stroke="#57534e" strokeWidth={3} fill="none" {...ns} />;
-      })}
 
       {/* coffret de communication */}
       {comm && (

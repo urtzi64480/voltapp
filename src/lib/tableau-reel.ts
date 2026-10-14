@@ -304,7 +304,8 @@ export function calculerTableauReel(rows: BreakerRow[], opts: OptionsCalculTable
     : empile ? Math.max(...composants.map(c => c.largeurMm)) + 2 * jeu : composants.reduce((s, c) => s + c.largeurMm, 0) + jeu * (composants.length + 1);
   const hauteurRequise = empile ? composants.reduce((s, c) => s + c.hauteurMm, 0) + jeu * (composants.length + 1) : Math.max(0, ...composants.map(c => c.hauteurMm)) + 2 * jeu;
   const hauteurDispo = Math.max(0, p.gtl.hauteurSousPlafondM * 1000 - 2 * NORME_COFFRET.reserveHautBasGtlMm.valeur);
-  const requise = largeurBoitiers + largeurGainesMm;
+  // Les gaines arrivent par le plafond, AU-DESSUS du coffret : elles ne prennent pas de largeur à côté, elles doivent juste tenir dans la largeur de la GTL.
+  const requise = Math.max(largeurBoitiers, largeurGainesMm);
   const retenue = Math.max(p.gtl.largeurMm, NORME_GTL.largeurMiniMm.valeur);
   const gtl: GtlReelle = {
     largeurRequiseMm: Math.ceil(requise), largeurRetenueMm: retenue,
