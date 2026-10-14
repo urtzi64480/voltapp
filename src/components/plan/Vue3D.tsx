@@ -1171,8 +1171,9 @@ const Vue3D = forwardRef<Vue3DHandle, {
             mesh.add(aretes);
             scene.add(mesh);
           };
-          boitesExistantes.forEach(b => dessinerBoite3D(b.point, `boite-${b.id}`));
-          if (!boitesExistantes.some(x => !x.surSegment) && lumieres.length > 1) {
+          // Gaines optimisées actives : les boîtes du câblage classique ne servent plus (seules celles des séparations de gaines sont dessinées).
+          if (!gainesNiv) boitesExistantes.forEach(b => dessinerBoite3D(b.point, `boite-${b.id}`));
+          if (!gainesNiv && !boitesExistantes.some(x => !x.surSegment) && lumieres.length > 1) {
             const centre = pointBoiteImplicite(lumieres.map(l => ({ x: l.x, y: l.y })), niveau.pieces, origineCircuits(niveau));
             dessinerBoite3D(centre, "boite");
           }

@@ -522,7 +522,14 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [mainOeuvreHeures, setMainOeuvreHeures] = useState("0");
   // Heures de main d'œuvre PAR POSTE (nom du poste → heures, optionnel). Chaque poste renseigné donne une ligne de main
   // d'œuvre rattachée à ce poste dans le devis : c'est ce temps chiffré que le suivi de réalisation compare au temps passé.
-  const [heuresPostes, setHeuresPostes] = useState<Record<string, string>>({});
+  // Temps de pose PRÉREMPLI : 1 h tous les 5 m de câble + 15 min par appareillage. Les deux temps sont distincts et modifiables poste par poste
+  // (une valeur saisie remplace le calcul pour ce poste ; champ vidé = retour au calcul).
+  const [metresParHeure, setMetresParHeure] = useState("5");
+  const [minParAppareil, setMinParAppareil] = useState("15");
+  const [hCablage, setHCablage] = useState<Record<string, string>>({});
+  const [hAppareils, setHAppareils] = useState<Record<string, string>>({});
+  // Gaines : false = une gaine par circuit (classique), true = gaines optimisées (regroupées, boîtes de dérivation). null = pas encore déterminé.
+  const [gainesOptimisees, setGainesOptimisees] = useState<boolean | null>(null);
   const [mainOeuvreIndex, setMainOeuvreIndex] = useState(0);
   const [fraisGenerauxPct, setFraisGenerauxPct] = useState("0");
   const [deplacementEur, setDeplacementEur] = useState("0");
@@ -606,7 +613,9 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       Object.entries(brouillon.posesSection as Record<string, unknown>).forEach(([sec, v]) => { if (v === "precablee" || v === "icta_fils") parSection[sec] = v; });
     }
     setPosesSection(parSection);
-    const { besoins, alertes, recap } = calculerBesoinsBruts(niveaux, rows, mode, sec => parSection[sec] ?? pose);
+    const variante = typeof brouillon?.gainesOptimisees === "boolean" ? brouillon.gainesOptimisees : niveaux.some(n => !!n.reglagesGaines?.params?.actif);
+    setGainesOptimisees(variante);
+    const { besoins, alertes, recap } = calculerBesoinsBruts(niveaux, rows, mode, sec => parSection[sec] ?? pose, variante);
     setRecapCircuits(recap);
     // Catalogue COURANT (articles ajoutés depuis l'ouverture de la page inclus), pas celui du chargement initial.
     const res = apparierCatalogue(besoins, prestations.length > 0 ? prestations : prest);
@@ -649,7 +658,14 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (brouillon) {
       if (brouillon.mainOeuvreHeures != null) setMainOeuvreHeures(brouillon.mainOeuvreHeures);
       // Les postes (pièces / circuits) dépendent du mode : les heures par poste ne se reprennent que dans le même mode.
-      setHeuresPostes(memeMode && brouillon.heuresPostes && typeof brouillon.heuresPostes === "object" ? brouillon.heuresPostes : {});
+      if (brouillon.metresParHeure != null) setMetresParHeure(String(brouillon.metresParHeure));
+      if (brouillon.minParAppareil != null) setMinParAppareil(String(brouillon.minParAppareil));
+      const ancien: Record<string, string> = memeMode && brouillon.heuresPostes && typeof brouillon.heuresPostes === "object" ? brouillon.heuresPostes : {};
+      // Ancien champ unique « Main d'œuvre » du poste : conservé tel quel (câblage = ancienne valeur, appareillage = 0) pour ne rien changer aux devis déjà préparés.
+      const cabl: Record<string, string> = memeMode && brouillon.hCablage && typeof brouillon.hCablage === "object" ? { ...brouillon.hCablage } : {};
+      const appa: Record<string, string> = memeMode && brouillon.hAppareils && typeof brouillon.hAppareils === "object" ? { ...brouillon.hAppareils } : {};
+      Object.entries(ancien).forEach(([poste, v]) => { if (cabl[poste] == null && appa[poste] == null && (parseFloat(String(v).replace(",", ".")) || 0) > 0) { cabl[poste] = String(v); appa[poste] = "0"; } });
+      setHCablage(cabl); setHAppareils(appa);
 
       if (brouillon.mainOeuvreIndex != null) setMainOeuvreIndex(brouillon.mainOeuvreIndex);
       if (brouillon.fraisGenerauxPct != null) setFraisGenerauxPct(brouillon.fraisGenerauxPct);
@@ -675,15 +691,17 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // place de resultat.parPiece directement, partout dans la page (affichage, agrégat,
   // totaux, génération du devis), pour que la sélection pièce par pièce soit cohérente
   // de bout en bout.
-  const parPieceFiltre: Record<string, BesoinApparie[]> = useMemo(() => {
-    if (!resultat) return {};
+  const filtrerParPiece = (res: ResultatPreDevis): Record<string, BesoinApparie[]> => {
     // Poste « Tableau électrique » : retiré tant que l'alerte n'a pas reçu un « oui » (inclureTableau !== true).
-    const sansTableauSiRefuse = Object.entries(resultat.parPiece).filter(([piece]) => !estPieceTableau(piece) || inclureTableau === true);
+    const sansTableauSiRefuse = Object.entries(res.parPiece).filter(([piece]) => !estPieceTableau(piece) || inclureTableau === true);
     if (piecesSelectionnees === null) return Object.fromEntries(sansTableauSiRefuse);
     return Object.fromEntries(
       sansTableauSiRefuse.filter(([piece]) => !estPieceReelle(piece) || piecesSelectionnees.has(piece)),
     );
-  }, [resultat, piecesSelectionnees, inclureTableau]);
+  };
+  const parPieceFiltre: Record<string, BesoinApparie[]> = useMemo(() => (resultat ? filtrerParPiece(resultat) : {}),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [resultat, piecesSelectionnees, inclureTableau]);
 
   // Besoins du tableau (disjoncteurs, différentiels, goulottes) tels que calculés, indépendamment de la réponse.
   const besoinsTableau: BesoinApparie[] = useMemo(
@@ -691,10 +709,9 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     [resultat],
   );
 
-  const besoinsAgreges: BesoinApparie[] = useMemo(() => {
-    if (!resultat) return [];
+  const agreger = (parPiece: Record<string, BesoinApparie[]>): BesoinApparie[] => {
     const parSousCat = new Map<string, { label: string; total: number; totalFils: number; options: OptionArticle[]; detail: Map<string, number> }>();
-    Object.values(parPieceFiltre).flat().forEach(b => {
+    Object.values(parPiece).flat().forEach(b => {
       if (!estBobinable(b.sousCategorie)) return;
       const entry = parSousCat.get(b.sousCategorie) ?? { label: b.label, total: 0, totalFils: 0, options: b.options, detail: new Map() };
       entry.total += b.quantite;
@@ -710,7 +727,10 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       quantiteFils: e.totalFils,
       options: sousCategorie.startsWith("cablage") ? optionsAvecRatioFils(e.options, ratioFilsDe({ quantite: e.total, quantiteFils: e.totalFils })) : e.options,
     }));
-  }, [resultat, parPieceFiltre]);
+  };
+  const besoinsAgreges: BesoinApparie[] = useMemo(() => (resultat ? agreger(parPieceFiltre) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [resultat, parPieceFiltre]);
 
   useEffect(() => {
     setChoixAgrege(prev => {
@@ -729,7 +749,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (!donnees || !mode) return;
     if (nouvelle === poseEncastre && sections === posesSection) return;
     const { niveaux, rows, prest } = donnees;
-    const { besoins, alertes, recap } = calculerBesoinsBruts(niveaux, rows, mode, sec => sections[sec] ?? nouvelle);
+    const { besoins, alertes, recap } = calculerBesoinsBruts(niveaux, rows, mode, sec => sections[sec] ?? nouvelle, gainesOptimisees ?? undefined);
     setPosesSection(sections);
     const res = apparierCatalogue(besoins, prestations.length > 0 ? prestations : prest);
     setPoseEncastre(nouvelle);
@@ -750,7 +770,31 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
   }
 
-  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, heuresPostes, mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, suiviV: VERSION_SUIVI_OK, poseEncastre, posesSection, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
+  // Bascule gaines classiques ↔ optimisées : recalcule les besoins en gardant les choix déjà faits (mêmes clés) ; les postes validés dont le contenu change perdent leur « OK ».
+  function changerVariante(optimisees: boolean) {
+    if (!donnees || !mode || optimisees === gainesOptimisees) return;
+    const { niveaux, rows, prest } = donnees;
+    const { besoins, alertes, recap } = calculerBesoinsBruts(niveaux, rows, mode, sec => posesSection[sec] ?? poseEncastre, optimisees);
+    const res = apparierCatalogue(besoins, prestations.length > 0 ? prestations : prest);
+    setGainesOptimisees(optimisees);
+    setRecapCircuits(recap);
+    setAlertesGeometrie(alertes);
+    setResultat(res);
+    setChoix(prev => {
+      const n: Record<string, EtatChoix> = {};
+      Object.values(res.parPiece).flat().forEach(b => { n[b.cle] = prev[b.cle] ?? etatParDefaut(b); });
+      return n;
+    });
+    const inv = postesInvalides(signaturesActuelles(res.parPiece), postesOk, postesSig);
+    if (inv.length > 0) {
+      setPostesOk(prev => { const n = { ...prev }; inv.forEach(k => delete n[k]); return n; });
+      setPostesSig(prev => { const n = { ...prev }; inv.forEach(k => delete n[k]); return n; });
+      setPostesModifies(prev => Array.from(new Set([...prev, ...inv])));
+      setPostesOuverts(prev => ({ ...prev, ...Object.fromEntries(inv.map(k => [k, true])) }));
+    }
+  }
+
+  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, hCablage, hAppareils, metresParHeure, minParAppareil, ...(gainesOptimisees !== null ? { gainesOptimisees } : {}), mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, suiviV: VERSION_SUIVI_OK, poseEncastre, posesSection, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
 
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
@@ -892,11 +936,45 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   }
 
   const heuresGenerales = parseFloat(mainOeuvreHeures) || 0;
-  // Heures par poste : seulement les postes encore présents dans le devis (pièce décochée = poste retiré).
-  const heuresParPoste: [string, number][] = Object.keys(parPieceFiltre)
-    .map(poste => [poste, parseFloat((heuresPostes[poste] ?? "").replace(",", ".")) || 0] as [string, number])
-    .filter(([, h]) => h > 0);
-  const totalHeuresPostes = heuresParPoste.reduce((s, [, h]) => s + h, 0);
+  // ─── Temps de pose préremplis : 1 h tous les 5 m de câble + 15 min par appareillage, séparés et modifiables par poste ───
+  const estSousCatCable = (sc: string) => sc.startsWith("cablage_") || sc.startsWith("gaine_precablee") || sc === "retour_lampe" || sc === "navette" || sc === "aller_commande" || sc === "cable_rj45" || sc === "cable_coax";
+  const tempsAutoPostes = (parPiece: Record<string, BesoinApparie[]>, recap: RecapCircuit[]): Record<string, { metres: number; appareils: number }> => {
+    const out: Record<string, { metres: number; appareils: number }> = {};
+    Object.entries(parPiece).forEach(([poste, besoins]) => {
+      let metres = 0, appareils = 0;
+      if (mode === "circuit") {
+        recap.filter(r => r.groupe === poste).forEach(r => {
+          metres += r.lignes.filter(l => estSousCatCable(l.sousCategorie)).reduce((a, l) => a + l.quantite, 0);
+          appareils += r.nbAppareils;
+        });
+      } else {
+        metres = besoins.filter(b => b.unite === "m" && estSousCatCable(b.sousCategorie)).reduce((a, b) => a + b.quantite, 0);
+        (donnees?.niveaux ?? []).forEach(n => n.pieces.filter(pc => pc.nom === poste).forEach(pc => { appareils += pc.appareillages.filter(a => !a.dejaExistant).length; }));
+      }
+      out[poste] = { metres, appareils };
+    });
+    return out;
+  };
+  const nombreSaisi = (v: string | undefined): number | null => {
+    if (v == null || v.trim() === "") return null;
+    const n = parseFloat(v.replace(",", "."));
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  const metresParHeureNum = Math.max(0.1, nombreSaisi(metresParHeure) ?? 5);
+  const minParAppareilNum = nombreSaisi(minParAppareil) ?? 15;
+  const arrondiH = (h: number) => Math.round(h * 100) / 100;
+  // Heures d'un poste : la valeur saisie remplace le calcul ; champ vide = calcul (m ÷ m/h ; appareils × min/60).
+  const heuresDePoste = (poste: string, t: { metres: number; appareils: number } | undefined) => {
+    const autoC = arrondiH((t?.metres ?? 0) / metresParHeureNum), autoA = arrondiH(((t?.appareils ?? 0) * minParAppareilNum) / 60);
+    return { autoC, autoA, cablage: nombreSaisi(hCablage[poste]) ?? autoC, appareils: nombreSaisi(hAppareils[poste]) ?? autoA };
+  };
+  const heuresPostesPour = (parPiece: Record<string, BesoinApparie[]>, recap: RecapCircuit[]) => {
+    const temps = tempsAutoPostes(parPiece, recap);
+    return Object.keys(parPiece).map(poste => ({ poste, t: temps[poste], ...heuresDePoste(poste, temps[poste]) })).filter(x => x.cablage > 0 || x.appareils > 0);
+  };
+  const tempsActuel = tempsAutoPostes(parPieceFiltre, recapCircuits);
+  const heuresParPoste = heuresPostesPour(parPieceFiltre, recapCircuits);
+  const totalHeuresPostes = heuresParPoste.reduce((s, x) => s + x.cablage + x.appareils, 0);
   const heures = heuresGenerales + totalHeuresPostes;
   const tauxHoraire = optionsMainOeuvre[mainOeuvreIndex]?.prix_unitaire ?? profil?.taux_horaire ?? 0;
   const totalMainOeuvre = heures * tauxHoraire;
@@ -911,8 +989,10 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const totalGeneral = totalConsommablesApprox + totalMainOeuvre + fraisGeneraux + deplacement;
 
   // Assemble les lignes du devis (consommables + main d'œuvre + frais + déplacement) : source unique, utilisée par la génération ET par l'aperçu de rentabilité.
-  function assemblerLignes() {
-    const tousLesBesoins = Object.values(parPieceFiltre).flat().filter(b => !estBobinable(b.sousCategorie));
+  function assemblerLignesPour(res: ResultatPreDevis, recap: RecapCircuit[]) {
+    const parPiece = filtrerParPiece(res);
+    const agreges = agreger(parPiece);
+    const tousLesBesoins = Object.values(parPiece).flat().filter(b => !estBobinable(b.sousCategorie));
     const construireChoixLigne = (besoin: BesoinApparie, etat: EtatChoix): ChoixLigne => {
     if (etat.mode === "exclu") return { besoin };
     if (etat.mode === "adefinir") return { besoin, aCompleter: true, aDefinir: true };
@@ -929,7 +1009,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     ...tousLesBesoins.map(besoin => construireChoixLigne(besoin, choix[besoin.cle] ?? etatParDefaut(besoin))),
     // Câbles/gaines/moulures : un seul choix par sous-catégorie sur le métrage total
     // (toutes pièces confondues) — voir besoinsAgreges plus haut.
-    ...besoinsAgreges.map(besoin => construireChoixLigne(besoin, choixAgrege[besoin.cle] ?? etatParDefaut(besoin))),
+    ...agreges.map(besoin => construireChoixLigne(besoin, choixAgrege[besoin.cle] ?? etatParDefaut(besoin))),
     ];
 
     const lignesConsommables = genererLignesDevis(choixLignes, prestations);
@@ -937,12 +1017,11 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const lignesFinales: Omit<DevisLigne, "devis_id" | "ordre">[] = [...lignesConsommables];
 
     const optMO = optionsMainOeuvre[mainOeuvreIndex];
-    // Main d'œuvre rattachée à chaque poste renseigné (comparée au temps passé dans le suivi de réalisation)…
-    heuresParPoste.forEach(([poste, h]) => {
-    lignesFinales.push({
-    nom: optMO?.nom ?? "Main d'œuvre", quantite: h, prix_unitaire: tauxHoraire, unite: "heure",
-    type_branche: "service", prestation_id: optMO?.prestation_id, poste,
-    });
+    // Main d'œuvre rattachée à chaque poste (comparée au temps passé dans le suivi de réalisation) : une ligne câblage et une ligne appareillage.
+    heuresPostesPour(parPiece, recap).forEach(x => {
+      const base = optMO?.nom ?? "Main d'œuvre";
+      if (x.cablage > 0) lignesFinales.push({ nom: `${base} — câblage`, quantite: x.cablage, prix_unitaire: tauxHoraire, unite: "heure", type_branche: "service", prestation_id: optMO?.prestation_id, poste: x.poste });
+      if (x.appareils > 0) lignesFinales.push({ nom: `${base} — appareillage`, quantite: x.appareils, prix_unitaire: tauxHoraire, unite: "heure", type_branche: "service", prestation_id: optMO?.prestation_id, poste: x.poste });
     });
     // … et main d'œuvre générale (non rattachée à un poste).
     if (heuresGenerales > 0) {
@@ -963,6 +1042,47 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
     return { lignesFinales, choixLignes };
   }
+  const assemblerLignes = () => assemblerLignesPour(resultat as ResultatPreDevis, recapCircuits);
+
+  // Rentabilité d'un jeu de lignes (mêmes formules que la page /devis/[id]/rentabilite) : utilisée par le panneau et par la comparaison des variantes.
+  function calculerRentab(lignes: Omit<DevisLigne, "devis_id" | "ordre">[]) {
+    const tauxCotisService = profil?.taux_cotisations_service ?? 21.2;
+    const tauxCotisMateriau = profil?.taux_cotisations_materiau ?? 12.3;
+    const tauxIrService = profil?.taux_ir_service ?? 0;
+    const tauxIrMateriau = profil?.taux_ir_materiau ?? 0;
+    let coutAchatTotal = 0, sansCout = 0;
+    lignes.forEach(l => {
+      const aFournisseur = !!l.fournisseur_id || l.prix_achat != null;
+      const pa: number | null = aFournisseur ? (l.prix_achat ?? null) : (l.prestation_id ? (prestations.find(x => x.id === l.prestation_id)?.prix_achat ?? null) : null);
+      const cout = pa && pa > 0 ? pa * l.quantite : 0;
+      coutAchatTotal += cout;
+      if (l.type_branche === "materiau" && cout === 0 && l.prix_unitaire > 0) sansCout++;
+    });
+    const totalService = lignes.filter(l => l.type_branche === "service").reduce((a, l) => a + arrondi2(l.quantite * l.prix_unitaire), 0);
+    const totalMateriau = lignes.filter(l => l.type_branche === "materiau").reduce((a, l) => a + arrondi2(l.quantite * l.prix_unitaire), 0);
+    const totalVente = arrondi2(totalService + totalMateriau);
+    const cotis = totalService * tauxCotisService / 100 + totalMateriau * tauxCotisMateriau / 100;
+    const ir = totalService * tauxIrService / 100 + totalMateriau * tauxIrMateriau / 100;
+    const netService = totalService - totalService * (tauxCotisService + tauxIrService) / 100;
+    const netMateriau = totalMateriau - totalMateriau * (tauxCotisMateriau + tauxIrMateriau) / 100 - coutAchatTotal;
+    const net = netService + netMateriau;
+    const pct = totalVente > 0 ? Math.round(net / totalVente * 1000) / 10 : 0;
+    const heuresLignes = lignes.filter(l => l.unite === "heure").reduce((a, l) => a + l.quantite, 0);
+    return { coutAchatTotal, sansCout, totalService, totalMateriau, totalVente, cotis, ir, netService, netMateriau, net, pct, heuresLignes };
+  }
+
+  // Les DEUX variantes de gaines chiffrées en parallèle (classiques / optimisées), pour comparer prix de vente et marge avant de choisir.
+  const variantes = useMemo(() => {
+    if (!donnees || !mode || gainesOptimisees === null) return null;
+    try {
+      const calc = (v: boolean) => {
+        const r = calculerBesoinsBruts(donnees.niveaux, donnees.rows, mode, sec => posesSection[sec] ?? poseEncastre, v);
+        return { res: apparierCatalogue(r.besoins, prestations.length > 0 ? prestations : donnees.prest), recap: r.recap };
+      };
+      return { classique: calc(false), optimisee: calc(true) };
+    } catch { return null; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [donnees, mode, poseEncastre, posesSection, prestations, gainesOptimisees === null]);
 
   async function genererDevis() {
     if (!resultat || !client) return;
@@ -1107,31 +1227,59 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
             avantChangement={sauvegarderBrouillon} onSelect={onSelect} onChanged={onChanged} compact />
         </div>
 
+        {/* Comparaison gaines classiques / optimisées : prix de vente, heures et marge des deux variantes, pour choisir la meilleure. */}
+        {resultat && variantes && gainesOptimisees !== null && (() => {
+          const evaluer = (res: ResultatPreDevis, recap: RecapCircuit[]) => {
+            try { const { lignesFinales } = assemblerLignesPour(res, recap); return calculerRentab(lignesFinales); } catch { return null; }
+          };
+          const cols = [
+            { cle: "classique", titre: "Gaines classiques", sous: "une gaine par circuit", optimisees: false, r: evaluer(gainesOptimisees ? variantes.classique.res : resultat, gainesOptimisees ? variantes.classique.recap : recapCircuits) },
+            { cle: "optimisee", titre: "Gaines optimisées", sous: "gaines regroupées + boîtes de dérivation", optimisees: true, r: evaluer(gainesOptimisees ? resultat : variantes.optimisee.res, gainesOptimisees ? recapCircuits : variantes.optimisee.recap) },
+          ];
+          if (cols.some(c => !c.r)) return null;
+          const meilleure = cols[0].r!.net >= cols[1].r!.net ? 0 : 1;
+          const ecart = Math.abs(cols[0].r!.net - cols[1].r!.net);
+          return (
+            <div className="card card-inner mb-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Euro size={15} className="text-volt-600" />
+                <h2 className="font-semibold text-ink-800 text-sm flex-1">Gaines : classiques ou optimisées ? <span className="text-xs font-normal text-ink-400">(rentabilité privée, absente du devis)</span></h2>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {cols.map((c, i) => {
+                  const r = c.r!;
+                  const actif = gainesOptimisees === c.optimisees;
+                  const coul = r.pct < 0 ? "text-red-600" : r.pct < 20 ? "text-amber-600" : "text-emerald-600";
+                  return (
+                    <div key={c.cle} className={`rounded-lg border p-2.5 text-xs ${actif ? "border-volt-400 bg-volt-50/40" : "border-ink-200"}`}>
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-ink-900 text-sm flex-1">{c.titre}{i === meilleure && ecart >= 0.5 ? <span className="ml-1.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5">+ rentable</span> : null}</p>
+                        {actif ? <span className="text-[10px] font-semibold text-volt-700">utilisé pour le devis</span> : <button type="button" className="btn-ghost !text-[11px] !px-2 !py-0.5" onClick={() => changerVariante(c.optimisees)}>Utiliser</button>}
+                      </div>
+                      <p className="text-ink-400 mb-1.5">{c.sous}</p>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                        <span className="text-ink-500">Vente HT</span><span className="text-right font-semibold text-ink-900">{fmt(r.totalVente)}</span>
+                        <span className="text-ink-500">Achat matériel</span><span className="text-right text-red-700">− {fmt(r.coutAchatTotal)}</span>
+                        <span className="text-ink-500">Heures de pose</span><span className="text-right">{arrondiH(r.heuresLignes).toString().replace(".", ",")} h</span>
+                        <span className="text-ink-500 font-semibold">Marge nette</span><span className={`text-right font-bold ${coul}`}>{fmt(r.net)} ({r.pct.toString().replace(".", ",")} %)</span>
+                      </div>
+                      {r.sansCout > 0 && <p className="text-[11px] text-amber-600 mt-1">{r.sansCout} ligne{r.sansCout > 1 ? "s" : ""} sans prix d&apos;achat connu : marge probablement surestimée.</p>}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-ink-400 mt-2">
+                {ecart >= 0.5 ? `${cols[meilleure].titre} : ${fmt(ecart)} de marge nette en plus.` : "Marges quasi identiques."} Mêmes articles et mêmes temps de pose dans les deux cas (les articles non encore choisis sont chiffrés au premier de la liste).
+              </p>
+            </div>
+          );
+        })()}
+
         {/* Rentabilité en temps réel — mêmes formules que la page /devis/[id]/rentabilite, sur les lignes qui seraient générées. */}
         {rentabOuverte && resultat && (() => {
           let lignes: Omit<DevisLigne, "devis_id" | "ordre">[] = [];
           try { lignes = assemblerLignes().lignesFinales; } catch { return null; }
-          const tauxCotisService = profil?.taux_cotisations_service ?? 21.2;
-          const tauxCotisMateriau = profil?.taux_cotisations_materiau ?? 12.3;
-          const tauxIrService = profil?.taux_ir_service ?? 0;
-          const tauxIrMateriau = profil?.taux_ir_materiau ?? 0;
-          let coutAchatTotal = 0, sansCout = 0;
-          lignes.forEach(l => {
-            const aFournisseur = !!l.fournisseur_id || l.prix_achat != null;
-            const pa: number | null = aFournisseur ? (l.prix_achat ?? null) : (l.prestation_id ? (prestations.find(x => x.id === l.prestation_id)?.prix_achat ?? null) : null);
-            const cout = pa && pa > 0 ? pa * l.quantite : 0;
-            coutAchatTotal += cout;
-            if (l.type_branche === "materiau" && cout === 0 && l.prix_unitaire > 0) sansCout++;
-          });
-          const totalService = lignes.filter(l => l.type_branche === "service").reduce((a, l) => a + arrondi2(l.quantite * l.prix_unitaire), 0);
-          const totalMateriau = lignes.filter(l => l.type_branche === "materiau").reduce((a, l) => a + arrondi2(l.quantite * l.prix_unitaire), 0);
-          const totalVente = arrondi2(totalService + totalMateriau);
-          const cotis = totalService * tauxCotisService / 100 + totalMateriau * tauxCotisMateriau / 100;
-          const ir = totalService * tauxIrService / 100 + totalMateriau * tauxIrMateriau / 100;
-          const netService = totalService - totalService * (tauxCotisService + tauxIrService) / 100;
-          const netMateriau = totalMateriau - totalMateriau * (tauxCotisMateriau + tauxIrMateriau) / 100 - coutAchatTotal;
-          const net = netService + netMateriau;
-          const pct = totalVente > 0 ? Math.round(net / totalVente * 1000) / 10 : 0;
+          const { coutAchatTotal, sansCout, totalService, totalMateriau, totalVente, cotis, ir, netService, netMateriau, net, pct } = calculerRentab(lignes);
           const couleur = pct < 0 ? "text-red-600" : pct < 20 ? "text-amber-600" : "text-emerald-600";
           return (
             <div className="card card-inner mb-4 sticky top-2 z-20 shadow-md">
@@ -1334,13 +1482,26 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 {nbDef > 0 && <span className="shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-300 rounded-full px-2 py-0.5"><AlertTriangle size={11} /> À définir avec le client{nbDef > 1 ? ` ×${nbDef}` : ""}</span>}
                 {ok && <span className="shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5"><span className="inline-block w-2 h-2 rounded-full bg-emerald-500" /> OK devis</span>}
               </button>
-              <label className="flex items-center gap-1.5 shrink-0 text-xs text-ink-500" title="Temps de main d'œuvre chiffré pour ce poste (facultatif) — comparé au temps passé dans le suivi de réalisation">
-                <span className="hidden sm:inline">Main d'œuvre</span>
-                <input className="input !py-1 !px-2 !w-16 text-right text-sm" type="number" inputMode="decimal" min="0" step="0.25" placeholder="0"
-                  value={heuresPostes[piece] ?? ""}
-                  onChange={e => setHeuresPostes(prev => ({ ...prev, [piece]: e.target.value }))} />
-                <span>h</span>
-              </label>
+              {(() => {
+                const t = tempsActuel[piece];
+                const h = heuresDePoste(piece, t);
+                const champ = (cle: "c" | "a") => {
+                  const modif = cle === "c" ? nombreSaisi(hCablage[piece]) != null : nombreSaisi(hAppareils[piece]) != null;
+                  const val = cle === "c" ? hCablage[piece] : hAppareils[piece];
+                  const auto = cle === "c" ? h.autoC : h.autoA;
+                  const set = (v: string) => (cle === "c" ? setHCablage : setHAppareils)(prev => { const n = { ...prev }; if (v === "") delete n[piece]; else n[piece] = v; return n; });
+                  return (
+                    <label className="flex items-center gap-1 shrink-0 text-xs text-ink-500"
+                      title={`${cle === "c" ? `Temps de câblage : ${(t?.metres ?? 0).toFixed(1).replace(".", ",")} m ÷ ${metresParHeureNum.toString().replace(".", ",")} m/h` : `Temps d'appareillage : ${t?.appareils ?? 0} appareil(s) × ${minParAppareilNum.toString().replace(".", ",")} min`} = ${auto.toString().replace(".", ",")} h (calcul automatique). Modifie la valeur pour ce poste ; vide = retour au calcul. Comparé au temps passé dans le suivi de réalisation.`}>
+                      <span className="hidden sm:inline">{cle === "c" ? "Câblage" : "Appar."}</span>
+                      <input className={`input !py-1 !px-1.5 !w-14 text-right text-sm ${modif ? "!border-volt-400" : ""}`} type="number" inputMode="decimal" min="0" step="0.25"
+                        value={val ?? String(auto)} onChange={e => set(e.target.value)} />
+                      <span>h</span>
+                    </label>
+                  );
+                };
+                return <>{champ("c")}{champ("a")}</>;
+              })()}
             </div>
             {ouv && (poseEncastre === "precablee" || Object.values(posesSection).includes("precablee")) && (() => {
               const r = repartitionGaines(besoins);
@@ -1478,9 +1639,23 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 onChange={e => setMainOeuvreHeures(e.target.value)} />
               <p className="text-[11px] text-ink-400 mt-1">
                 {totalHeuresPostes > 0
-                  ? `+ ${totalHeuresPostes} h saisie${totalHeuresPostes > 1 ? "s" : ""} par poste ci-dessus (${heuresParPoste.length} poste${heuresParPoste.length > 1 ? "s" : ""}) = ${heures} h au total.`
-                  : "Heures non rattachées à un poste. Tu peux aussi saisir les heures poste par poste (champ « Main d'œuvre » de chaque carte) : elles s'ajoutent à celles-ci et servent à comparer ton estimation au temps réellement passé."}
+                  ? `+ ${arrondiH(totalHeuresPostes).toString().replace(".", ",")} h de pose par poste ci-dessus (${heuresParPoste.length} poste${heuresParPoste.length > 1 ? "s" : ""}) = ${arrondiH(heures).toString().replace(".", ",")} h au total.`
+                  : "Heures non rattachées à un poste. Les heures de pose de chaque poste (câblage + appareillage) sont préremplies ci-dessus et s'ajoutent à celles-ci."}
               </p>
+            </div>
+            <div className="md:col-span-2 rounded-lg border border-ink-100 bg-ink-50/60 p-2.5">
+              <p className="text-xs font-semibold text-ink-700 mb-1.5">Temps de pose préremplis (modifiables poste par poste)</p>
+              <div className="flex items-center gap-x-4 gap-y-2 flex-wrap text-xs text-ink-600">
+                <label className="flex items-center gap-1.5">Câblage : 1 h tous les
+                  <input className="input !py-1 !px-1.5 !w-16 text-right" type="number" min="0.5" step="0.5" value={metresParHeure} onChange={e => setMetresParHeure(e.target.value)} /> m
+                </label>
+                <label className="flex items-center gap-1.5">Appareillage :
+                  <input className="input !py-1 !px-1.5 !w-16 text-right" type="number" min="0" step="1" value={minParAppareil} onChange={e => setMinParAppareil(e.target.value)} /> min par appareil
+                </label>
+                <button type="button" className="text-volt-600 font-medium disabled:text-ink-300" disabled={Object.keys(hCablage).length + Object.keys(hAppareils).length === 0}
+                  onClick={() => { setHCablage({}); setHAppareils({}); }}>↺ Tout remettre au calcul</button>
+              </div>
+              <p className="text-[11px] text-ink-400 mt-1">Câblage = longueur de câble du poste ÷ mètres par heure ; appareillage = nombre d&apos;appareils × minutes. Les deux sont des lignes de main d&apos;œuvre distinctes dans le devis.</p>
             </div>
             <div>
               <label className="label">Tarif horaire</label>

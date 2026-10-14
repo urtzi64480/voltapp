@@ -2392,6 +2392,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [circuitsVisibles, setCircuitsVisibles] = useState<Set<number>>(new Set());
   // Gaines optimisées : afficher aussi le câblage des circuits à l'intérieur des pièces (sinon seules les gaines regroupées sont tracées).
   const [cablagePiecesGn, setCablagePiecesGn] = useState(false);
+  // Gaines optimisées : circuits vus INDIVIDUELLEMENT (tracé classique complet, avec ses boîtes), en plus du tracé regroupé des autres.
+  const [circuitsDetailles, setCircuitsDetailles] = useState<Set<number>>(new Set());
   const [showPrintForm, setShowPrintForm] = useState(false);
   const [show3DPrintForm, setShow3DPrintForm] = useState(false);
   const [vue3D, setVue3D] = useState(false);
@@ -6091,7 +6093,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       const gainesNivPlan = calqueGaines ? gainesMaison?.[niveauActif.id] : undefined;
       const cheminBr = gainesNivPlan ? cheminCircuitGaine(gainesNivPlan, breaker.label) : null;
       const premierSeg = segments.find(sg => sg.aId === "tableau" && sg.type !== "domotique");
-      const suitGaine = !!(cheminBr && premierSeg && Math.hypot(cheminBr[cheminBr.length - 1].vers.x - premierSeg.bPoint.x, cheminBr[cheminBr.length - 1].vers.y - premierSeg.bPoint.y) < 0.05);
+      const detaille = circuitsDetailles.has(breaker.id);
+      const suitGaine = !detaille && !!(cheminBr && premierSeg && Math.hypot(cheminBr[cheminBr.length - 1].vers.x - premierSeg.bPoint.x, cheminBr[cheminBr.length - 1].vers.y - premierSeg.bPoint.y) < 0.05);
       segments.forEach(seg => {
         // Gaines optimisées : seules les gaines regroupées sont tracées ; le câblage dans les pièces n'apparaît que sur demande (ou pour le circuit sélectionné).
         if (suitGaine && !cablagePiecesGn && breaker.id !== breakerPanneauId && seg !== premierSeg) return;
@@ -6312,7 +6315,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       // Boîte(s) de dérivation, déplaçables en drag-drop et nommées indépendamment
       // — le câble les chaîne dans l'ordre, chaque lampe repart en étoile depuis
       // la boîte la plus proche d'elle (voir construireBranchesCircuitEclairage).
-      if (!visuel) {
+      // Gaines optimisées actives : les boîtes de dérivation du câblage classique ne servent plus, sauf sur un circuit vu individuellement.
+      if (!visuel && !(gainesNivPlan && !detaille)) {
         const lumieres = breaker.circuit === "lumiere" ? points.filter(a => estLumiere(a.type)) : [];
         const boitesExistantes = niveauActif.boitesDerivation?.[breaker.label] ?? [];
         {
@@ -9561,6 +9565,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         })()}
                         {!b && <span className="text-[9px] text-ink-400 shrink-0 italic whitespace-nowrap">vide</span>}
                         {manuel?.nonRelieTableau && <span className="text-[9px] text-sky-600 shrink-0" title="Circuit déjà existant, non relié au tableau">🔗✕</span>}
+                        {b && calqueGaines && niveauActif && gainesMaison?.[niveauActif.id] && (
+                          <button onClick={e => { e.preventDefault(); e.stopPropagation(); setCircuitsDetailles(prev => { const n = new Set(prev); if (n.has(b.id)) n.delete(b.id); else n.add(b.id); return n; }); }}
+                            className={`btn-ghost !p-0.5 shrink-0 ${circuitsDetailles.has(b.id) ? "!bg-ink-900 !text-volt-400" : ""}`}
+                            title={circuitsDetailles.has(b.id) ? "Revenir au tracé regroupé dans la gaine" : "Voir ce circuit individuellement : tracé complet du tableau jusqu'à ses appareillages, avec ses boîtes de dérivation"}>
+                            <Eye size={12} />
+                          </button>
+                        )}
                         {b && CIRCUITS[b.circuit]?.category !== "lumiere" && (
                           <button onClick={e => { e.preventDefault(); e.stopPropagation(); demarrerDessinCheminement(b); }}
                             className="btn-ghost !p-0.5 shrink-0" title="Dessiner le cheminement">
