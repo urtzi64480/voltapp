@@ -60,6 +60,29 @@ export interface TronconArbre {
   gaine: string;
   tauxPct: number;
   ok: boolean;
+  /** Boîte de dérivation à l'arrivée de ce tronçon (là où la gaine se sépare en plusieurs) ; absent si le tronçon aboutit à un circuit. */
+  boiteVers?: string;
+  /** Tronçon très court dont l'extrémité est fusionnée dans la boîte d'amont (pas de seconde boîte à moins de DISTANCE_MINI_BOITES_M) : id de cette boîte. */
+  dansBoite?: string;
+}
+
+/** Deux séparations de gaine plus proches que ça (m) partagent une seule boîte de dérivation. */
+export const DISTANCE_MINI_BOITES_M = 1;
+
+/** Boîte de dérivation : créée à chaque endroit où une gaine commune se sépare en plusieurs gaines. */
+export interface BoiteGaine {
+  id: string;
+  /** « BD1 », « BD2 »… (« BDF1 » pour les courants faibles), numérotées sur tout le niveau. */
+  nom: string;
+  groupeId: string;
+  point: Point;
+  courantFaible: boolean;
+  /** Tronçon qui arrive dans la boîte. */
+  entrant: { tronconId: string; gaine: string };
+  /** Tronçons qui en repartent. */
+  sorties: { tronconId: string; gaine: string; nbCircuits: number }[];
+  /** Circuits (clés) qui traversent la boîte. */
+  circuits: string[];
 }
 
 export interface GroupeGaines {
@@ -81,6 +104,8 @@ export interface ResultatGainesOptimisees {
   groupes: GroupeGaines[];
   /** clé de circuit → id du groupe (gaine au départ). */
   groupeDeCircuit: Record<string, string>;
+  /** Boîtes de dérivation créées aux séparations de gaines. */
+  boites: BoiteGaine[];
   avant: BilanGaines;
   apres: BilanGaines;
   avertissements: string[];
@@ -222,23 +247,38 @@ export function optimiserGaines(
   racines.sort((a, b) => (a.faible === b.faible ? angle(a.n) - angle(b.n) : a.faible ? 1 : -1));
 
   const groupes: GroupeGaines[] = [];
+  const boites: BoiteGaine[] = [];
   const groupeDeCircuit: Record<string, string> = {};
   let compteurP = 0, compteurF = 0;
   racines.forEach(({ n, faible }) => {
     const id = faible ? `GF${++compteurF}` : `G${++compteurP}`;
     const troncons: TronconArbre[] = [];
     let k = 0;
-    const parcourir = (nd: Noeud, de: Point, parent: string | null): TronconArbre => {
+    const parcourir = (nd: Noeud, de: Point, parent: string | null, boiteAmont: BoiteGaine | null): TronconArbre => {
       const r = remplissage(nd.circuits, params);
       const t: TronconArbre = {
         id: `${id}.${++k}`, parent, de, vers: nd.point, longueurM: d2(de, nd.point), circuits: nd.circuits.map(c => c.cle),
         nbCables: r.nbCables, gaine: r.gaine, tauxPct: r.tauxPct, ok: r.ok,
       };
       troncons.push(t);
-      nd.enfants.forEach(e => parcourir(e, nd.point, t.id));
+      if (nd.enfants.length > 0) {
+        let boite: BoiteGaine;
+        if (boiteAmont && t.longueurM < DISTANCE_MINI_BOITES_M) {
+          // séparation très proche de la précédente : une seule boîte, qui récupère les départs de ce nœud
+          boite = boiteAmont;
+          t.dansBoite = boite.id;
+          boite.sorties = boite.sorties.filter(x => x.tronconId !== t.id);
+          boite.circuits = [...new Set([...boite.circuits, ...nd.circuits.map(c => c.cle)])];
+        } else {
+          t.boiteVers = `${id}.B${boites.filter(b => b.groupeId === id).length + 1}`;
+          boite = { id: t.boiteVers, nom: "", groupeId: id, point: { x: nd.point.x, y: nd.point.y }, courantFaible: faible, entrant: { tronconId: t.id, gaine: t.gaine }, sorties: [], circuits: nd.circuits.map(c => c.cle) };
+          boites.push(boite);
+        }
+        nd.enfants.forEach(e => { const f = parcourir(e, nd.point, t.id, boite); if (!f.dansBoite) boite.sorties.push({ tronconId: f.id, gaine: f.gaine, nbCircuits: f.circuits.length }); });
+      }
       return t;
     };
-    const tronc = parcourir(n, origine, null);
+    const tronc = parcourir(n, origine, null, null);
     const warn: string[] = [];
     if (n.circuits.length > params.maxCircuitsParGaine) warn.push(`${n.circuits.length} circuits dans la gaine (maximum conseillé ${params.maxCircuitsParGaine}).`);
     troncons.forEach(t => { if (!t.ok) warn.push(`Tronçon ${t.id} : remplissage ${t.tauxPct} % > ${params.tauxMaxPct} %.`); });
@@ -251,6 +291,10 @@ export function optimiserGaines(
     warn.forEach(w => avertissements.push(`${groupes[groupes.length - 1].nom} : ${w}`));
   });
 
+  // Noms des boîtes : BD1, BD2… (puissance) puis BDF1… (courants faibles), dans l'ordre des gaines
+  let nb = 0, nbF = 0;
+  boites.forEach(b => { b.nom = b.courantFaible ? `BDF${++nbF}` : `BD${++nb}`; });
+
   // Bilan avant / après
   const directM = circuits.map(c => d2(origine, c.entree));
   const avant: BilanGaines = { departs: circuits.length, gaineM: directM.reduce((s, x) => s + x, 0), cableM: directM.reduce((s, x) => s + x, 0) };
@@ -260,7 +304,7 @@ export function optimiserGaines(
     while (t) { cableApres += t.longueurM; const par: string | null = t.parent; t = par ? g.troncons.find(x => x.id === par) : undefined; }
   }));
   const apres: BilanGaines = { departs: groupes.length, gaineM: groupes.reduce((s, g) => s + g.longueurM, 0), cableM: cableApres };
-  return { groupes, groupeDeCircuit, avant, apres, avertissements };
+  return { groupes, groupeDeCircuit, boites, avant, apres, avertissements };
 }
 
 /** Texte d'une gaine de départ : « 3 × circuits · ICTA 25 (31 %) ». */

@@ -11,7 +11,7 @@ import type { BreakerRow } from "@/lib/electrical-constants";
 import { calculerTableauReel, fusionnerParamsTableau, type ControleNF, type ParamsGtl, type ParamsTableauReel, type ResultatTableauReel } from "@/lib/tableau-reel";
 import { PARAMS_RACCORDEMENT_DEFAUT, SECTIONS_ABAQUE, LONGUEURS_ABAQUE, type ParamsRaccordement } from "@/lib/raccordement-agcp";
 import { CALIBRES_AGCP } from "@/lib/normes-nfc";
-import { couleurGroupe, deplacerCircuitGaine, fusionnerForcages, fusionnerParamsGaines, FORCAGES_VIDES, type ForcagesGaines, type ParamsGainesOptimisees } from "@/lib/gaines-optimisees";
+import { couleurGroupe, deplacerCircuitGaine, fusionnerForcages, fusionnerParamsGaines, FORCAGES_VIDES, type ForcagesGaines, type GroupeGaines, type ParamsGainesOptimisees, type TronconArbre } from "@/lib/gaines-optimisees";
 import type { GainesNiveau, SyntheseGaines } from "@/lib/gaines-optimisees-plan";
 import type { ReglagesGaines, ReglagesTableauReel } from "@/lib/maison-types";
 import { agencerGtl } from "@/lib/gtl-agencement";
@@ -450,91 +450,148 @@ function GainesOnglet(p: TableauReelPanelProps) {
   const cout = (gaineM: number, cableM: number) => gaineM * prixGaine + cableM * prixCable;
   const g = p.gaines;
   const [survol, setSurvol] = useState<string | null>(null);
+  const [boiteActive, setBoiteActive] = useState<string | null>(null);
   const peutDessiner = params.actif && !!g && (p.pieces?.length ?? 0) > 0;
+  const nbCircuits = g ? g.groupes.reduce((n, x) => n + x.circuits.length, 0) : 0;
+
+  const deplacer = (c: { cle: string }, v: string) => {
+    if (!g || !v) return;
+    if (v === "__seul") majForcages(deplacerCircuitGaine(forcages, c.cle, null));
+    else { const cible = g.groupes.find(x => x.id === v); if (cible) majForcages(deplacerCircuitGaine(forcages, c.cle, cible.circuits[0].cle, cible.circuits.map(x => x.cle))); }
+  };
+
+  // Lecture à plat : une ligne « Tableau → gaine → boîte », puis un bloc par boîte qui dit d'où elle reçoit et où elle repart.
+  const longueur = (m: number) => (m < 0.05 ? "sur place" : `${fmt(m, 1)} m`);
+  const Destination = ({ gr, t }: { gr: GroupeGaines; t: TronconArbre }) => {
+    const boite = g?.boites.find(b => b.id === t.boiteVers);
+    const circuit = !boite && t.circuits.length === 1 ? gr.circuits.find(c => c.cle === t.circuits[0]) : undefined;
+    return (
+      <>
+        <span className="text-ink-400">→</span>
+        {boite && (
+          <button onClick={() => setBoiteActive(boiteActive === boite.id ? null : boite.id)}
+            className={`rounded border px-1.5 text-xs font-semibold ${boiteActive === boite.id ? "border-amber-400 bg-amber-100" : "border-ink-300 bg-white"}`}
+            title="Boîte de dérivation : la gaine se sépare ici">▣ {boite.nom}</button>
+        )}
+        {circuit && (
+          <span className={`inline-flex items-center gap-1 rounded border px-1.5 text-xs ${circuit.breakerId === p.breakerSelectionneId ? "border-amber-400 bg-amber-50" : "border-ink-200"}`}>
+            <button onClick={() => p.onSelectBreaker(circuit.breakerId === p.breakerSelectionneId ? null : circuit.breakerId)} className="hover:underline">{circuit.label}</button>
+            <select value="" title="Déplacer ce circuit dans une autre gaine" onChange={e => deplacer(circuit, e.target.value)} className="w-4 text-[11px] border-0 bg-transparent cursor-pointer">
+              <option value="">⇄</option>
+              {!gr.seul && <option value="__seul">Gaine individuelle</option>}
+              {g?.groupes.filter(x => x.id !== gr.id && x.courantFaible === gr.courantFaible).map(x => <option key={x.id} value={x.id}>→ {x.nom}</option>)}
+            </select>
+          </span>
+        )}
+      </>
+    );
+  };
+  const Ligne = ({ gr, t }: { gr: GroupeGaines; t: TronconArbre }) => (
+    <div className="flex flex-wrap items-center gap-1.5 py-0.5">
+      <span className="text-[11px] text-ink-600">{t.gaine} · {longueur(t.longueurM)}</span>
+      <Destination gr={gr} t={t} />
+    </div>
+  );
+
   return (
-    <div className="h-full grid gap-3 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_460px]">
-      <Carte titre={`Plan du niveau « ${p.niveauNom} » — arbre de gaines`}>
+    <div className="h-full grid gap-3 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_480px]">
+      <Carte titre={`Plan du niveau « ${p.niveauNom} »`}>
         {peutDessiner && g ? (
           <>
-            <ZoneZoom ratio={1.4} className="flex-1"><GainesPlan pieces={p.pieces ?? []} origine={g.origine} groupes={g.groupes} selectionBreakerId={p.breakerSelectionneId} groupeSurvole={survol} onSurvol={setSurvol} onSelectBreaker={p.onSelectBreaker} /></ZoneZoom>
-            <p className="text-xs text-ink-500 pt-1">Une couleur par gaine de départ (tireté vert = courants faibles). Survole une gaine dans la liste ou sur le plan pour l&apos;isoler ; clique un point d&apos;arrivée pour sélectionner son circuit.</p>
+            <ZoneZoom ratio={1.4} className="flex-1"><GainesPlan pieces={p.pieces ?? []} origine={g.origine} groupes={g.groupes} boites={g.boites} selectionBreakerId={p.breakerSelectionneId} groupeSurvole={survol} boiteActive={boiteActive} onSurvol={setSurvol} onSelectBreaker={p.onSelectBreaker} onBoite={setBoiteActive} /></ZoneZoom>
+            <p className="text-xs text-ink-500 pt-1">⚡ Tableau · une couleur par gaine (tireté vert = courants faibles) · <b>B</b> = boîte de dérivation (là où une gaine se sépare). Survole une gaine ou clique une boîte pour l&apos;isoler.</p>
           </>
         ) : (
           <div className="flex-1 grid place-items-center text-sm text-ink-500 text-center px-6">
-            {!params.actif ? "Active « Gaines optimisées » à droite pour voir l'arbre de gaines sur le plan." : "Rien à dessiner sur ce niveau (place le tableau ou le point d'arrivée des gaines, et génère les circuits)."}
+            {!params.actif ? "Active « Gaines optimisées » à droite pour regrouper les circuits dans des gaines communes." : "Rien à dessiner sur ce niveau (place le tableau ou le point d'arrivée des gaines, et génère les circuits)."}
           </div>
         )}
       </Carte>
-      <Carte titre="Gaines optimisées au départ du tableau" className="overflow-hidden">
+      <Carte titre="Gaines optimisées" className="overflow-hidden">
         <div className="overflow-y-auto flex flex-col gap-3 pr-1">
-      <div className="flex items-center gap-3 flex-wrap">
-        <Case label="Gaines optimisées au départ du tableau" valeur={params.actif} onChange={v => maj({ actif: v })} aide="Désactivé : une gaine par circuit, comme avant" />
-        <Case label="Afficher sur le plan" valeur={p.reglagesGaines.calque ?? true} onChange={v => p.onReglagesGaines({ calque: v })} />
-        <button className="btn-ghost !text-xs" onClick={p.onRecalculerGaines} disabled={!params.actif}>↻ Recalculer</button>
-        <button className="btn-ghost !text-xs" onClick={() => majForcages(FORCAGES_VIDES)} disabled={forcages.departsSeuls.length + forcages.ensembles.length === 0}>Libérer tout</button>
-      </div>
-      <div className="grid grid-cols-1 gap-y-0.5">
-        <Champ label="Circuits maxi par gaine" aide="Avertissement au-delà, jamais un blocage"><Num valeur={params.maxCircuitsParGaine} onChange={v => maj({ maxCircuitsParGaine: Math.round(v) })} min={1} /></Champ>
-        <Champ label="Remplissage maxi (%)" aide="33 % : règle des conduits"><Num valeur={params.tauxMaxPct} onChange={v => maj({ tauxMaxPct: v })} min={5} max={100} /></Champ>
-        <Champ label="Pénalité par départ (m)" aide="Plus elle est haute, plus on regroupe"><Num valeur={params.penaliteDepartM} onChange={v => maj({ penaliteDepartM: v })} pas={0.5} min={0} /></Champ>
-        <Case label="Plaque, IRVE, chauffe-eau, ≥ 32 A : gaine à part" valeur={params.grandsCircuitsSeuls} onChange={v => maj({ grandsCircuitsSeuls: v })} />
-        <Case label="Pose apparente (IRL)" valeur={params.poseApparente} onChange={v => maj({ poseApparente: v })} />
-        <Champ label="Prix gaine (€/m)"><Num valeur={prixGaine} onChange={v => p.onReglagesGaines({ prixGaineEuroM: v })} pas={0.1} min={0} /></Champ>
-        <Champ label="Prix câble (€/m)"><Num valeur={prixCable} onChange={v => p.onReglagesGaines({ prixCableEuroM: v })} pas={0.1} min={0} /></Champ>
-      </div>
-      {s && (
-        <table className="w-full text-xs border border-ink-200">
-          <thead className="bg-ink-50 text-ink-500"><tr><th className="text-left px-2 font-normal" /><th className="font-normal text-right px-2">Avant</th><th className="font-normal text-right px-2">Après</th><th className="font-normal text-right px-2">Écart</th></tr></thead>
-          <tbody>
-            <tr><td className="px-2">Départs au tableau</td><td className="text-right px-2 font-mono">{s.departsAvant}</td><td className="text-right px-2 font-mono">{params.actif ? s.departsApres : s.departsAvant}</td><td className="text-right px-2 font-mono">{params.actif ? s.departsApres - s.departsAvant : 0}</td></tr>
-            <tr><td className="px-2">Gaine (m, à vol d&apos;oiseau)</td><td className="text-right px-2 font-mono">{fmt(s.gaineAvantM, 0)}</td><td className="text-right px-2 font-mono">{fmt(params.actif ? s.gaineApresM : s.gaineAvantM, 0)}</td><td className="text-right px-2 font-mono">{fmt(params.actif ? s.gaineApresM - s.gaineAvantM : 0, 0)}</td></tr>
-            <tr><td className="px-2">Câble (m, à vol d&apos;oiseau)</td><td className="text-right px-2 font-mono">{fmt(s.cableAvantM, 0)}</td><td className="text-right px-2 font-mono">{fmt(params.actif ? s.cableApresM : s.cableAvantM, 0)}</td><td className="text-right px-2 font-mono">{fmt(params.actif ? s.cableApresM - s.cableAvantM : 0, 0)}</td></tr>
-            <tr className="font-semibold"><td className="px-2">Estimation gaine + câble (€ HT)</td><td className="text-right px-2 font-mono">{fmt(cout(s.gaineAvantM, s.cableAvantM), 0)}</td><td className="text-right px-2 font-mono">{fmt(params.actif ? cout(s.gaineApresM, s.cableApresM) : cout(s.gaineAvantM, s.cableAvantM), 0)}</td><td className="text-right px-2 font-mono">{fmt(params.actif ? cout(s.gaineApresM, s.cableApresM) - cout(s.gaineAvantM, s.cableAvantM) : 0, 0)}</td></tr>
-          </tbody>
-        </table>
-      )}
-      {s && s.montees.length > 0 && <p className="text-xs text-ink-500">Montées vers les autres niveaux (inchangées) : {s.montees.map(m => `${m.nbGaines > 1 ? `${m.nbGaines} × ` : ""}${m.gaine} → ${m.niveau}`).join(" · ")}.</p>}
-      <p className="text-[11px] text-ink-400">Longueurs à vol d&apos;oiseau depuis le tableau / point d&apos;arrivée des gaines : le câble suit le tronc puis sa branche, donc un peu plus long qu&apos;en ligne droite ; la gaine commune est plus courte. Estimation indicative, hors montées verticales.</p>
+          <div className="flex items-center gap-3 flex-wrap">
+            <Case label="Activer les gaines optimisées" valeur={params.actif} onChange={v => maj({ actif: v })} aide="Désactivé : une gaine par circuit depuis le tableau, comme avant" />
+            <Case label="Afficher sur le plan" valeur={p.reglagesGaines.calque ?? true} onChange={v => p.onReglagesGaines({ calque: v })} />
+            <button className="btn-ghost !text-xs" onClick={p.onRecalculerGaines} disabled={!params.actif}>↻ Recalculer</button>
+            <button className="btn-ghost !text-xs" onClick={() => majForcages(FORCAGES_VIDES)} disabled={forcages.departsSeuls.length + forcages.ensembles.length === 0}>Libérer tout</button>
+          </div>
 
-      {!params.actif && <p className="text-xs text-ink-600">Option désactivée : active-la pour regrouper les circuits qui partent dans la même direction (niveau « {p.niveauNom} »).</p>}
-      {params.actif && !g && <p className="text-xs text-ink-600">Aucun circuit à regrouper sur le niveau « {p.niveauNom} » (tableau ou point d&apos;arrivée des gaines à placer, circuits à générer).</p>}
-      {params.actif && g && (
-        <div className="flex flex-col gap-1.5">
-          <p className="text-xs font-semibold text-ink-700">Niveau « {p.niveauNom} » : {g.groupes.length} gaine(s) pour {g.groupes.reduce((n, x) => n + x.circuits.length, 0)} circuit(s)</p>
-          {g.avertissements.map((w, i) => <p key={i} className="text-xs text-amber-700">⚠️ {w}</p>)}
-          {g.ignores.length > 0 && <p className="text-xs text-ink-500">Non raccordés (ignorés) : {g.ignores.join(", ")}.</p>}
-          {g.groupes.map((gr, gi) => {
-            const coul = couleurGroupe(gi, gr.courantFaible);
-            const fige = forcages.ensembles.some(e => e.length > 1 && gr.circuits.every(c => e.includes(c.cle)));
-            return (
-              <div key={gr.id} onMouseEnter={() => setSurvol(gr.id)} onMouseLeave={() => setSurvol(null)} className={`rounded border p-1.5 ${survol === gr.id ? "border-ink-500 bg-ink-50" : "border-ink-200"}`}>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="inline-block w-3 h-3 rounded-sm" style={{ background: coul }} />
-                  <b>{gr.nom}</b><span className="text-ink-600">{gr.tronc.gaine} · {gr.tronc.tauxPct} % · {fmt(gr.longueurM, 1)} m</span>
-                  {gr.circuits.length > 1 && !fige && <button className="ml-auto text-[11px] underline" title="Garde ces circuits ensemble lors des prochains recalculs" onClick={() => majForcages({ ...forcages, ensembles: [...forcages.ensembles, gr.circuits.map(c => c.cle)] })}>🔒 Figer</button>}
-                  {fige && <span className="ml-auto text-[11px] text-ink-500">🔒 figée</span>}
-                </div>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {gr.circuits.map(c => (
-                    <span key={c.cle} className={`inline-flex items-center gap-1 rounded border px-1 py-0.5 text-[11px] ${c.breakerId === p.breakerSelectionneId ? "border-amber-400 bg-amber-50" : "border-ink-200"}`}>
-                      <button onClick={() => p.onSelectBreaker(c.breakerId === p.breakerSelectionneId ? null : c.breakerId)} className="hover:underline">{c.label}</button>
-                      <select value="" title="Déplacer ce circuit" onChange={e => {
-                        const v = e.target.value; if (!v) return;
-                        if (v === "__seul") majForcages(deplacerCircuitGaine(forcages, c.cle, null));
-                        else { const cible = g.groupes.find(x => x.id === v); if (cible) majForcages(deplacerCircuitGaine(forcages, c.cle, cible.circuits[0].cle, cible.circuits.map(x => x.cle))); }
-                      }} className="w-4 text-[11px] border-0 bg-transparent cursor-pointer">
-                        <option value="">⇄</option>
-                        {!gr.seul && <option value="__seul">Départ individuel</option>}
-                        {g.groupes.filter(x => x.id !== gr.id && x.courantFaible === gr.courantFaible).map(x => <option key={x.id} value={x.id}>→ {x.nom}</option>)}
-                      </select>
-                    </span>
-                  ))}
-                </div>
+          {s && params.actif && g && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-2 text-xs text-ink-800">
+              <b>{s.departsAvant} départs → {s.departsApres} gaines</b> au tableau (tous niveaux), <b>{s.boites} boîte{s.boites > 1 ? "s" : ""} de dérivation</b> au total.<br />
+              Gaine {fmt(s.gaineApresM - s.gaineAvantM, 0)} m · câble {s.cableApresM - s.cableAvantM >= 0 ? "+" : ""}{fmt(s.cableApresM - s.cableAvantM, 0)} m · environ <b>{fmt(cout(s.gaineApresM, s.cableApresM) - cout(s.gaineAvantM, s.cableAvantM), 0)} € HT</b> (boîtes non comptées ici : elles apparaissent au pré-devis).
+            </div>
+          )}
+          {s && s.montees.length > 0 && <p className="text-xs text-ink-500">Montées vers les autres niveaux (inchangées) : {s.montees.map(m => `${m.nbGaines > 1 ? `${m.nbGaines} × ` : ""}${m.gaine} → ${m.niveau}`).join(" · ")}.</p>}
+          {!params.actif && <p className="text-xs text-ink-600">Option désactivée : active-la pour regrouper les circuits qui partent dans la même direction (niveau « {p.niveauNom} »).</p>}
+          {params.actif && !g && <p className="text-xs text-ink-600">Aucun circuit à regrouper sur le niveau « {p.niveauNom} » (tableau ou point d&apos;arrivée des gaines à placer, circuits à générer).</p>}
+
+          {params.actif && g && (
+            <>
+              <div className="flex flex-col gap-2">
+                <p className="text-xs font-semibold text-ink-700">Chemin de chaque gaine — {g.groupes.length} gaine(s) pour {nbCircuits} circuit(s)</p>
+                {g.avertissements.map((w, i) => <p key={i} className="text-xs text-amber-700">⚠️ {w}</p>)}
+                {g.ignores.length > 0 && <p className="text-xs text-ink-500">Non raccordés (ignorés) : {g.ignores.join(", ")}.</p>}
+                {g.groupes.map((gr, gi) => {
+                  const coul = couleurGroupe(gi, gr.courantFaible);
+                  const fige = forcages.ensembles.some(e => e.length > 1 && gr.circuits.every(c => e.includes(c.cle)));
+                  return (
+                    <div key={gr.id} onMouseEnter={() => setSurvol(gr.id)} onMouseLeave={() => setSurvol(null)} className={`rounded-lg border p-2 ${survol === gr.id ? "border-ink-500 bg-ink-50" : "border-ink-200"}`}>
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="inline-block w-3 h-3 rounded-sm" style={{ background: coul }} />
+                        <b>{gr.nom}</b><span className="text-ink-600">{gr.circuits.length} circuit{gr.circuits.length > 1 ? "s" : ""} · remplissage {gr.tronc.tauxPct} % · {fmt(gr.longueurM, 1)} m de gaine</span>
+                        {gr.circuits.length > 1 && !fige && <button className="ml-auto text-[11px] underline" title="Garde ces circuits ensemble lors des prochains recalculs" onClick={() => majForcages({ ...forcages, ensembles: [...forcages.ensembles, gr.circuits.map(c => c.cle)] })}>🔒 Figer</button>}
+                        {fige && <span className="ml-auto text-[11px] text-ink-500">🔒 figée</span>}
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                        <span className="rounded bg-ink-900 px-1.5 text-xs font-semibold text-volt-400">⚡ Tableau</span>
+                        <Ligne gr={gr} t={gr.tronc} />
+                      </div>
+                      {g.boites.filter(b => b.groupeId === gr.id).map(b => (
+                        <div key={b.id} className={`mt-1.5 ml-3 border-l-2 pl-2 ${boiteActive === b.id ? "border-amber-400" : "border-ink-200"}`} style={{ borderLeftColor: boiteActive === b.id ? undefined : coul }}>
+                          <div className="text-xs"><b>▣ {b.nom}</b> <span className="text-ink-500">reçoit {b.entrant.gaine} ({b.circuits.length} circuits), repart vers :</span></div>
+                          {b.sorties.map(so => { const t = gr.troncons.find(x => x.id === so.tronconId); return t ? <Ligne key={so.tronconId} gr={gr} t={t} /> : null; })}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
-        </div>
-      )}
+
+              <div>
+                <p className="text-xs font-semibold text-ink-700 mb-1">Boîtes de dérivation à poser — {g.boites.length}</p>
+                {g.boites.length === 0
+                  ? <p className="text-xs text-ink-500">Aucune : chaque gaine va directement à son circuit.</p>
+                  : (
+                    <table className="w-full text-xs border border-ink-200">
+                      <thead className="bg-ink-50 text-ink-500"><tr><th className="text-left px-2 font-normal">Boîte</th><th className="text-left font-normal">Arrive</th><th className="text-left font-normal">Repart</th><th className="text-right px-2 font-normal">Circuits</th></tr></thead>
+                      <tbody>
+                        {g.boites.map(b => (
+                          <tr key={b.id} onClick={() => setBoiteActive(boiteActive === b.id ? null : b.id)} className={`border-t border-ink-100 cursor-pointer hover:bg-ink-50 ${boiteActive === b.id ? "bg-amber-50" : ""}`}>
+                            <td className="px-2 py-1 font-semibold">▣ {b.nom}</td><td>{b.entrant.gaine}</td><td>{b.sorties.map(x => x.gaine.replace(/ verte.*/, "")).join(" + ")}</td><td className="text-right px-2">{b.circuits.length}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                <p className="text-[11px] text-ink-400 mt-1">Ces boîtes sont comptées au pré-devis (ligne « Boîte de dérivation ») et dessinées en 3D.</p>
+              </div>
+            </>
+          )}
+
+          <details className="rounded-lg border border-ink-200 p-2">
+            <summary className="cursor-pointer text-xs font-semibold text-ink-700">Réglages avancés</summary>
+            <div className="grid grid-cols-1 gap-y-0.5 mt-1">
+              <Champ label="Circuits maxi par gaine" aide="Avertissement au-delà, jamais un blocage"><Num valeur={params.maxCircuitsParGaine} onChange={v => maj({ maxCircuitsParGaine: Math.round(v) })} min={1} /></Champ>
+              <Champ label="Remplissage maxi (%)" aide="33 % : règle des conduits"><Num valeur={params.tauxMaxPct} onChange={v => maj({ tauxMaxPct: v })} min={5} max={100} /></Champ>
+              <Champ label="Pénalité par départ (m)" aide="Plus elle est haute, plus on regroupe"><Num valeur={params.penaliteDepartM} onChange={v => maj({ penaliteDepartM: v })} pas={0.5} min={0} /></Champ>
+              <Case label="Plaque, IRVE, chauffe-eau, ≥ 32 A : gaine à part" valeur={params.grandsCircuitsSeuls} onChange={v => maj({ grandsCircuitsSeuls: v })} />
+              <Case label="Pose apparente (IRL)" valeur={params.poseApparente} onChange={v => maj({ poseApparente: v })} />
+              <Champ label="Prix gaine (€/m)"><Num valeur={prixGaine} onChange={v => p.onReglagesGaines({ prixGaineEuroM: v })} pas={0.1} min={0} /></Champ>
+              <Champ label="Prix câble (€/m)"><Num valeur={prixCable} onChange={v => p.onReglagesGaines({ prixCableEuroM: v })} pas={0.1} min={0} /></Champ>
+            </div>
+            <p className="text-[11px] text-ink-400 mt-1">Longueurs à vol d&apos;oiseau depuis le tableau ; le câble suit le tronc puis sa branche. Estimation indicative, hors montées verticales.</p>
+          </details>
         </div>
       </Carte>
     </div>
