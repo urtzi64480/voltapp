@@ -12,6 +12,7 @@ import TableauReelPanel, { type Onglet as OngletTableauReel } from "@/components
 import type { GaineAttente } from "@/lib/maison-types";
 import { cheminGaineAttente, longueursGaineAttente, nouvelleGaineAttente, SECTIONS_ATTENTE, HAUTEUR_ATTENTE_DEFAUT_CM, libelleSection } from "@/lib/gaines-attente";
 import { couleurGroupe, cheminCircuitGaine, fusionnerForcages, fusionnerParamsGaines, diametreGaineDepuisLibelle } from "@/lib/gaines-optimisees";
+import { purgerTracesCircuits } from "@/lib/purger-circuit";
 import { optimiserGainesMaison, syntheseGaines, type GainesNiveau } from "@/lib/gaines-optimisees-plan";
 import type { ReglagesGaines, ReglagesTableauReel } from "@/lib/maison-types";
 import { useProjets, qsProjet, modifierProjet, sauverTableau, sauverAnnexes, synchroniserAnnexes, lireAnnexes, nouvelIdAnnexe, TABLEAU_PRINCIPAL, TableauAnnexe } from "@/lib/projets";
@@ -4287,14 +4288,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const breaker = resultat?.breakers.find(b => b.manuelId === manuelId);
     if (refuserVerrou(breaker?.label ?? niveauActif?.circuitsManuels?.find(m => m.id === manuelId)?.nom)) return;
     const membreIds = niveauActif?.pieces.flatMap(p => p.appareillages).filter(a => a.circuitManuelId === manuelId).map(a => a.id) ?? [];
-    updateNiveauActif(n => ({
+    updateNiveauActif(n0 => { const n = purgerTracesCircuits(n0, breaker ? [breaker.label] : [], membreIds); return {
       ...n,
       circuitsManuels: (n.circuitsManuels ?? []).filter(m => m.id !== manuelId),
       pieces: n.pieces.map(p => ({
         ...p,
         appareillages: p.appareillages.map(a => a.circuitManuelId === manuelId ? { ...a, circuitManuelId: undefined, circuitId: undefined } : a),
       })),
-    }));
+    }; });
     if (breaker) retirerBreakerDuResultat(breaker.id, membreIds);
   };
   // Supprime N'IMPORTE QUEL circuit déjà généré, manuel ou automatique. Un circuit manuel
@@ -4309,14 +4310,14 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (b.manuelId != null) { supprimerCircuitManuel(b.manuelId); return; }
     if (!niveauActif) return;
     const membreIds = niveauActif.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id).map(a => a.id);
-    updateNiveauActif(n => ({
+    updateNiveauActif(n0 => { const n = purgerTracesCircuits(n0, [b.label], membreIds); return {
       ...n,
       appareillagesExclus: Array.from(new Set([...(n.appareillagesExclus ?? []), ...membreIds])),
       pieces: n.pieces.map(p => ({
         ...p,
         appareillages: p.appareillages.map(a => membreIds.includes(a.id) ? { ...a, circuitId: undefined } : a),
       })),
-    }));
+    }; });
     retirerBreakerDuResultat(b.id, membreIds);
   };
   // Rattache (ou détache, avec undefined) un appareillage à un circuit manuel — prioritaire
@@ -5434,7 +5435,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     // Un circuit manuel effacé disparaît vraiment (définition + rattachements) : il ne reste pas « à générer ». « Tous » / « un niveau »
     // vident aussi les manuels du périmètre, même sans appareillage.
     const manuelsEfface = new Set(resultat.breakers.filter(b => ids.has(b.id) && b.manuelId != null).map(b => b.manuelId as number));
-    const strip = (n: Niveau): Niveau => {
+    const membresEfface = resultat.maison.niveaux.flatMap(nv => nv.pieces.flatMap(p => p.appareillages)).filter(a => a.circuitId != null && ids.has(a.circuitId)).map(a => a.id);
+    const strip = (n0: Niveau): Niveau => {
+      const n = purgerTracesCircuits(n0, labelsEfface, membresEfface, reinitialiser);
       const viderManuels = reinitialiser || portee === "tous" || portee === n.id;
       const manuelsRetires = new Set((n.circuitsManuels ?? []).filter(m => viderManuels || manuelsEfface.has(m.id)).map(m => m.id));
       return {
@@ -5707,6 +5710,24 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     catch (e) { console.error("Gaines optimisées :", e); setGainesMaison(null); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resultatBrut, cleReglagesGaines, recalculGaines, panneauTableauOuvert, calqueGaines]);
+  // Un circuit effacé (ou renommé) ne doit laisser aucune trace dans le regroupement : on retire des « forçages » de gaines les circuits qui
+  // n'existent plus, pour qu'un nouveau circuit tracé à la main (même du même nom) reparte d'un calcul neuf et non de l'ancien modèle.
+  const labelsPrecedentsRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const labels = new Set((resultatBrut?.breakers ?? []).map(b => b.label));
+    const avant = labelsPrecedentsRef.current;
+    labelsPrecedentsRef.current = labels;
+    if (!avant) return;
+    const disparus = new Set([...avant].filter(l => !labels.has(l)));
+    if (disparus.size === 0) return;
+    const f = fusionnerForcages(reglagesGn.forcages);
+    const net = {
+      departsSeuls: f.departsSeuls.filter(k => !disparus.has(k)),
+      ensembles: f.ensembles.map(e => e.filter(k => !disparus.has(k))).filter(e => e.length > 1),
+    };
+    if (net.departsSeuls.length !== f.departsSeuls.length || JSON.stringify(net.ensembles) !== JSON.stringify(f.ensembles)) majReglagesGn({ forcages: net });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resultatBrut]);
   const syntheseGainesMaison = useMemo(() => (resultat && gainesMaison ? syntheseGaines(resultat, gainesMaison) : null), [resultat, gainesMaison]);
   const entreesGaines = useMemo(() => {
     if (!gainesMaison || !resultat) return { gaineDeBreaker: undefined, diametreGaines: undefined, supplementaires: undefined };
