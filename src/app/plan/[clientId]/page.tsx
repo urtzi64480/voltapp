@@ -2384,6 +2384,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // retoucher à la main. Réinitialisé à "tous visibles" à chaque nouvelle génération
   // (voir handleGenerer) ; n'affecte jamais l'impression, qui inclut toujours tous les circuits.
   const [circuitsVisibles, setCircuitsVisibles] = useState<Set<number>>(new Set());
+  // Gaines optimisées : afficher aussi le câblage des circuits à l'intérieur des pièces (sinon seules les gaines regroupées sont tracées).
+  const [cablagePiecesGn, setCablagePiecesGn] = useState(false);
   const [showPrintForm, setShowPrintForm] = useState(false);
   const [show3DPrintForm, setShow3DPrintForm] = useState(false);
   const [vue3D, setVue3D] = useState(false);
@@ -6054,13 +6056,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       const ctxLg = creerContexteLongueurs(niveauActif);
       const hAncreLg = hauteurAncreFn(ctxLg);
       const gainesNivPlan = calqueGaines ? gainesMaison?.[niveauActif.id] : undefined;
+      const cheminBr = gainesNivPlan ? cheminCircuitGaine(gainesNivPlan, breaker.label) : null;
+      const premierSeg = segments.find(sg => sg.aId === "tableau" && sg.type !== "domotique");
+      const suitGaine = !!(cheminBr && premierSeg && Math.hypot(cheminBr[cheminBr.length - 1].vers.x - premierSeg.bPoint.x, cheminBr[cheminBr.length - 1].vers.y - premierSeg.bPoint.y) < 0.05);
       segments.forEach(seg => {
+        // Gaines optimisées : seules les gaines regroupées sont tracées ; le câblage dans les pièces n'apparaît que sur demande (ou pour le circuit sélectionné).
+        if (suitGaine && !cablagePiecesGn && breaker.id !== breakerPanneauId && seg !== premierSeg) return;
         // Gaines optimisées : tout départ du tableau suit la gaine commune (tronc → boîtes de dérivation → entrée du circuit), en faisceau ;
         // les autres câbles du circuit qui partaient du tableau (ex. chaque lampe d'un circuit d'éclairage) repartent ensuite de cette entrée.
-        const chemin = gainesNivPlan && seg.aId === "tableau" && seg.type !== "domotique" ? cheminCircuitGaine(gainesNivPlan, breaker.label) : null;
-        const premierSeg = segments.find(sg => sg.aId === "tableau" && sg.type !== "domotique");
+        const chemin = suitGaine && seg.aId === "tableau" && seg.type !== "domotique" ? cheminBr : null;
         const entreeGn = chemin ? chemin[chemin.length - 1].vers : null;
-        if (chemin && entreeGn && premierSeg && Math.hypot(entreeGn.x - premierSeg.bPoint.x, entreeGn.y - premierSeg.bPoint.y) < 0.05) {
+        if (chemin && entreeGn) {
           if (visuel && !masquerGaine) {
             const ez2 = Math.max(0.8, Math.min(1.6, zoom));
             const cableDe = (cleC: string, pts: Point[]) => {
@@ -9392,12 +9398,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     ))}
                   </div>
                 )}
+                {calqueGaines && niveauActif && gainesMaison?.[niveauActif.id] && (
+                  <label className="flex items-center gap-1.5 text-[10px] text-ink-500 mb-1.5 cursor-pointer" title="Gaines optimisées : par défaut seules les gaines regroupées sont tracées ; coche pour voir aussi le câblage de chaque circuit dans les pièces">
+                    <input type="checkbox" checked={cablagePiecesGn} onChange={e => setCablagePiecesGn(e.target.checked)} />
+                    Voir le câblage dans les pièces
+                  </label>
+                )}
                 <label className="flex items-center gap-1.5 text-[10px] text-ink-500 mb-1.5 cursor-pointer" title="Les appareillages d'un circuit masqué disparaissent aussi du plan : il ne reste que ce qui n'est pas encore câblé">
                   <input type="checkbox" checked={afficherSansCircuit} onChange={e => setAfficherSansCircuit(e.target.checked)} />
                   Afficher les appareillages sans circuit
                 </label>
                 <div className="flex flex-col gap-1">
-                  {circuitsAffiches.map(item => {
+                  {(() => { const rendreItem = (item: (typeof circuitsAffiches)[number]) => {
                     const b = item.breaker;
                     const manuel = item.manuel;
                     const circuitEclairage = b ? CIRCUITS[b.circuit]?.category === "lumiere" : manuel?.famille === "lumiere";
@@ -9428,10 +9440,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                           onClick={e => e.stopPropagation()}
                           onChange={e => b ? renommerCircuit(b, e.target.value) : renommerCircuitManuelDirect(manuel!.id, e.target.value)} />
                         {lg !== null && <span className="font-mono text-ink-400 shrink-0" title={lgDetail ? `${lgDetail.horizontale.toFixed(2)} m à l'horizontale + ${lgDetail.verticale.toFixed(2)} m de montées / descentes` : undefined}>{lg.toFixed(1)}m</span>}
-                        {b && visible && circuitsVisibles.size < circuitsNiveauActif.length && estCircuitSansDisjoncteur(b) && (
+                        {b && visible && !calqueGaines && circuitsVisibles.size < circuitsNiveauActif.length && estCircuitSansDisjoncteur(b) && (
                           <span className="font-mono text-[10px] text-emerald-700 shrink-0 whitespace-nowrap" title="Courants faibles : gaine de couleur verte, séparée des gaines de puissance">🔀 {gaineCommunication()}</span>
                         )}
-                        {b && visible && circuitsVisibles.size < circuitsNiveauActif.length && !estCircuitSansDisjoncteur(b) && (() => {
+                        {b && visible && !calqueGaines && circuitsVisibles.size < circuitsNiveauActif.length && !estCircuitSansDisjoncteur(b) && (() => {
                           // Gaine du circuit : seulement pour les circuits SÉLECTIONNÉS (cochés quand tous ne le sont pas) — chaque circuit part du
                           // tableau dans sa propre gaine.
                           const sc = effectiveSection(b), gi = gaineRecommandee([sc, sc, sc]);
@@ -9503,7 +9515,38 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         </div>
                       </label>
                     );
-                  })}
+                  };
+                  const gnN = calqueGaines && niveauActif ? gainesMaison?.[niveauActif.id] : undefined;
+                  if (!gnN) return circuitsAffiches.map(rendreItem);
+                  // Gaines optimisées : les circuits sont rangés par gaine (celle qui part du tableau), avec une case pour tout afficher / masquer d'un coup.
+                  const parGroupe = gnN.groupes.map((gr, gi) => ({ gr, gi, items: circuitsAffiches.filter(it => it.breaker && gr.circuits.some(c => c.breakerId === it.breaker!.id)) })).filter(g => g.items.length > 0);
+                  const rangés = new Set(parGroupe.flatMap(g => g.items.map(i => i.key)));
+                  const autres = circuitsAffiches.filter(it => !rangés.has(it.key));
+                  return (
+                    <>
+                      {parGroupe.map(({ gr, gi, items }) => {
+                        const ids = items.map(i => i.breaker!.id);
+                        const tous = ids.every(id => circuitsVisibles.has(id));
+                        return (
+                          <div key={gr.id} className="rounded-lg border border-ink-200 p-1.5 flex flex-col gap-1" style={{ borderLeft: `4px solid ${couleurGroupe(gi, gr.courantFaible)}` }}>
+                            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-ink-800 cursor-pointer" title="Afficher / masquer tous les circuits de cette gaine">
+                              <input type="checkbox" checked={tous} onChange={() => setCircuitsVisibles(prev => { const next = new Set(prev); ids.forEach(id => (tous ? next.delete(id) : next.add(id))); return next; })} />
+                              <span>{gr.nom}</span>
+                              <span className="font-mono font-normal text-[10px] text-ink-500">{gr.circuits.length > 1 ? `${gr.circuits.length} circuits · ` : ""}{gr.tronc.gaine.replace(/ verte.*/, "")}</span>
+                            </label>
+                            {items.map(rendreItem)}
+                          </div>
+                        );
+                      })}
+                      {autres.length > 0 && (
+                        <div className="rounded-lg border border-ink-200 p-1.5 flex flex-col gap-1">
+                          <p className="text-[11px] font-semibold text-ink-600">Hors gaines regroupées</p>
+                          {autres.map(rendreItem)}
+                        </div>
+                      )}
+                    </>
+                  );
+                  })()}
                 </div>
               </DraggablePanel>
             )}
