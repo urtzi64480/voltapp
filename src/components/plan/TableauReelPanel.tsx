@@ -395,7 +395,12 @@ function RaccordementOnglet({ res, rac, majRac }: { res: ResultatTableauReel; ra
         <Champ label="Chute admise sur la liaison (%)" aide="Le reste de 3 % (éclairage) / 5 % (autres) est laissé aux circuits terminaux"><Num valeur={rac.budgetChutePct} onChange={v => majRac({ budgetChutePct: v })} pas={0.1} min={0.1} /></Champ>
         <Champ label="Section mini (mm²)"><Num valeur={rac.sectionMiniMm2} onChange={v => majRac({ sectionMiniMm2: v })} /></Champ>
         <Champ label="Chute calculée sur"><select value={rac.baseChute} onChange={e => majRac({ baseChute: e.target.value as ParamsRaccordement["baseChute"] })} className="text-xs border border-ink-200 rounded px-1 py-0.5"><option value="demande">Courant d&apos;emploi</option><option value="calibre">Calibre de l&apos;AGCP</option></select></Champ>
-        <Champ label="Courant d'emploi imposé (A)" aide="0 = déduit des disjoncteurs installés"><Num valeur={rac.courantEmploiForceA ?? 0} onChange={v => majRac({ courantEmploiForceA: v > 0 ? v : undefined })} min={0} /></Champ>
+        <Case label="Courant d'emploi automatique" valeur={rac.courantEmploiForceA == null}
+          onChange={auto => majRac({ courantEmploiForceA: auto ? undefined : Math.max(1, Math.round(res.raccordement.demande?.courantEmploiA ?? res.raccordement.courantEmploiA)) })}
+          aide="Coché : déduit des disjoncteurs du tableau (chauffage, chauffe-eau, recharge VE à 100 %, le reste à 50 %). Décoché : tu fixes la valeur." />
+        {rac.courantEmploiForceA == null
+          ? <Champ label="Courant d'emploi calculé"><b className="font-mono text-xs">{fmt(res.raccordement.demande?.courantEmploiA ?? res.raccordement.courantEmploiA)} A</b></Champ>
+          : <Champ label="Courant d'emploi imposé (A)" aide="Valeur que tu fixes à la place du calcul automatique"><Num valeur={rac.courantEmploiForceA} onChange={v => majRac({ courantEmploiForceA: v > 0 ? v : undefined })} min={1} /></Champ>}
       </div>
       </Carte>
       <Carte titre="Résultat du calcul" className="overflow-hidden">
