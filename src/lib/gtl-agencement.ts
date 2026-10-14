@@ -1,13 +1,13 @@
 // src/lib/gtl-agencement.ts
 //
-// AGENCEMENT PHYSIQUE de la GTL en élévation (vue de face, à l'échelle) : où se posent le disjoncteur d'abonné, le coffret de distribution et
+// AGENCEMENT PHYSIQUE de la GTL en élévation (vue de face, à l'échelle) : où se posent le coffret de distribution et
 // le coffret de communication, et où passent les gaines. Fonction pure. Les coordonnées sont en mm : x depuis le bord gauche de la GTL,
 // y = hauteur depuis le sol (le dessin inverse l'axe). La norme alerte, elle ne bloque jamais : un conflit est signalé, jamais refusé.
 
 import type { ParamsTableauReel, ResultatTableauReel } from "./tableau-reel";
 import { NORME_GTL } from "./normes-nfc";
 
-export type IdElementGtl = "agcp" | "coffret" | "comm";
+export type IdElementGtl = "coffret" | "comm";
 export interface ElementGtl {
   id: IdElementGtl;
   nom: string;
@@ -18,7 +18,7 @@ export interface ElementGtl {
   h: number;
   /** Problème réel : chevauchement impossible à résoudre, dépasse du sol / du plafond, hors plage de hauteur. */
   conflit?: string;
-  /** Information : l'élément a été décalé pour ne pas chevaucher un autre (ex. disjoncteur d'abonné posé au-dessus du coffret). */
+  /** Information : l'élément a été décalé pour ne pas chevaucher un autre. */
   note?: string;
 }
 
@@ -50,30 +50,24 @@ export function agencerGtl(res: ResultatTableauReel, p: ParamsTableauReel): Agen
   const els: ElementGtl[] = [];
 
   const coffret: ElementGtl = { id: "coffret", nom: "Tableau de distribution", x: jeu, y: coffretY, w: cof.largeurMm, h: cof.hauteurMm };
-  const agcp: ElementGtl | null = pg.largeurAgcpMm > 0 ? { id: "agcp", nom: "Disjoncteur d'abonné", x: jeu, y: Math.max(0, p.hauteurAgcpM * 1000 - pg.hauteurAgcpMm / 2), w: pg.largeurAgcpMm, h: pg.hauteurAgcpMm } : null;
   const comm: ElementGtl | null = pg.largeurCoffretCommMm > 0 ? { id: "comm", nom: "Coffret de communication", x: jeu, y: 300, w: pg.largeurCoffretCommMm, h: pg.hauteurCoffretCommMm } : null;
 
   if (empile) {
-    // même colonne : on pose le coffret à la hauteur de ses manettes, puis chaque autre élément à sa hauteur souhaitée ; en cas de chevauchement il passe au-dessus (AGCP) ou au-dessous (communication)
-    if (agcp && chevauche(agcp, coffret, jeu)) { agcp.y = coffret.y + coffret.h + jeu; agcp.note = "Posé au-dessus du coffret (la hauteur choisie est occupée par le coffret)"; }
+    // même colonne : on pose le coffret à la hauteur de ses manettes, puis la communication au-dessous
     if (comm) {
       comm.y = Math.max(0, Math.min(comm.y, coffret.y - jeu - comm.h));
-      if (chevauche(comm, coffret, jeu) || (agcp && chevauche(comm, agcp, jeu))) {
+      if (chevauche(comm, coffret, jeu)) {
         comm.conflit = "Pas la place sous le coffret : chevauchement";
       } else if (comm.y + comm.h > coffret.y - jeu + 1e-9) comm.conflit = "Pas la place sous le coffret";
     }
   } else {
-    // côte à côte : de gauche à droite AGCP, coffret de distribution, coffret de communication
+    // côte à côte : de gauche à droite coffret de distribution, coffret de communication
     let x = jeu;
-    [agcp, coffret, comm].forEach(e => { if (e) { e.x = x; x += e.w + jeu; } });
+    [coffret, comm].forEach(e => { if (e) { e.x = x; x += e.w + jeu; } });
   }
-  [agcp, coffret, comm].forEach(e => {
+  [coffret, comm].forEach(e => {
     if (!e) return;
     if (e.y + e.h > H + 1e-9) e.conflit = e.conflit ?? "Dépasse du plafond";
-    if (e.id === "agcp") {
-      const centre = (e.y + e.h / 2) / 1000;
-      if (centre + 1e-9 < NORME_GTL.abonneMiniM.valeur || centre - 1e-9 > NORME_GTL.abonneMaxiM.valeur) e.conflit = e.conflit ?? `Centre à ${centre.toFixed(2).replace(".", ",")} m, hors de ${NORME_GTL.abonneMiniM.valeur}–${NORME_GTL.abonneMaxiM.valeur} m`;
-    }
     els.push(e);
   });
   const xMax = els.reduce((m, e) => Math.max(m, e.x + e.w), 0);

@@ -2,7 +2,7 @@
 // src/components/plan/TableauReelVisuels.tsx
 //
 // Dessins du panneau « Tableau réaliste » (plein écran) :
-//  · GtlElevation  — la GTL vue de face, À L'ÉCHELLE (mm) : disjoncteur d'abonné, coffret, coffret de communication, gaines, repères de hauteur ;
+//  · GtlElevation  — la GTL vue de face, À L'ÉCHELLE (mm) : coffret, coffret de communication, gaines, repères de hauteur ;
 //  · TableauDetail — le tableau tel qu'on l'ouvre : rails DIN, différentiels, disjoncteurs avec manette, peignes, borniers N / PE, étiquettes ;
 //  · GainesPlan    — le plan du niveau avec l'arbre de gaines (tronc commun + branches).
 // Composants purement visuels : aucun calcul métier ici (voir lib/tableau-reel.ts, lib/gtl-agencement.ts, lib/gaines-optimisees.ts).
@@ -56,12 +56,9 @@ export function GtlElevation({ res, params, couleurGaine }: GtlElevationProps) {
   const X = (x: number) => mg.g + x;                       // x GTL → x dessin
   const Y = (y: number) => mg.h + H - y;                    // hauteur depuis le sol → y dessin
   const cof = ag.elements.find(e => e.id === "coffret");
-  const agcp = ag.elements.find(e => e.id === "agcp");
   const comm = ag.elements.find(e => e.id === "comm");
   const phase = COULEURS_PHASE[params.couleurPhase] ?? "#dc2626";
-  const liaison = res.liaisons.find(l => l.id === "agcp-tableau");
   const repères = [0.5, 0.9, 1.3, 1.8];
-  const sec = liaison?.conducteurs[0]?.sectionMm2;
   const ns = { vectorEffect: "non-scaling-stroke" } as const;
 
   return (
@@ -187,47 +184,6 @@ export function GtlElevation({ res, params, couleurGaine }: GtlElevationProps) {
         </g>
       )}
 
-      {/* disjoncteur d'abonné */}
-      {agcp && (
-        <g>
-          <title>{`Disjoncteur d'abonné ${agcp.w} × ${agcp.h} mm, centré à ${fmt(params.hauteurAgcpM, 2)} m${agcp.conflit ? ` — ${agcp.conflit}` : ""}`}</title>
-          <rect x={X(agcp.x)} y={Y(agcp.y + agcp.h)} width={agcp.w} height={agcp.h} rx={6} fill="#fde68a" stroke={agcp.conflit ? "#dc2626" : "#1c1917"} strokeWidth={agcp.conflit ? 3 : 2} {...ns} />
-          <rect x={X(agcp.x + agcp.w / 2) - 16} y={Y(agcp.y + agcp.h) + 20} width={32} height={agcp.h * 0.4} rx={4} fill="#1c1917" />
-          <text x={X(agcp.x + agcp.w / 2)} y={Y(agcp.y) - 84} textAnchor="middle" fontSize={T * 0.8} fontWeight={700} fill="#1c1917">AGCP</text>
-          <text x={X(agcp.x + agcp.w / 2)} y={Y(agcp.y) - 36} textAnchor="middle" fontSize={T * 0.9} fontWeight={700} fill="#1c1917">{liaison?.calibreA ?? ""} A</text>
-          {(agcp.conflit || agcp.note) && <text x={X(agcp.x + agcp.w) + 14} y={Y(agcp.y + agcp.h / 2) + T / 3} fontSize={T * 0.85} fill={agcp.conflit ? "#dc2626" : "#78716c"} fontWeight={700}>{agcp.conflit ? "⚠" : "↑"} {fmt((agcp.y + agcp.h / 2) / 1000, 2)} m</text>}
-        </g>
-      )}
-
-      {/* liaison AGCP → tableau (verticale si empilés, horizontale si côte à côte) */}
-      {agcp && cof && (() => {
-        const cote = agcp.x + agcp.w <= cof.x + 1e-9;
-        const trio = [phase, "#2563eb", "#16a34a"];
-        const libelle = `${sec ? `${sec} mm²` : ""}${liaison?.longueurM != null ? ` · ${liaison.longueurM} m` : ""}`;
-        if (cote) {
-          const yy = Y(agcp.y + agcp.h / 2);
-          return (
-            <g>
-              {trio.map((c, i) => <line key={i} x1={X(agcp.x + agcp.w)} x2={X(cof.x)} y1={yy - 12 + i * 12} y2={yy - 12 + i * 12} stroke={c} strokeWidth={7} {...ns} />)}
-              <text x={X(agcp.x + agcp.w)} y={yy - 26} fontSize={T * 0.8} fill="#1c1917">{libelle}</text>
-            </g>
-          );
-        }
-        const xc = agcp.x + Math.min(agcp.w, cof.w) / 2 - 12;
-        const haut = agcp.y > cof.y;                       // AGCP au-dessus du coffret
-        const yDe = haut ? agcp.y : agcp.y + agcp.h;
-        const yVers = haut ? cof.y + cof.h : cof.y;
-        const xTexte = agcp.x + agcp.w + 14;
-        return (
-          <g>
-            {trio.map((c, i) => <line key={i} x1={X(xc) + i * 12} x2={X(xc) + i * 12} y1={Y(yDe)} y2={Y(yVers)} stroke={c} strokeWidth={7} {...ns} />)}
-            <line x1={X(xc) + 30} x2={X(xTexte) - 4} y1={(Y(yDe) + Y(yVers)) / 2} y2={(Y(yDe) + Y(yVers)) / 2} stroke="#a8a29e" strokeWidth={1} strokeDasharray="4 4" {...ns} />
-            <text x={X(xTexte)} y={(Y(yDe) + Y(yVers)) / 2 - 10} fontSize={T * 0.85} fill="#1c1917">{sec ? `${sec} mm²` : ""}</text>
-            <text x={X(xTexte)} y={(Y(yDe) + Y(yVers)) / 2 - 10 - T} fontSize={T * 0.85} fill="#1c1917">{liaison?.longueurM != null ? `${liaison.longueurM} m` : ""}</text>
-          </g>
-        );
-      })()}
-
       {/* cotes */}
       <g stroke="#57534e" strokeWidth={1} fill="none" {...ns}>
         <line x1={X(0)} x2={X(W)} y1={Y(0) + 120} y2={Y(0) + 120} />
@@ -259,11 +215,9 @@ export function TableauDetail({ res, params, couleurGaine, selectionne, onSelect
   const x0 = 78;                                   // début des rails (après la goulotte de liaison)
   const largeurRail = nbMod * MOD;
   const W = x0 + largeurRail + 150;
-  const yH = 96;                                   // bandeau d'en-tête (AGCP)
+  const yH = 118;                                  // bandeau d'en-tête : départ de toutes les gaines (à l'échelle)
   const H = yH + res.rails.length * RANGEE + 60;
   const phase = COULEURS_PHASE[params.couleurPhase] ?? "#dc2626";
-  const liaison = res.liaisons.find(l => l.id === "agcp-tableau");
-  const sec = liaison?.conducteurs[0]?.sectionMm2;
   const ns = { vectorEffect: "non-scaling-stroke" } as const;
   if (res.rails.length === 0) return <div className="h-full grid place-items-center text-sm text-ink-500">Aucun circuit : génère les circuits du plan pour voir le tableau.</div>;
 
@@ -273,16 +227,37 @@ export function TableauDetail({ res, params, couleurGaine, selectionne, onSelect
       <rect x={6} y={yH - 4} width={W - 12} height={H - yH - 2} rx={10} fill="#d6d3d1" stroke="#44403c" strokeWidth={3} {...ns} />
       <rect x={14} y={yH + 4} width={W - 28} height={H - yH - 18} rx={6} fill="#efeeeb" stroke="#a8a29e" strokeWidth={1} {...ns} />
 
-      {/* disjoncteur d'abonné + liaison */}
-      <g>
-        <rect x={16} y={8} width={150} height={66} rx={6} fill="#fde68a" stroke="#1c1917" strokeWidth={2} {...ns} />
-        <rect x={26} y={16} width={30} height={50} rx={3} fill="#1c1917" />
-        <text x={64} y={36} fontSize={15} fontWeight={700} fill="#1c1917">AGCP</text>
-        <text x={64} y={55} fontSize={14} fill="#1c1917">{liaison?.calibreA ?? "—"} A</text>
-        <text x={176} y={32} fontSize={14} fill="#1c1917" fontWeight={600}>Liaison {sec ? `${sec} mm²` : ""}{liaison?.longueurM != null ? ` · ${liaison.longueurM} m` : ""}</text>
-        <text x={176} y={52} fontSize={12} fill="#57534e">chute {fmt(res.raccordement.chutePct, 2)} % · phase {params.couleurPhase}, neutre bleu, terre vert/jaune</text>
-      </g>
-      {[phase, "#2563eb", "#16a34a"].map((c, i) => <line key={c + i} x1={26 + i * 8} x2={26 + i * 8} y1={74} y2={H - 30} stroke={c} strokeWidth={5} {...ns} />)}
+      {/* départ de TOUTES les gaines présentes sur le plan, à l'échelle (diamètre réel : 1 module = 17,5 mm) */}
+      {(() => {
+        const px = MOD / 17.5;                                    // px par mm
+        const liste = res.gaines;
+        const gap = 14;
+        const total = liste.reduce((t, g) => t + g.diametreMm * px + gap, 0);
+        const dispo = W - 28 - 20;
+        const k = total > dispo ? dispo / total : 1;
+        let x = 24;
+        return (
+          <g>
+            <text x={16} y={12} fontSize={12} fontWeight={700} fill="#44403c">Gaines au départ du tableau ({liste.length}) — diamètres à l&apos;échelle</text>
+            {liste.map(g => {
+              const d = g.diametreMm * px * k, cx = x + d / 2, cy = yH - 14 - d / 2;
+              x += d + gap * k;
+              const coul = couleurGaine(g.id);
+              return (
+                <g key={g.id}>
+                  <title>{`Gaine ø${g.diametreMm} mm${g.depart ? ` — ${g.nbCircuits} circuit(s)` : " — montée / attente / courants faibles"}`}</title>
+                  <line x1={cx} x2={cx} y1={cy + d / 2} y2={yH - 4} stroke={coul} strokeWidth={Math.max(3, d * 0.35)} strokeLinecap="round" opacity={0.55} />
+                  <circle cx={cx} cy={cy} r={d / 2} fill="#fff" stroke={coul} strokeWidth={4} />
+                  <circle cx={cx} cy={cy} r={Math.max(2, d / 2 - 7)} fill={coul} opacity={0.25} />
+                  <text x={cx} y={cy + 4} textAnchor="middle" fontSize={Math.max(9, Math.min(13, d * 0.38))} fontWeight={800} fill="#1c1917">{g.depart && g.nbCircuits > 0 ? g.nbCircuits : ""}</text>
+                  <text x={cx} y={cy - d / 2 - 4} textAnchor="middle" fontSize={11} fontWeight={700} fill="#1c1917">ø{g.diametreMm}</text>
+                </g>
+              );
+            })}
+          </g>
+        );
+      })()}
+      {[phase, "#2563eb", "#16a34a"].map((c, i) => <line key={c + i} x1={26 + i * 8} x2={26 + i * 8} y1={yH} y2={H - 30} stroke={c} strokeWidth={5} {...ns} />)}
       {[phase, "#2563eb", "#16a34a"].map((c, i) => <line key={c + "h" + i} x1={26 + i * 8} x2={x0 - 8} y1={yH + 10 + i * 5} y2={yH + 10 + i * 5} stroke={c} strokeWidth={4} {...ns} />)}
 
       {res.rails.map((r, ri) => {

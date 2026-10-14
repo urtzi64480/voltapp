@@ -10,7 +10,7 @@ import { calculerBesoinsBruts, signaturesActuelles, postesInvalides, CLE_OK_CABL
 import Shell from "@/components/layout/Shell";
 import TableauReelPanel, { type Onglet as OngletTableauReel } from "@/components/plan/TableauReelPanel";
 import type { GaineAttente } from "@/lib/maison-types";
-import { cheminGaineAttente, longueursGaineAttente, nouvelleGaineAttente, SECTIONS_ATTENTE, HAUTEUR_ATTENTE_DEFAUT_CM, libelleSection } from "@/lib/gaines-attente";
+import { cheminGaineAttente, gaineDeAttente, longueursGaineAttente, nouvelleGaineAttente, SECTIONS_ATTENTE, HAUTEUR_ATTENTE_DEFAUT_CM, libelleSection } from "@/lib/gaines-attente";
 import { couleurGroupe, cheminCircuitGaine, fusionnerForcages, fusionnerParamsGaines, diametreGaineDepuisLibelle } from "@/lib/gaines-optimisees";
 import { purgerTracesCircuits } from "@/lib/purger-circuit";
 import { optimiserGainesMaison, syntheseGaines, type GainesNiveau } from "@/lib/gaines-optimisees-plan";
@@ -5729,29 +5729,51 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resultatBrut]);
   const syntheseGainesMaison = useMemo(() => (resultat && gainesMaison ? syntheseGaines(resultat, gainesMaison) : null), [resultat, gainesMaison]);
+  // Gaines qui arrivent au tableau, avec leur diamètre RÉEL (jamais un diamètre par défaut), en mode classique comme en optimisé :
+  //  · optimisé : une gaine par groupe (diamètre du tronc), + gaines vertes ;
+  //  · classique : une gaine par circuit (câble de départ : phase + neutre + terre à la section du circuit), + une gaine verte par circuit courants faibles ;
+  //  · niveaux sans tableau : montées tableau → niveau ; gaines en attente posées sur le plan.
   const entreesGaines = useMemo(() => {
-    if (!gainesMaison || !resultat) return { gaineDeBreaker: undefined, diametreGaines: undefined, supplementaires: undefined };
+    if (!resultat) return { gaineDeBreaker: undefined, diametreGaines: undefined, supplementaires: undefined };
     const gaineDeBreaker: Record<number, string> = {};
     const diametreGaines: Record<string, number> = {};
     const supplementaires: number[] = [];
-    Object.values(gainesMaison).forEach(g => {
-      if (!g.porteTableau) return;
-      g.groupes.forEach(gr => {
-        const id = `${g.niveauId}:${gr.id}`;
-        diametreGaines[id] = diametreGaineDepuisLibelle(gr.tronc.gaine);
-        gr.circuits.forEach(c => { gaineDeBreaker[c.breakerId] = id; });
-      });
+    const dansCeTableau = (n: Niveau) => (tableauReelEffectif === TABLEAU_PRINCIPAL ? !estAnnexe(n) : estAnnexe(n) && n.tableauId === tableauReelEffectif);
+    const diamVerte = diametreGaineDepuisLibelle(gaineCommunication());
+    niveaux.forEach(n => {
+      const g = gainesMaison?.[n.id];
+      if (g) {
+        if (!g.porteTableau) return;
+        g.groupes.forEach(gr => {
+          if (gr.courantFaible) { supplementaires.push(diametreGaineDepuisLibelle(gr.tronc.gaine, diamVerte)); return; }
+          const id = `${n.id}:${gr.id}`;
+          diametreGaines[id] = diametreGaineDepuisLibelle(gr.tronc.gaine);
+          gr.circuits.forEach(c => { gaineDeBreaker[c.breakerId] = id; });
+        });
+      } else if (n.tableauPos) {
+        breakersDuNiveau(resultat.breakers, n).forEach(b => {
+          if (b.manuelId != null && (n.circuitsManuels ?? []).find(m => m.id === b.manuelId)?.nonRelieTableau) return;
+          if (estCircuitSansDisjoncteur(b)) { supplementaires.push(diamVerte); return; }
+          const sc = effectiveSection(b);
+          diametreGaines[`dep-${b.id}`] = diametreGaineDepuisLibelle(gaineRecommandee([sc, sc, sc]).gaine);
+        });
+      }
     });
-    (syntheseGainesMaison?.montees ?? []).forEach(m => {
-      const niv = niveaux.find(n => n.id === m.niveauId);
-      if (!niv) return;
+    // Montées vers les niveaux qui n'ont pas leur propre tableau
+    const niveauxAvecTableau = new Set(niveaux.filter(n => n.tableauPos).map(n => n.id));
+    genererGainesNiveaux(resultat).forEach(t => {
+      const niv = niveaux.find(n => (n.nom || n.type) === t.niveau);
+      if (!niv || niveauxAvecTableau.has(niv.id) || estAnnexe(niv)) return;
       const id = `montee:${niv.id}`;
-      diametreGaines[id] = diametreGaineDepuisLibelle(m.gaine);
+      const d = diametreGaineDepuisLibelle(t.gaine);
+      diametreGaines[id] = d;
       breakersDuNiveau(resultat.breakers, niv).forEach(b => { if (gaineDeBreaker[b.id] == null && !estCircuitSansDisjoncteur(b)) gaineDeBreaker[b.id] = id; });
-      for (let k = 1; k < m.nbGaines; k++) supplementaires.push(diametreGaineDepuisLibelle(m.gaine));
+      for (let k = 1; k < t.nbGaines; k++) supplementaires.push(d);
     });
+    // Gaines en attente : elles arrivent au tableau sans y être raccordées
+    niveaux.filter(dansCeTableau).forEach(n => (n.gainesAttente ?? []).forEach(ga => supplementaires.push(diametreGaineDepuisLibelle(gaineDeAttente(ga).gaine))));
     return { gaineDeBreaker, diametreGaines, supplementaires };
-  }, [gainesMaison, syntheseGainesMaison, resultat, niveaux]);
+  }, [gainesMaison, resultat, niveaux, tableauReelEffectif]);
 
   // Couleur de chaque gaine de départ (même palette que le tracé sur le plan) ; montées et gaines individuelles : gris.
   const couleurGaineDe = useMemo(() => {
@@ -6891,7 +6913,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           {resultat && (
             <>
               <button onClick={() => { setOngletTableauReel("ensemble"); setPanneauTableauOuvert(o => !o); }}
-                title="Tableau virtuel comme si tu l'avais devant toi : rails, différentiels, réserve, GTL, raccordement, connexions et contrôles NF C 15-100"
+                title="Tableau virtuel comme si tu l'avais devant toi : rails, différentiels, réserve, GTL, connexions et contrôles NF C 15-100"
                 className={`btn-ghost !text-xs ${panneauTableauOuvert ? "!bg-ink-100" : ""}`}>
                 <Zap size={13} /> Tableau réaliste
               </button>

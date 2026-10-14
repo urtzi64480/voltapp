@@ -2,15 +2,13 @@
 // src/components/plan/TableauReelPanel.tsx
 //
 // PANNEAU « TABLEAU RÉALISTE » du module Plan : le tableau tel qu'on l'aurait devant soi (rails, modules, différentiels, réserve), la GTL et
-// ses composants, la liaison disjoncteur d'abonné → tableau (section + abaque de chute de tension), les connexions phase / neutre / terre,
+// ses composants, les connexions phase / neutre / terre,
 // les contrôles NF C 15-100 (alertes, jamais bloquantes) et les gaines optimisées au départ du tableau. Tous les paramètres sont modifiables ;
-// les calculs viennent de lib/tableau-reel.ts, lib/raccordement-agcp.ts et lib/gaines-optimisees.ts (fonctions pures, testées).
+// les calculs viennent de lib/tableau-reel.ts, lib/gaines-optimisees.ts (fonctions pures, testées).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { BreakerRow } from "@/lib/electrical-constants";
 import { calculerTableauReel, fusionnerParamsTableau, type ControleNF, type ParamsGtl, type ParamsTableauReel, type ResultatTableauReel } from "@/lib/tableau-reel";
-import { PARAMS_RACCORDEMENT_DEFAUT, SECTIONS_ABAQUE, LONGUEURS_ABAQUE, type ParamsRaccordement } from "@/lib/raccordement-agcp";
-import { CALIBRES_AGCP } from "@/lib/normes-nfc";
 import { couleurGroupe, deplacerCircuitGaine, fusionnerForcages, fusionnerParamsGaines, FORCAGES_VIDES, type ForcagesGaines, type GroupeGaines, type ParamsGainesOptimisees, type TronconArbre } from "@/lib/gaines-optimisees";
 import type { GainesNiveau, SyntheseGaines } from "@/lib/gaines-optimisees-plan";
 import type { ReglagesGaines, ReglagesTableauReel } from "@/lib/maison-types";
@@ -18,10 +16,10 @@ import { agencerGtl } from "@/lib/gtl-agencement";
 import { SchemaGaines } from "./SchemaGaines";
 import { GainesPlan, GtlElevation, TableauDetail, ZoneZoom, COULEURS_PHASE, ratioElevation, ratioTableau, type PieceDessin } from "./TableauReelVisuels";
 
-export type Onglet = "ensemble" | "tableau" | "gtl" | "connexions" | "raccordement" | "controles" | "gaines" | "schema";
+export type Onglet = "ensemble" | "tableau" | "gtl" | "connexions" | "controles" | "gaines" | "schema";
 const ONGLETS: { id: Onglet; label: string; icone: string }[] = [
   { id: "ensemble", label: "Vue d'ensemble", icone: "▦" }, { id: "tableau", label: "Tableau", icone: "⚡" }, { id: "gtl", label: "GTL", icone: "▥" },
-  { id: "connexions", label: "Connexions", icone: "⤳" }, { id: "raccordement", label: "Raccordement", icone: "⎓" },
+  { id: "connexions", label: "Connexions", icone: "⤳" },
   { id: "controles", label: "Contrôles NF", icone: "✓" }, { id: "gaines", label: "Gaines", icone: "⑂" }, { id: "schema", label: "Schéma technique", icone: "⌘" },
 ];
 
@@ -169,13 +167,11 @@ export default function TableauReelPanel(p: TableauReelPanelProps) {
   const fermerRef = useRef(p.onFermer);
   fermerRef.current = p.onFermer;
   const params = useMemo(() => fusionnerParamsTableau(p.reglages.params), [p.reglages.params]);
-  const rac = useMemo<ParamsRaccordement>(() => ({ ...PARAMS_RACCORDEMENT_DEFAUT, ...(p.reglages.raccordement ?? {}) }), [p.reglages.raccordement]);
   const res = useMemo(() => calculerTableauReel(p.rows, {
-    params, raccordement: rac, gaineDeBreaker: p.gaineDeBreaker, diametreGaines: p.diametreGaines, gainesSupplementairesMm: p.gainesSupplementairesMm,
-  }), [p.rows, params, rac, p.gaineDeBreaker, p.diametreGaines, p.gainesSupplementairesMm]);
+    params, gaineDeBreaker: p.gaineDeBreaker, diametreGaines: p.diametreGaines, gainesSupplementairesMm: p.gainesSupplementairesMm,
+  }), [p.rows, params, p.gaineDeBreaker, p.diametreGaines, p.gainesSupplementairesMm]);
   const majParams = (patch: Partial<ParamsTableauReel>) => p.onReglages({ params: { ...p.reglages.params, ...patch } });
   const majGtl = (patch: Partial<ParamsGtl>) => majParams({ gtl: { ...params.gtl, ...patch } });
-  const majRac = (patch: Partial<ParamsRaccordement>) => p.onReglages({ raccordement: { ...p.reglages.raccordement, ...patch } });
   const nbAlertes = res.controles.filter(c => c.niveau !== "info").length;
   const couleurGaine = useMemo(() => p.couleurGaine ?? ((id: string) => (id.startsWith("dep-") ? "#a8a29e" : "#64748b")), [p.couleurGaine]);
   // Sans gaines optimisées, le bandeau de chaque disjoncteur reprend la couleur de son circuit sur le plan.
@@ -209,7 +205,6 @@ export default function TableauReelPanel(p: TableauReelPanelProps) {
   const ratioGtl = ratioElevation(res, params), ratioTab = ratioTableau(res);
   const conflitsGtl = useMemo(() => agencerGtl(res, params).elements.filter(e => e.conflit || e.note), [res, params]);
   const gtlOk = res.gtl.largeurRequiseMm <= res.gtl.largeurRetenueMm && res.gtl.hauteurRequiseMm <= res.gtl.hauteurDisponibleMm;
-  const liaison = res.liaisons.find(l => l.id === "agcp-tableau");
 
   const contenu = (
     <div className="fixed inset-0 z-[200] bg-[#f3f2ef] flex flex-col" role="dialog" aria-modal="true" aria-label="Tableau réaliste">
@@ -248,7 +243,6 @@ export default function TableauReelPanel(p: TableauReelPanelProps) {
               <div className="flex flex-wrap gap-2 shrink-0">
                 <Kpi label="Circuits" valeur={`${res.totaux.circuits}`} sous={`${res.totaux.differentiels} différentiel(s)`} ton="neutre" />
                 <Kpi label="Modules" valeur={`${res.totaux.modulesUtilises}/${res.totaux.capacite}`} sous={`réserve ${fmt(res.totaux.reservePct, 0)} % (exigé ${fmt(res.totaux.reserveRequisePct, 0)} %)`} ton={res.totaux.reservePct + 1e-9 >= res.totaux.reserveRequisePct ? "ok" : "warn"} />
-                <Kpi label="Disjoncteur d'abonné" valeur={`${liaison?.calibreA ?? "—"} A`} sous={`liaison ${res.raccordement.sectionRetenueMm2} mm² · ${fmt(res.raccordement.chutePct, 2)} %`} ton={res.raccordement.alertes.length === 0 ? "ok" : "warn"} onClick={() => setOnglet("raccordement")} />
                 <Kpi label="GTL" valeur={`${res.gtl.largeurRetenueMm} mm`} sous={`besoin ${res.gtl.largeurRequiseMm} mm`} ton={gtlOk ? "ok" : "warn"} onClick={() => setOnglet("gtl")} />
                 <Kpi label="Gaines au tableau" valeur={`${res.gtl.nbGaines}`} sous={`${fmt(res.gtl.largeurGainesMm, 0)} mm de passage`} ton="neutre" onClick={() => setOnglet("gaines")} />
                 <Kpi label="Alertes NF C 15-100" valeur={nbAlertes > 0 ? `${nbAlertes}` : "aucune"} sous="voir le détail" ton={nbAlertes > 0 ? "warn" : "ok"} onClick={() => setOnglet("controles")} />
@@ -319,7 +313,6 @@ export default function TableauReelPanel(p: TableauReelPanelProps) {
             </Carte>
           )}
 
-          {onglet === "raccordement" && <RaccordementOnglet res={res} rac={rac} majRac={majRac} />}
 
           {onglet === "controles" && (
             <Carte titre={`Contrôles NF C 15-100 — ${nbAlertes} alerte(s)`} className="h-full">
@@ -369,92 +362,20 @@ function GtlOnglet({ res, params, majGtl, majParams, ratio, couleurGaine }: { re
             <Champ label="Largeur GTL (mm)" aide="60 cm mini"><Num valeur={pg.largeurMm} onChange={v => majGtl({ largeurMm: v })} min={0} largeur="w-20" /></Champ>
             <Champ label="Profondeur (mm)" aide="25 cm mini"><Num valeur={pg.profondeurMm} onChange={v => majGtl({ profondeurMm: v })} min={0} largeur="w-20" /></Champ>
             <Champ label="Hauteur sous plafond (m)"><Num valeur={pg.hauteurSousPlafondM} onChange={v => majGtl({ hauteurSousPlafondM: v })} pas={0.05} min={1} /></Champ>
-            <Champ label="Disjoncteur d'abonné à (m)" aide="0,90 à 1,80 m"><Num valeur={params.hauteurAgcpM} onChange={v => majParams({ hauteurAgcpM: v })} pas={0.05} /></Champ>
             <Champ label="Agencement"><select value={pg.agencement} onChange={e => majGtl({ agencement: e.target.value as ParamsGtl["agencement"] })} className="text-xs border border-ink-200 rounded px-1 py-0.5"><option value="empile">Empilé</option><option value="cote_a_cote">Côte à côte</option></select></Champ>
             <Case label="ETEL (largeur GTL + 100 mm)" valeur={pg.etel} onChange={v => majGtl({ etel: v })} />
             <Champ label="Largeur coffret com. (mm)" aide="0 = coffret de communication ailleurs"><Num valeur={pg.largeurCoffretCommMm} onChange={v => majGtl({ largeurCoffretCommMm: v })} min={0} largeur="w-20" /></Champ>
             <Champ label="Haut. coffret com. (mm)"><Num valeur={pg.hauteurCoffretCommMm} onChange={v => majGtl({ hauteurCoffretCommMm: v })} min={0} largeur="w-20" /></Champ>
-            <Champ label="Largeur AGCP (mm)"><Num valeur={pg.largeurAgcpMm} onChange={v => majGtl({ largeurAgcpMm: v })} min={0} largeur="w-20" /></Champ>
-            <Champ label="Haut. AGCP (mm)"><Num valeur={pg.hauteurAgcpMm} onChange={v => majGtl({ hauteurAgcpMm: v })} min={0} largeur="w-20" /></Champ>
-            <Champ label="Diamètre gaine par défaut (mm)"><Num valeur={pg.diametreGaineMm} onChange={v => majGtl({ diametreGaineMm: v })} min={8} /></Champ>
             <Champ label="Couches de gaines"><Num valeur={pg.couchesGaines} onChange={v => majGtl({ couchesGaines: Math.round(v) })} min={1} max={4} /></Champ>
             <Champ label="Jeu entre éléments (mm)"><Num valeur={pg.jeuMm} onChange={v => majGtl({ jeuMm: v })} min={0} /></Champ>
           </div>
-          <Controles liste={res.controles.filter(c => c.id.startsWith("gtl") || c.id.startsWith("agcp"))} onSelect={() => undefined} />
+          <Controles liste={res.controles.filter(c => c.id.startsWith("gtl"))} onSelect={() => undefined} />
         </div>
       </Carte>
     </div>
   );
 }
 
-
-// ─── Raccordement ─────────────────────────────────────────────────────────────────────────────────────────────────
-function RaccordementOnglet({ res, rac, majRac }: { res: ResultatTableauReel; rac: ParamsRaccordement; majRac: (p: Partial<ParamsRaccordement>) => void }) {
-  const r = res.raccordement;
-  const calibres = CALIBRES_AGCP.valeur.filter(c => c.phase === rac.phase);
-  return (
-    <div className="h-full grid gap-3 grid-cols-1 lg:grid-cols-[430px_minmax(0,1fr)]">
-      <Carte titre="Paramètres de la liaison disjoncteur d'abonné → tableau" className="overflow-hidden">
-      <div className="overflow-y-auto pr-1 flex flex-col gap-0.5">
-        <Champ label="Réseau"><select value={rac.phase} onChange={e => { const ph = e.target.value as ParamsRaccordement["phase"]; majRac({ phase: ph, calibreAgcpA: CALIBRES_AGCP.valeur.filter(c => c.phase === ph).slice(-1)[0]?.calibreA ?? rac.calibreAgcpA }); }} className="text-xs border border-ink-200 rounded px-1 py-0.5"><option value="mono">Monophasé</option><option value="tri">Triphasé</option></select></Champ>
-        <Champ label="Disjoncteur d'abonné"><select value={rac.calibreAgcpA} onChange={e => majRac({ calibreAgcpA: parseInt(e.target.value, 10) })} className="text-xs border border-ink-200 rounded px-1 py-0.5">{calibres.map(c => <option key={c.calibreA} value={c.calibreA}>{c.libelle}</option>)}</select></Champ>
-        <Champ label="Distance AGCP → tableau (m)"><Num valeur={rac.longueurM} onChange={v => majRac({ longueurM: v })} pas={0.5} min={0} /></Champ>
-        <Champ label="Mode de pose"><select value={rac.pose} onChange={e => majRac({ pose: e.target.value as ParamsRaccordement["pose"] })} className="text-xs border border-ink-200 rounded px-1 py-0.5"><option value="B">B — sous conduit en paroi</option><option value="C">C — sur paroi / goulotte</option></select></Champ>
-        <Champ label="Isolant"><select value={rac.isolant} onChange={e => majRac({ isolant: e.target.value as ParamsRaccordement["isolant"] })} className="text-xs border border-ink-200 rounded px-1 py-0.5"><option value="PVC">PVC</option><option value="PR">PR / PRC</option></select></Champ>
-        <Champ label="Température ambiante (°C)"><Num valeur={rac.temperatureC} onChange={v => majRac({ temperatureC: v })} /></Champ>
-        <Champ label="Circuits jointifs (K2)"><Num valeur={rac.nbCircuitsGroupes} onChange={v => majRac({ nbCircuitsGroupes: Math.max(1, Math.round(v)) })} min={1} /></Champ>
-        <Champ label="K1 (mode de pose)" aide="1 = cas général ; 0,7 à 0,95 si paroi isolée thermiquement"><Num valeur={rac.coefK1} onChange={v => majRac({ coefK1: v })} pas={0.05} min={0.1} max={1.5} /></Champ>
-        <Champ label="cos φ"><Num valeur={rac.cosPhi} onChange={v => majRac({ cosPhi: v })} pas={0.05} min={0.1} max={1} /></Champ>
-        <Champ label="Chute admise sur la liaison (%)" aide="Le reste de 3 % (éclairage) / 5 % (autres) est laissé aux circuits terminaux"><Num valeur={rac.budgetChutePct} onChange={v => majRac({ budgetChutePct: v })} pas={0.1} min={0.1} /></Champ>
-        <Champ label="Section mini (mm²)"><Num valeur={rac.sectionMiniMm2} onChange={v => majRac({ sectionMiniMm2: v })} /></Champ>
-        <Champ label="Chute calculée sur"><select value={rac.baseChute} onChange={e => majRac({ baseChute: e.target.value as ParamsRaccordement["baseChute"] })} className="text-xs border border-ink-200 rounded px-1 py-0.5"><option value="demande">Courant d&apos;emploi</option><option value="calibre">Calibre de l&apos;AGCP</option></select></Champ>
-        <Case label="Courant d'emploi automatique" valeur={rac.courantEmploiForceA == null}
-          onChange={auto => majRac({ courantEmploiForceA: auto ? undefined : Math.max(1, Math.round(res.raccordement.demande?.courantEmploiA ?? res.raccordement.courantEmploiA)) })}
-          aide="Coché : déduit des disjoncteurs du tableau (chauffage, chauffe-eau, recharge VE à 100 %, le reste à 50 %). Décoché : tu fixes la valeur." />
-        {rac.courantEmploiForceA == null
-          ? <Champ label="Courant d'emploi calculé"><b className="font-mono text-xs">{fmt(res.raccordement.demande?.courantEmploiA ?? res.raccordement.courantEmploiA)} A</b></Champ>
-          : <Champ label="Courant d'emploi imposé (A)" aide="Valeur que tu fixes à la place du calcul automatique"><Num valeur={rac.courantEmploiForceA} onChange={v => majRac({ courantEmploiForceA: v > 0 ? v : undefined })} min={1} /></Champ>}
-      </div>
-      </Carte>
-      <Carte titre="Résultat du calcul" className="overflow-hidden">
-      <div className="overflow-y-auto flex flex-col gap-3 pr-1">
-      <div className="rounded border border-ink-200 p-2 bg-ink-50 text-xs grid grid-cols-2 gap-x-6 gap-y-0.5">
-        <span>Courant d&apos;emploi estimé</span><b className="text-right">{fmt(r.courantEmploiA)} A ({fmt(r.puissanceDemandeeKva)} kVA)</b>
-        <span>AGCP choisi</span><b className="text-right">{rac.calibreAgcpA} A{r.puissanceAgcpKva != null ? ` (${r.puissanceAgcpKva} kVA)` : ""}</b>
-        <span>Calibre d&apos;AGCP conseillé</span><b className="text-right">{r.calibreAgcpConseilleA != null ? `${r.calibreAgcpConseilleA} A` : "au-delà du standard"}</b>
-        <span>K total (K1 × K2 × K3)</span><b className="text-right">{fmt(r.kTotal, 2)}</b>
-        <span>Section par courant admissible</span><b className="text-right">{r.sectionIzMm2 ?? "—"} mm²</b>
-        <span>Section par chute de tension</span><b className="text-right">{r.sectionChuteMm2 ?? "—"} mm²</b>
-        <span className="font-semibold">Section retenue (cuivre)</span><b className="text-right text-emerald-800">{r.sectionRetenueMm2} mm² — imposée par : {r.imposePar}</b>
-        <span>Neutre / terre</span><b className="text-right">{r.sectionNeutreMm2} / {r.sectionPEMm2} mm²</b>
-        <span>Iz corrigé</span><b className="text-right">{fmt(r.izCorrigeRetenueA, 0)} A</b>
-        <span>Chute de tension de la liaison</span><b className="text-right">{fmt(r.chuteV, 2)} V — {fmt(r.chutePct, 2)} %</b>
-        <span>Reste pour les circuits terminaux</span><b className="text-right">{fmt(r.resteEclairagePct, 2)} % éclairage · {fmt(r.resteAutresPct, 2)} % autres</b>
-        <span>Pertes Joule dans la liaison</span><b className="text-right">{fmt(r.pertesW, 0)} W</b>
-      </div>
-      {r.demande && <p className="text-xs text-ink-500">Courant d&apos;emploi : {fmt(r.demande.pleineChargeA, 0)} A à 100 % (chauffage, chauffe-eau, recharge VE) + {fmt(r.demande.autresA, 0)} A × 50 % ({r.demande.nbDisjoncteurs} disjoncteurs).</p>}
-      <div>
-        <p className="text-xs font-semibold text-ink-700 mb-1">Abaque de chute de tension (% de 230 V, I = {fmt(r.courantChuteA, 0)} A) — vert : ≤ {rac.budgetChutePct} %</p>
-        <div className="overflow-x-auto">
-          <table className="text-[11px] border-collapse">
-            <thead><tr><th className="px-1 text-left font-normal text-ink-500">mm² \ m</th>{LONGUEURS_ABAQUE.map(l => <th key={l} className={`px-1 font-normal ${l === Math.round(rac.longueurM) ? "text-ink-900 font-bold" : "text-ink-500"}`}>{l}</th>)}</tr></thead>
-            <tbody>
-              {r.abaque.map((ligne, i) => (
-                <tr key={SECTIONS_ABAQUE[i]}>
-                  <th className={`px-1 text-left ${SECTIONS_ABAQUE[i] === r.sectionRetenueMm2 ? "text-ink-900 font-bold" : "font-normal text-ink-500"}`}>{SECTIONS_ABAQUE[i]}</th>
-                  {ligne.map(c => <td key={c.longueurM} className={`px-1 text-right font-mono ${c.ok ? "bg-emerald-100 text-emerald-900" : "bg-red-100 text-red-800"} ${c.sectionMm2 === r.sectionRetenueMm2 && c.longueurM === Math.round(rac.longueurM) ? "outline outline-2 outline-ink-900" : ""}`}>{fmt(c.chutePct, 2)}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <Controles liste={res.controles.filter(c => c.id.startsWith("rac"))} onSelect={() => undefined} />
-      </div>
-      </Carte>
-    </div>
-  );
-}
 
 // ─── Gaines optimisées ────────────────────────────────────────────────────────────────────────────────────────────
 function GainesOnglet(p: TableauReelPanelProps) {
