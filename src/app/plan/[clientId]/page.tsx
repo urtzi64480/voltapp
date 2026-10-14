@@ -8,6 +8,10 @@ import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
 import { calculerBesoinsBruts, signaturesActuelles, postesInvalides, CLE_OK_CABLES, CLE_OK_GAINES } from "@/lib/predevis-engine";
 import Shell from "@/components/layout/Shell";
+import TableauReelPanel, { type Onglet as OngletTableauReel } from "@/components/plan/TableauReelPanel";
+import { couleurGroupe, fusionnerForcages, fusionnerParamsGaines, diametreGaineDepuisLibelle } from "@/lib/gaines-optimisees";
+import { optimiserGainesMaison, syntheseGaines, type GainesNiveau } from "@/lib/gaines-optimisees-plan";
+import type { ReglagesGaines, ReglagesTableauReel } from "@/lib/maison-types";
 import { useProjets, qsProjet, modifierProjet, sauverTableau, sauverAnnexes, synchroniserAnnexes, lireAnnexes, nouvelIdAnnexe, TABLEAU_PRINCIPAL, TableauAnnexe } from "@/lib/projets";
 import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -5629,6 +5633,113 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const colorMap = resultat ? construireColorMap(resultat, niveaux) : new Map<number, string>();
 
+  // ── TABLEAU RÉALISTE & GAINES OPTIMISÉES ────────────────────────────────────────────────────────────────────────────────────────────
+  // Réglages communs à toute la maison : recopiés sur chaque niveau (comme orientationNord) pour suivre l'enregistrement du plan et l'annuler / refaire.
+  const reglagesTR: ReglagesTableauReel = niveaux.find(n => n.reglagesTableauReel)?.reglagesTableauReel ?? {};
+  const reglagesGn: ReglagesGaines = niveaux.find(n => n.reglagesGaines)?.reglagesGaines ?? {};
+  const majReglagesTR = (patch: Partial<ReglagesTableauReel>) => setNiveaux(nvs => {
+    const nv = { ...(nvs.find(n => n.reglagesTableauReel)?.reglagesTableauReel ?? {}), ...patch };
+    return nvs.map(n => ({ ...n, reglagesTableauReel: nv }));
+  });
+  const majReglagesGn = (patch: Partial<ReglagesGaines>) => setNiveaux(nvs => {
+    const nv = { ...(nvs.find(n => n.reglagesGaines)?.reglagesGaines ?? {}), ...patch };
+    return nvs.map(n => ({ ...n, reglagesGaines: nv }));
+  });
+  const [tableauReelId, setTableauReelId] = useState<string>(TABLEAU_PRINCIPAL);
+  const [ongletTableauReel, setOngletTableauReel] = useState<OngletTableauReel>("tableau");
+  const [recalculGaines, setRecalculGaines] = useState(0);
+  const [rowsEnregistres, setRowsEnregistres] = useState<BreakerRow[]>([]);
+  const panneauTableauOuvert = !!reglagesTR.actif;
+  const paramsGaines = fusionnerParamsGaines(reglagesGn.params);
+  const forcagesGaines = fusionnerForcages(reglagesGn.forcages);
+  const calqueGaines = paramsGaines.actif && reglagesGn.calque !== false;
+  const tableauxReels = useMemo(() => [
+    { id: TABLEAU_PRINCIPAL, nom: "Tableau principal" },
+    ...niveaux.filter(n => estAnnexe(n) && n.tableauId).map(n => ({ id: n.tableauId as string, nom: `Tableau — ${n.nom || "Annexe"}` })),
+  ].filter((t, i, a) => a.findIndex(x => x.id === t.id) === i), [niveaux]);
+  const tableauReelEffectif = tableauxReels.some(t => t.id === tableauReelId) ? tableauReelId : TABLEAU_PRINCIPAL;
+
+  // Gaines optimisées : recalculées à l'activation, à chaque réglage, à chaque nouvelle génération des circuits et au clic sur « Recalculer »
+  // (pas à chaque déplacement à la souris : le tracé reste alors celui du dernier calcul).
+  const [gainesMaison, setGainesMaison] = useState<Record<number, GainesNiveau> | null>(null);
+  const cleReglagesGaines = JSON.stringify([reglagesGn.params, reglagesGn.forcages]);
+  useEffect(() => {
+    if (!paramsGaines.actif || !resultatRef.current || !(panneauTableauOuvert || calqueGaines)) { setGainesMaison(null); return; }
+    try { setGainesMaison(optimiserGainesMaison(resultatRef.current, niveauxRef.current, paramsGaines, forcagesGaines)); }
+    catch (e) { console.error("Gaines optimisées :", e); setGainesMaison(null); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resultatBrut, cleReglagesGaines, recalculGaines, panneauTableauOuvert, calqueGaines]);
+  const syntheseGainesMaison = useMemo(() => (resultat && gainesMaison ? syntheseGaines(resultat, gainesMaison) : null), [resultat, gainesMaison]);
+  const entreesGaines = useMemo(() => {
+    if (!gainesMaison || !resultat) return { gaineDeBreaker: undefined, diametreGaines: undefined, supplementaires: undefined };
+    const gaineDeBreaker: Record<number, string> = {};
+    const diametreGaines: Record<string, number> = {};
+    const supplementaires: number[] = [];
+    Object.values(gainesMaison).forEach(g => {
+      if (!g.porteTableau) return;
+      g.groupes.forEach(gr => {
+        const id = `${g.niveauId}:${gr.id}`;
+        diametreGaines[id] = diametreGaineDepuisLibelle(gr.tronc.gaine);
+        gr.circuits.forEach(c => { gaineDeBreaker[c.breakerId] = id; });
+      });
+    });
+    (syntheseGainesMaison?.montees ?? []).forEach(m => {
+      const niv = niveaux.find(n => n.id === m.niveauId);
+      if (!niv) return;
+      const id = `montee:${niv.id}`;
+      diametreGaines[id] = diametreGaineDepuisLibelle(m.gaine);
+      breakersDuNiveau(resultat.breakers, niv).forEach(b => { if (gaineDeBreaker[b.id] == null && !estCircuitSansDisjoncteur(b)) gaineDeBreaker[b.id] = id; });
+      for (let k = 1; k < m.nbGaines; k++) supplementaires.push(diametreGaineDepuisLibelle(m.gaine));
+    });
+    return { gaineDeBreaker, diametreGaines, supplementaires };
+  }, [gainesMaison, syntheseGainesMaison, resultat, niveaux]);
+
+  // Tableau enregistré (module Tableau) : relu à la demande, sans toucher au plan.
+  useEffect(() => {
+    if (!panneauTableauOuvert || reglagesTR.source !== "enregistre") return;
+    let annule = false;
+    supabase.from("projets").select("tableau_config, tableaux_annexes").eq("id", projet.id).single().then(({ data: c }) => {
+      if (annule) return;
+      let rows: BreakerRow[] = [];
+      try {
+        if (tableauReelEffectif !== TABLEAU_PRINCIPAL) rows = lireAnnexes((c as any)?.tableaux_annexes).find(a => a.id === tableauReelEffectif)?.rows ?? [];
+        else if (c?.tableau_config) { const parsed = JSON.parse(c.tableau_config); if (Array.isArray(parsed)) rows = parsed; }
+      } catch { rows = []; }
+      setRowsEnregistres(rows);
+    });
+    return () => { annule = true; };
+  }, [panneauTableauOuvert, reglagesTR.source, tableauReelEffectif, projet.id]);
+
+  const rowsTableauReel = useMemo<BreakerRow[]>(() => {
+    if (!panneauTableauOuvert) return [];
+    if (reglagesTR.source === "enregistre") return rowsEnregistres;
+    if (!resultat) return [];
+    const niveauxDuTableau = niveaux.filter(n => (tableauReelEffectif === TABLEAU_PRINCIPAL ? !estAnnexe(n) : estAnnexe(n) && n.tableauId === tableauReelEffectif));
+    const idsManuelsNonRelies = new Set(niveaux.flatMap(n => (n.circuitsManuels ?? []).filter(m => m.nonRelieTableau).map(m => m.id)));
+    const noms: Record<string, string> = {};
+    niveaux.forEach(n => Object.assign(noms, n.nomsCircuits ?? {}));
+    const vus = new Set<number>();
+    const liste: Breaker[] = [];
+    niveauxDuTableau.forEach(n => breakersDuNiveau(resultat.breakers, n).forEach(b => {
+      if (vus.has(b.id) || estCircuitSansDisjoncteur(b) || (b.manuelId != null && idsManuelsNonRelies.has(b.manuelId))) return;
+      vus.add(b.id);
+      liste.push({ ...b, label: noms[b.label] ?? b.label });
+    }));
+    return liste.length > 0 ? assemblerTableau(liste) : [];
+  }, [panneauTableauOuvert, reglagesTR.source, rowsEnregistres, resultat, niveaux, tableauReelEffectif]);
+
+  /** Clic sur un disjoncteur du tableau réaliste → isole son circuit sur le plan ; clic de nouveau → tous les circuits. */
+  const [breakerPanneauId, setBreakerPanneauId] = useState<number | null>(null);
+  const selectionnerBreakerPanneau = (id: number | null) => {
+    setBreakerPanneauId(id);
+    if (!resultat) return;
+    if (id == null) { setCircuitsVisibles(new Set(resultat.breakers.map(b => b.id))); return; }
+    const parId = resultat.breakers.find(b => b.id === id);
+    const label = parId ? null : rowsTableauReel.flatMap(r => r.slots).find(sl => sl?.id === id)?.label;
+    const cible = parId ?? (label ? resultat.breakers.find(b => b.label === label || niveaux.some(n => n.nomsCircuits?.[b.label] === label)) : undefined);
+    if (cible) afficherCeCircuit(cible);
+  };
+
   // Symbole + carré d'appui : le carré (boxSize) est ce qui vient toucher le mur — le symbole,
   // lui, reste lisible à tous les zooms : 20 px à zoom 1 (inchangé), jusqu'à 30 px en zoom avant, et
   // il RÉTRÉCIT en zoom arrière (jusqu'à 7 px) pour que le plan d'une maison entière ne soit pas surchargé.
@@ -6621,6 +6732,25 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
             </div>
           )}
 
+          {resultat && (
+            <>
+              <button onClick={() => { setOngletTableauReel("tableau"); majReglagesTR({ actif: !panneauTableauOuvert }); }}
+                title="Tableau virtuel comme si tu l'avais devant toi : rails, différentiels, réserve, GTL, raccordement, connexions et contrôles NF C 15-100"
+                className={`btn-ghost !text-xs ${panneauTableauOuvert ? "!bg-ink-100" : ""}`}>
+                <Zap size={13} /> Tableau réaliste
+              </button>
+              <button onClick={() => {
+                  const actif = !paramsGaines.actif;
+                  majReglagesGn({ params: { ...reglagesGn.params, actif } });
+                  if (actif) { setOngletTableauReel("gaines"); majReglagesTR({ actif: true }); }
+                }}
+                title="Option : regroupe les circuits qui partent dans la même direction dans des gaines communes au départ du tableau (au lieu d'une gaine par circuit)"
+                className={`btn-ghost !text-xs ${paramsGaines.actif ? "!bg-ink-100" : ""}`}>
+                <Network size={13} /> Gaines optimisées{paramsGaines.actif ? " ✓" : ""}
+              </button>
+            </>
+          )}
+
           <div className="ml-auto flex items-center gap-1">
             <button onClick={() => zoomBtn(-1)} className="btn-ghost !px-2 !py-1.5"><ZoomOut size={14} /></button>
             <span className="text-xs font-mono text-ink-400 w-10 text-center">{Math.round(zoom * 100)}%</span>
@@ -6638,6 +6768,33 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 du bandeau de commandes (voir Vue3D, circuitsAction). */}
             {!vue3D && blocCircuits && (
               <div className="absolute top-3 left-3 z-20 flex flex-col gap-1.5 max-w-xs">{blocCircuits}</div>
+            )}
+            {panneauTableauOuvert && resultat && (
+              <TableauReelPanel
+                key={ongletTableauReel}
+                ongletInitial={ongletTableauReel}
+                rows={rowsTableauReel}
+                tableaux={tableauxReels}
+                tableauId={tableauReelEffectif}
+                onTableau={setTableauReelId}
+                source={reglagesTR.source ?? "plan"}
+                onSource={source => majReglagesTR({ source })}
+                reglages={reglagesTR}
+                onReglages={majReglagesTR}
+                reglagesGaines={reglagesGn}
+                onReglagesGaines={majReglagesGn}
+                gaines={niveauActif ? gainesMaison?.[niveauActif.id] ?? null : null}
+                niveauNom={niveauActif ? (niveauActif.nom || NIVEAU_TYPES[niveauActif.type]) : ""}
+                synthese={syntheseGainesMaison}
+                gaineDeBreaker={entreesGaines.gaineDeBreaker}
+                diametreGaines={entreesGaines.diametreGaines}
+                gainesSupplementairesMm={entreesGaines.supplementaires}
+                couleurDe={id => colorMap.get(id) ?? "#78716c"}
+                breakerSelectionneId={breakerPanneauId}
+                onSelectBreaker={selectionnerBreakerPanneau}
+                onRecalculerGaines={() => setRecalculGaines(t => t + 1)}
+                onFermer={() => majReglagesTR({ actif: false })}
+              />
             )}
             {!vue3D && (
               <div className="absolute bottom-3 left-3 z-20 flex items-center gap-1 rounded-xl bg-white/95 border border-ink-200 shadow p-1">
@@ -7386,6 +7543,27 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
               {/* Circuits : tracé VISIBLE, toujours au-dessus de tout (murs, appareillages, meubles…), sans capter la souris. */}
               <g style={{ pointerEvents: "none" }}>{rendreCircuitsPlan("visuel")}</g>
+
+              {/* Gaines optimisées : tronc commun + branches, une couleur par gaine de départ (vert pointillé = courants faibles). */}
+              {calqueGaines && niveauActif && gainesMaison?.[niveauActif.id] && (
+                <g style={{ pointerEvents: "none" }}>
+                  {gainesMaison[niveauActif.id].groupes.flatMap((gr, gi) => gr.troncons.map(t => {
+                    const a = toScreen(t.de), b = toScreen(t.vers);
+                    const coul = couleurGroupe(gi, gr.courantFaible);
+                    const w = Math.min(9, 2.5 + t.circuits.length * 0.7);
+                    return (
+                      <g key={t.id}>
+                        <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#ffffff" strokeWidth={w + 3} strokeLinecap="round" opacity={0.85} />
+                        <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={coul} strokeWidth={w} strokeLinecap="round" opacity={0.8} strokeDasharray={gr.courantFaible ? "7 4" : undefined} />
+                        {t.circuits.length > 1 && (
+                          <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 5} textAnchor="middle" fontSize={10} fontWeight={700} fill={coul} stroke="#ffffff" strokeWidth={3} paintOrder="stroke">{t.circuits.length}× {t.gaine.replace(/ verte.*/, "")}</text>
+                        )}
+                        {t.parent === null && <circle cx={b.x} cy={b.y} r={4} fill={coul} stroke="#ffffff" strokeWidth={1.5} />}
+                      </g>
+                    );
+                  }))}
+                </g>
+              )}
 
               {niveauActif?.tableauPos && (() => {
                 const p = toScreen(niveauActif.tableauPos);
