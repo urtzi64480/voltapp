@@ -69,6 +69,8 @@ import {
   distance, SegmentCircuit, origineCircuits} from "./maison-types";
 
 import { nbConducteurs } from "./couleurs-fils";
+import { fusionnerForcages, fusionnerParamsGaines } from "./gaines-optimisees";
+import { optimiserGainesMaison, type GainesNiveau } from "./gaines-optimisees-plan";
 import {
   genererCircuits, segmentsPourCircuit, breakersDuNiveau, ResultatGeneration, cleCircuitDedie,
 } from "./maison-engine";
@@ -79,7 +81,7 @@ import {
 
 
 import {
-  creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurJambe, pieceDeJambe, indexPiecesAppareils,
+  creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurJambe, estVerticale, pieceDeJambe, indexPiecesAppareils,
 } from "./longueurs-circuits";
 import { Prestation, Gamme, DevisLigne, PrestationFournisseur } from "@/types";
 import { nomAvecConditionnement } from "@/lib/utils";
@@ -350,6 +352,22 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
 
   resultat.alertes.forEach(a => alertes.push(a)); // remonte aussi les alertes du plan (non raccordé, etc.)
 
+  // ─── Gaines optimisées au départ du tableau (option du plan : Niveau.reglagesGaines) ───────────────────────────────────────────────
+  // Actif : la 1re liaison de chaque circuit (tableau / point d'arrivée → 1er appareillage) ne compte plus UNE gaine par circuit mais les tronçons
+  // de l'arbre de gaines partagé ; le câble de ces circuits suit le tronc puis sa branche (un peu plus long qu'en ligne droite).
+  const reglagesGaines = niveaux.find(n => n.reglagesGaines)?.reglagesGaines;
+  const paramsGaines = fusionnerParamsGaines(reglagesGaines?.params);
+  let gainesOpt: Record<number, GainesNiveau> | null = null;
+  if (paramsGaines.actif) {
+    try { gainesOpt = optimiserGainesMaison(resultat, resultat.maison.niveaux, paramsGaines, fusionnerForcages(reglagesGaines?.forcages)); }
+    catch { alertes.push("Gaines optimisées : calcul impossible, le pré-devis garde une gaine par circuit."); }
+    if (gainesOpt) {
+      const n = Object.values(gainesOpt);
+      const avant = n.reduce((t, g) => t + g.avant.departs, 0), apres = n.reduce((t, g) => t + g.apres.departs, 0);
+      alertes.push(`Gaines optimisées actives : ${apres} gaine(s) de départ au lieu de ${avant} (une par circuit). Gaines partagées chiffrées une seule fois (« Commun — Gaines au départ du tableau »), câble rallongé du détour par le tronc.`);
+    }
+  }
+
   resultat.maison.niveaux.forEach(niveau => {
     // ─── Appareillages (mécanismes) et sorties dédiées, par pièce ──────────
     // Par pièce RÉELLE (voir piece-reelle.ts) : une prise posée dehors contre le mur des WC se compte à l'extérieur, pas aux WC.
@@ -511,8 +529,12 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         {
           const codeVerte = `gaine_icta_verte${GAINE_COMMUNICATION_DIAMETRE}`;
           const labelVerte = `Gaine ${gaineCommunication("encastre")}`;
-          ajouter(`${codeVerte}@${dest.id}`, codeVerte, labelVerte, dest.nom, horizontale + verticale, "m");
-          if (bCF) noterCircuit(niveau, bCF, nomCircuit(bCF), codeVerte, labelVerte, horizontale + verticale, "m");
+          // Gaines optimisées : le circuit de communication est dans une gaine verte PARTAGÉE (tronçons ajoutés plus bas) — plus de gaine par câble.
+          const dansGaineVerteCommune = !!(bCF && gainesOpt?.[niveau.id]?.groupeDeCircuit[bCF.label]);
+          if (!dansGaineVerteCommune) {
+            ajouter(`${codeVerte}@${dest.id}`, codeVerte, labelVerte, dest.nom, horizontale + verticale, "m");
+            if (bCF) noterCircuit(niveau, bCF, nomCircuit(bCF), codeVerte, labelVerte, horizontale + verticale, "m");
+          }
           const bv = cumul.get(`${codeVerte}@${dest.id}`); if (bv) (bv.appareils ??= []).push({ piece: piece.nom || "Pièce", nom: a.nom?.trim() || undefined });
         }
         { const b = cumul.get(`${tv ? "cable_coax" : "cable_rj45"}@${dest.id}`); if (b) (b.appareils ??= []).push({ piece: piece.nom || "Pièce", nom: a.nom?.trim() || undefined }); }
@@ -537,6 +559,34 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
 
     // ─── Boîtes de dérivation (une par circuit lumière qui en utilise) ─────
     const breakersNiveau = breakersDuNiveauPd;
+
+    // Gaines optimisées de CE niveau : métré réel de la 1re liaison de chaque circuit regroupé (pour caler la longueur des troncs sur le
+    // cheminement réel — coudes, murs — et non sur la ligne droite) et cheminement le long de l'arbre.
+    const gn = gainesOpt?.[niveau.id];
+    const cheminArbre = new Map<string, number>();   // clé de circuit → longueur du chemin tronc + branche (m, ligne droite)
+    const mesureHoriz = new Map<string, number>();   // clé de circuit → course horizontale réelle de sa 1re liaison (m)
+    let facteurChemin = 1;
+    if (gn) {
+      gn.groupes.forEach(gr => gr.circuits.forEach(c => {
+        const feuilleTr = gr.troncons.find(t => t.circuits.length === 1 && t.circuits[0] === c.cle);
+        let t = feuilleTr, longueur = 0;
+        while (t) { longueur += t.longueurM; const par: string | null = t.parent; t = par ? gr.troncons.find(x => x.id === par) : undefined; }
+        cheminArbre.set(c.cle, longueur);
+      }));
+      let mesure = 0, direct = 0;
+      breakersNiveau.forEach(b => {
+        if (estCircuitSansDisjoncteur(b) || !gn.groupeDeCircuit[b.label]) return;
+        const pts = niveau.pieces.flatMap(p => p.appareillages).filter(a => a.circuitId === b.id);
+        const segs = segmentsPourCircuit(b, pts, niveau, origineCalcul);
+        const premier = segs.find(sg => sg.aId === "tableau" && sg.type !== "domotique");
+        if (!premier) return;
+        const h = tracerLiaison(ctxLongueurs, b, segs, premier, hauteurAncre).jambes.filter(j => !estVerticale(j)).reduce((n, j) => n + longueurJambe(j), 0);
+        mesureHoriz.set(b.label, h);
+        const c = gn.groupes.flatMap(g => g.circuits).find(x => x.cle === b.label);
+        if (c) { mesure += h; direct += Math.hypot(c.entree.x - gn.origine.x, c.entree.y - gn.origine.y); }
+      });
+      if (direct > 0.5) facteurChemin = Math.max(1, mesure / direct);
+    }
 
     breakersNiveau.forEach(b => {
       // Circuit de communication (RJ45) : son câble est déjà chiffré plus haut (étoile vers le coffret) — le
@@ -609,8 +659,14 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         // LONGUEUR RÉELLE : chaque jambe du tracé 3D (course horizontale ET montées / descentes), avec sa pose —
         // exactement ce que dessine la vue 3D (voir longueurs-circuits.ts).
         const { jambes } = tracerLiaison(ctxLongueurs, b, segments, seg, hauteurAncre);
+        // 1re liaison d'un circuit regroupé : sa course horizontale est portée par la gaine PARTAGÉE (tronçons de l'arbre, ajoutés plus bas) ;
+        // son câble suit le tronc puis la branche (longueur du chemin × cheminement réel du niveau).
+        const premiereDepart = segments.find(sg => sg.aId === "tableau" && sg.type !== "domotique");
+        const groupee = !!gn && seg === premiereDepart && !!gn.groupeDeCircuit[b.label] && mesureHoriz.has(b.label);
+        const kCable = groupee && (mesureHoriz.get(b.label) ?? 0) > 0.01 ? Math.max(1, ((cheminArbre.get(b.label) ?? 0) * facteurChemin) / (mesureHoriz.get(b.label) as number)) : 1;
         jambes.forEach(jambe => {
-          const legLength = longueurJambe(jambe);
+          const horizGroupee = groupee && !estVerticale(jambe);
+          const legLength = longueurJambe(jambe) * (horizGroupee ? kCable : 1);
           if (legLength <= 0) return;
           const pose = jambe.pose;
           // Attribution à la pièce : point médian d'une course horizontale, pièce de l'appareillage pour une montée
@@ -630,11 +686,11 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
           // STRICTEMENT 3 fils communs (phase, neutre, terre) = tout sauf navette / commande / retour lampe : seuls ces tronçons existent en
           // gaine précâblée. Dès que la liaison porte autre chose (navette, retour, commande), gaine ICTA + fils à câbler soi-même.
           const strict3 = !estLiaisonCommande;
-          const precablee = pose !== "apparent" && poseEncastreDe(section) === "precablee" && strict3;
-          const aCabler = pose !== "apparent" && poseEncastreDe(section) === "precablee" && !strict3;
+          const precablee = !horizGroupee && pose !== "apparent" && poseEncastreDe(section) === "precablee" && strict3;
+          const aCabler = !horizGroupee && pose !== "apparent" && poseEncastreDe(section) === "precablee" && !strict3;
           const sousCatGaine = pose === "apparent" ? `gaine_irl${diamGaine}` : precablee ? `gaine_precablee_3g${section}` : `gaine_icta${diamGaine}`;
           const labelGaine = pose === "apparent" ? `Gaine ${gaineLiaison.gaine} (pose apparente)` : precablee ? `Gaine ICTA précâblée 3G${section} (3 fils : phase, neutre, terre)` : aCabler ? `Gaine ${gaineLiaison.gaine} — à câbler (navettes / retours / commandes)` : `Gaine ${gaineLiaison.gaine}`;
-          noterCircuit(niveau, b, nomCircuit(b), sousCatGaine, labelGaine, legLength, "m");
+          if (!horizGroupee) noterCircuit(niveau, b, nomCircuit(b), sousCatGaine, labelGaine, legLength, "m");
 
           // Câblage d'une liaison d'éclairage (composition exacte : couleurs-fils.ts → conducteursSegment) :
           //  · alimentation → commande : l'ALLER (phase), + neutre + terre qui poursuivent vers la lampe ;
@@ -649,7 +705,7 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
             if (strict3) ajouter(`cablage_${section}@${nomPiece}`, `cablage_${section}`, LABEL_CABLAGE[section] ?? `Câblage ${section}mm²`, nomPiece, legLength, "m", legLength * nbCond);
             else ajouter(`cablagecmd_${section}@${nomPiece}`, `cablagecmd_${section}`, `Fils de liaison ${section}mm² — navettes / retours / commandes (à câbler dans la gaine)`, nomPiece, legLength, "m", legLength * nbCond);
           }
-          ajouter(`${sousCatGaine}@${nomPiece}`, sousCatGaine, labelGaine, nomPiece, legLength, "m");
+          if (!horizGroupee) ajouter(`${sousCatGaine}@${nomPiece}`, sousCatGaine, labelGaine, nomPiece, legLength, "m");
           if (aCabler) { const bg = cumul.get(`${sousCatGaine}@${nomPiece}`); if (bg) bg.note = "Tronçons de navette / retour / commande : pas de gaine précâblée, tu câbles toi-même (gaine + fils ci-dessous)."; }
         });
       });
@@ -684,6 +740,25 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         noterCircuit(niveau, b, nomCircuit(b), sousCatGaine, labelGaineV, d, "m");
       }
     });
+
+    // Tronçons de l'arbre de gaines (tronc commun + branches) : chacun compté UNE fois, à la gaine recommandée pour tous les câbles qui le traversent.
+    if (gn) {
+      const nomGaines = pseudoCommun(`Gaines au départ du tableau — ${niveau.nom || niveau.type}`);
+      gn.groupes.forEach(gr => gr.troncons.forEach(t => {
+        const longueur = t.longueurM * facteurChemin;
+        if (longueur <= 0) return;
+        const diam = t.gaine.replace(/ verte.*/, "").replace(/\D/g, "");
+        const verte = gr.courantFaible;
+        const code = verte ? `gaine_icta_verte${diam}` : paramsGaines.poseApparente ? `gaine_irl${diam}` : `gaine_icta${diam}`;
+        const libelle = `Gaine ${t.gaine}${verte ? "" : paramsGaines.poseApparente ? " (pose apparente)" : ""} — ${gr.nom} partagée (${t.circuits.length} circuit${t.circuits.length > 1 ? "s" : ""})`;
+        ajouter(`${code}@${nomGaines}`, code, `Gaine ${t.gaine} (tronçons partagés au départ du tableau)`, nomGaines, longueur, "m");
+        // Information par circuit : part du tronçon répartie sur les circuits qui l'empruntent.
+        t.circuits.forEach(cle => {
+          const b = breakersNiveau.find(x => x.label === cle);
+          if (b) noterCircuit(niveau, b, nomCircuit(b), code, libelle, longueur / t.circuits.length, "m");
+        });
+      }));
+    }
   });
 
   // ─── Disjoncteurs et différentiels (tableau — une seule fois, pas par niveau) ─────
