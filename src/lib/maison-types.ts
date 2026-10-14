@@ -551,6 +551,23 @@ export const EPAISSEUR_CLOISON_ZONE_CM = 10;
 // Photo de chantier d'un circuit : fichier dans le stockage (chemin), position SUR le tracé du circuit (mètres, repère du plan), légende libre.
 export interface PhotoChantier { id: number; circuit: string; point: Point; chemin: string; legende?: string; date: string; hauteurCm?: number /* hauteur au-dessus du sol fini, cm */ }
 
+/**
+ * Gaine EN ATTENTE : posée (et, au choix, précâblée) pour un circuit futur. Elle rejoint le tableau SANS y être raccordée, et se termine au mur par
+ * une boîte d'encastrement fermée par un obturateur et une plaque de finition. Chaque attente est sa propre gaine (jamais regroupée avec les autres).
+ */
+export interface GaineAttente {
+  id: string;
+  nom: string;
+  /** Extrémité au mur (m, repère du plan) : l'obturateur. */
+  point: Point;
+  /** Vrai : gaine ICTA précâblée (le câble est déjà tiré) ; faux : gaine vide, avec fil tireur. */
+  precable: boolean;
+  /** Section du câble (mm², texte « 1.5 », « 2.5 », « 4.0 », « 6.0 », « 10.0 ») : dimensionne la gaine et, si précâblée, fixe le câble. */
+  section: string;
+  /** Hauteur de l'obturateur au sol (cm) ; 30 par défaut. */
+  hauteurCm?: number;
+}
+
 export interface Niveau {
   id: number;
   nom: string;
@@ -569,6 +586,8 @@ export interface Niveau {
   reglagesGaines?: ReglagesGaines;
   tableauHauteur?: number; // cm — hauteur d'installation du tableau (vue 3D), 150 par défaut
   tableauRotation?: number; // degrés — orientation du tableau (aligné sur le mur porteur), 0 par défaut
+  // Gaines en attente (pré-câblées ou non) posées sur ce niveau : voir GaineAttente et lib/gaines-attente.ts.
+  gainesAttente?: GaineAttente[];
   // Boîte(s) de dérivation d'un circuit d'éclairage — indexé par le label du disjoncteur
   // (stable tant que la composition du plan ne change pas, comme couleursCircuits). Une
   // liste plutôt qu'un point unique : plusieurs boîtes nommées peuvent être ajoutées,
