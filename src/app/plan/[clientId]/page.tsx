@@ -6091,7 +6091,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       const ctxLg = creerContexteLongueurs(niveauActif);
       const hAncreLg = hauteurAncreFn(ctxLg);
       const gainesNivPlan = calqueGaines ? gainesMaison?.[niveauActif.id] : undefined;
-      const cheminBr = gainesNivPlan ? cheminCircuitGaine(gainesNivPlan, breaker.label) : null;
+      // Départ individuel (gaine à un seul circuit) : même représentation unifilaire, un seul tronçon (le tronc).
+      const cheminSeul = (() => {
+        if (!gainesNivPlan) return null;
+        const gi = gainesNivPlan.groupes.findIndex(gg => gg.circuits.some(c => c.cle === breaker.label));
+        const gg = gainesNivPlan.groupes[gi];
+        if (!gg || gg.circuits.length !== 1) return null;
+        const t = gg.tronc;
+        return [{ tronconId: t.id, de: t.de, vers: t.vers, gaine: t.gaine, circuits: t.circuits, rang: 0, groupeIndex: gi, courantFaible: gg.courantFaible, longueurM: t.longueurM, chemin: t.chemin, passage: t.passage }];
+      })();
+      const cheminBr = gainesNivPlan ? (cheminCircuitGaine(gainesNivPlan, breaker.label) ?? cheminSeul) : null;
       const premierSeg = segments.find(sg => sg.aId === "tableau" && sg.type !== "domotique");
       const detaille = circuitsDetailles.has(breaker.id);
       const suitGaine = !detaille && !!(cheminBr && premierSeg && Math.hypot(cheminBr[cheminBr.length - 1].vers.x - premierSeg.bPoint.x, cheminBr[cheminBr.length - 1].vers.y - premierSeg.bPoint.y) < 0.05);
@@ -6105,16 +6114,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         if (chemin && entreeGn) {
           if (visuel && !masquerGaine) {
             const ez2 = Math.max(0.8, Math.min(1.6, zoom));
+            // Mode optimisé = schéma UNIFILAIRE : un seul trait par circuit (à sa couleur), du tableau jusqu'à chaque appareillage ; le détail
+            // des conducteurs reste accessible avec l'œil du circuit.
             const cableDe = (cleC: string, pts: Point[]) => {
               for (let i = 0; i < pts.length - 1; i++) {
                 const a1 = toScreen(pts[i]), b1 = toScreen(pts[i + 1]);
-                const traits = geometrieCable(a1, b1, conducteursSegment(seg), (1.6 + 0.5) * ez2);
-                elements.push(<line key={`${cleC}-${i}-halo`} x1={a1.x} y1={a1.y} x2={b1.x} y2={b1.y} stroke="#fff" strokeWidth={6 * ez2} strokeLinecap="round" opacity={0.8} />);
-                if (!masquerFils) traits.forEach((t, k) => {
-                  elements.push(<line key={`${cleC}-${i}-f${k}`} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke={t.couleur} strokeWidth={1.6 * ez2} strokeLinecap="round" />);
-                  if (t.couleur2) elements.push(<line key={`${cleC}-${i}-f${k}b`} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke={t.couleur2} strokeWidth={1.6 * ez2} strokeDasharray={`${3 * ez2} ${3 * ez2}`} />);
-                });
+                elements.push(<line key={`${cleC}-${i}-halo`} x1={a1.x} y1={a1.y} x2={b1.x} y2={b1.y} stroke="#fff" strokeWidth={4.4 * ez2} strokeLinecap="round" opacity={0.85} />);
+                if (!masquerFils) elements.push(<line key={`${cleC}-${i}-u`} x1={a1.x} y1={a1.y} x2={b1.x} y2={b1.y} stroke={color} strokeWidth={2.2 * ez2} strokeLinecap="round" strokeDasharray={seg.type === "retour" ? `${5 * ez2} ${3 * ez2}` : undefined} />);
               }
+              const fin = toScreen(pts[pts.length - 1]);
+              if (!masquerFils) elements.push(<circle key={`${cleC}-pt`} cx={fin.x} cy={fin.y} r={3 * ez2} fill={color} stroke="#fff" strokeWidth={1.2} />);
             };
             if (seg === premierSeg) {
               chemin.forEach((et, k) => {
@@ -6158,6 +6167,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         const sectionsLg = showLongueurs && seg.type !== "domotique" ? tracerLiaison(ctxLg, breaker, segments, seg, hAncreLg).sections : null;
         const cle = cleSegmentLiaison(seg.aId, seg.bId);
         const coudes = coudesSegment(niveauActif, seg);
+        // Mode optimisé : schéma unifilaire (un trait par circuit) pour tout le câblage du circuit regroupé, jusqu'à chaque appareillage.
+        if (visuel && suitGaine && seg.type !== "domotique") {
+          if (masquerFils) return;
+          const ez3 = Math.max(0.8, Math.min(1.6, zoom));
+          const ptsU = [seg.aPoint, ...coudes.map(c => c.point), seg.bPoint].map(toScreen);
+          const dU = ptsU.map(q => `${q.x},${q.y}`).join(" ");
+          const fin = ptsU[ptsU.length - 1];
+          elements.push(<polyline key={`${breaker.id}-u-${cle}-h`} points={dU} fill="none" stroke="#fff" strokeWidth={4.4 * ez3} strokeLinecap="round" strokeLinejoin="round" opacity={0.85} />);
+          elements.push(<polyline key={`${breaker.id}-u-${cle}`} points={dU} fill="none" stroke={color} strokeWidth={2.2 * ez3} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={seg.type === "retour" ? `${5 * ez3} ${3 * ez3}` : undefined} />);
+          elements.push(<circle key={`${breaker.id}-u-${cle}-pt`} cx={fin.x} cy={fin.y} r={3 * ez3} fill={color} stroke="#fff" strokeWidth={1.2} />);
+          return;
+        }
         // Liaison (navette) entre deux va-et-vient : couleur du circuit assombrie,
         // pour rester rattachée au circuit tout en se distinguant du reste du tracé.
         const estDomotique = seg.type === "domotique";
