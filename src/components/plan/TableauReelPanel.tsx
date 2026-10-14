@@ -171,6 +171,7 @@ function Pastilles({ couleur }: { couleur: string }) {
 // ─── Panneau ──────────────────────────────────────────────────────────────────────────────────────────────────────
 export default function TableauReelPanel(p: TableauReelPanelProps) {
   const [onglet, setOnglet] = useState<Onglet>(p.ongletInitial ?? "tableau");
+  const [coteDroit, setCoteDroit] = useState(false);
   const zoneImpression = useRef<HTMLDivElement>(null);
   const params = useMemo(() => fusionnerParamsTableau(p.reglages.params), [p.reglages.params]);
   const rac = useMemo<ParamsRaccordement>(() => ({ ...PARAMS_RACCORDEMENT_DEFAUT, ...(p.reglages.raccordement ?? {}) }), [p.reglages.raccordement]);
@@ -194,7 +195,7 @@ export default function TableauReelPanel(p: TableauReelPanelProps) {
   };
 
   return (
-    <div className="absolute z-30 top-2 right-2 bottom-2 w-[min(760px,96%)] card flex flex-col shadow-xl border border-ink-300 bg-white overflow-hidden">
+    <div className={`absolute z-[60] top-2 ${coteDroit ? "right-2" : "left-2"} bottom-2 w-[min(760px,96%)] card flex flex-col shadow-xl border border-ink-300 bg-white overflow-hidden`}>
       <div className="flex items-center gap-2 px-3 py-2 border-b border-ink-200">
         <span className="text-sm font-semibold text-ink-900">⚡ Tableau réaliste</span>
         {p.tableaux.length > 1 && (
@@ -207,7 +208,8 @@ export default function TableauReelPanel(p: TableauReelPanelProps) {
           <option value="plan">Circuits du plan</option><option value="enregistre">Tableau enregistré</option>
         </select>
         <span className={`text-[11px] ${nbAlertes > 0 ? "text-amber-700" : "text-emerald-700"}`}>{nbAlertes > 0 ? `${nbAlertes} alerte(s)` : "✓ conforme"}</span>
-        <button onClick={imprimer} className="btn-ghost !text-[11px] ml-auto" title="Imprimer l'onglet affiché">🖨️</button>
+        <button onClick={() => setCoteDroit(c => !c)} className="btn-ghost !text-[11px] ml-auto" title="Placer le panneau de l'autre côté du plan">↔</button>
+        <button onClick={imprimer} className="btn-ghost !text-[11px]" title="Imprimer l'onglet affiché">🖨️</button>
         <button onClick={p.onFermer} className="btn-ghost !text-[11px]" aria-label="Fermer">✕</button>
       </div>
       <div className="flex gap-0.5 px-2 pt-1 border-b border-ink-200 overflow-x-auto">

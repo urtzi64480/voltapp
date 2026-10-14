@@ -304,3 +304,13 @@ export function diametreGaineDepuisLibelle(libelle: string | undefined, def = 20
   const m = libelle?.match(/(\d{2})/);
   return m ? parseInt(m[1], 10) : def;
 }
+
+/** Jonctions de l'arbre (du tronc vers la feuille, point d'entrée exclu) que traverse le câble d'un circuit regroupé ; null si le circuit n'est pas dans l'arbre. */
+export function jonctionsVersCircuit(res: ResultatGainesOptimisees, cleCircuit: string): Point[] | null {
+  const gr = res.groupes.find(g => g.circuits.some(c => c.cle === cleCircuit));
+  if (!gr) return null;
+  const chaine: TronconArbre[] = [];
+  let t = gr.troncons.find(x => x.circuits.length === 1 && x.circuits[0] === cleCircuit);
+  while (t) { chaine.unshift(t); const par: string | null = t.parent; t = par ? gr.troncons.find(x => x.id === par) : undefined; }
+  return chaine.slice(0, -1).map(x => ({ x: x.vers.x, y: x.vers.y }));
+}

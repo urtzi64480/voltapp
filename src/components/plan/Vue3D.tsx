@@ -28,6 +28,8 @@ import { parametresMur3D, geometrieMurs, surfaceUtile, faceInterieureM, epaisseu
 import { appareillagesEnPoseApparente, posesTroncons, hauteursTroncons, hauteurDefautLiaison } from "@/lib/pose-circuits";
 import { construireChemin3D, hauteurGaineNiveau } from "@/lib/chemin-3d";
 import { HAUTEUR_TABLEAU_DEFAUT, creerContexteLongueurs } from "@/lib/longueurs-circuits";
+import { couleurGroupe, diametreGaineDepuisLibelle, fusionnerForcages, fusionnerParamsGaines, jonctionsVersCircuit, optimiserGaines, type ResultatGainesOptimisees } from "@/lib/gaines-optimisees";
+import { circuitsGainesNiveau } from "@/lib/gaines-optimisees-plan";
 
 // Hauteur du tableau par défaut (HAUTEUR_TABLEAU_DEFAUT) : définie dans lib/longueurs-circuits.ts, partagée avec le calcul des longueurs.
 
@@ -1003,6 +1005,40 @@ const Vue3D = forwardRef<Vue3DHandle, {
         return new THREE.Vector3(pt.x + (id === "tableau" ? decalageTableau : 0), hauteurAncre(id), pt.y);
       };
       const couche2 = (p: { x: number; y: number }) => pointDansCouche2(niveau.pieces, p);
+      // Gaines optimisées (option du plan) : tronc commun + branches à la hauteur de gaine ; les câbles des circuits regroupés
+      // empruntent ces tronçons au lieu de partir chacun de leur côté.
+      let gainesNiv: ResultatGainesOptimisees | null = null;
+      const paramsGn = fusionnerParamsGaines(niveau.reglagesGaines?.params);
+      if (paramsGn.actif) {
+        try {
+          const c = circuitsGainesNiveau({ ...resultat, maison: { niveaux: [{ ...niveau, pieces: niveauResultat.pieces }] } }, { ...niveau, pieces: niveauResultat.pieces });
+          if (c && c.circuits.length > 0) gainesNiv = optimiserGaines(c.circuits, c.origine, paramsGn, fusionnerForcages(niveau.reglagesGaines?.forcages));
+        } catch { gainesNiv = null; }
+      }
+      if (gainesNiv) {
+        gainesNiv.groupes.forEach((gr, gi) => {
+          const couleurGn = new THREE.Color(couleurGroupe(gi, gr.courantFaible));
+          gr.troncons.forEach(t => {
+            const p0 = new THREE.Vector3(t.de.x, hauteurGaine, t.de.y), p1 = new THREE.Vector3(t.vers.x, hauteurGaine, t.vers.y);
+            const longueur = p0.distanceTo(p1);
+            if (longueur < 0.01) return;
+            const rayon = Math.max(0.008, diametreGaineDepuisLibelle(t.gaine) / 2000);
+            const tube = new THREE.Mesh(new THREE.CylinderGeometry(rayon, rayon, longueur, 12),
+              new THREE.MeshStandardMaterial({ color: couleurGn, transparent: true, opacity: 0.4, emissive: couleurGn, emissiveIntensity: 0.25 }));
+            tube.position.copy(p0).add(p1).multiplyScalar(0.5);
+            tube.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), p1.clone().sub(p0).normalize());
+            scene.add(tube);
+            const noeud = new THREE.Mesh(new THREE.SphereGeometry(rayon * 1.3, 10, 8), new THREE.MeshStandardMaterial({ color: couleurGn }));
+            noeud.position.copy(p1);
+            scene.add(noeud);
+          });
+        });
+      }
+      /** Coudes imposés à la 1re liaison d'un circuit regroupé : les jonctions de l'arbre entre l'origine et son point d'entrée. */
+      const coudesArbre = (cleCircuit: string): { point: { x: number; y: number } }[] | null => {
+        const j = gainesNiv ? jonctionsVersCircuit(gainesNiv, cleCircuit) : null;
+        return j ? j.map(point => ({ point })) : null;
+      };
       parCircuit.forEach((points, circuitId) => {
         const breaker = resultat.breakers.find(b => b.id === circuitId);
         if (!breaker) return;
@@ -1013,6 +1049,8 @@ const Vue3D = forwardRef<Vue3DHandle, {
         // Circuit de prises (ou tout circuit non éclairage) : les appareillages se relient entre eux à la hauteur de la
         // 1re prise du circuit, au lieu de remonter à la hauteur de gaine à chaque prise (voir hauteurDefautLiaison).
         const hauteurDefaut = hauteurDefautLiaison(breaker, segments, hauteurAncre, hauteurGaine);
+        const premiereDepart = segments.find(sg => sg.aId === "tableau" && sg.type !== "domotique");
+        const coudesGroupe = coudesArbre(breaker.label);
         segments.forEach(seg => {
           if (seg.type === "domotique") {
             // Liaison sans fil (domotique) — pas de coudes de gaine à représenter (aucun
@@ -1029,7 +1067,9 @@ const Vue3D = forwardRef<Vue3DHandle, {
             return;
           }
           const cle = cleSegmentLiaison(seg.aId, seg.bId);
-          const coudes = coudesSegment(niveau, seg);
+          // 1re liaison d'un circuit regroupé : coudes = jonctions de l'arbre de gaines (poses / hauteurs réglées à la main ignorées sur ce trajet).
+          const surArbre = seg === premiereDepart && coudesGroupe != null;
+          const coudes = surArbre ? coudesGroupe.map(c => ({ point: c.point, hauteur: undefined, hauteurMini: undefined, poseType: undefined, hauteurSection: undefined })) as ReturnType<typeof coudesSegment> : coudesSegment(niveau, seg);
           const depart = ancre3D(seg.aId, seg.aPoint, decalageTableau);
           const arrivee = ancre3D(seg.bId, seg.bPoint, decalageTableau);
           // Tracé : chaque section court à plat à UNE hauteur (réglée, sinon celle du coude, sinon la gaine par défaut),
