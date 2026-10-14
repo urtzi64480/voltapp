@@ -581,7 +581,7 @@ export interface Niveau {
   tableauId?: string;
   tableauPos?: Point; // position du tableau électrique / GTL sur ce niveau
   // Réglages communs à toute la maison (recopiés sur chaque niveau, comme orientationNord) : tableau réaliste / GTL / raccordement et gaines optimisées.
-  // Types complets : lib/tableau-reel.ts, lib/raccordement-agcp.ts, lib/gaines-optimisees.ts (les valeurs absentes retombent sur les défauts).
+  // Types complets : lib/tableau-reel.ts, lib/gaines-optimisees.ts (les valeurs absentes retombent sur les défauts).
   reglagesTableauReel?: ReglagesTableauReel;
   reglagesGaines?: ReglagesGaines;
   tableauHauteur?: number; // cm — hauteur d'installation du tableau (vue 3D), 150 par défaut
@@ -1729,7 +1729,6 @@ export interface ReglagesTableauReel {
   /** Panneau « Tableau réaliste » affiché. */
   actif?: boolean;
   params?: Partial<import("./tableau-reel").ParamsTableauReel>;
-  raccordement?: Partial<import("./raccordement-agcp").ParamsRaccordement>;
   /** Source des rangées : circuits du plan (toujours à jour) ou tableau enregistré dans le module Tableau. */
   source?: "plan" | "enregistre";
 }

@@ -2,13 +2,12 @@
 //
 // TABLEAU RÉALISTE : à partir des rangées du tableau (BreakerRow[] — celles produites par assemblerTableau ou éditées à la main),
 // reconstitue le tableau PHYSIQUE « comme devant soi » : rails en modules de 17,5 mm, différentiels, départs, réserve, hauteur des
-// manettes, coffret, GTL, liaisons phase/neutre/terre depuis le disjoncteur d'abonné jusqu'à chaque départ et chaque gaine, contrôles NF C 15-100.
+// manettes, coffret, GTL, liaisons phase/neutre/terre depuis l'arrivée du coffret jusqu'à chaque départ et chaque gaine, contrôles NF C 15-100.
 // Fonctions pures, sans état. Règle d'or : la norme ALERTE, elle ne bloque jamais (voir normes-nfc.ts pour les sources / statuts).
 
 import type { Breaker, BreakerRow } from "./electrical-constants";
-import { BREAKER_TYPES, CIRCUITS, DIFF_HIERARCHY, estAccessoireTableau, largeurAppareil } from "./electrical-constants";
+import { BREAKER_TYPES, CIRCUITS, DIFF_HIERARCHY, estAccessoireTableau, estCircuitSansDisjoncteur, largeurAppareil } from "./electrical-constants";
 import { NORME_COFFRET, NORME_GTL, NORME_PARAFOUDRE, NORME_TABLEAU, sectionPE, type StatutNorme } from "./normes-nfc";
-import { calculerRaccordement, demandeInstallation, PARAMS_RACCORDEMENT_DEFAUT, type ParamsRaccordement, type ResultatRaccordement } from "./raccordement-agcp";
 
 export interface ParamsGtl {
   largeurMm: number;
@@ -17,11 +16,9 @@ export interface ParamsGtl {
   etel: boolean;
   /** Largeur du coffret de communication placé dans la GTL (0 = absent, ex. déjà ailleurs). */
   largeurCoffretCommMm: number;
-  largeurAgcpMm: number;
-  /** « empile » : coffret, AGCP et coffret de communication l'un au-dessus de l'autre (largeur = le plus large) ; « cote_a_cote » : côte à côte (largeurs additionnées). */
+  /** « empile » : coffret et coffret de communication l'un au-dessus de l'autre (largeur = le plus large) ; « cote_a_cote » : côte à côte (largeurs additionnées). */
   agencement: "empile" | "cote_a_cote";
   hauteurCoffretCommMm: number;
-  hauteurAgcpMm: number;
   couchesGaines: number;
   diametreGaineMm: number;
   hauteurSousPlafondM: number;
@@ -48,21 +45,19 @@ export interface ParamsTableauReel {
   /** Phase du réseau — repris par défaut du raccordement. */
   couleurPhase: string;
   gtl: ParamsGtl;
-  /** Hauteur (m) du disjoncteur d'abonné. */
-  hauteurAgcpM: number;
 }
 
 export const PARAMS_GTL_DEFAUT: ParamsGtl = {
   largeurMm: NORME_GTL.largeurMiniMm.valeur, profondeurMm: NORME_GTL.profondeurMiniMm.valeur, etel: false,
-  largeurCoffretCommMm: NORME_COFFRET.largeurCoffretCommunicationMm.valeur, largeurAgcpMm: NORME_COFFRET.largeurAgcpMm.valeur,
-  agencement: "empile", hauteurCoffretCommMm: NORME_COFFRET.hauteurCoffretCommunicationMm.valeur, hauteurAgcpMm: NORME_COFFRET.hauteurAgcpMm.valeur,
+  largeurCoffretCommMm: NORME_COFFRET.largeurCoffretCommunicationMm.valeur,
+  agencement: "empile", hauteurCoffretCommMm: NORME_COFFRET.hauteurCoffretCommunicationMm.valeur,
   couchesGaines: NORME_COFFRET.couchesGainesMax.valeur, diametreGaineMm: NORME_COFFRET.diametreGaineExtMm.valeur,
   hauteurSousPlafondM: 2.5, jeuMm: 20,
 };
 
 export const PARAMS_TABLEAU_REEL_DEFAUT: ParamsTableauReel = {
   modulesParRail: 18, pasRangeeMm: NORME_COFFRET.pasRangeeMm.valeur, collectif: false, porte: true, pmr: false, basManetteM: 1.0,
-  coupureGenerale: false, parafoudre: false, parafoudreRequis: false, couleurPhase: "rouge", gtl: PARAMS_GTL_DEFAUT, hauteurAgcpM: 1.4,
+  coupureGenerale: false, parafoudre: false, parafoudreRequis: false, couleurPhase: "rouge", gtl: PARAMS_GTL_DEFAUT,
 };
 
 /** Fusion profonde des réglages enregistrés avec les défauts (réglages anciens / partiels / corrompus tolérés). */
@@ -79,14 +74,11 @@ export function fusionnerParamsTableau(p?: Partial<ParamsTableauReel> | null): P
     coupureGenerale: bool(p?.coupureGenerale, d.coupureGenerale), parafoudre: bool(p?.parafoudre, d.parafoudre),
     parafoudreRequis: bool(p?.parafoudreRequis, d.parafoudreRequis),
     couleurPhase: typeof p?.couleurPhase === "string" && p.couleurPhase ? p.couleurPhase : d.couleurPhase,
-    hauteurAgcpM: num(p?.hauteurAgcpM, d.hauteurAgcpM),
     gtl: {
       largeurMm: num(g.largeurMm, d.gtl.largeurMm), profondeurMm: num(g.profondeurMm, d.gtl.profondeurMm), etel: bool(g.etel, d.gtl.etel),
       largeurCoffretCommMm: Math.max(0, num(g.largeurCoffretCommMm, d.gtl.largeurCoffretCommMm)),
-      largeurAgcpMm: Math.max(0, num(g.largeurAgcpMm, d.gtl.largeurAgcpMm)),
       agencement: g.agencement === "cote_a_cote" ? "cote_a_cote" : "empile",
       hauteurCoffretCommMm: Math.max(0, num(g.hauteurCoffretCommMm, d.gtl.hauteurCoffretCommMm)),
-      hauteurAgcpMm: Math.max(0, num(g.hauteurAgcpMm, d.gtl.hauteurAgcpMm)),
       couchesGaines: Math.max(1, Math.round(num(g.couchesGaines, d.gtl.couchesGaines))),
       diametreGaineMm: Math.max(8, num(g.diametreGaineMm, d.gtl.diametreGaineMm)),
       hauteurSousPlafondM: num(g.hauteurSousPlafondM, d.gtl.hauteurSousPlafondM), jeuMm: Math.max(0, num(g.jeuMm, d.gtl.jeuMm)),
@@ -160,7 +152,6 @@ export interface ResultatTableauReel {
   /** Gaines de la GTL, positionnées (voir GtlReelle.largeurGainesMm). */
   gaines: GaineGtl[];
   liaisons: LiaisonReelle[];
-  raccordement: ResultatRaccordement;
   controles: ControleNF[];
   totaux: { circuits: number; differentiels: number; modulesUtilises: number; modulesLibres: number; capacite: number; reservePct: number; reserveRequisePct: number };
   gainesParDepart: number;
@@ -199,9 +190,22 @@ export function diametreGaineDeLibelle(libelle: string | undefined, def: number)
   return m ? parseInt(m[1], 10) : def;
 }
 
+/** Courant d'emploi d'un jeu de départs : chauffage / chauffe-eau / recharge VE à 100 %, les autres circuits au coefficient de simultanéité de la norme. */
+function demandeInstallation(breakers: Breaker[]): { courantEmploiA: number } {
+  const PLEINE = new Set(["chauffe_eau", "irve"]);
+  let pleine = 0, autres = 0;
+  breakers.forEach(b => {
+    if (estCircuitSansDisjoncteur(b) || b.circuit === "general" || b.amperes <= 0) return;
+    if (CIRCUITS[b.circuit]?.category === "chauffage" || PLEINE.has(b.circuit)) pleine += b.amperes; else autres += b.amperes;
+  });
+  return { courantEmploiA: pleine + autres * NORME_TABLEAU.coefAutresCircuits.valeur };
+}
+
+/** Section (mm²) des conducteurs d'arrivée du coffret (coupure générale → répartiteur). */
+const NORME_TABLEAU_LIAISON_MM2 = 10;
+
 export interface OptionsCalculTableau {
   params?: Partial<ParamsTableauReel> | null;
-  raccordement?: Partial<ParamsRaccordement> | null;
   /** breakerId → identifiant de gaine (option « gaines optimisées »). */
   gaineDeBreaker?: Record<number, string>;
   /** Diamètre extérieur (mm) de chaque gaine du tableau, par identifiant. Défaut : params.gtl.diametreGaineMm. */
@@ -259,9 +263,6 @@ export function calculerTableauReel(rows: BreakerRow[], opts: OptionsCalculTable
   const reserveRequisePct = p.collectif ? (capacite > 0 ? (100 * NORME_GTL.reserveModulesCollectif.valeur) / capacite : 0) : NORME_GTL.reservePctMaison.valeur;
   const nbId = rails.filter(r => r.calibreId != null).length;
 
-  // ── Raccordement AGCP → tableau
-  const raccordement = calculerRaccordement({ ...PARAMS_RACCORDEMENT_DEFAUT, ...(opts.raccordement ?? {}) }, tousBreakers);
-
   // ── Gaines
   const gainesIds = new Set<string>();
   rails.forEach(r => r.departs.forEach(d => { if (!d.accessoire) gainesIds.add(d.gaineId); }));
@@ -295,7 +296,6 @@ export function calculerTableauReel(rows: BreakerRow[], opts: OptionsCalculTable
   // ── GTL
   const composants = [
     { nom: "Coffret de distribution", largeurMm: coffretLargeur, hauteurMm: coffretHauteur, detail: `${p.modulesParRail} modules × 17,5 mm, ${nbRangees} rangée(s)` },
-    ...(p.gtl.largeurAgcpMm > 0 ? [{ nom: "Disjoncteur d'abonné (AGCP)", largeurMm: p.gtl.largeurAgcpMm, hauteurMm: p.gtl.hauteurAgcpMm, detail: "Disjoncteur de branchement et plastron" }] : []),
     ...(p.gtl.largeurCoffretCommMm > 0 ? [{ nom: "Coffret de communication", largeurMm: p.gtl.largeurCoffretCommMm, hauteurMm: p.gtl.hauteurCoffretCommMm, detail: "Grade VDI" }] : []),
   ];
   const jeu = p.gtl.jeuMm;
@@ -316,15 +316,13 @@ export function calculerTableauReel(rows: BreakerRow[], opts: OptionsCalculTable
 
   // ── Liaisons physiques
   const liaisons: LiaisonReelle[] = [];
-  const sRac = raccordement.sectionRetenueMm2;
+  const sRac = NORME_TABLEAU_LIAISON_MM2;
   const cond = (s: number, pe = true): Conducteur[] => [
     { role: "phase", couleur: phaseCoul, sectionMm2: s }, { role: "neutre", couleur: "bleu", sectionMm2: s },
     ...(pe ? [{ role: "terre" as const, couleur: "vert/jaune", sectionMm2: sectionPE(s) }] : []),
   ];
   const peigne = nbId > 1;
-  let amont = "Disjoncteur d'abonné";
-  liaisons.push({ id: "agcp-tableau", de: "Disjoncteur d'abonné", vers: p.coupureGenerale ? "Coupure générale" : (peigne ? "Répartiteur" : "Différentiel de tête"), calibreA: opts.raccordement?.calibreAgcpA ?? PARAMS_RACCORDEMENT_DEFAUT.calibreAgcpA, conducteurs: cond(sRac), longueurM: opts.raccordement?.longueurM ?? PARAMS_RACCORDEMENT_DEFAUT.longueurM });
-  amont = p.coupureGenerale ? "Coupure générale" : amont;
+  let amont = p.coupureGenerale ? "Coupure générale" : (peigne ? "Répartiteur" : "Arrivée");
   if (p.coupureGenerale) liaisons.push({ id: "sect-rep", de: "Coupure générale", vers: peigne ? "Répartiteur" : "Différentiel de tête", calibreA: null, conducteurs: cond(sRac) });
   if (p.parafoudre) liaisons.push({ id: "parafoudre", de: peigne ? "Répartiteur" : "Arrivée", vers: "Parafoudre (+ disjoncteur de déconnexion)", calibreA: 20, conducteurs: [{ role: "phase", couleur: phaseCoul, sectionMm2: 10 }, { role: "neutre", couleur: "bleu", sectionMm2: 10 }, { role: "terre", couleur: "vert/jaune", sectionMm2: 10 }] });
   rails.forEach(r => {
@@ -390,13 +388,7 @@ export function calculerTableauReel(rows: BreakerRow[], opts: OptionsCalculTable
   if (gtl.largeurRequiseMm > retenue) add({ id: "gtl-requise", niveau: "avertissement", titre: `GTL trop étroite : ${gtl.largeurRequiseMm} mm nécessaires`, detail: `Composants + gaines (${nbGaines} gaine(s)) > ${retenue} mm. Élargir la GTL, passer en ETEL, optimiser les gaines ou réduire la largeur du coffret.`, source: NORME_GTL.largeurEtelSupGtlMm.source, statut: "verifie" });
   if (hauteurRequise > hauteurDispo + 1e-9) add({ id: "gtl-hauteur-requise", niveau: "avertissement", titre: `GTL trop basse : ${gtl.hauteurRequiseMm} mm nécessaires`, detail: `Éléments empilés > ${gtl.hauteurDisponibleMm} mm utiles. Passer en agencement côte à côte (GTL plus large) ou ETEL.`, source: NORME_GTL.hauteur.source, statut: "a_verifier" });
   if (p.gtl.hauteurSousPlafondM + 1e-9 < NORME_COFFRET.hauteurSousPlafondMiniM.valeur) add({ id: "gtl-hauteur", niveau: "info", titre: `Hauteur GTL ${p.gtl.hauteurSousPlafondM} m`, detail: "La GTL va du sol au plafond.", source: NORME_GTL.hauteur.source, statut: "verifie" });
-  const hAgcp = p.hauteurAgcpM, aMin = NORME_GTL.abonneMiniM.valeur, aMax = NORME_GTL.abonneMaxiM.valeur;
-  if (hAgcp + 1e-9 < aMin || hAgcp - 1e-9 > aMax) add({ id: "agcp-hauteur", niveau: "avertissement", titre: `Disjoncteur d'abonné à ${hAgcp.toFixed(2)} m`, detail: `Hors de la plage ${aMin}–${aMax} m.`, source: NORME_GTL.abonneMiniM.source, statut: "verifie" });
-  if (p.pmr && (hAgcp < 0.9 || hAgcp > NORME_GTL.pmrMaxiM.valeur)) add({ id: "agcp-pmr", niveau: "avertissement", titre: `Disjoncteur d'abonné PMR à ${hAgcp.toFixed(2)} m`, detail: "Logement accessible : entre 0,90 et 1,30 m.", source: NORME_GTL.pmrMaxiM.source, statut: NORME_GTL.pmrMaxiM.statut });
-
-  // Raccordement (alertes de calcul, sans doublon de la mention « à vérifier » reportée en bas)
-  raccordement.alertes.forEach((a, i) => add({ id: `rac-${i}`, niveau: /Aucune section|n'est pas protégée|> calibre|au-dessus de/.test(a) ? "avertissement" : "info", titre: "Raccordement", detail: a, source: "Calcul de la liaison (voir onglet Raccordement)", statut: "a_verifier" }));
 
   const totaux = { circuits: nbCircuitsTotal, differentiels: nbId, modulesUtilises: utilises, modulesLibres: libres, capacite, reservePct, reserveRequisePct };
-  return { rails, coffret, gtl, gaines, liaisons, raccordement, controles, totaux, gainesParDepart: nbCircuitsTotal > 0 ? nbGaines / nbCircuitsTotal : 0, nbRangeesConseille: conseil };
+  return { rails, coffret, gtl, gaines, liaisons, controles, totaux, gainesParDepart: nbCircuitsTotal > 0 ? nbGaines / nbCircuitsTotal : 0, nbRangeesConseille: conseil };
 }
