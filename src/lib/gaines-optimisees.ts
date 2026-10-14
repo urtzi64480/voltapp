@@ -358,3 +358,40 @@ export function jonctionsVersCircuit(res: ResultatGainesOptimisees, cleCircuit: 
   while (t) { chaine.unshift(t); const par: string | null = t.parent; t = par ? gr.troncons.find(x => x.id === par) : undefined; }
   return chaine.slice(0, -1).map(x => ({ x: x.vers.x, y: x.vers.y }));
 }
+
+/** Une étape du trajet d'un circuit regroupé : un tronçon de gaine du tronc vers sa feuille. */
+export interface EtapeChemin {
+  tronconId: string;
+  de: Point;
+  vers: Point;
+  gaine: string;
+  /** Clés des circuits qui passent dans ce tronçon (faisceau). */
+  circuits: string[];
+  /** Place de ce circuit dans le faisceau (0..circuits.length-1), identique d'un tronçon à l'autre. */
+  rang: number;
+  groupeIndex: number;
+  courantFaible: boolean;
+  longueurM: number;
+  /** Boîte de dérivation à l'arrivée de l'étape (absent sur la dernière). */
+  boiteVers?: string;
+}
+
+/**
+ * Trajet complet d'un circuit regroupé : tableau → tronc → boîtes → dernier tronçon (qui aboutit à son point d'entrée).
+ * null si le circuit n'est pas dans une gaine commune (départ individuel : son tracé ordinaire est conservé).
+ */
+export function cheminCircuitGaine(res: ResultatGainesOptimisees, cleCircuit: string): EtapeChemin[] | null {
+  const groupeIndex = res.groupes.findIndex(g => g.circuits.some(c => c.cle === cleCircuit));
+  if (groupeIndex < 0) return null;
+  const gr = res.groupes[groupeIndex];
+  if (gr.circuits.length < 2) return null;
+  const chaine: TronconArbre[] = [];
+  let t = gr.troncons.find(x => x.circuits.length === 1 && x.circuits[0] === cleCircuit);
+  while (t) { chaine.unshift(t); const par: string | null = t.parent; t = par ? gr.troncons.find(x => x.id === par) : undefined; }
+  if (chaine.length < 2) return null;
+  return chaine.map(x => ({
+    tronconId: x.id, de: x.de, vers: x.vers, gaine: x.gaine, circuits: x.circuits,
+    rang: Math.max(0, gr.circuits.filter(c => x.circuits.includes(c.cle)).findIndex(c => c.cle === cleCircuit)),
+    groupeIndex, courantFaible: gr.courantFaible, longueurM: x.longueurM, boiteVers: x.dansBoite ?? x.boiteVers,
+  }));
+}
