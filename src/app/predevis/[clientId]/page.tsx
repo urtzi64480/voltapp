@@ -522,10 +522,8 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [mainOeuvreHeures, setMainOeuvreHeures] = useState("0");
   // Heures de main d'œuvre PAR POSTE (nom du poste → heures, optionnel). Chaque poste renseigné donne une ligne de main
   // d'œuvre rattachée à ce poste dans le devis : c'est ce temps chiffré que le suivi de réalisation compare au temps passé.
-  // Temps de pose PRÉREMPLI : 1 h tous les 5 m de câble + 15 min par appareillage. Les deux temps sont distincts et modifiables poste par poste
+  // Temps de pose : saisis à la main par poste (câblage / appareillage), jamais préremplis.
   // (une valeur saisie remplace le calcul pour ce poste ; champ vidé = retour au calcul).
-  const [metresParHeure, setMetresParHeure] = useState("5");
-  const [minParAppareil, setMinParAppareil] = useState("15");
   const [hCablage, setHCablage] = useState<Record<string, string>>({});
   const [hAppareils, setHAppareils] = useState<Record<string, string>>({});
   // Gaines : false = une gaine par circuit (classique), true = gaines optimisées (regroupées, boîtes de dérivation). null = pas encore déterminé.
@@ -658,8 +656,6 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (brouillon) {
       if (brouillon.mainOeuvreHeures != null) setMainOeuvreHeures(brouillon.mainOeuvreHeures);
       // Les postes (pièces / circuits) dépendent du mode : les heures par poste ne se reprennent que dans le même mode.
-      if (brouillon.metresParHeure != null) setMetresParHeure(String(brouillon.metresParHeure));
-      if (brouillon.minParAppareil != null) setMinParAppareil(String(brouillon.minParAppareil));
       const ancien: Record<string, string> = memeMode && brouillon.heuresPostes && typeof brouillon.heuresPostes === "object" ? brouillon.heuresPostes : {};
       // Ancien champ unique « Main d'œuvre » du poste : conservé tel quel (câblage = ancienne valeur, appareillage = 0) pour ne rien changer aux devis déjà préparés.
       const cabl: Record<string, string> = memeMode && brouillon.hCablage && typeof brouillon.hCablage === "object" ? { ...brouillon.hCablage } : {};
@@ -794,7 +790,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
   }
 
-  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, hCablage, hAppareils, metresParHeure, minParAppareil, ...(gainesOptimisees !== null ? { gainesOptimisees } : {}), mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, suiviV: VERSION_SUIVI_OK, poseEncastre, posesSection, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
+  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, hCablage, hAppareils, ...(gainesOptimisees !== null ? { gainesOptimisees } : {}), mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, suiviV: VERSION_SUIVI_OK, poseEncastre, posesSection, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
 
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
@@ -936,7 +932,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   }
 
   const heuresGenerales = parseFloat(mainOeuvreHeures) || 0;
-  // ─── Temps de pose préremplis : 1 h tous les 5 m de câble + 15 min par appareillage, séparés et modifiables par poste ───
+  // ─── Temps de pose : AUCUN préremplissage, uniquement ce que tu saisis par poste (câblage et appareillage séparés) ───
   const estSousCatCable = (sc: string) => sc.startsWith("cablage_") || sc.startsWith("gaine_precablee") || sc === "retour_lampe" || sc === "navette" || sc === "aller_commande" || sc === "cable_rj45" || sc === "cable_coax";
   const tempsAutoPostes = (parPiece: Record<string, BesoinApparie[]>, recap: RecapCircuit[]): Record<string, { metres: number; appareils: number }> => {
     const out: Record<string, { metres: number; appareils: number }> = {};
@@ -960,13 +956,11 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const n = parseFloat(v.replace(",", "."));
     return Number.isFinite(n) && n >= 0 ? n : null;
   };
-  const metresParHeureNum = Math.max(0.1, nombreSaisi(metresParHeure) ?? 5);
-  const minParAppareilNum = nombreSaisi(minParAppareil) ?? 15;
   const arrondiH = (h: number) => Math.round(h * 100) / 100;
-  // Heures d'un poste : la valeur saisie remplace le calcul ; champ vide = calcul (m ÷ m/h ; appareils × min/60).
-  const heuresDePoste = (poste: string, t: { metres: number; appareils: number } | undefined) => {
-    const autoC = arrondiH((t?.metres ?? 0) / metresParHeureNum), autoA = arrondiH(((t?.appareils ?? 0) * minParAppareilNum) / 60);
-    return { autoC, autoA, cablage: nombreSaisi(hCablage[poste]) ?? autoC, appareils: nombreSaisi(hAppareils[poste]) ?? autoA };
+  // Heures d'un poste : uniquement la valeur saisie (vide = 0, rien n'est calculé automatiquement).
+  const heuresDePoste = (_poste: string, _t: { metres: number; appareils: number } | undefined) => {
+    void _poste; void _t;
+    return { autoC: 0, autoA: 0, cablage: nombreSaisi(hCablage[_poste]) ?? 0, appareils: nombreSaisi(hAppareils[_poste]) ?? 0 };
   };
   const heuresPostesPour = (parPiece: Record<string, BesoinApparie[]>, recap: RecapCircuit[]) => {
     const temps = tempsAutoPostes(parPiece, recap);
@@ -1488,14 +1482,13 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 const champ = (cle: "c" | "a") => {
                   const modif = cle === "c" ? nombreSaisi(hCablage[piece]) != null : nombreSaisi(hAppareils[piece]) != null;
                   const val = cle === "c" ? hCablage[piece] : hAppareils[piece];
-                  const auto = cle === "c" ? h.autoC : h.autoA;
-                  const set = (v: string) => (cle === "c" ? setHCablage : setHAppareils)(prev => { const n = { ...prev }; if (v === "") delete n[piece]; else n[piece] = v; return n; });
+                                    const set = (v: string) => (cle === "c" ? setHCablage : setHAppareils)(prev => { const n = { ...prev }; if (v === "") delete n[piece]; else n[piece] = v; return n; });
                   return (
                     <label className="flex items-center gap-1 shrink-0 text-xs text-ink-500"
-                      title={`${cle === "c" ? `Temps de câblage : ${(t?.metres ?? 0).toFixed(1).replace(".", ",")} m ÷ ${metresParHeureNum.toString().replace(".", ",")} m/h` : `Temps d'appareillage : ${t?.appareils ?? 0} appareil(s) × ${minParAppareilNum.toString().replace(".", ",")} min`} = ${auto.toString().replace(".", ",")} h (calcul automatique). Modifie la valeur pour ce poste ; vide = retour au calcul. Comparé au temps passé dans le suivi de réalisation.`}>
+                      title={`${cle === "c" ? `Temps de câblage — ${(t?.metres ?? 0).toFixed(1).replace(".", ",")} m de câble sur ce poste` : `Temps d'appareillage — ${t?.appareils ?? 0} appareil(s) sur ce poste`}. Saisis les heures prévues (vide = 0). Comparé au temps passé dans le suivi de réalisation.`}>
                       <span className="hidden sm:inline">{cle === "c" ? "Câblage" : "Appar."}</span>
                       <input className={`input !py-1 !px-1.5 !w-14 text-right text-sm ${modif ? "!border-volt-400" : ""}`} type="number" inputMode="decimal" min="0" step="0.25"
-                        value={val ?? String(auto)} onChange={e => set(e.target.value)} />
+                        value={val ?? ""} placeholder="0" onChange={e => set(e.target.value)} />
                       <span>h</span>
                     </label>
                   );
@@ -1640,22 +1633,8 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
               <p className="text-[11px] text-ink-400 mt-1">
                 {totalHeuresPostes > 0
                   ? `+ ${arrondiH(totalHeuresPostes).toString().replace(".", ",")} h de pose par poste ci-dessus (${heuresParPoste.length} poste${heuresParPoste.length > 1 ? "s" : ""}) = ${arrondiH(heures).toString().replace(".", ",")} h au total.`
-                  : "Heures non rattachées à un poste. Les heures de pose de chaque poste (câblage + appareillage) sont préremplies ci-dessus et s'ajoutent à celles-ci."}
+                  : "Heures non rattachées à un poste. Les heures de pose de chaque poste (câblage + appareillage) se saisissent sur chaque poste ci-dessus et s'ajoutent à celles-ci."}
               </p>
-            </div>
-            <div className="md:col-span-2 rounded-lg border border-ink-100 bg-ink-50/60 p-2.5">
-              <p className="text-xs font-semibold text-ink-700 mb-1.5">Temps de pose préremplis (modifiables poste par poste)</p>
-              <div className="flex items-center gap-x-4 gap-y-2 flex-wrap text-xs text-ink-600">
-                <label className="flex items-center gap-1.5">Câblage : 1 h tous les
-                  <input className="input !py-1 !px-1.5 !w-16 text-right" type="number" min="0.5" step="0.5" value={metresParHeure} onChange={e => setMetresParHeure(e.target.value)} /> m
-                </label>
-                <label className="flex items-center gap-1.5">Appareillage :
-                  <input className="input !py-1 !px-1.5 !w-16 text-right" type="number" min="0" step="1" value={minParAppareil} onChange={e => setMinParAppareil(e.target.value)} /> min par appareil
-                </label>
-                <button type="button" className="text-volt-600 font-medium disabled:text-ink-300" disabled={Object.keys(hCablage).length + Object.keys(hAppareils).length === 0}
-                  onClick={() => { setHCablage({}); setHAppareils({}); }}>↺ Tout remettre au calcul</button>
-              </div>
-              <p className="text-[11px] text-ink-400 mt-1">Câblage = longueur de câble du poste ÷ mètres par heure ; appareillage = nombre d&apos;appareils × minutes. Les deux sont des lignes de main d&apos;œuvre distinctes dans le devis.</p>
             </div>
             <div>
               <label className="label">Tarif horaire</label>

@@ -602,7 +602,9 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         const lumieres = b.circuit === "lumiere" ? points.filter(a => estLumiere(a.type)) : [];
         const boitesExistantes = niveau.boitesDerivation?.[b.label] ?? [];
         const nbEtoile = boitesExistantes.filter(x => !x.surSegment).length;
-        const nbBoites = (nbEtoile > 0 ? nbEtoile : (lumieres.length > 1 ? 1 : 0)) + (boitesExistantes.length - nbEtoile);
+        // Gaines optimisées : le circuit regroupé suit l'arbre de gaines (boîtes comptées plus bas) — ses boîtes de dérivation « classiques » (et leurs WAGO) disparaissent.
+        const regroupe = !!gn?.groupeDeCircuit[b.label];
+        const nbBoites = regroupe ? 0 : (nbEtoile > 0 ? nbEtoile : (lumieres.length > 1 ? 1 : 0)) + (boitesExistantes.length - nbEtoile);
         if (nbBoites > 0) {
           noterCircuit(niveau, b, nomCircuit(b), "boite_derivation", "Boîte de dérivation", nbBoites, "u");
           if (mode === "circuit") ajouter(`boite_derivation@c${niveau.id}:${b.id}`, "boite_derivation", "Boîte de dérivation", nomCircuit(b), nbBoites, "u");
