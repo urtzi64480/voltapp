@@ -349,6 +349,17 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
 
   const maison: Maison = { niveaux };
   const resultat: ResultatGeneration = genererCircuits(maison);
+  // Le pré-devis suit le PLAN : s'il n'y a plus aucun circuit sur le plan (jamais générés, ou tous effacés), il ne recrée pas de circuits de
+  // son côté — ni câbles, gaines, boîtes de dérivation, WAGO, ni disjoncteurs / différentiels / coffret du tableau. Restent les appareillages
+  // posés sur le plan (mécanismes, plaques, boîtes d'encastrement) et les gaines en attente.
+  const planAvecCircuits = niveaux.some(n => n.pieces.some(p => p.appareillages.some(a => a.circuitId != null)));
+  if (!planAvecCircuits) {
+    resultat.breakers = [];
+    resultat.alertes = [];
+    resultat.maison.niveaux.forEach(n => n.pieces.forEach(p => p.appareillages.forEach(a => { a.circuitId = undefined; })));
+    tableauRows = [];
+    alertes.push("Pré-devis : aucun circuit sur le plan — câbles, gaines, boîtes de dérivation, disjoncteurs et coffret ne sont pas chiffrés. Génère (ou trace) les circuits dans le plan pour les voir ici.");
+  }
   const indexTableau = indexerTableau(tableauRows);
 
   resultat.alertes.forEach(a => alertes.push(a)); // remonte aussi les alertes du plan (non raccordé, etc.)
