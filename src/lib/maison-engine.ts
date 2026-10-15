@@ -335,7 +335,11 @@ function genererBreakersLumiere(
 // tel quel — l'utilisateur a la main libre, y compris pour dépasser volontairement les
 // seuils NF C 15-100 habituels si c'est un choix assumé.
 function breakerFromClusterManuel(cluster: Item[], manuel: CircuitManuel, niveauNom: string, tousItems: Item[]): Breaker {
-  const spec = CIRCUITS[manuel.famille] ?? CIRCUITS.autre;
+  // Prises tracées à la main : au-delà de 8 socles (seuil 16 A / 1,5 mm²), le circuit passe
+  // automatiquement en 20 A / 2,5 mm² (famille "prise_20"). Repasse en 16 A s'il redescend à ≤ 8.
+  const nbSocles = cluster.length;
+  const famille = manuel.famille === "prise_16" && nbSocles > (MAX_PAR_CIRCUIT.prise_16 ?? 8) ? "prise_20" : manuel.famille;
+  const spec = CIRCUITS[famille] ?? CIRCUITS.autre;
   let pieces: PieceConfig[];
   if (spec.category === "lumiere") {
     const parPiece = new Map<string, GroupeLumineux[]>();
@@ -360,7 +364,7 @@ function breakerFromClusterManuel(cluster: Item[], manuel: CircuitManuel, niveau
     label += ` (${(totalW / 1000).toFixed(2).replace(/\.?0+$/, "")} kW)`;
   }
   return {
-    id: uid(), label, circuit: manuel.famille,
+    id: uid(), label, circuit: famille,
     amperes: spec.ampMax, type: "1P", customSection: spec.section ?? "2.5", pieces, manuelId: manuel.id,
   };
 }
