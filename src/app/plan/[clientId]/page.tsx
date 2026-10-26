@@ -10,7 +10,7 @@ import { calculerBesoinsBruts, signaturesActuelles, postesInvalides, CLE_OK_CABL
 import Shell from "@/components/layout/Shell";
 import TableauReelPanel, { type Onglet as OngletTableauReel } from "@/components/plan/TableauReelPanel";
 import type { GaineAttente } from "@/lib/maison-types";
-import { cheminGaineAttente, gaineDeAttente, longueursGaineAttente, nouvelleGaineAttente, SECTIONS_ATTENTE, HAUTEUR_ATTENTE_DEFAUT_CM, libelleSection } from "@/lib/gaines-attente";
+import { cheminGaineAttente, cleGaineAttente, gaineDeAttente, longueursGaineAttente, nouvelleGaineAttente, segmentGaineAttente, SECTIONS_ATTENTE, HAUTEUR_ATTENTE_DEFAUT_CM, libelleSection } from "@/lib/gaines-attente";
 import { couleurGroupe, cheminCircuitGaine, fusionnerForcages, fusionnerParamsGaines, diametreGaineDepuisLibelle } from "@/lib/gaines-optimisees";
 import { purgerTracesCircuits } from "@/lib/purger-circuit";
 import { optimiserGainesMaison, syntheseGaines, type GainesNiveau } from "@/lib/gaines-optimisees-plan";
@@ -3473,7 +3473,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     if (cible === "nouvelle") setSelectedAttenteId(null);
   };
   const modifierAttente = (id: string, patch: Partial<GaineAttente>) => updateNiveauActif(n => ({ ...n, gainesAttente: (n.gainesAttente ?? []).map(g => g.id === id ? { ...g, ...patch } : g) }));
-  const supprimerAttente = (id: string) => { updateNiveauActif(n => ({ ...n, gainesAttente: (n.gainesAttente ?? []).filter(g => g.id !== id) })); setSelectedAttenteId(null); };
+  const supprimerAttente = (id: string) => {
+    const cle = cleGaineAttente({ id });
+    const sans = <T,>(m?: Record<string, T>): Record<string, T> | undefined => { if (!m || !(cle in m)) return m; const { [cle]: _x, ...reste } = m; void _x; return reste; };
+    updateNiveauActif(n => ({
+      ...n, gainesAttente: (n.gainesAttente ?? []).filter(g => g.id !== id),
+      ...(n.liaisonWaypoints ? { liaisonWaypoints: sans(n.liaisonWaypoints) } : {}),
+      ...(n.poseFinLiaison ? { poseFinLiaison: sans(n.poseFinLiaison) } : {}),
+      ...(n.hauteurFinLiaison ? { hauteurFinLiaison: sans(n.hauteurFinLiaison) } : {}),
+    }));
+    setSelectedAttenteId(null); setSelectedWaypoint(null); setSelectedTroncon(null);
+  };
   const armerPlacementPointArrivee = () => {
     setPlacingPointArrivee(true); setMode("select"); setPlacementType(null); setPlacingBoiteLabel(null); setPlacingPhoto(null); setPoseParties(null); setPlacingTableau(false); setPlacingOuverture(null); setPlacingMeuble(false); setDrawingPoints([]);
     setLiaisonLumiereMode(null);
@@ -3571,17 +3581,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     const ancien = niveauActif?.pieces.flatMap(p => p.appareillages).find(a => a.id === appareillageId);
     if (!ancien || ancien.type === type) return;
     // Calculé HORS de l'updater (setNiveaux est différé) : le même objet sert à la mise à jour et à la fenêtre de commande.
-    const { commandePourIds, commandePourIds2, domotique, usageDedie, circuitManuelId, circuitId, cibleServiceIds, ...reste } = ancien;
+    const { commandePourIds, commandePourIds2, domotique, voyant, usageDedie, circuitManuelId, circuitId, cibleServiceIds, ...reste } = ancien;
     void circuitId; void cibleServiceIds;
     const maj: AppareillagePlace = { ...reste, type, ...(type === "prise_dediee" ? { usageDedie: usageDedie ?? USAGE_DEDIE_DEFAUT } : {}) };
     const controleVersControle = estCommande(type) && estCommande(ancien.type);
     if (controleVersControle) {
       // Les lampes commandées et le circuit manuel sont conservés. Vers un double : voies 1 et 2 telles quelles (voie 2
       // vide depuis un simple). Vers un simple : les deux voies fusionnent en une seule liste.
-      Object.assign(maj, { domotique, circuitManuelId });
+      Object.assign(maj, { domotique, voyant, circuitManuelId });
       if (estCommandeDouble(type)) Object.assign(maj, { commandePourIds, commandePourIds2 });
       else Object.assign(maj, { commandePourIds: lumieresCommandees({ commandePourIds, commandePourIds2 }) });
-    } else void domotique, void circuitManuelId, void commandePourIds, void commandePourIds2;
+    } else void domotique, void voyant, void circuitManuelId, void commandePourIds, void commandePourIds2;
     updateNiveauActif(n => ({
       ...n,
       pieces: n.pieces.map(p => ({ ...p, appareillages: p.appareillages.map(a => a.id === appareillageId ? maj : a) })),
@@ -3931,6 +3941,17 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       })),
     }));
     invalidateResultat();
+  };
+
+  // Mécanisme à voyant lumineux : question de matériel uniquement (article « _voyant » au pré-devis), aucune régénération.
+  const modifierVoyant = (appareillageId: number, voyant: boolean) => {
+    updateNiveauActif(n => ({
+      ...n,
+      pieces: n.pieces.map(p => ({
+        ...p,
+        appareillages: p.appareillages.map(a => a.id === appareillageId ? { ...a, voyant } : a),
+      })),
+    }));
   };
 
   const modifierDomotique = (appareillageId: number, domotique: boolean) => {
@@ -4808,13 +4829,16 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         setTimeout(() => setPlacementError(null), 3200);
         return;
       }
+      // L'obturateur se pose sur la FACE d'un mur comme un appareillage (aimanté au mur le plus proche ; Alt = position libre).
+      const rzAtt = e.altKey ? null : resoudreMural(m, niveauActif.pieces, niveauActif.zones ?? [], "prise", SNAP_MUR_PX / (PX_PER_M * zoom));
+      const mAtt = rzAtt?.aimante ? rzAtt.point : m;
       if (placingAttente === "nouvelle") {
         const id = `att-${uidMaison()}-${Date.now().toString(36)}`;
-        updateNiveauActif(n => ({ ...n, gainesAttente: [...(n.gainesAttente ?? []), nouvelleGaineAttente(n, id, m, optionsAttente.precable, optionsAttente.section)] }));
+        updateNiveauActif(n => ({ ...n, gainesAttente: [...(n.gainesAttente ?? []), nouvelleGaineAttente(n, id, mAtt, optionsAttente.precable, optionsAttente.section)] }));
         setSelectedAttenteId(id);
       } else {
         const id = placingAttente;
-        updateNiveauActif(n => ({ ...n, gainesAttente: (n.gainesAttente ?? []).map(g => g.id === id ? { ...g, point: m } : g) }));
+        updateNiveauActif(n => ({ ...n, gainesAttente: (n.gainesAttente ?? []).map(g => g.id === id ? { ...g, point: mAtt } : g) }));
         setSelectedAttenteId(id);
       }
       setPlacingAttente(null);
@@ -7762,25 +7786,78 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 </g>
               )}
 
-              {/* Gaines en attente : tracé tireté du tableau (sans raccordement) jusqu'à l'obturateur posé au mur ; filet jaune = précâblée. */}
+              {/* Gaines en attente : tracé d'un CIRCUIT (routage dans les murs, coudes tirables, section encastrée = tireté / apparente = moulure,
+                  longueur 3D par section) du tableau (sans raccordement) jusqu'à l'obturateur posé au mur ; filet jaune = précâblée. */}
               {niveauActif && (niveauActif.gainesAttente ?? []).map(ga => {
-                const chemin = cheminGaineAttente(niveauActif, ga);
-                if (!chemin) return null;
+                const seg = segmentGaineAttente(niveauActif, ga);
+                if (!seg) return null;
+                const cle = cleGaineAttente(ga);
+                const coudes = coudesSegment(niveauActif, seg);
+                const chemin = [seg.aPoint, ...coudes.map(c => c.point), seg.bPoint];
                 const px = chemin.map(toScreen);
-                const pts = px.map(q => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(" ");
                 const fin = px[px.length - 1];
                 const sel = selectedAttenteId === ga.id;
                 const coul = ga.precable ? "#d97706" : "#475569";
+                const posesAtt = posesTroncons(niveauActif, cle, coudes);
+                const lgAtt = showLongueurs ? longueursGaineAttente(niveauActif, ga) : null;
+                const selectionner = () => {
+                  setSelectedAttenteId(ga.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedBoite(null);
+                  setSelectedMeubleId(null); setSelectedPointArrivee(false); setPanelResetTick(t => t + 1);
+                };
                 return (
-                  <g key={ga.id} style={{ cursor: zoneCliquable ? "pointer" : "default" }}
-                    onPointerDown={e => { if (!zoneCliquable) return; e.stopPropagation(); setSelectedAttenteId(ga.id); setSelectedPieceId(null); setSelectedAppareillageId(null); setSelectedTableau(false); setSelectedBoite(null); setSelectedMeubleId(null); setSelectedWaypoint(null); setSelectedPointArrivee(false); }}>
-                    <polyline points={pts} fill="none" stroke="#fff" strokeWidth={sel ? 9 : 7} strokeLinecap="round" strokeLinejoin="round" opacity={0.9} />
-                    <polyline points={pts} fill="none" stroke={sel ? "#F59E0B" : coul} strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="10 5" />
-                    {ga.precable && <polyline points={pts} fill="none" stroke="#facc15" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" />}
-                    <polyline points={pts} fill="none" stroke="transparent" strokeWidth={14} />
-                    <rect x={fin.x - 8} y={fin.y - 8} width={16} height={16} rx={2} fill="#fff" stroke={sel ? "#F59E0B" : coul} strokeWidth={2.5} />
-                    <line x1={fin.x - 4} y1={fin.y - 4} x2={fin.x + 4} y2={fin.y + 4} stroke={coul} strokeWidth={2} />
-                    <line x1={fin.x + 4} y1={fin.y - 4} x2={fin.x - 4} y2={fin.y + 4} stroke={coul} strokeWidth={2} />
+                  <g key={ga.id} style={{ cursor: zoneCliquable ? "pointer" : "default" }}>
+                    {px.slice(1).map((q, k) => {
+                      const j = k, aPx = px[j], bPx = q, apparente = posesAtt[j] === "apparent";
+                      const sectionSel = selectedTroncon?.cle === cle && selectedTroncon?.index === j;
+                      return (
+                        <g key={`${ga.id}-s${j}`}>
+                          {apparente && <line x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#d6d3d1" strokeWidth={9} strokeLinecap="round" opacity={0.9} />}
+                          {sectionSel && <line x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#F59E0B" strokeWidth={12} strokeLinecap="round" opacity={0.35} />}
+                          <line x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#fff" strokeWidth={sel ? 9 : 7} strokeLinecap="round" opacity={0.9} />
+                          <line x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke={sel ? "#F59E0B" : coul} strokeWidth={4} strokeLinecap="round" strokeDasharray={apparente ? undefined : "10 5"} />
+                          {ga.precable && <line x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="#facc15" strokeWidth={1.4} strokeLinecap="round" />}
+                          {lgAtt && <EtiquetteLongueur aPx={aPx} bPx={bPx} texte={`${(lgAtt.sections[j] ?? distance(chemin[j], chemin[j + 1])).toFixed(2)}m`} />}
+                          <line x1={aPx.x} y1={aPx.y} x2={bPx.x} y2={bPx.y} stroke="transparent" strokeWidth={14}
+                            onPointerDown={e => {
+                              if (!zoneCliquable) return;
+                              e.stopPropagation();
+                              // Maj + clic : choisir la SECTION (pose, hauteur) ; clic sur une attente déjà choisie : nouveau coude que l'on tire aussitôt (comme un circuit).
+                              if (e.shiftKey) { selectionner(); setSelectedTroncon({ cle, index: j }); setSelectedWaypoint(null); return; }
+                              if (!sel) { selectionner(); setSelectedTroncon(null); setSelectedWaypoint(null); return; }
+                              const rect = svgRef.current?.getBoundingClientRect();
+                              if (!rect) return;
+                              const mCoude = toMeters(e.clientX - rect.left, e.clientY - rect.top);
+                              const nouveauId = ajouterWaypoint(cle, j, mCoude, coudes);
+                              setSelectedWaypoint({ cle, waypointId: nouveauId }); setSelectedTroncon(null);
+                              setPanelResetTick(t => t + 1);
+                              setDragMode({ kind: "liaison", cle, waypointId: nouveauId });
+                            }} />
+                        </g>
+                      );
+                    })}
+                    {coudes.map(c => {
+                      if (c.id < 0 || !zoneCliquable) return null; // coudes du routage automatique : pas de poignée tant qu'ils ne sont pas modifiés
+                      const cPx = toScreen(c.point);
+                      const estSel = selectedWaypoint?.cle === cle && selectedWaypoint?.waypointId === c.id;
+                      return (
+                        <g key={`${ga.id}-wp-${c.id}`} style={{ cursor: "grab" }}
+                          onPointerDown={e => {
+                            e.stopPropagation();
+                            selectionner(); setSelectedTroncon(null);
+                            setSelectedWaypoint({ cle, waypointId: c.id });
+                            setDragMode({ kind: "liaison", cle, waypointId: c.id });
+                          }}
+                          onDoubleClick={e => { e.stopPropagation(); supprimerWaypoint(cle, c.id); }}>
+                          <circle cx={cPx.x} cy={cPx.y} r={14} fill={estSel ? "#FEF3C7" : "transparent"} stroke="none" />
+                          <rect x={cPx.x - 5} y={cPx.y - 5} width={10} height={10} rx={2} fill={estSel ? "#F59E0B" : "#fff"} stroke={coul} strokeWidth={2} style={{ pointerEvents: "none" }} />
+                        </g>
+                      );
+                    })}
+                    <g onPointerDown={e => { if (!zoneCliquable) return; e.stopPropagation(); selectionner(); setSelectedTroncon(null); setSelectedWaypoint(null); }}>
+                      <rect x={fin.x - 8} y={fin.y - 8} width={16} height={16} rx={2} fill="#fff" stroke={sel ? "#F59E0B" : coul} strokeWidth={2.5} />
+                      <line x1={fin.x - 4} y1={fin.y - 4} x2={fin.x + 4} y2={fin.y + 4} stroke={coul} strokeWidth={2} />
+                      <line x1={fin.x + 4} y1={fin.y - 4} x2={fin.x - 4} y2={fin.y + 4} stroke={coul} strokeWidth={2} />
+                    </g>
                     <text x={fin.x + 12} y={fin.y - 8} fontSize={10.5} fontWeight={700} fill="#1c1917" stroke="#fff" strokeWidth={3} paintOrder="stroke" style={{ pointerEvents: "none" }}>{ga.nom || "Attente"}{ga.precable ? ` · 3G${libelleSection(ga.section)}` : " · vide"}</text>
                   </g>
                 );
@@ -8721,6 +8798,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                         onChange={e => modifierDomotique(selectedAppareillage.id, e.target.checked)} />
                       <span>📶 Domotique (liaison sans fil — tracé en onde, pas de câble physique)</span>
                     </label>
+                    {!selectedAppareillage.domotique && !estSaillie(selectedAppareillage) && (
+                      <label className="flex items-center gap-2 text-xs text-ink-500 cursor-pointer">
+                        <input type="checkbox" checked={selectedAppareillage.voyant ?? false}
+                          onChange={e => modifierVoyant(selectedAppareillage.id, e.target.checked)} />
+                        <span>💡 À voyant lumineux (ex. éclairage extérieur) — article dédié + boîte + plaque au pré-devis</span>
+                      </label>
+                    )}
                   </>
                 )}
                 {estCommandeService(selectedAppareillage.type) && (() => {
@@ -8894,8 +8978,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     <span>cm</span>
                   </div>
                   <p className="text-[11px] text-ink-500">
-                    {lg ? `≈ ${lg.totaleM.toFixed(1).replace(".", ",")} m (dont ${lg.verticaleM.toFixed(1).replace(".", ",")} m de montée / descente) · ` : "Place le tableau ou l'arrivée des gaines pour la tracer · "}
-                    non raccordée au tableau. Pré-devis : gaine{ga.precable ? " précâblée" : " + câble à tirer plus tard (non compté)"}, boîte d&apos;encastrement, obturateur, plaque de finition.
+                    {lg ? `≈ ${lg.totaleM.toFixed(2).replace(".", ",")} m (dont ${lg.verticaleM.toFixed(2).replace(".", ",")} m de montée / descente${lg.apparentM > 0.001 ? ` · ${lg.apparentM.toFixed(2).replace(".", ",")} m apparent` : ""}) · ` : "Place le tableau ou l'arrivée des gaines pour la tracer · "}
+                    non raccordée au tableau. Tracé comme un circuit : tire sur la gaine pour la déformer, Maj + clic = pose / hauteur d&apos;une section, double-clic sur un coude = le retirer. Pré-devis : gaine{ga.precable ? " précâblée" : " + câble à tirer plus tard (non compté)"}, boîte d&apos;encastrement, obturateur, plaque de finition.
                   </p>
                   <button onClick={() => armerPlacementAttente(ga.id)} className="btn-ghost !text-xs self-start">Repositionner l&apos;obturateur</button>
                 </DraggablePanel>
