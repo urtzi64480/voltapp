@@ -5,7 +5,12 @@
 import type { Niveau } from "./maison-types";
 
 export function purgerTracesCircuits(n: Niveau, labels: Iterable<string>, appareillageIds: Iterable<number>, tout = false): Niveau {
-  if (tout) return { ...n, boitesDerivation: undefined, ordresCircuits: undefined, liaisonWaypoints: undefined };
+  // Les gaines en attente ne sont pas des circuits : leurs coudes (clé « tableau->attente-… ») survivent à la purge.
+  const gardeAttentes = (m?: Record<string, unknown[]>) => m ? Object.fromEntries(Object.entries(m).filter(([cle]) => cle.startsWith("tableau->attente-"))) : undefined;
+  if (tout) {
+    const coudesAttente = gardeAttentes(n.liaisonWaypoints as Record<string, unknown[]> | undefined);
+    return { ...n, boitesDerivation: undefined, ordresCircuits: undefined, liaisonWaypoints: coudesAttente && Object.keys(coudesAttente).length > 0 ? coudesAttente as Niveau["liaisonWaypoints"] : undefined };
+  }
   const L = new Set(labels), A = new Set([...appareillageIds].map(String));
   const boites = n.boitesDerivation, ordres = n.ordresCircuits, coudes = n.liaisonWaypoints;
   const idsBoites = new Set<string>();

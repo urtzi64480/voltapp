@@ -70,7 +70,7 @@ import {
 
 import { nbConducteurs } from "./couleurs-fils";
 import { fusionnerForcages, fusionnerParamsGaines } from "./gaines-optimisees";
-import { gaineDeAttente, libelleSection, longueursGaineAttente } from "./gaines-attente";
+import { gaineDeAttente, libelleSection, longueursGaineAttente, SECTIONS_ATTENTE } from "./gaines-attente";
 import { optimiserGainesMaison, type GainesNiveau } from "./gaines-optimisees-plan";
 import {
   genererCircuits, segmentsPourCircuit, breakersDuNiveau, ResultatGeneration, cleCircuitDedie,
@@ -183,6 +183,13 @@ const LABEL_APPAREILLAGE_DOMOTIQUE: Record<string, string> = {
   interrupteur_double: "Double interrupteur domotique", va_et_vient_double: "Double va-et-vient domotique", telerupteur_double: "Double bouton télérupteur domotique",
 };
 
+// Une commande filaire peut être à VOYANT LUMINEUX (AppareillagePlace.voyant) : article distinct (prix propre) dans la sous-catégorie
+// `<type>_voyant`. Même logique que le reste : 1 mécanisme + 1 boîte d'encastrement + 1 plaque de finition (voir clustersEncastrement).
+const LABEL_APPAREILLAGE_VOYANT: Record<string, string> = {
+  interrupteur: "Interrupteur à voyant lumineux", va_et_vient: "Va-et-vient à voyant lumineux", telerupteur: "Bouton télérupteur à voyant lumineux",
+  interrupteur_double: "Double interrupteur à voyant lumineux", va_et_vient_double: "Double va-et-vient à voyant lumineux", telerupteur_double: "Double bouton télérupteur à voyant lumineux",
+};
+
 // Nomenclature des appareillages telle que le pré-devis la RÉCLAME au catalogue : source unique, reprise par
 // la page Catalogue (SOUS_CATEGORIES_CONNUES) pour que la liste d'autocomplétion ne puisse plus dériver du
 // moteur. Tout nouveau type d'appareillage ajouté à LABEL_APPAREILLAGE (ou à sa variante domotique) y
@@ -190,12 +197,13 @@ const LABEL_APPAREILLAGE_DOMOTIQUE: Record<string, string> = {
 // Besoin d'APPAREILLAGE (prise, interrupteur, commande, variantes domotiques, plaques de finition) — par opposition aux boîtes,
 // câbles, disjoncteurs… Sert au choix « même marque partout » du pré-devis.
 export function estSousCategorieAppareillage(sousCategorie: string): boolean {
-  return sousCategorie in LABEL_APPAREILLAGE || sousCategorie.endsWith("_domotique") || sousCategorie === "prise_specialisee" || sousCategorie.startsWith("plaque_") || sousCategorie.endsWith("_saillie");
+  return sousCategorie in LABEL_APPAREILLAGE || sousCategorie.endsWith("_domotique") || sousCategorie.endsWith("_voyant") || sousCategorie === "prise_specialisee" || sousCategorie.startsWith("plaque_") || sousCategorie.endsWith("_saillie");
 }
 
 export const NOMENCLATURE_APPAREILLAGE: { code: string; label: string }[] = [
   ...Object.entries(LABEL_APPAREILLAGE).map(([code, label]) => ({ code, label })),
   ...Object.entries(LABEL_APPAREILLAGE_DOMOTIQUE).map(([type, label]) => ({ code: `${type}_domotique`, label })),
+  ...Object.entries(LABEL_APPAREILLAGE_VOYANT).map(([type, label]) => ({ code: `${type}_voyant`, label })),
   { code: "prise_specialisee", label: "Prise / sortie de câble spécialisée" },
   // Versions EN SAILLIE (boîtier apparent compris dans l'article — ni boîte d'encastrement ni plaque au pré-devis).
   ...TYPES_SAILLIE_POSSIBLE.filter(t => t in LABEL_APPAREILLAGE && t !== "point_lumineux" && t !== "applique")
@@ -424,6 +432,10 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         if (estCmd && a.domotique && LABEL_APPAREILLAGE_DOMOTIQUE[a.type]) {
           const sousCat = `${a.type}_domotique`;
           ajouter(`${sousCat}@${dest.id}`, sousCat, LABEL_APPAREILLAGE_DOMOTIQUE[a.type], dest.nom, 1, "u"); cleParApp.set(a.id, `${sousCat}@${dest.id}`);
+        } else if (estCmd && a.voyant && !sail && LABEL_APPAREILLAGE_VOYANT[a.type]) {
+          // Mécanisme à voyant lumineux encastré : article « _voyant » ; sa boîte et sa plaque sont ajoutées plus bas (TYPES_ENCASTRABLES).
+          const sousCat = `${a.type}_voyant`;
+          ajouter(`${sousCat}@${dest.id}`, sousCat, LABEL_APPAREILLAGE_VOYANT[a.type], dest.nom, 1, "u"); cleParApp.set(a.id, `${sousCat}@${dest.id}`);
         } else if (cleCircuitDedie(a) === "irve") {
           // Tout point de recharge (prise renforcée IRVE, borne IRVE, prise dédiée « IRVE ») = « Prise renforcée IRVE »,
           // jamais une sortie de câble spécialisée générique.
@@ -797,11 +809,19 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
       const piece = mode === "circuit" ? `Attente — ${nom}` : pseudoCommun(`Gaines en attente — ${niveau.nom || niveau.type}`);
       const suffixe = mode === "circuit" ? `@attente:${niveau.id}:${g.id}` : `@attente:${niveau.id}`;
       const etat = g.precable ? `précâblée 3G${libelleSection(g.section)}` : `vide, câble 3G${libelleSection(g.section)} à tirer`;
-      ajouter(`${ga.code}${suffixe}`, ga.code, `${ga.libelle}`, piece, lg.totaleM, "m");
+      // Comme un circuit : section ENCASTRÉE = gaine ICTA (ou précâblée) ; section APPARENTE = gaine IRL (pose apparente), jamais précâblée.
+      if (lg.encastreM > 0.001) ajouter(`${ga.code}${suffixe}`, ga.code, `${ga.libelle}`, piece, lg.encastreM, "m");
+      if (lg.apparentM > 0.001) {
+        const s = SECTIONS_ATTENTE.includes(g.section) ? g.section : "2.5";
+        const gIrl = gaineRecommandee([s, s, s], "IRL").gaine, codeIrl = `gaine_irl${gIrl.replace(/\D/g, "")}`;
+        ajouter(`${codeIrl}${suffixe}`, codeIrl, `Gaine ${gIrl} (pose apparente — attente)`, piece, lg.apparentM, "m");
+        // Gaine IRL = gaine vide : si l'attente est précâblée, le câble tiré sur la part apparente est compté (la gaine précâblée ne couvre que l'encastré).
+        if (g.precable) ajouter(`cablage_${s}${suffixe}`, `cablage_${s}`, LABEL_CABLAGE[s] ?? `Câblage ${s}mm²`, piece, lg.apparentM, "m", lg.apparentM * 3);
+      }
       ajouter(`boite_encastrement_1poste${suffixe}`, "boite_encastrement_1poste", "Boîte d'encastrement simple (obturateur de gaine en attente)", piece, 1, "u");
       ajouter(`obturateur_attente${suffixe}`, "obturateur_attente", "Obturateur de gaine en attente (à poser au mur)", piece, 1, "u");
       ajouter(`plaque_1poste${suffixe}`, "plaque_1poste", "Plaque de finition simple (obturateur de gaine en attente)", piece, 1, "u");
-      const lb = cumul.get(`${ga.code}${suffixe}`);
+      const lb = cumul.get(lg.encastreM > 0.001 ? `${ga.code}${suffixe}` : `boite_encastrement_1poste${suffixe}`);
       if (lb) (lb.appareils ??= []).push({ piece: niveau.nom || "Niveau", nom: `${nom} — ${etat}` });
     });
   });

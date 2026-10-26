@@ -1,13 +1,13 @@
 // src/lib/gaines-attente.ts
 //
 // Gaines EN ATTENTE : une gaine (pré-câblée ou non) part du tableau (ou du point d'arrivée des gaines du niveau) et aboutit à un obturateur
-// posé au mur, pour un circuit futur. Elle n'est pas raccordée au tableau. Tracé : le même routage que les circuits (dans les murs, parallèle
-// aux murs…). Longueurs : course horizontale + montée / descente (hauteur de gaine du niveau).
+// posé au mur, pour un circuit futur. Elle n'est pas raccordée au tableau. Tracé : celui d'un circuit (routage dans les murs, coudes posés à la main, poses encastrée / apparente par
+// section). Longueurs : le calcul d'un circuit (tracerLiaison : course horizontale + montées / descentes).
 
 import { gaineRecommandee } from "./electrical-constants";
-import { creerContexteLongueurs } from "./longueurs-circuits";
+import { creerContexteLongueurs, hauteurAncreFn, tracerLiaison, type ContexteLongueurs } from "./longueurs-circuits";
 import { coudesSegment } from "./routage-circuits";
-import { origineCircuits, type GaineAttente, type Niveau, type Point } from "./maison-types";
+import { cleSegmentLiaison, origineCircuits, type GaineAttente, type Niveau, type Point, type SegmentCircuit } from "./maison-types";
 
 export const SECTIONS_ATTENTE = ["1.5", "2.5", "4.0", "6.0", "10.0"];
 export const HAUTEUR_ATTENTE_DEFAUT_CM = 30;
@@ -19,26 +19,57 @@ export function nouvelleGaineAttente(niveau: Niveau, id: string, point: Point, p
   return { id, nom: `Attente ${n}`, point, precable, section };
 }
 
-/** Chemin tracé sur le plan : origine, coudes éventuels, extrémité. null sans origine (ni tableau ni point d'arrivée des gaines). */
-export function cheminGaineAttente(niveau: Niveau, g: GaineAttente): Point[] | null {
+/** Clé de liaison de la gaine en attente (coudes posés à la main, poses et hauteurs des sections : même stockage que les circuits). */
+export const cleGaineAttente = (g: Pick<GaineAttente, "id">): string => cleSegmentLiaison("tableau", `attente-${g.id}`);
+
+/** Liaison « tableau → obturateur », au même format qu'un segment de circuit. null sans origine (ni tableau ni point d'arrivée des gaines). */
+export function segmentGaineAttente(niveau: Niveau, g: GaineAttente): SegmentCircuit | null {
   const origine = origineCircuits(niveau);
   if (!origine) return null;
-  const coudes = coudesSegment(niveau, { aId: "tableau", aPoint: origine, bId: `attente-${g.id}`, bPoint: g.point }).map(c => c.point);
-  return [origine, ...coudes, g.point];
+  return { aId: "tableau", aPoint: origine, bId: `attente-${g.id}`, bPoint: g.point };
 }
 
-export interface LongueursAttente { horizontaleM: number; verticaleM: number; totaleM: number }
+export const hauteurObturateurM = (g: GaineAttente): number => (g.hauteurCm ?? HAUTEUR_ATTENTE_DEFAUT_CM) / 100;
 
-/** Longueur réelle : course horizontale + montée du tableau à la hauteur de gaine + descente jusqu'à l'obturateur. */
+/** Hauteur (m) de chaque ancre de la liaison : le tableau (ou la gaine si un point d'arrivée est configuré) au départ, l'obturateur à l'arrivée. */
+export function hauteurAncreAttente(ctx: ContexteLongueurs, g: GaineAttente): (id: string) => number {
+  const base = hauteurAncreFn(ctx);
+  return id => (id === `attente-${g.id}` ? hauteurObturateurM(g) : base(id));
+}
+
+/** Chemin tracé sur le plan : origine, coudes éventuels (posés à la main, sinon routage dans les murs comme un circuit), extrémité. */
+export function cheminGaineAttente(niveau: Niveau, g: GaineAttente): Point[] | null {
+  const seg = segmentGaineAttente(niveau, g);
+  if (!seg) return null;
+  return [seg.aPoint, ...coudesSegment(niveau, seg).map(c => c.point), seg.bPoint];
+}
+
+export interface LongueursAttente {
+  horizontaleM: number; verticaleM: number; totaleM: number;
+  /** Part posée en APPARENT (moulure / gaine IRL) et part ENCASTRÉE, en m (somme = totaleM). */
+  apparentM: number; encastreM: number;
+  /** Longueur 3D de chaque section du tracé (coudes + 1), comme les étiquettes d'un circuit. */
+  sections: number[];
+}
+
+/**
+ * Longueur réelle : EXACTEMENT le calcul d'un circuit (longueurs-circuits.ts → tracerLiaison) — course horizontale de chaque section,
+ * montées / descentes entre les hauteurs de course, poses encastrée / apparente par section, hauteurs réglées à la main.
+ */
 export function longueursGaineAttente(niveau: Niveau, g: GaineAttente): LongueursAttente | null {
-  const chemin = cheminGaineAttente(niveau, g);
-  if (!chemin) return null;
-  let h = 0;
-  for (let i = 1; i < chemin.length; i++) h += Math.hypot(chemin[i].x - chemin[i - 1].x, chemin[i].y - chemin[i - 1].y);
+  const seg = segmentGaineAttente(niveau, g);
+  if (!seg) return null;
   const ctx = creerContexteLongueurs(niveau);
-  const hObt = (g.hauteurCm ?? HAUTEUR_ATTENTE_DEFAUT_CM) / 100;
-  const v = Math.abs(ctx.hauteurGaine - ctx.hauteurOrigine) + Math.abs(ctx.hauteurGaine - hObt);
-  return { horizontaleM: h, verticaleM: v, totaleM: h + v };
+  // Éclairage : hauteur de course par défaut = hauteur de gaine (pas de règle « prises en chaîne » pour une gaine en attente).
+  const { jambes, sections } = tracerLiaison(ctx, { circuit: "lumiere" }, [seg], seg, hauteurAncreAttente(ctx, g));
+  let horizontaleM = 0, verticaleM = 0, apparentM = 0;
+  jambes.forEach(j => {
+    const h = Math.hypot(j.b.x - j.a.x, j.b.z - j.a.z), v = Math.abs(j.b.y - j.a.y);
+    horizontaleM += h; verticaleM += v;
+    if (j.pose === "apparent") apparentM += h + v;
+  });
+  const totaleM = horizontaleM + verticaleM;
+  return { horizontaleM, verticaleM, totaleM, apparentM, encastreM: totaleM - apparentM, sections };
 }
 
 export interface GaineDeAttente {

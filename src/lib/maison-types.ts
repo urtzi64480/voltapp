@@ -93,6 +93,10 @@ export interface AppareillagePlace {
   // uniquement la visualisation du cheminement (voir SegmentCircuit.type "domotique" et
   // pointsOndulesEntre ci-dessous) — n'affecte pas la composition électrique du circuit.
   domotique?: boolean;
+  // Pour interrupteur / va_et_vient / telerupteur (simples et doubles) : mécanisme À VOYANT LUMINEUX (éclairage extérieur, cave, garage…
+  // pour savoir que la lampe est allumée). Article catalogue propre (« _voyant ») ; boîte d'encastrement et plaque de finition comme
+  // pour tout mécanisme encastré. Purement une question de matériel : aucun impact sur le tracé. Sans effet sur une commande domotique.
+  voyant?: boolean;
   // Rempli par genererCircuits() — id du Breaker (electrical-constants.ts) qui dessert ce point.
   circuitId?: number;
   // Rattachement manuel à un CircuitManuel (id stable, voir plus bas) — prioritaire sur le
