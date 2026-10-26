@@ -26,7 +26,7 @@ import { cloisonsDeZone, ouverturesEffectivesZone } from "@/lib/zones";
 import { SaisonSoleil, LABEL_SAISON_SOLEIL, LATITUDE_DEFAUT, elevationMidi, directionSoleilMidi } from "@/lib/soleil";
 import { parametresMur3D, geometrieMurs, surfaceUtile, faceInterieureM, epaisseurTotaleM, HAUTEUR_DEFAUT, preparerMurs, pointDansCouche2 } from "@/lib/murs";
 import { appareillagesEnPoseApparente, posesTroncons, hauteursTroncons, hauteurDefautLiaison } from "@/lib/pose-circuits";
-import { cheminGaineAttente, gaineDeAttente, HAUTEUR_ATTENTE_DEFAUT_CM } from "@/lib/gaines-attente";
+import { cheminGaineAttente, cleGaineAttente, gaineDeAttente, hauteurObturateurM, segmentGaineAttente } from "@/lib/gaines-attente";
 import { construireChemin3D, hauteurGaineNiveau } from "@/lib/chemin-3d";
 import { HAUTEUR_TABLEAU_DEFAUT, creerContexteLongueurs } from "@/lib/longueurs-circuits";
 import { couleurGroupe, diametreGaineDepuisLibelle, fusionnerForcages, fusionnerParamsGaines, jonctionsVersCircuit, optimiserGaines, type ResultatGainesOptimisees } from "@/lib/gaines-optimisees";
@@ -1048,22 +1048,42 @@ const Vue3D = forwardRef<Vue3DHandle, {
       }
       // Gaines en attente : tube du tableau à l'obturateur (à hauteur de gaine, puis descente), obturateur + plaque de finition au mur.
       (niveau.gainesAttente ?? []).forEach(ga => {
+        const seg = segmentGaineAttente(niveau, ga);
+        if (!seg) return;
         const chemin = cheminGaineAttente(niveau, ga);
         if (!chemin) return;
         const coul = new THREE.Color(ga.precable ? 0xf59e0b : 0x64748b);
-        const hObt = (ga.hauteurCm ?? HAUTEUR_ATTENTE_DEFAUT_CM) / 100;
+        const hObt = hauteurObturateurM(ga);
         const rayon = Math.max(0.008, diametreGaineDepuisLibelle(gaineDeAttente(ga).gaine) / 2000);
-        const pts = chemin.map(q => new THREE.Vector3(q.x, hauteurGaine, q.y));
+        // Même tracé qu'un circuit : coudes (posés à la main ou routés dans les murs), poses et hauteurs par section, couche 2 du mur.
+        const cle = cleGaineAttente(ga);
+        const coudes = coudesSegment(niveau, seg);
+        const depart = ancre3D("tableau", seg.aPoint, 0);
+        const jambes = construireChemin3D({
+          depart: { x: depart.x, y: depart.y, z: depart.z },
+          arrivee: { x: seg.bPoint.x, y: hObt, z: seg.bPoint.y },
+          coudes: coudes.map(c => ({ point: c.point, hauteurCm: c.hauteur, hauteurMiniCm: c.hauteurMini })),
+          poses: posesTroncons(niveau, cle, coudes),
+          hauteursSection: hauteursTroncons(niveau, cle, coudes),
+          hauteurGaine,
+          couche2,
+        });
         const fin = chemin[chemin.length - 1];
-        pts.push(new THREE.Vector3(fin.x, hObt, fin.y));
-        for (let i = 1; i < pts.length; i++) {
-          const p0 = pts[i - 1], p1 = pts[i], lg = p0.distanceTo(p1);
-          if (lg < 0.01) continue;
+        jambes.forEach(jb => {
+          const p0 = new THREE.Vector3(jb.a.x, jb.a.y, jb.a.z), p1 = new THREE.Vector3(jb.b.x, jb.b.y, jb.b.z), lg = p0.distanceTo(p1);
+          if (lg < 0.01) return;
+          const apparent = jb.pose === "apparent";
           const tube = new THREE.Mesh(new THREE.CylinderGeometry(rayon, rayon, lg, 12), new THREE.MeshStandardMaterial({ color: coul, transparent: true, opacity: 0.55, emissive: coul, emissiveIntensity: 0.3 }));
           tube.position.copy(p0).add(p1).multiplyScalar(0.5);
           tube.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), p1.clone().sub(p0).normalize());
           scene.add(tube);
-        }
+          if (apparent) {
+            // Section apparente : moulure PVC translucide autour de la gaine, comme un circuit.
+            const moul = new THREE.Mesh(new THREE.BoxGeometry(0.02, lg, 0.014), new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 }));
+            moul.position.copy(tube.position); moul.quaternion.copy(tube.quaternion);
+            scene.add(moul);
+          }
+        });
         const plaque = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.012), new THREE.MeshStandardMaterial({ color: 0xfafaf9 }));
         plaque.position.set(fin.x, hObt, fin.y);
         scene.add(plaque);
