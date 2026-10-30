@@ -229,6 +229,7 @@ export interface Facture {
   remise_facture_type?: "pct" | "eur" | null;
   remise_facture_valeur?: number | null;
   remise_facture_montant?: number | null;
+  remise_facture_motif?: string | null;
   paye_le?: string;
   moyen_paiement?: string;
   notes_internes?: string;

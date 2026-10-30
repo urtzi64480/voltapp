@@ -8,7 +8,7 @@ import Shell from "@/components/layout/Shell";
 import LigneImage from "@/components/devis/LigneImage";
 import { supprimerAvecDependances } from "@/lib/suppression";
 import { grouperParPoste, totalItems, trierParOrdre } from "@/lib/postes";
-import { calculerRemiseFacture, libelleRemiseFacture, montantRemiseFacture, totalAvantRemiseFacture, type TypeRemiseFacture } from "@/lib/remise-facture";
+import { calculerRemiseFacture, libelleRemiseFacture, montantRemiseFacture, motifRemiseFacture, MOTIF_REMISE_MAX, nettoyerMotifRemise, totalAvantRemiseFacture, type TypeRemiseFacture } from "@/lib/remise-facture";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Download, CheckCircle, Clock, Trash2, Plus, Save, X, AlertTriangle, Mail, FileCode, ShieldCheck } from "lucide-react";
@@ -58,6 +58,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
   const [profil, setProfil] = useState<Profil | null>(null);
   const [remiseType, setRemiseType] = useState<TypeRemiseFacture>("pct");
   const [remiseValeur, setRemiseValeur] = useState("");
+  const [remiseMotif, setRemiseMotif] = useState("");
   const [savingRemise, setSavingRemise] = useState(false);
 
   useEffect(() => {
@@ -79,6 +80,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
       if ((f as any)?.remise_facture_type && ((f as any).remise_facture_valeur ?? 0) > 0) {
         setRemiseType((f as any).remise_facture_type);
         setRemiseValeur(String((f as any).remise_facture_valeur));
+        setRemiseMotif((f as any).remise_facture_motif ?? "");
       }
       setProfil((pr as Profil) ?? null);
       setApporteurs(ap ?? []);
@@ -122,15 +124,16 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
       remise_facture_type: montant > 0 ? remiseType : null,
       remise_facture_valeur: montant > 0 ? valeurRetenue : 0,
       remise_facture_montant: montant,
+      remise_facture_motif: montant > 0 ? (nettoyerMotifRemise(remiseMotif) || null) : null,
     };
     // .eq("statut", "a_envoyer") : jamais de modification d'une facture déjà envoyée (modifiée depuis un autre onglet, par exemple).
     const { data, error } = await supabase.from("factures").update(maj).eq("id", id).eq("statut", "a_envoyer").select("id");
     setSavingRemise(false);
-    if (echecSupabase(error, "Enregistrement de la remise (la migration 010_remise_facture.sql est-elle appliquée ?)")) return;
+    if (echecSupabase(error, "Enregistrement de la remise (les migrations 010_remise_facture.sql et 011_remise_facture_motif.sql sont-elles appliquées ?)")) return;
     if (!data || data.length === 0) { alert("Cette facture n'est plus « à envoyer » : sa remise ne peut plus être modifiée."); return; }
     setFacture(f => f ? { ...f, ...maj } : f);
-    if (montant === 0) setRemiseValeur("");
-    else setRemiseValeur(String(valeurRetenue));
+    if (montant === 0) { setRemiseValeur(""); setRemiseMotif(""); }
+    else { setRemiseValeur(String(valeurRetenue)); setRemiseMotif(nettoyerMotifRemise(remiseMotif)); }
   }
 
   async function saveApporteur() {
@@ -480,6 +483,9 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
                   <span>{libelleRemiseFacture(facture)}</span><span>− {fmt(remiseFactureEur)}</span>
                 </div>
               )}
+              {remiseFactureEur > 0.01 && motifRemiseFacture(facture) && (
+                <div className="text-xs italic text-red-400 -mt-0.5">Motif : {motifRemiseFacture(facture)}</div>
+              )}
               {(hasRemise || remiseFideliteEur > 0.01 || remiseFactureEur > 0.01) && (
                 <div className="flex justify-between text-red-600 font-medium text-xs pt-1 border-t border-ink-100">
                   <span>Total remises</span><span>− {fmt(remiseS + remiseM + remiseFideliteEur + remiseFactureEur)}</span>
@@ -524,6 +530,9 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
                 value={remiseValeur} onChange={e => setRemiseValeur(e.target.value)}
                 className="flex-1 px-3 py-2 text-sm text-right bg-white border-l border-ink-200 focus:outline-none" />
             </div>
+            <input type="text" maxLength={MOTIF_REMISE_MAX} value={remiseMotif} onChange={e => setRemiseMotif(e.target.value)}
+              placeholder="Motif de la remise (ex : geste commercial, client fidèle, retard de chantier…) — imprimé sur la facture"
+              className="input text-sm mt-2 w-full" />
             {apercuRemise.montant > 0 && (
               <p className="text-xs text-ink-500 mt-2">
                 Remise <span className="text-red-500 font-semibold">− {fmt(apercuRemise.montant)}</span> · total {fmt(baseRemise)} → <span className="font-semibold text-emerald-600">{fmt(apercuRemise.totalTtc)}</span>
@@ -535,7 +544,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
                 <button onClick={() => { void enregistrerRemise(true); }} disabled={savingRemise} className="btn-ghost flex-1 justify-center text-sm"><X size={13} /> Retirer la remise</button>
               )}
               <button onClick={() => { void enregistrerRemise(); }}
-                disabled={savingRemise || apercuRemise.montant <= 0 || (apercuRemise.montant === remiseFactureEur && remiseType === facture.remise_facture_type)}
+                disabled={savingRemise || apercuRemise.montant <= 0 || (apercuRemise.montant === remiseFactureEur && remiseType === facture.remise_facture_type && nettoyerMotifRemise(remiseMotif) === motifRemiseFacture(facture))}
                 className="btn-volt flex-1 justify-center text-sm">
                 <Save size={13} /> {savingRemise ? "Enregistrement…" : "Appliquer la remise"}
               </button>

@@ -30,6 +30,18 @@ export function montantRemiseFacture(f: Pick<Facture, "remise_facture_montant">)
   return m > 0.004 ? arrondi2(m) : 0;
 }
 
+export const MOTIF_REMISE_MAX = 120;
+
+/** Motif nettoyé (espaces, retours à la ligne) et borné ; "" si vide. */
+export function nettoyerMotifRemise(m?: string | null): string {
+  return (m ?? "").replace(/\s+/g, " ").trim().slice(0, MOTIF_REMISE_MAX);
+}
+
+/** Motif de la remise enregistrée ; "" si aucune remise (un motif orphelin n'est jamais affiché). */
+export function motifRemiseFacture(f: Pick<Facture, "remise_facture_montant" | "remise_facture_motif">): string {
+  return montantRemiseFacture(f) > 0 ? nettoyerMotifRemise(f.remise_facture_motif) : "";
+}
+
 /** Libellé affiché sur la facture : « Remise exceptionnelle (10 %) » ou « Remise exceptionnelle ». */
 export function libelleRemiseFacture(f: Pick<Facture, "remise_facture_type" | "remise_facture_valeur">): string {
   if (f.remise_facture_type === "pct" && (Number(f.remise_facture_valeur) || 0) > 0) {

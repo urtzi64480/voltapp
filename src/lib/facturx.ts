@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { Facture, Profil } from "@/types";
 import { dateLocale } from "@/lib/utils";
+import { motifRemiseFacture } from "@/lib/remise-facture";
 
 export interface AcompteFX {
   montant: number;
@@ -119,6 +120,7 @@ export function buildFacturXml(facture: Facture, profil: Profil, acomptes: Acomp
   const grandTotal = r2(Number(facture.total_ttc) || 0);
   const ecart = r2(lineTotal - grandTotal);
   const allowance = ecart > 0 ? ecart : 0;
+  const motifRemise = allowance > 0 ? motifRemiseFacture(facture) : "";
   const charge = ecart < 0 ? -ecart : 0;
 
   const prepaid = r2(Math.min(grandTotal, acomptes.reduce((a, ac) => a + (Number(ac.montant) || 0), 0)));
@@ -221,7 +223,7 @@ export function buildFacturXml(facture: Facture, profil: Profil, acomptes: Acomp
   const allowanceCharge =
     (allowance > 0
       ? `<ram:SpecifiedTradeAllowanceCharge><ram:ChargeIndicator><udt:Indicator>false</udt:Indicator></ram:ChargeIndicator>` +
-        `<ram:ActualAmount>${amt(allowance)}</ram:ActualAmount><ram:Reason>Remise commerciale</ram:Reason>${taxCat}</ram:SpecifiedTradeAllowanceCharge>`
+        `<ram:ActualAmount>${amt(allowance)}</ram:ActualAmount><ram:Reason>${esc(motifRemise ? `Remise commerciale : ${motifRemise}` : "Remise commerciale")}</ram:Reason>${taxCat}</ram:SpecifiedTradeAllowanceCharge>`
       : "") +
     (charge > 0
       ? `<ram:SpecifiedTradeAllowanceCharge><ram:ChargeIndicator><udt:Indicator>true</udt:Indicator></ram:ChargeIndicator>` +

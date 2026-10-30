@@ -3,7 +3,7 @@ import { Devis, Profil, Facture } from "@/types";
 import { fmt, fmtDate, fmtDatetime } from "./utils";
 import { chargerImagesPdf, ImagesPdf } from "./pdfImages";
 import { grouperParPoste, totalItems, trierParOrdre } from "./postes";
-import { libelleRemiseFacture, montantRemiseFacture } from "./remise-facture";
+import { libelleRemiseFacture, montantRemiseFacture, motifRemiseFacture } from "./remise-facture";
 import {
   buildFacturXml, assemblerFacturX, natureOperations, sirenFromSiret,
   MENTION_RETARD_PRO, MENTION_ESCOMPTE,
@@ -415,13 +415,25 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   const totalAcomptes = Math.round(acomptes.reduce((a, ac) => a + ac.montant, 0) * 100) / 100;
   const soldeRestant = Math.round((facture.total_ttc - totalAcomptes) * 100) / 100;
 
-  const lignesTotal: { label: string; value: string; bold?: boolean; color?: [number, number, number] }[] = [
+  const lignesTotal: { label: string; value: string; bold?: boolean; small?: boolean; color?: [number, number, number] }[] = [
     { label: "Prestation service :", value: fmt(totServiceNet) },
     { label: "Matériels :", value: fmt(totMateriauNet) },
   ];
   if (remiseFideliteEur > 0.01) lignesTotal.push({ label: `Remise fidélité ${facture.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
   const remiseFactureEur = montantRemiseFacture(facture);
-  if (remiseFactureEur > 0.01) lignesTotal.push({ label: `${libelleRemiseFacture(facture)} :`, value: `- ${fmt(remiseFactureEur)}`, color: [220, 50, 50] });
+  if (remiseFactureEur > 0.01) {
+    lignesTotal.push({ label: `${libelleRemiseFacture(facture)} :`, value: `- ${fmt(remiseFactureEur)}`, color: [220, 50, 50] });
+    // Motif : lignes en petit sous la remise (max 2, coupé proprement), pour tenir dans la boîte de totaux.
+    const motif = motifRemiseFacture(facture);
+    if (motif) {
+      doc.setFont(FONT, "italic"); doc.setFontSize(6.5);
+      const morceaux: string[] = doc.splitTextToSize(`Motif : ${motif}`, 70);
+      const gardes = morceaux.slice(0, 2);
+      // Plus de 2 lignes : on coupe la 2e à la limite d'un mot et on ajoute « ... » (le caractère « … » n'existe pas dans la police du PDF).
+      if (morceaux.length > 2) gardes[1] = gardes[1].replace(/\s*\S*$/, "").replace(/[\s.,;:]+$/, "") + "...";
+      gardes.forEach(l => lignesTotal.push({ label: l, value: "", small: true, color: [220, 120, 120] }));
+    }
+  }
   lignesTotal.push({ label: "Total TTC :", value: fmt(facture.total_ttc), bold: true, color: [251, 191, 36] });
   if (acomptes.length > 0) {
     acomptes.forEach((ac, i) => {
@@ -446,8 +458,8 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   doc.setFillColor(28, 25, 23); doc.rect(bx, fy, 80, boxH, "F");
   lignesTotal.forEach((row, i) => {
     const y = fy + 9 + i * 7;
-    doc.setFont(FONT, row.bold ? "bold" : "normal");
-    doc.setFontSize(row.bold ? 10 : 8);
+    doc.setFont(FONT, row.bold ? "bold" : row.small ? "italic" : "normal");
+    doc.setFontSize(row.bold ? 10 : row.small ? 6.5 : 8);
     const color = row.color ?? [200, 200, 190];
     doc.setTextColor(color[0], color[1], color[2]);
     doc.text(row.label, bx + 4, y);
