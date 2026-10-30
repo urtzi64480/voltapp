@@ -570,6 +570,8 @@ export interface GaineAttente {
   section: string;
   /** Hauteur de l'obturateur au sol (cm) ; 30 par défaut. */
   hauteurCm?: number;
+  /** Vrai : l'obturateur est à l'EXTÉRIEUR de la maison (jardin, façade) : boîtier étanche en saillie au lieu de boîte d'encastrement + plaque. */
+  exterieur?: boolean;
 }
 
 export interface Niveau {

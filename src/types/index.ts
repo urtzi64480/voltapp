@@ -225,6 +225,10 @@ export interface Facture {
   total_materiau: number;
   total_ttc: number;
   remise_fidelite_pct?: number;
+  // Remise accordée sur la facture avant envoi (voir lib/remise-facture.ts) : total_ttc = total_service + total_materiau − remise_facture_montant.
+  remise_facture_type?: "pct" | "eur" | null;
+  remise_facture_valeur?: number | null;
+  remise_facture_montant?: number | null;
   paye_le?: string;
   moyen_paiement?: string;
   notes_internes?: string;

@@ -10,7 +10,7 @@ import { calculerBesoinsBruts, signaturesActuelles, postesInvalides, CLE_OK_CABL
 import Shell from "@/components/layout/Shell";
 import TableauReelPanel, { type Onglet as OngletTableauReel } from "@/components/plan/TableauReelPanel";
 import type { GaineAttente } from "@/lib/maison-types";
-import { cheminGaineAttente, cleGaineAttente, gaineDeAttente, longueursGaineAttente, nouvelleGaineAttente, segmentGaineAttente, SECTIONS_ATTENTE, HAUTEUR_ATTENTE_DEFAUT_CM, libelleSection } from "@/lib/gaines-attente";
+import { cheminGaineAttente, cleGaineAttente, estPointExterieur, gaineDeAttente, longueursGaineAttente, nouvelleGaineAttente, segmentGaineAttente, SECTIONS_ATTENTE, HAUTEUR_ATTENTE_DEFAUT_CM, libelleSection } from "@/lib/gaines-attente";
 import { couleurGroupe, cheminCircuitGaine, fusionnerForcages, fusionnerParamsGaines, diametreGaineDepuisLibelle } from "@/lib/gaines-optimisees";
 import { purgerTracesCircuits } from "@/lib/purger-circuit";
 import { optimiserGainesMaison, syntheseGaines, type GainesNiveau } from "@/lib/gaines-optimisees-plan";
@@ -4574,6 +4574,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     });
     return id;
   };
+  // LIGNE DROITE à partir d'un coude : le suivi des murs est désactivé de ce coude jusqu'à l'arrivée. Tout ce qui suit le coude (coudes du routage
+  // dans les murs, passages de portes…) est retiré : le tracé va droit du coude à l'arrivée, quels que soient les murs et obstacles traversés.
+  // Ce qui précède le coude est conservé tel quel (tracé déjà figé en coudes réels dès qu'un point est posé sur la liaison).
+  const ligneDroiteApresWaypoint = (cle: string, waypointId: number) => {
+    if (refuserVerrouCle(cle)) return;
+    updateNiveauActif(n => {
+      const coudes = n.liaisonWaypoints?.[cle] ?? [];
+      const rang = coudes.findIndex(w => w.id === waypointId);
+      if (rang < 0 || rang === coudes.length - 1) return n;
+      return { ...n, liaisonWaypoints: { ...(n.liaisonWaypoints ?? {}), [cle]: coudes.slice(0, rang + 1) } };
+    });
+  };
   const supprimerWaypoint = (cle: string, waypointId: number) => {
     if (refuserVerrouCle(cle)) return;
     updateNiveauActif(n => ({
@@ -4838,7 +4850,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
         setSelectedAttenteId(id);
       } else {
         const id = placingAttente;
-        updateNiveauActif(n => ({ ...n, gainesAttente: (n.gainesAttente ?? []).map(g => g.id === id ? { ...g, point: mAtt } : g) }));
+        updateNiveauActif(n => ({ ...n, gainesAttente: (n.gainesAttente ?? []).map(g => g.id === id ? { ...g, point: mAtt, exterieur: estPointExterieur(n, mAtt) || undefined } : g) }));
         setSelectedAttenteId(id);
       }
       setPlacingAttente(null);
@@ -7858,7 +7870,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       <line x1={fin.x - 4} y1={fin.y - 4} x2={fin.x + 4} y2={fin.y + 4} stroke={coul} strokeWidth={2} />
                       <line x1={fin.x + 4} y1={fin.y - 4} x2={fin.x - 4} y2={fin.y + 4} stroke={coul} strokeWidth={2} />
                     </g>
-                    <text x={fin.x + 12} y={fin.y - 8} fontSize={10.5} fontWeight={700} fill="#1c1917" stroke="#fff" strokeWidth={3} paintOrder="stroke" style={{ pointerEvents: "none" }}>{ga.nom || "Attente"}{ga.precable ? ` · 3G${libelleSection(ga.section)}` : " · vide"}</text>
+                    <text x={fin.x + 12} y={fin.y - 8} fontSize={10.5} fontWeight={700} fill="#1c1917" stroke="#fff" strokeWidth={3} paintOrder="stroke" style={{ pointerEvents: "none" }}>{ga.nom || "Attente"}{ga.precable ? ` · 3G${libelleSection(ga.section)}` : " · vide"}{ga.exterieur ? " · ext." : ""}</text>
                   </g>
                 );
               })}
@@ -8965,6 +8977,10 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     <input type="checkbox" checked={ga.precable} onChange={e => modifierAttente(ga.id, { precable: e.target.checked })} />
                     Précâblée (câble déjà tiré dans la gaine)
                   </label>
+                  <label className="flex items-center gap-2 text-xs text-ink-700 cursor-pointer">
+                    <input type="checkbox" checked={ga.exterieur ?? false} onChange={e => modifierAttente(ga.id, { exterieur: e.target.checked || undefined })} />
+                    Obturateur à l&apos;extérieur de la maison (boîtier étanche en saillie)
+                  </label>
                   <div className="flex items-center gap-2 text-xs text-ink-500">
                     <span className="shrink-0 w-24">Section du câble</span>
                     <select className="input !py-1 !text-xs flex-1" value={ga.section} onChange={e => modifierAttente(ga.id, { section: e.target.value })}>
@@ -8979,7 +8995,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                   </div>
                   <p className="text-[11px] text-ink-500">
                     {lg ? `≈ ${lg.totaleM.toFixed(2).replace(".", ",")} m (dont ${lg.verticaleM.toFixed(2).replace(".", ",")} m de montée / descente${lg.apparentM > 0.001 ? ` · ${lg.apparentM.toFixed(2).replace(".", ",")} m apparent` : ""}) · ` : "Place le tableau ou l'arrivée des gaines pour la tracer · "}
-                    non raccordée au tableau. Tracé comme un circuit : tire sur la gaine pour la déformer, Maj + clic = pose / hauteur d&apos;une section, double-clic sur un coude = le retirer. Pré-devis : gaine{ga.precable ? " précâblée" : " + câble à tirer plus tard (non compté)"}, boîte d&apos;encastrement, obturateur, plaque de finition.
+                    non raccordée au tableau. Tracé comme un circuit : tire sur la gaine pour la déformer, Maj + clic = pose / hauteur d&apos;une section, double-clic sur un coude = le retirer. Pré-devis : gaine{ga.precable ? " précâblée" : " + câble à tirer plus tard (non compté)"}, {ga.exterieur ? "boîtier étanche IP55 (extérieur)." : "boîte d&apos;encastrement, obturateur, plaque de finition."}
                   </p>
                   <button onClick={() => armerPlacementAttente(ga.id)} className="btn-ghost !text-xs self-start">Repositionner l&apos;obturateur</button>
                 </DraggablePanel>
@@ -9392,6 +9408,18 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                       onChange={e => modifierHauteurWaypoint(selectedWaypoint.cle, selectedWaypoint.waypointId, e.target.value ? Number(e.target.value) : undefined)} />
                     <button onClick={() => supprimerWaypoint(selectedWaypoint.cle, selectedWaypoint.waypointId)} className="btn-danger !px-2 !py-1.5 shrink-0"><Trash2 size={13} /></button>
                   </div>
+                  {(() => {
+                    const coudesWp = niveauActif.liaisonWaypoints?.[selectedWaypoint.cle] ?? [];
+                    const encoreDesCoudesApres = coudesWp.findIndex(w => w.id === selectedWaypoint.waypointId) < coudesWp.length - 1;
+                    return (
+                      <button onClick={() => ligneDroiteApresWaypoint(selectedWaypoint.cle, selectedWaypoint.waypointId)}
+                        disabled={!encoreDesCoudesApres}
+                        title="Désactive le suivi des murs à partir de ce coude : le câble / la gaine va en ligne droite jusqu'à l'arrivée, sans tenir compte des murs ni des obstacles."
+                        className="btn-ghost !text-xs !py-1.5 disabled:opacity-50">
+                        {encoreDesCoudesApres ? "↗ Ligne droite à partir d'ici (sans suivi des murs)" : "✓ Ligne droite d'ici jusqu'à l'arrivée"}
+                      </button>
+                    );
+                  })()}
                   {(() => {
                     const coudes = niveauActif.liaisonWaypoints?.[selectedWaypoint.cle] ?? [];
                     const rang = coudes.findIndex(w => w.id === selectedWaypoint.waypointId);

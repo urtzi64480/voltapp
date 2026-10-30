@@ -818,10 +818,15 @@ export function calculerBesoinsBruts(niveaux: Niveau[], tableauRows: BreakerRow[
         // Gaine IRL = gaine vide : si l'attente est précâblée, le câble tiré sur la part apparente est compté (la gaine précâblée ne couvre que l'encastré).
         if (g.precable) ajouter(`cablage_${s}${suffixe}`, `cablage_${s}`, LABEL_CABLAGE[s] ?? `Câblage ${s}mm²`, piece, lg.apparentM, "m", lg.apparentM * 3);
       }
-      ajouter(`boite_encastrement_1poste${suffixe}`, "boite_encastrement_1poste", "Boîte d'encastrement simple (obturateur de gaine en attente)", piece, 1, "u");
-      ajouter(`obturateur_attente${suffixe}`, "obturateur_attente", "Obturateur de gaine en attente (à poser au mur)", piece, 1, "u");
-      ajouter(`plaque_1poste${suffixe}`, "plaque_1poste", "Plaque de finition simple (obturateur de gaine en attente)", piece, 1, "u");
-      const lb = cumul.get(lg.encastreM > 0.001 ? `${ga.code}${suffixe}` : `boite_encastrement_1poste${suffixe}`);
+      if (g.exterieur) {
+        // Extérieur : pas de boîte d'encastrement ni de plaque — un boîtier étanche en saillie coiffe la gaine.
+        ajouter(`obturateur_attente_exterieur${suffixe}`, "obturateur_attente_exterieur", "Boîtier étanche IP55 de gaine en attente (extérieur, en saillie)", piece, 1, "u");
+      } else {
+        ajouter(`boite_encastrement_1poste${suffixe}`, "boite_encastrement_1poste", "Boîte d'encastrement simple (obturateur de gaine en attente)", piece, 1, "u");
+        ajouter(`obturateur_attente${suffixe}`, "obturateur_attente", "Obturateur de gaine en attente (à poser au mur)", piece, 1, "u");
+        ajouter(`plaque_1poste${suffixe}`, "plaque_1poste", "Plaque de finition simple (obturateur de gaine en attente)", piece, 1, "u");
+      }
+      const lb = cumul.get(lg.encastreM > 0.001 ? `${ga.code}${suffixe}` : (g.exterieur ? `obturateur_attente_exterieur${suffixe}` : `boite_encastrement_1poste${suffixe}`));
       if (lb) (lb.appareils ??= []).push({ piece: niveau.nom || "Niveau", nom: `${nom} — ${etat}` });
     });
   });

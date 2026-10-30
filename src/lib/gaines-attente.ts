@@ -7,16 +7,23 @@
 import { gaineRecommandee } from "./electrical-constants";
 import { creerContexteLongueurs, hauteurAncreFn, tracerLiaison, type ContexteLongueurs } from "./longueurs-circuits";
 import { coudesSegment } from "./routage-circuits";
-import { cleSegmentLiaison, origineCircuits, type GaineAttente, type Niveau, type Point, type SegmentCircuit } from "./maison-types";
+import { cleSegmentLiaison, distanceAuSegment, origineCircuits, trouverPiece, type GaineAttente, type Niveau, type Point, type SegmentCircuit } from "./maison-types";
 
 export const SECTIONS_ATTENTE = ["1.5", "2.5", "4.0", "6.0", "10.0"];
 export const HAUTEUR_ATTENTE_DEFAUT_CM = 30;
 export const libelleSection = (s: string): string => s.replace(".", ",").replace(/,0$/, "");
 
 /** Valeurs par défaut d'une nouvelle gaine en attente. */
+/** Un point est « à l'extérieur » s'il n'est dans aucune pièce ET à plus de 0,5 m de tout mur (un point sur la face d'un mur reste « au mur »). */
+export function estPointExterieur(niveau: Niveau, point: Point): boolean {
+  if (niveau.pieces.length === 0) return false;
+  if (trouverPiece(point, niveau.pieces)) return false;
+  return niveau.pieces.every(p => p.contour.every((a, i) => distanceAuSegment(point, a, p.contour[(i + 1) % p.contour.length]) > 0.5));
+}
+
 export function nouvelleGaineAttente(niveau: Niveau, id: string, point: Point, precable: boolean, section: string): GaineAttente {
   const n = (niveau.gainesAttente ?? []).length + 1;
-  return { id, nom: `Attente ${n}`, point, precable, section };
+  return { id, nom: `Attente ${n}`, point, precable, section, ...(estPointExterieur(niveau, point) ? { exterieur: true } : {}) };
 }
 
 /** Clé de liaison de la gaine en attente (coudes posés à la main, poses et hauteurs des sections : même stockage que les circuits). */

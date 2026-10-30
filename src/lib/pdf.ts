@@ -3,6 +3,7 @@ import { Devis, Profil, Facture } from "@/types";
 import { fmt, fmtDate, fmtDatetime } from "./utils";
 import { chargerImagesPdf, ImagesPdf } from "./pdfImages";
 import { grouperParPoste, totalItems, trierParOrdre } from "./postes";
+import { libelleRemiseFacture, montantRemiseFacture } from "./remise-facture";
 import {
   buildFacturXml, assemblerFacturX, natureOperations, sirenFromSiret,
   MENTION_RETARD_PRO, MENTION_ESCOMPTE,
@@ -419,6 +420,8 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
     { label: "Matériels :", value: fmt(totMateriauNet) },
   ];
   if (remiseFideliteEur > 0.01) lignesTotal.push({ label: `Remise fidélité ${facture.remise_fidelite_pct}% :`, value: `- ${fmt(remiseFideliteEur)}`, color: [22, 163, 74] });
+  const remiseFactureEur = montantRemiseFacture(facture);
+  if (remiseFactureEur > 0.01) lignesTotal.push({ label: `${libelleRemiseFacture(facture)} :`, value: `- ${fmt(remiseFactureEur)}`, color: [220, 50, 50] });
   lignesTotal.push({ label: "Total TTC :", value: fmt(facture.total_ttc), bold: true, color: [251, 191, 36] });
   if (acomptes.length > 0) {
     acomptes.forEach((ac, i) => {

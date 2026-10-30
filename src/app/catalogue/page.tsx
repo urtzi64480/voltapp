@@ -199,6 +199,7 @@ const SOUS_CATEGORIES_CONNUES: { code: string; label: string }[] = [
   { code: "navette", label: "Navette (fil, entre deux va-et-vient)" },
   { code: "boite_derivation", label: "Boîte de dérivation" },
   { code: "obturateur_attente", label: "Obturateur de gaine en attente (au mur, avec boîte d'encastrement + plaque)" },
+  { code: "obturateur_attente_exterieur", label: "Boîtier étanche IP55 de gaine en attente (extérieur, en saillie)" },
   { code: "wago_221_2", label: "Borne WAGO 221-412 (2 conducteurs, à levier)" },
   { code: "wago_221_3", label: "Borne WAGO 221-413 (3 conducteurs, à levier)" },
   { code: "wago_221_5", label: "Borne WAGO 221-415 (5 conducteurs, à levier)" },

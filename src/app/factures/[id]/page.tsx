@@ -8,6 +8,7 @@ import Shell from "@/components/layout/Shell";
 import LigneImage from "@/components/devis/LigneImage";
 import { supprimerAvecDependances } from "@/lib/suppression";
 import { grouperParPoste, totalItems, trierParOrdre } from "@/lib/postes";
+import { calculerRemiseFacture, libelleRemiseFacture, montantRemiseFacture, totalAvantRemiseFacture, type TypeRemiseFacture } from "@/lib/remise-facture";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Download, CheckCircle, Clock, Trash2, Plus, Save, X, AlertTriangle, Mail, FileCode, ShieldCheck } from "lucide-react";
@@ -55,6 +56,9 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
   const [devisAssocie, setDevisAssocie] = useState<{ id: string; numero: string; statut: string } | null>(null);
   const [sendingRelance, setSendingRelance] = useState(false);
   const [profil, setProfil] = useState<Profil | null>(null);
+  const [remiseType, setRemiseType] = useState<TypeRemiseFacture>("pct");
+  const [remiseValeur, setRemiseValeur] = useState("");
+  const [savingRemise, setSavingRemise] = useState(false);
 
   useEffect(() => {
     supabase.from("factures").select("devis_id").eq("id", id).single()
@@ -72,6 +76,10 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
       supabase.from("profil").select("*").maybeSingle(),
     ]).then(([{ data: f }, { data: ap }, { data: ac }, { data: pr }]) => {
       setFacture(f as any);
+      if ((f as any)?.remise_facture_type && ((f as any).remise_facture_valeur ?? 0) > 0) {
+        setRemiseType((f as any).remise_facture_type);
+        setRemiseValeur(String((f as any).remise_facture_valeur));
+      }
       setProfil((pr as Profil) ?? null);
       setApporteurs(ap ?? []);
       setApporteurId((f as any)?.apporteur_id ?? "");
@@ -95,6 +103,35 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
 
   const montantSaisi = facture ? montantFromValeur(acompteValeur, acompteMode, facture.total_ttc) : 0;
   const pctSaisi = facture && montantSaisi > 0 ? pctFromMontant(montantSaisi, facture.total_ttc) : 0;
+
+  // Remise sur la facture, avant envoi : recalculée TOUJOURS depuis les totaux de base (service + matériaux), jamais depuis total_ttc,
+  // pour que la modifier plusieurs fois ou la retirer ne dérive pas. Uniquement tant que la facture est « à envoyer ».
+  async function enregistrerRemise(retirer = false) {
+    if (!facture || facture.statut !== "a_envoyer") return;
+    const base = totalAvantRemiseFacture(facture);
+    const { montant, valeurRetenue, totalTtc } = retirer
+      ? { montant: 0, valeurRetenue: 0, totalTtc: base }
+      : calculerRemiseFacture(base, remiseType, parseFloat(remiseValeur.replace(",", ".")));
+    if (totalTtc < totalAcomptes - 0.01) {
+      alert(`Cette remise ramènerait la facture à ${fmt(totalTtc)}, sous le total des acomptes déjà versés (${fmt(totalAcomptes)}). Supprime ou réduis d'abord un acompte.`);
+      return;
+    }
+    setSavingRemise(true);
+    const maj = {
+      total_ttc: totalTtc,
+      remise_facture_type: montant > 0 ? remiseType : null,
+      remise_facture_valeur: montant > 0 ? valeurRetenue : 0,
+      remise_facture_montant: montant,
+    };
+    // .eq("statut", "a_envoyer") : jamais de modification d'une facture déjà envoyée (modifiée depuis un autre onglet, par exemple).
+    const { data, error } = await supabase.from("factures").update(maj).eq("id", id).eq("statut", "a_envoyer").select("id");
+    setSavingRemise(false);
+    if (echecSupabase(error, "Enregistrement de la remise (la migration 010_remise_facture.sql est-elle appliquée ?)")) return;
+    if (!data || data.length === 0) { alert("Cette facture n'est plus « à envoyer » : sa remise ne peut plus être modifiée."); return; }
+    setFacture(f => f ? { ...f, ...maj } : f);
+    if (montant === 0) setRemiseValeur("");
+    else setRemiseValeur(String(valeurRetenue));
+  }
 
   async function saveApporteur() {
     setSavingApporteur(true);
@@ -286,6 +323,9 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
   const remiseS = (facture as any).remise_valeur > 0.01 ? Math.max(0, Math.round((lignesSBrut - facture.total_service - remiseFideliteEur) * 100) / 100) : 0;
   const remiseM = (facture as any).remise_valeur > 0.01 ? Math.max(0, Math.round((lignesMBrut - facture.total_materiau) * 100) / 100) : 0;
   const hasRemise = remiseS > 0.01 || remiseM > 0.01;
+  const remiseFactureEur = montantRemiseFacture(facture);
+  const baseRemise = totalAvantRemiseFacture(facture);
+  const apercuRemise = calculerRemiseFacture(baseRemise, remiseType, parseFloat(remiseValeur.replace(",", ".")));
 
   const conformite = verifierConformiteFacture(facture, profil);
 
@@ -435,9 +475,14 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
                   <span>🎁 Fidélité ({facture.remise_fidelite_pct}%)</span><span>− {fmt(remiseFideliteEur)}</span>
                 </div>
               )}
-              {(hasRemise || remiseFideliteEur > 0.01) && (
+              {remiseFactureEur > 0.01 && (
+                <div className="flex justify-between text-red-500 font-medium">
+                  <span>{libelleRemiseFacture(facture)}</span><span>− {fmt(remiseFactureEur)}</span>
+                </div>
+              )}
+              {(hasRemise || remiseFideliteEur > 0.01 || remiseFactureEur > 0.01) && (
                 <div className="flex justify-between text-red-600 font-medium text-xs pt-1 border-t border-ink-100">
-                  <span>Total remises</span><span>− {fmt(remiseS + remiseM + remiseFideliteEur)}</span>
+                  <span>Total remises</span><span>− {fmt(remiseS + remiseM + remiseFideliteEur + remiseFactureEur)}</span>
                 </div>
               )}
               <div className="flex justify-between font-bold text-emerald-600 text-base pt-2 border-t border-ink-200">
@@ -464,6 +509,39 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
           </div>
           <p className="text-xs text-ink-300 mt-3">{profil?.mention_tva || "TVA non applicable — Art. 293 B du CGI"}</p>
         </div>
+
+        {facture.statut === "a_envoyer" && (
+          <div className="card card-inner mb-4">
+            <p className="font-semibold text-ink-900 text-sm mb-1">Remise sur la facture</p>
+            <p className="text-xs text-ink-400 mb-3">À accorder avant l&apos;envoi : elle apparaît sur le PDF et dans le Factur-X, et réduit le total à payer.</p>
+            <div className="flex rounded-xl border border-ink-200 overflow-hidden">
+              <button onClick={() => { setRemiseType("pct"); setRemiseValeur(""); }}
+                className={cn("px-3 py-2 text-xs font-semibold transition-colors", remiseType === "pct" ? "bg-ink-900 text-volt-400" : "bg-white text-ink-500 hover:bg-ink-50")}>%</button>
+              <button onClick={() => { setRemiseType("eur"); setRemiseValeur(""); }}
+                className={cn("px-3 py-2 text-xs font-semibold transition-colors border-l border-ink-200", remiseType === "eur" ? "bg-ink-900 text-volt-400" : "bg-white text-ink-500 hover:bg-ink-50")}>€</button>
+              <input type="number" min="0" max={remiseType === "pct" ? 100 : baseRemise} step={remiseType === "pct" ? 0.5 : 1}
+                placeholder={remiseType === "pct" ? "Ex : 10" : "Ex : 50"}
+                value={remiseValeur} onChange={e => setRemiseValeur(e.target.value)}
+                className="flex-1 px-3 py-2 text-sm text-right bg-white border-l border-ink-200 focus:outline-none" />
+            </div>
+            {apercuRemise.montant > 0 && (
+              <p className="text-xs text-ink-500 mt-2">
+                Remise <span className="text-red-500 font-semibold">− {fmt(apercuRemise.montant)}</span> · total {fmt(baseRemise)} → <span className="font-semibold text-emerald-600">{fmt(apercuRemise.totalTtc)}</span>
+                {apercuRemise.totalTtc < totalAcomptes - 0.01 && <span className="text-red-500 ml-1">· inférieur aux acomptes déjà versés ({fmt(totalAcomptes)})</span>}
+              </p>
+            )}
+            <div className="flex gap-2 mt-3">
+              {remiseFactureEur > 0 && (
+                <button onClick={() => { void enregistrerRemise(true); }} disabled={savingRemise} className="btn-ghost flex-1 justify-center text-sm"><X size={13} /> Retirer la remise</button>
+              )}
+              <button onClick={() => { void enregistrerRemise(); }}
+                disabled={savingRemise || apercuRemise.montant <= 0 || (apercuRemise.montant === remiseFactureEur && remiseType === facture.remise_facture_type)}
+                className="btn-volt flex-1 justify-center text-sm">
+                <Save size={13} /> {savingRemise ? "Enregistrement…" : "Appliquer la remise"}
+              </button>
+            </div>
+          </div>
+        )}
 
         {conformite.length > 0 ? (
           <div className="card card-inner mb-4 border border-amber-200 bg-amber-50">
