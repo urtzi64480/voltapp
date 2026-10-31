@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import EnregistrerServiceWorker from "@/components/EnregistrerServiceWorker";
 
 export const metadata: Metadata = {
   title: "VoltApp — Gestion Électricien",
@@ -30,6 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="bg-ink-50 text-ink-900 antialiased">
         {children}
+        <EnregistrerServiceWorker />
       </body>
     </html>
   );

@@ -3,7 +3,7 @@
 ## Ordre d'exécution (base neuve)
 
 `001` → `002` → `003` → `004` → `006` → `007` → `008` → `009` → `010` → `011` → `012` (ordre alphabétique des fichiers de `migrations/`).
-Les numéros `005` n'existent pas dans l'historique d'origine (ancienne migration jamais versionnée) ; `003` est la reconstruction du schéma réellement utilisé par le code.
+Les migrations d'origine `003` (colonnes fournisseur de `devis_lignes`) et `005` (`image_url` des lignes) n'ont jamais été versionnées ; elles sont absorbées par le nouveau `003_reconstruction_schema.sql`, qui reconstruit le schéma réellement utilisé par le code.
 
 > **Base de production existante** : ne rien relancer à l'aveugle. Lancer d'abord l'audit ci-dessous. `003` et `012` sont de toute façon sans effet sur ce qui existe déjà (voir `tests/migrations.test.ts`).
 
@@ -22,3 +22,9 @@ Les numéros `005` n'existent pas dans l'historique d'origine (ancienne migratio
 ## Tests
 
 `npm test` rejoue toutes les migrations sur un vrai Postgres (PGlite, en mémoire, sans toucher à Supabase) et vérifie notamment que chaque table lue par le code existe.
+
+## Mode hors-ligne du suivi de chantier
+
+Aucune migration. `public/sw.js` (service worker, production uniquement) met en cache la coquille de la page `/plan/<client>/suivi` ;
+les modifications faites sans réseau (coches, temps, validation) sont gardées dans le navigateur (`localStorage`) puis rejouées en une
+écriture lecture-modification-écriture à la reconnexion (`src/lib/suivi-hors-ligne.ts`). Il faut avoir ouvert le suivi une fois avec du réseau.

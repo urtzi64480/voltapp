@@ -22,6 +22,14 @@ const nextConfig = {
         ],
       },
       {
+        // Le service worker doit toujours être revérifié (mise à jour immédiate des nouvelles versions).
+        source: "/sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Content-Type", value: "application/javascript; charset=utf-8" },
+        ],
+      },
+      {
         source: "/manifest.json",
         headers: [
           { key: "Cache-Control", value: "no-store, must-revalidate" },
