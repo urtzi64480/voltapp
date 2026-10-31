@@ -11,6 +11,7 @@
 // Chaque écriture relit la valeur en base puis applique SEULEMENT la modification demandée (lecture-modification-écriture) :
 // deux appareils (téléphone sur le chantier, ordinateur au bureau) ne s'écrasent donc pas mutuellement.
 import { supabase } from "@/lib/supabase";
+import { lireControles, estVide, type Controles } from "@/lib/checklist-fin-chantier";
 
 export type Coches = Record<string, string>; // clé de coche → date ISO de réalisation
 export type Minutes = Record<string, number>; // clé → minutes passées
@@ -25,9 +26,11 @@ export interface SuiviStocke {
   chantier: InfosChantier;
   temps: Minutes;
   tempsPostes: Minutes;
+  /** Contrôles de fin de chantier (checklist remise au client). Absent tant que rien n'a été choisi ni fait. */
+  controles?: Controles;
 }
 
-interface Brut { v: 1; coches?: Coches; chantier?: InfosChantier; temps?: Minutes; tempsPostes?: Minutes }
+interface Brut { v: 1; coches?: Coches; chantier?: InfosChantier; temps?: Minutes; tempsPostes?: Minutes; controles?: Controles }
 
 const minutesPropres = (brut: unknown): Minutes => {
   const propre: Minutes = {};
@@ -55,7 +58,10 @@ export function lireSuivi(raw: string | null | undefined): SuiviStocke {
       if (typeof c.valide_le === "string" && c.valide_le) chantier.valide_le = c.valide_le;
       if (typeof c.devis_id === "string" && c.devis_id) chantier.devis_id = c.devis_id;
     }
-    return { coches, chantier, temps: minutesPropres(parsed.temps), tempsPostes: minutesPropres(parsed.tempsPostes) };
+    const suivi: SuiviStocke = { coches, chantier, temps: minutesPropres(parsed.temps), tempsPostes: minutesPropres(parsed.tempsPostes) };
+    const controles = lireControles((parsed as Record<string, unknown>).controles);
+    if (controles) suivi.controles = controles;
+    return suivi;
   } catch { return vide; }
 }
 
@@ -67,6 +73,7 @@ const serialiser = (s: SuiviStocke): string | null => {
   if (s.chantier.valide_le || s.chantier.devis_id) brut.chantier = s.chantier;
   if (Object.keys(s.temps).length > 0) brut.temps = s.temps;
   if (Object.keys(s.tempsPostes).length > 0) brut.tempsPostes = s.tempsPostes;
+  if (s.controles && !estVide(s.controles)) brut.controles = s.controles;
   return Object.keys(brut).length === 1 ? null : JSON.stringify(brut);
 };
 

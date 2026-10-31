@@ -11,7 +11,7 @@ const VERSION = "v1";
 const CACHE_STATIC = "voltapp-static-" + VERSION;
 const CACHE_PAGES = "voltapp-pages-" + VERSION;
 
-const estPageSuivi = (url) => /^\/(plan|devis)\/[^/]+\/suivi\/?$/.test(url.pathname);
+const estPageSuivi = (url) => /^\/(plan|devis)\/[^/]+\/(suivi|fin-chantier)\/?$/.test(url.pathname);
 
 self.addEventListener("install", () => { self.skipWaiting(); });
 
