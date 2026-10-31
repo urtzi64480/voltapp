@@ -157,7 +157,7 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string, ima
   doc.text("DEVIS", textX, 16);
   doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(200, 200, 190);
   doc.text(`N° ${devis.numero}`, textX, 23);
-  doc.text(`Émis le ${fmtDate(devis.date_emission)}${devis.date_validite ? ` · Valable jusqu'au ${fmtDate(devis.date_validite)}` : ""}`, textX, 28);
+  doc.text(`Émis le ${fmtDate(devis.date_emission ?? devis.created_at)}${devis.date_validite ? ` · Valable jusqu'au ${fmtDate(devis.date_validite)}` : ""}`, textX, 28);
 
   const artisan = [
     profil.nom_entreprise || `${profil.prenom ?? ""} ${profil.nom ?? ""}`.trim(),

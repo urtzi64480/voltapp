@@ -54,6 +54,7 @@ export async function middleware(request: NextRequest) {
     estSousChemin("/api/public") ||
     estSousChemin("/images") ||
     estSousChemin("/carte-nfc") ||
+    pathname === "/sw.js" ||
     pathname === "/icon-192.png" ||
     pathname === "/icon-512.png" ||
     pathname === "/robots.txt" ||

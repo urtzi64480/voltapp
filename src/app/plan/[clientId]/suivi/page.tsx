@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
-  ArrowLeft, Check, ChevronDown, ChevronRight, AlertTriangle, Copy, RotateCcw, RefreshCw, LayoutTemplate, ListChecks, BookOpen, Search, X, Info,
+  ArrowLeft, Check, ChevronDown, ChevronRight, AlertTriangle, Copy, RotateCcw, RefreshCw, LayoutTemplate, ListChecks, BookOpen, Search, X, Info, WifiOff,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { Client, Projet } from "@/types";
@@ -23,9 +23,12 @@ import {
   SuiviPlan, CircuitSuivi, ElementSuivi, GuideCommande, CategorieElement, Progression,
 } from "@/lib/suivi-realisation";
 import {
-  Coches, Minutes, InfosChantier, SuiviStocke, lireSuivi, modifierSuivi, relireSuivi, retirerCoches, formaterMinutes,
-  definirChantier, definirTemps,
+  Coches, Minutes, InfosChantier, SuiviStocke, lireSuivi, relireSuivi, formaterMinutes,
 } from "@/lib/suivi-persistance";
+import {
+  appliquerFile, ecrireChantier, ecrireCoches, ecrireTemps, enLigne, estErreurReseau, lireProjetsMemorises, memoriserProjets, nbEnAttente,
+  synchroniser, type ResultatEcritureSuivi,
+} from "@/lib/suivi-hors-ligne";
 import { calculerBilan, HeuresDevis } from "@/lib/suivi-bilan";
 import { CarteChantier, CarteBilan, SaisieTemps, DevisResume } from "@/components/plan/SuiviChantier";
 import { modifierProjet } from "@/lib/projets";
@@ -339,19 +342,28 @@ export default function SuiviPage() {
   const params = useParams();
   const clientId = params.clientId as string;
   const { projets, projet, loading, changerProjet, recharger } = useProjets(clientId);
+  // Copie locale : mémorisée à chaque chargement réussi, utilisée seulement si les projets ne peuvent pas être lus (hors ligne).
+  useEffect(() => { if (!loading && projets.length > 0) memoriserProjets(clientId, projets); }, [loading, projets, clientId]);
+  const [idHorsLigne, setIdHorsLigne] = useState<string | null>(null);
   if (loading) return <Shell><div className="flex items-center justify-center h-64 text-ink-400">Chargement…</div></Shell>;
-  if (!projet) return <Shell><div className="p-8 text-center text-ink-500">Impossible de charger le projet de ce client.</div></Shell>;
+  if (!projet) {
+    const copie = lireProjetsMemorises(clientId);
+    if (!copie) return <Shell><div className="p-8 text-center text-ink-500">Impossible de charger le projet de ce client.{!enLigne() && " Tu es hors ligne : ouvre ce suivi une première fois avec du réseau pour pouvoir le retrouver ensuite sans connexion."}</div></Shell>;
+    const voulu = idHorsLigne ?? (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("projet") : null);
+    const choisi = copie.projets.find(x => x.id === voulu) ?? copie.projets[0];
+    return <Suivi key={choisi.id} clientId={clientId} projet={choisi} projets={copie.projets} copieLocale={copie.le} onSelect={setIdHorsLigne} onChanged={async () => { await recharger(); }} />;
+  }
   return <Suivi key={projet.id} clientId={clientId} projet={projet} projets={projets} onSelect={changerProjet} onChanged={async next => { await recharger(next); }} />;
 }
 
 type Calcul = { vide: true } | { erreur: string } | { suivi: SuiviPlan };
 
-function Suivi({ clientId, projet, projets, onSelect, onChanged }: { clientId: string; projet: Projet; projets: Projet[]; onSelect: (id: string) => void; onChanged: (nextId: string | null) => Promise<void> | void }) {
+function Suivi({ clientId, projet, projets, onSelect, onChanged, copieLocale }: { clientId: string; projet: Projet; projets: Projet[]; onSelect: (id: string) => void; onChanged: (nextId: string | null) => Promise<void> | void; copieLocale?: string }) {
   const [client, setClient] = useState<Client | null>(null);
-  const [coches, setCoches] = useState<Coches>(() => lireSuivi(projet.suivi_realisation).coches);
-  const [chantier, setChantier] = useState<InfosChantier>(() => lireSuivi(projet.suivi_realisation).chantier);
-  const [temps, setTemps] = useState<Minutes>(() => lireSuivi(projet.suivi_realisation).temps);
-  const [tempsPostes, setTempsPostes] = useState<Minutes>(() => lireSuivi(projet.suivi_realisation).tempsPostes);
+  const [coches, setCoches] = useState<Coches>(() => appliquerFile(lireSuivi(projet.suivi_realisation), projet.id).coches);
+  const [chantier, setChantier] = useState<InfosChantier>(() => appliquerFile(lireSuivi(projet.suivi_realisation), projet.id).chantier);
+  const [temps, setTemps] = useState<Minutes>(() => appliquerFile(lireSuivi(projet.suivi_realisation), projet.id).temps);
+  const [tempsPostes, setTempsPostes] = useState<Minutes>(() => appliquerFile(lireSuivi(projet.suivi_realisation), projet.id).tempsPostes);
   const [nomChantier, setNomChantier] = useState(projet.nom);
   const [devisListe, setDevisListe] = useState<DevisResume[]>([]);
   const [heuresDevis, setHeuresDevis] = useState<HeuresDevis[] | null>(null);
@@ -367,6 +379,8 @@ function Suivi({ clientId, projet, projets, onSelect, onChanged }: { clientId: s
   const [aReinitialiser, setAReinitialiser] = useState<CircuitSuivi | null>(null);
   const [copie, setCopie] = useState(false);
   const [enCours, setEnCours] = useState(false);
+  const [attente, setAttente] = useState<number>(() => nbEnAttente(projet.id));
+  const [horsLigne, setHorsLigne] = useState<boolean>(() => !enLigne());
   const pendingRef = useRef(0);
   const fileRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -376,8 +390,9 @@ function Suivi({ clientId, projet, projets, onSelect, onChanged }: { clientId: s
 
   // Devis du client (pour lier le chantier à son devis).
   useEffect(() => {
-    supabase.from("devis").select("id, numero, objet, statut, date_emission").eq("client_id", clientId).order("created_at", { ascending: false })
-      .then(({ data }) => setDevisListe((data ?? []) as DevisResume[]));
+    // La table devis n'a pas de colonne date_emission : on lit created_at.
+    supabase.from("devis").select("id, numero, objet, statut, created_at").eq("client_id", clientId).order("created_at", { ascending: false })
+      .then(({ data }) => setDevisListe(((data ?? []) as unknown as (DevisResume & { created_at?: string })[]).map(d => ({ ...d, date_emission: d.created_at ?? null }))));
   }, [clientId]);
 
   // Heures de main d'œuvre chiffrées dans le devis choisi (lignes en heures, par poste). Jamais bloquant : en cas d'échec, simple message.
@@ -427,20 +442,25 @@ function Suivi({ clientId, projet, projets, onSelect, onChanged }: { clientId: s
   }, []);
 
   // Applique un état relu en base (coches, chantier, temps) — seulement quand plus aucune écriture n'est en attente.
-  const appliquerRelu = useCallback((r: SuiviStocke) => {
+  // Les modifications encore en file (hors ligne) restent appliquées par-dessus l'état relu.
+  const appliquerRelu = useCallback((brut: SuiviStocke) => {
+    const r = appliquerFile(brut, projet.id);
     setCoches(r.coches); setChantier(r.chantier); setTemps(r.temps); setTempsPostes(r.tempsPostes);
-  }, []);
+  }, [projet.id]);
 
   // Toute modification (coche, temps, validation…) : mise à jour immédiate à l'écran, puis écriture en file (une à la fois)
   // qui relit la base avant d'écrire — deux appareils ne s'écrasent pas.
-  const enregistrer = useCallback((optimiste: () => void, ecrire: () => ReturnType<typeof modifierSuivi>) => {
+  const enregistrer = useCallback((optimiste: () => void, ecrire: () => Promise<ResultatEcritureSuivi>) => {
     optimiste();
     pendingRef.current += 1;
     fileRef.current = fileRef.current.then(async () => {
       const res = await ecrire();
       pendingRef.current -= 1;
-      if (res.ok) {
-        setErreur(null);
+      if (res.ok && "enAttente" in res) {
+        // Hors ligne : la modification est gardée sur l'appareil, l'affichage (déjà à jour) ne change pas.
+        setErreur(null); setAttente(res.nbEnAttente);
+      } else if (res.ok) {
+        setErreur(null); setAttente(nbEnAttente(projet.id));
         if (pendingRef.current === 0) appliquerRelu(res.suivi);
       } else {
         signalerEchec(res.message, res.colonneAbsente);
@@ -459,9 +479,7 @@ function Suivi({ clientId, projet, projets, onSelect, onChanged }: { clientId: s
         cles.forEach(k => { if (fait) { if (!n[k]) n[k] = dateIso; } else delete n[k]; });
         return n;
       }),
-      () => modifierSuivi(projet.id, st => {
-        cles.forEach(k => { if (fait) { if (!st.coches[k]) st.coches[k] = dateIso; } else delete st.coches[k]; });
-      }),
+      () => ecrireCoches(projet.id, cles, fait, dateIso),
     );
   }, [projet.id, enregistrer]);
 
@@ -471,7 +489,7 @@ function Suivi({ clientId, projet, projets, onSelect, onChanged }: { clientId: s
     const setter = cible === "temps" ? setTemps : setTempsPostes;
     enregistrer(
       () => setter(prev => { const n = { ...prev }; if (minutes > 0) n[cle] = Math.round(minutes); else delete n[cle]; return n; }),
-      () => definirTemps(projet.id, cible, cle, minutes),
+      () => ecrireTemps(projet.id, cible, cle, minutes),
     );
   }, [projet.id, enregistrer]);
 
@@ -483,7 +501,7 @@ function Suivi({ clientId, projet, projets, onSelect, onChanged }: { clientId: s
         if (!n.devis_id) delete n.devis_id;
         return n;
       }),
-      () => definirChantier(projet.id, patch),
+      () => ecrireChantier(projet.id, patch),
     );
   }, [projet.id, enregistrer]);
 
@@ -502,6 +520,26 @@ function Suivi({ clientId, projet, projets, onSelect, onChanged }: { clientId: s
     setEnCours(false);
   }, [projet.id, appliquerRelu]);
 
+  // Envoie les modifications faites hors ligne (une seule écriture, qui relit la base d'abord).
+  const envoyerFile = useCallback(async () => {
+    if (pendingRef.current > 0 || nbEnAttente(projet.id) === 0) return;
+    setEnCours(true);
+    const res = await synchroniser(projet.id);
+    if (res?.ok) { setErreur(null); if (pendingRef.current === 0) appliquerRelu(res.suivi); }
+    else if (res && !estErreurReseau(res.message)) signalerEchec(res.message, res.colonneAbsente);
+    setAttente(nbEnAttente(projet.id));
+    setEnCours(false);
+  }, [projet.id, appliquerRelu, signalerEchec]);
+
+  useEffect(() => {
+    void envoyerFile(); // modifications laissées en file lors d'une visite précédente
+    const enLigneAgain = () => { setHorsLigne(false); void envoyerFile(); };
+    const coupe = () => setHorsLigne(true);
+    window.addEventListener("online", enLigneAgain);
+    window.addEventListener("offline", coupe);
+    return () => { window.removeEventListener("online", enLigneAgain); window.removeEventListener("offline", coupe); };
+  }, [envoyerFile]);
+
   // Retour sur l'onglet (ex. après avoir coché depuis un autre appareil) : coches relues.
   useEffect(() => {
     const onVisible = () => { if (document.visibilityState === "visible") void actualiser(); };
@@ -509,17 +547,16 @@ function Suivi({ clientId, projet, projets, onSelect, onChanged }: { clientId: s
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [actualiser]);
 
-  const reinitialiser = async () => {
+  const reinitialiser = () => {
     if (!aReinitialiser) return;
-    const res = await retirerCoches(projet.id, clesDuCircuit(aReinitialiser));
-    if (res.ok) { setCoches(res.coches); setErreur(null); } else signalerEchec(res.message, res.colonneAbsente);
+    const cles = clesDuCircuit(aReinitialiser);
     setAReinitialiser(null);
+    modifier(cles, false);
   };
 
   const orphelines = useMemo(() => (suivi ? cochesOrphelines(suivi, coches) : []), [suivi, coches]);
-  const nettoyer = async () => {
-    const res = await retirerCoches(projet.id, orphelines);
-    if (res.ok) { setCoches(res.coches); setErreur(null); } else signalerEchec(res.message, res.colonneAbsente);
+  const nettoyer = () => {
+    modifier(orphelines, false);
   };
 
   const global = suivi ? progressionPlan(suivi, coches) : { fait: 0, total: 0, pct: 0 };
@@ -582,6 +619,19 @@ function Suivi({ clientId, projet, projets, onSelect, onChanged }: { clientId: s
           <p className="text-[11px] text-ink-400 mt-2">Choisis le projet à suivre. « Renommer » donne un nom clair à chaque projet, y compris ceux qui existent déjà (« Logement principal » par exemple) ; « Nouveau » en crée un autre pour ce client.</p>
         </div>
 
+        {(horsLigne || attente > 0 || copieLocale) && (
+          <div className="card card-inner border-amber-300 bg-amber-50 mb-5 flex flex-wrap items-center gap-2 text-sm text-amber-900" role="status">
+            <WifiOff size={16} className="shrink-0" />
+            <span className="flex-1 min-w-0">
+              {horsLigne ? "Hors ligne" : "Connexion rétablie"}
+              {attente > 0 ? ` — ${attente} modification${attente > 1 ? "s" : ""} enregistrée${attente > 1 ? "s" : ""} sur cet appareil, envoyée${attente > 1 ? "s" : ""} dès que le réseau revient.` : horsLigne ? " — les modifications seront gardées sur cet appareil." : "."}
+              {copieLocale && ` Plan affiché d'après la copie du ${dateCourte(copieLocale)}.`}
+            </span>
+            {attente > 0 && !horsLigne && (
+              <button type="button" onClick={() => void envoyerFile()} className="btn-ghost !py-1.5 !text-xs">Envoyer maintenant</button>
+            )}
+          </div>
+        )}
         {colonneAbsente && (
           <div className="card card-inner border-red-300 bg-red-50 mb-5">
             <p className="font-semibold text-red-800 text-sm">Une étape de mise en place est nécessaire avant de pouvoir enregistrer les coches</p>

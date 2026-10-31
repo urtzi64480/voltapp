@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, Users, FileText, BookOpen,
   TrendingUp, Settings, Zap, Menu, X, Receipt, CalendarDays, AlertTriangle, ClipboardList, Inbox, CalendarCheck, Camera,
-  LayoutTemplate,
+  LayoutTemplate, PiggyBank,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { cn, dateLocale } from "@/lib/utils";
@@ -24,6 +24,7 @@ const NAV = [
   { href: "/plan",          label: "Plans interventions", icon: LayoutTemplate },
   { href: "/realisations",  label: "Réalisations",  icon: Camera },
   { href: "/crm",           label: "CRM",           icon: TrendingUp },
+  { href: "/rentabilite",   label: "Rentabilité",   icon: PiggyBank },
   { href: "/parametres",    label: "Paramètres",    icon: Settings },
 ];
 
