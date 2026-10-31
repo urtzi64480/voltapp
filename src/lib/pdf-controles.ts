@@ -10,6 +10,7 @@ export interface InfosPdfControles {
   objet?: string | null;
   client?: { nom: string; prenom?: string | null; adresse?: string | null } | null;
   dateChantier?: string | null; // AAAA-MM-JJ (validation du chantier) ; sinon date du jour
+  contexte?: string;            // texte du devis (contexteDevis) : détermine les contrôles proposés par défaut
 }
 
 export const nomFichierControles = (numero: string) =>
@@ -53,7 +54,7 @@ export async function genPDFControlesBlob(controles: Controles | undefined, prof
   if (infos.client?.adresse) { doc.text(infos.client.adresse, M, y); y += 5; }
   if (infos.objet) { doc.text(`Objet : ${infos.objet}`, M, y, { maxWidth: W - 2 * M }); y += 5; }
 
-  const remis = controlesRemis(controles);
+  const remis = controlesRemis(controles, infos.contexte ?? "");
   autoTable(doc, {
     startY: y + 4,
     head: [["Contrôle réalisé", "Catégorie", "Mesure", "Date"]],

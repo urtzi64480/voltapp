@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  CATALOGUE_CONTROLES, appliquerActionControles, controlesAffiches, controlesRemis, controlesRestants, controlesVides, estVide, idsRetenus, lireControles,
+  contexteDevis, idsProposes, CATALOGUE_CONTROLES, appliquerActionControles, controlesAffiches, controlesRemis, controlesRestants, controlesVides, estVide, idsRetenus, lireControles,
 } from "@/lib/checklist-fin-chantier";
 import { lireSuivi } from "@/lib/suivi-persistance";
 import { appliquerOperation } from "@/lib/suivi-hors-ligne";
@@ -14,20 +14,35 @@ describe("checklist fin de chantier", () => {
     expect(new Set(ids).size).toBe(ids.length);
     CATALOGUE_CONTROLES.forEach(c => expect(`${c.libelle} ${c.aide ?? ""}`).not.toMatch(/\d+\s*(Ω|ohm|mA|MΩ)/i));
   });
-  it("sans sélection : propositions par défaut", () => {
-    expect(idsRetenus(undefined)).toEqual(CATALOGUE_CONTROLES.filter(c => c.parDefaut).map(c => c.id));
+  it("sans sélection : propositions tirées du devis", () => {
+    const sdb = contexteDevis(["Rénovation salle de bain", "Prise 16A + terre", "Détecteur de fumée DAAF", "Pose de spots LED"]);
+    const r = idsRetenus(undefined, sdb);
+    ["liaison-equipotentielle", "essai-prises", "detecteur-fumee", "essai-luminaires", "visuel-general", "nettoyage"].forEach(id => expect(r).toContain(id));
+    ["vmc", "borne-irve", "parafoudre", "motorisations"].forEach(id => expect(r).not.toContain(id));
+    const irve = idsRetenus(undefined, contexteDevis(["Borne de recharge 7 kW", "Disjoncteur dédié 32A"]));
+    expect(irve).toContain("borne-irve"); expect(irve).not.toContain("liaison-equipotentielle");
+  });
+  it("accents et pluriels ignorés ; « reprise » ne déclenche pas « prise »", () => {
+    expect(idsProposes(contexteDevis(["Installation d'une VMC hygroréglable", "Éclairage"]))).toEqual(expect.arrayContaining(["vmc", "essai-luminaires"]));
+    expect(idsProposes(contexteDevis(["Reprise de maçonnerie", "Motorisation de volet roulant"]))).not.toContain("essai-prises");
+  });
+  it("devis sans rien de reconnaissable : repli sur les contrôles classiques", () => {
+    const r = idsRetenus(undefined, contexteDevis(["Forfait déplacement"]));
+    expect(r).toEqual(expect.arrayContaining(["visuel-general", "essai-dd", "essai-prises", "resistance-terre"]));
+    expect(idsRetenus(undefined)).toEqual(r);
   });
   it("retenir / écarter part des défauts", () => {
     const c = controlesVides();
-    appliquerActionControles(c, { action: "retenir", id: "isolement", retenu: true });
-    appliquerActionControles(c, { action: "retenir", id: "nettoyage", retenu: false });
+    const avant = idsRetenus(c);
+    appliquerActionControles(c, { action: "retenir", id: "isolement", retenu: true, ids: [...avant, "isolement"] });
+    appliquerActionControles(c, { action: "retenir", id: "nettoyage", retenu: false, ids: [...avant, "isolement"].filter(i => i !== "nettoyage") });
     const r = idsRetenus(c);
     expect(r).toContain("isolement"); expect(r).not.toContain("nettoyage"); expect(r).toContain("visuel-general");
   });
   it("seuls les contrôles retenus ET faits sont remis", () => {
     const c = controlesVides();
     appliquerActionControles(c, { action: "fait", id: "visuel-general", fait: true, dateIso: "2026-10-01T10:00:00Z" });
-    appliquerActionControles(c, { action: "fait", id: "isolement", fait: true, dateIso: "2026-10-01T10:00:00Z" }); // fait mais non retenu
+    appliquerActionControles(c, { action: "fait", id: "vmc", fait: true, dateIso: "2026-10-01T10:00:00Z" }); // fait mais non retenu (rien sur la VMC dans le devis)
     expect(controlesRemis(c).map(x => x.id)).toEqual(["visuel-general"]);
     expect(controlesRestants(c).length).toBe(idsRetenus(c).length - 1);
   });
@@ -52,7 +67,7 @@ describe("checklist fin de chantier", () => {
   });
   it("perso ajouté après une sélection explicite reste retenu", () => {
     const c = controlesVides();
-    appliquerActionControles(c, { action: "retenir", id: "isolement", retenu: true });
+    appliquerActionControles(c, { action: "retenir", id: "isolement", retenu: true, ids: [...idsRetenus(c), "isolement"] });
     appliquerActionControles(c, { action: "perso+", id: "p2", libelle: "X" });
     expect(idsRetenus(c)).toContain("p2");
   });
