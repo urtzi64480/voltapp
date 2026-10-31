@@ -18,7 +18,7 @@ interface Acompte {
   created_at: string;
 }
 
-async function loadLogoBase64(logoUrl?: string | null): Promise<string | null> {
+export async function loadLogoBase64(logoUrl?: string | null): Promise<string | null> {
   const url = logoUrl ?? null;
   if (!url) return null;
   try {

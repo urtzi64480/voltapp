@@ -181,6 +181,7 @@ function Suivi({ devis, colonneAbsente: absenteInitial, copieLocale }: { devis: 
             <button type="button" onClick={() => void actualiser()} className="btn-ghost !py-2" title="Relire l'enregistrement">
               <RefreshCw size={14} className={enCours ? "animate-spin" : ""} /> Actualiser
             </button>
+            <Link href={`/devis/${devis.id}/fin-chantier`} className="btn-ghost !py-2"><Check size={14} /> Fin de chantier</Link>
             <Link href={`/devis/${devis.id}/rentabilite`} className="btn-ghost !py-2"><Euro size={14} /> Rentabilité</Link>
           </div>
         </div>

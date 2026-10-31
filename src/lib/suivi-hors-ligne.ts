@@ -11,11 +11,13 @@
 import { lireStockage, ecrireStockage } from "@/lib/safe-storage";
 import { CibleSuivi, Coches, InfosChantier, modifierSuiviCible, ResultatSuivi, SuiviStocke } from "@/lib/suivi-persistance";
 import type { Projet } from "@/types";
+import { ActionControles, appliquerActionControles, controlesVides, copierControles, estVide } from "@/lib/checklist-fin-chantier";
 
 export type OperationSuivi =
   | { type: "coches"; cles: string[]; fait: boolean; dateIso: string }
   | { type: "temps"; cible: "temps" | "tempsPostes"; cle: string; minutes: number }
-  | { type: "chantier"; patch: InfosChantier };
+  | { type: "chantier"; patch: InfosChantier }
+  | { type: "controles"; action: ActionControles };
 
 /** Applique une opération sur un suivi (même logique que suivi-persistance : coches, temps, chantier). */
 export function appliquerOperation(s: SuiviStocke, op: OperationSuivi): void {
@@ -23,6 +25,10 @@ export function appliquerOperation(s: SuiviStocke, op: OperationSuivi): void {
     op.cles.forEach(k => { if (op.fait) { if (!s.coches[k]) s.coches[k] = op.dateIso; } else delete s.coches[k]; });
   } else if (op.type === "temps") {
     if (op.minutes > 0) s[op.cible][op.cle] = Math.round(op.minutes); else delete s[op.cible][op.cle];
+  } else if (op.type === "controles") {
+    const c = s.controles ?? controlesVides();
+    appliquerActionControles(c, op.action);
+    if (estVide(c)) delete s.controles; else s.controles = c;
   } else {
     s.chantier = { ...s.chantier, ...op.patch };
     if (!s.chantier.valide_le) delete s.chantier.valide_le;
@@ -49,6 +55,10 @@ function operationValide(o: unknown): o is OperationSuivi {
   if (x.type === "coches") return Array.isArray(x.cles) && x.cles.every(c => typeof c === "string") && typeof x.fait === "boolean" && typeof x.dateIso === "string";
   if (x.type === "temps") return (x.cible === "temps" || x.cible === "tempsPostes") && typeof x.cle === "string" && typeof x.minutes === "number" && Number.isFinite(x.minutes);
   if (x.type === "chantier") return !!x.patch && typeof x.patch === "object";
+  if (x.type === "controles") {
+    const a = x.action as Record<string, unknown> | undefined;
+    return !!a && typeof a === "object" && ["retenir", "fait", "valeur", "perso+", "perso-"].includes(a.action as string) && typeof a.id === "string";
+  }
   return false;
 }
 
@@ -135,12 +145,16 @@ export const ecrireCoches = (projetId: string, cles: string[], fait: boolean, da
   ecrireOuMettreEnFile(projetId, { type: "coches", cles, fait, dateIso });
 export const ecrireTemps = (projetId: string, cible: "temps" | "tempsPostes", cle: string, minutes: number) =>
   ecrireOuMettreEnFile(projetId, { type: "temps", cible, cle, minutes });
+export const ecrireControles = (projetId: string, action: ActionControles) =>
+  ecrireOuMettreEnFile(projetId, { type: "controles", action });
 export const ecrireChantier = (projetId: string, patch: InfosChantier) =>
   ecrireOuMettreEnFile(projetId, { type: "chantier", patch });
 
 /** Coches telles qu'elles seront après la file (pour l'affichage à partir d'un état relu avant la coupure). */
 export function appliquerFile(s: SuiviStocke, projetId: string): SuiviStocke {
   const copie: SuiviStocke = { coches: { ...s.coches } as Coches, chantier: { ...s.chantier }, temps: { ...s.temps }, tempsPostes: { ...s.tempsPostes } };
+  const ctl = copierControles(s.controles);
+  if (ctl) copie.controles = ctl;
   lireFile(projetId).forEach(op => appliquerOperation(copie, op));
   return copie;
 }
