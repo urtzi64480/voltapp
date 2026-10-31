@@ -102,7 +102,7 @@ function ApercuDocument({
           <p className="text-volt-400 font-bold text-xl tracking-wide">DEVIS</p>
           <p className="text-ink-400 text-xs mt-1">N° {devis.numero}</p>
           <p className="text-ink-400 text-xs">
-            Émis le {fmtDate(devis.date_emission)}
+            Émis le {fmtDate(devis.date_emission ?? devis.created_at)}
             {devis.date_validite ? ` · Valable jusqu'au ${fmtDate(devis.date_validite)}` : ""}
           </p>
         </div>
@@ -776,7 +776,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
             <div className="card card-inner mb-4 flex flex-wrap gap-4 text-sm">
               {client && <div><p className="label">Client</p><p className="font-semibold">{client.prenom ? `${client.prenom} ${client.nom}` : client.nom}</p></div>}
               {devis.objet && <div><p className="label">Objet</p><p>{devis.objet}</p></div>}
-              <div><p className="label">Date</p><p>{fmtDate(devis.date_emission)}</p></div>
+              <div><p className="label">Date</p><p>{fmtDate(devis.date_emission ?? devis.created_at)}</p></div>
               {devis.date_validite && <div><p className="label">Validité</p><p>{fmtDate(devis.date_validite)}</p></div>}
               {apporteurActuel && (
                 <div><p className="label">Apporteur <span className="text-ink-300">(interne)</span></p><p className="text-ink-600">{apporteurActuel.nom}</p></div>

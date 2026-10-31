@@ -459,7 +459,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                       <FileText size={15} className="text-ink-400 shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-sm">{d.numero}</p>
-                        <p className="text-xs text-ink-400 truncate">{d.objet ? `${d.objet} · ` : ""}{fmtDate(d.date_emission)}</p>
+                        <p className="text-xs text-ink-400 truncate">{d.objet ? `${d.objet} · ` : ""}{fmtDate(d.date_emission ?? d.created_at)}</p>
                       </div>
                       <span className={cn("badge shrink-0", STATUT_COLORS[d.statut])}>{STATUT_LABELS[d.statut]}</span>
                       <span className="font-bold text-volt-600 shrink-0">{fmt(d.total_ttc)}</span>

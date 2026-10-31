@@ -390,8 +390,9 @@ function Suivi({ clientId, projet, projets, onSelect, onChanged, copieLocale }: 
 
   // Devis du client (pour lier le chantier à son devis).
   useEffect(() => {
-    supabase.from("devis").select("id, numero, objet, statut, date_emission").eq("client_id", clientId).order("created_at", { ascending: false })
-      .then(({ data }) => setDevisListe((data ?? []) as DevisResume[]));
+    // La table devis n'a pas de colonne date_emission : on lit created_at.
+    supabase.from("devis").select("id, numero, objet, statut, created_at").eq("client_id", clientId).order("created_at", { ascending: false })
+      .then(({ data }) => setDevisListe(((data ?? []) as unknown as (DevisResume & { created_at?: string })[]).map(d => ({ ...d, date_emission: d.created_at ?? null }))));
   }, [clientId]);
 
   // Heures de main d'œuvre chiffrées dans le devis choisi (lignes en heures, par poste). Jamais bloquant : en cas d'échec, simple message.
