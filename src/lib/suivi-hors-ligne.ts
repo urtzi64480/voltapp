@@ -9,7 +9,7 @@
 // Rejouer deux fois la même opération donne le même résultat (dates de coche conservées, temps = valeur absolue).
 // Seules les erreurs RÉSEAU mettent en file : une vraie erreur serveur (colonne absente, droit refusé…) est remontée telle quelle.
 import { lireStockage, ecrireStockage } from "@/lib/safe-storage";
-import { Coches, InfosChantier, modifierSuivi, ResultatSuivi, SuiviStocke } from "@/lib/suivi-persistance";
+import { CibleSuivi, Coches, InfosChantier, modifierSuiviCible, ResultatSuivi, SuiviStocke } from "@/lib/suivi-persistance";
 import type { Projet } from "@/types";
 
 export type OperationSuivi =
@@ -29,6 +29,16 @@ export function appliquerOperation(s: SuiviStocke, op: OperationSuivi): void {
     if (!s.chantier.devis_id) delete s.chantier.devis_id;
   }
 }
+
+/**
+ * Clé d'un suivi : l'identifiant du projet (plan) tel quel, ou « devis:<id> » pour le suivi d'un devis (chantier sans plan).
+ * Les identifiants de projet sont des UUID : aucune collision possible avec le préfixe.
+ */
+export const cleSuiviDevis = (devisId: string) => `devis:${devisId}`;
+export function cibleDepuisCle(cle: string): CibleSuivi {
+  return cle.startsWith("devis:") ? { table: "devis", id: cle.slice(6) } : { table: "projets", id: cle };
+}
+const modifierSuivi = (cle: string, modif: (s: SuiviStocke) => void) => modifierSuiviCible(cibleDepuisCle(cle), modif);
 
 // ─── File d'attente (localStorage) ───────────────────────────────────────────────────────────────────────────
 const cleFile = (projetId: string) => `voltapp:suivi-file:${projetId}`;
@@ -154,5 +164,22 @@ export function lireProjetsMemorises(clientId: string): { le: string; projets: P
     if (typeof p.le !== "string" || !Array.isArray(p.projets) || p.projets.length === 0) return null;
     const projets = p.projets.filter((x): x is Projet => !!x && typeof x === "object" && typeof (x as Projet).id === "string");
     return projets.length > 0 ? { le: p.le, projets } : null;
+  } catch { return null; }
+}
+
+// ─── Copie locale d'un devis (ouverture de son suivi sans réseau) ────────────────────────────────────────────
+// Lecture seule, comme la copie des projets : les écritures passent toujours par la file.
+const cleDevis = (devisId: string) => `voltapp:suivi-devis:${devisId}`;
+
+export function memoriserDevis<T extends { id: string }>(devis: T): void {
+  ecrireStockage("local", cleDevis(devis.id), JSON.stringify({ le: new Date().toISOString(), devis }));
+}
+
+export function lireDevisMemorise<T extends { id: string }>(devisId: string): { le: string; devis: T } | null {
+  try {
+    const brut = lireStockage("local", cleDevis(devisId));
+    if (!brut) return null;
+    const p = JSON.parse(brut) as { le?: unknown; devis?: { id?: unknown } };
+    return typeof p.le === "string" && p.devis && p.devis.id === devisId ? { le: p.le, devis: p.devis as T } : null;
   } catch { return null; }
 }

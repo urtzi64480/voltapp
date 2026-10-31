@@ -39,6 +39,7 @@ describe("service worker", () => {
       sw.requete("https://app.test/devis", { mode: "navigate" }),
       sw.requete("https://app.test/api/public/demande"),
       sw.requete("https://app.test/plan/abc", { mode: "navigate" }),
+      sw.requete("https://app.test/devis/abc/rentabilite", { mode: "navigate" }),
     ]) expect(await sw.traiter(r), r.url).toBeUndefined();
     expect(sw.appels).toEqual([]);
   });
@@ -59,6 +60,15 @@ describe("service worker", () => {
     enLigne = false;
     expect(await sw.traiter(nav)).toBe(page);                       // copie du cache
     expect(await sw.traiter(sw.requete("https://app.test/plan/abc/suivi?projet=2", { mode: "navigate" }))).toBe(page); // autre ?projet= : même coquille
+  });
+
+  it("le suivi d'un devis est aussi disponible hors ligne", async () => {
+    let enLigne = true;
+    const page = rep();
+    const sw = monter(async () => { if (!enLigne) throw new TypeError("Failed to fetch"); return page; });
+    const nav = sw.requete("https://app.test/devis/d1/suivi", { mode: "navigate" });
+    await sw.traiter(nav); enLigne = false;
+    expect(await sw.traiter(nav)).toBe(page);
   });
 
   it("hors ligne sans copie : l'erreur réseau est laissée telle quelle (comportement habituel du navigateur)", async () => {

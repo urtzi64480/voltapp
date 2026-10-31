@@ -28,3 +28,9 @@ Les migrations d'origine `003` (colonnes fournisseur de `devis_lignes`) et `005`
 Aucune migration. `public/sw.js` (service worker, production uniquement) met en cache la coquille de la page `/plan/<client>/suivi` ;
 les modifications faites sans réseau (coches, temps, validation) sont gardées dans le navigateur (`localStorage`) puis rejouées en une
 écriture lecture-modification-écriture à la reconnexion (`src/lib/suivi-hors-ligne.ts`). Il faut avoir ouvert le suivi une fois avec du réseau.
+
+## Suivi de chantier d'un devis (migration 013)
+
+`013_devis_suivi_realisation.sql` ajoute `devis.suivi_realisation` : le suivi (étapes cochées, temps par poste, validation) est rattaché
+directement au devis, avec ou sans plan (`/devis/<id>/suivi`). Même format que `projets.suivi_realisation`. La page Rentabilité additionne
+le temps du devis et celui des plans qui lui sont rattachés.

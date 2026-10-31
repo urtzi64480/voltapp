@@ -11,7 +11,7 @@ import { attacherFournisseurs } from "@/lib/fournisseurs";
 import { colonnesFournisseur, colonnesImage, estLigneACompleter, nbLignesACompleter } from "@/lib/devis-lignes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro } from "lucide-react";
+import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro, ListChecks } from "lucide-react";
 
 type PrestationExt = Prestation & { est_kit?: boolean; kit_description?: string | null };
 type Mode = "view" | "edit";
@@ -764,6 +764,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
           <span className={cn("badge", STATUT_COLORS[devis.statut])}>{STATUT_LABELS[devis.statut]}</span>
           {/* Rentabilité déplacée sur sa propre page (jamais affichée dans le flux client —
               aperçu/signature) : accès direct pour Ben uniquement, en un clic. */}
+          <Link href={`/devis/${id}/suivi`} className="btn-ghost !px-2.5 !py-2 text-ink-400 hover:text-volt-600" title="Suivi de chantier (avancement, heures prévues / réelles)"><ListChecks size={16} /></Link>
           <Link href={`/devis/${id}/rentabilite`} className="btn-ghost !px-2.5 !py-2 text-ink-400 hover:text-volt-600" title="Rentabilité (privé)"><Euro size={16} /></Link>
           <button onClick={() => setConfirmDelete(true)} className="btn-ghost !px-2.5 !py-2 text-red-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={16} /></button>
           {peutModifier && mode === "view" && (
