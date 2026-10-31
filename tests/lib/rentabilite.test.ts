@@ -110,3 +110,29 @@ describe("grouperParType", () => {
   });
   it("liste vide → []", () => { expect(grouperParType([])).toEqual([]); });
 });
+
+import { partCouverte, proratiser } from "@/lib/rentabilite";
+describe("source de l'analyse (devis / factures émises / payées)", () => {
+  const fac = (statut: string, ttc: number) => ({ devis_id: "d", statut, total_ttc: ttc });
+  it("devis : seulement les signés", () => {
+    expect(partCouverte("devis", "signe", 100, [])).toBe(1);
+    expect(partCouverte("devis", "envoye", 100, [fac("payee", 100)])).toBeNull();
+  });
+  it("émises : exclut « à envoyer », compte payée/relance/impayée", () => {
+    expect(partCouverte("emises", "signe", 100, [fac("a_envoyer", 100)])).toBeNull();
+    expect(partCouverte("emises", "signe", 100, [fac("envoyee", 30), fac("payee", 20)])).toBe(0.5);
+    expect(partCouverte("emises", "signe", 100, [fac("impayee", 100)])).toBe(1);
+  });
+  it("payées : seulement le statut payee, plafonné à 100 %", () => {
+    expect(partCouverte("payees", "signe", 100, [fac("envoyee", 100)])).toBeNull();
+    expect(partCouverte("payees", "signe", 100, [fac("payee", 40)])).toBe(0.4);
+    expect(partCouverte("payees", "signe", 100, [fac("payee", 150)])).toBe(1);
+    expect(partCouverte("payees", "signe", 0, [fac("payee", 10)])).toBe(1);
+  });
+  it("proratiser ramène CA, achats, charges et net ; garde les heures", () => {
+    const r = { id: "d", numero: "N", objet: "", type: "T", ca: 100, coutAchat: 20, cotisations: 10, impots: 0, net: 70, margePct: 70, lignesSansCout: 0, heuresEstimees: 5, heuresReelles: 6 };
+    const p = proratiser(r, 0.5);
+    expect([p.ca, p.coutAchat, p.cotisations, p.net, p.heuresEstimees, p.heuresReelles, p.margePct]).toEqual([50, 10, 5, 35, 5, 6, 70]);
+    expect(proratiser(r, 1)).toBe(r);
+  });
+});

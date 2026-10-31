@@ -9,11 +9,11 @@ import { supabase } from "@/lib/supabase";
 import { cn, fmt } from "@/lib/utils";
 import { formaterMinutes } from "@/lib/suivi-persistance";
 import {
-  analyserDevis, construirePrixAchatMap, grouperParType, minutesReelles, tauxDepuisProfil,
-  type InfoPrestation, type LigneRentab, type ResultatDevis,
+  analyserDevis, construirePrixAchatMap, grouperParType, minutesReelles, partCouverte, proratiser, tauxDepuisProfil,
+  type FactureRentab, type InfoPrestation, type SourceRentab, type LigneRentab, type ResultatDevis,
 } from "@/lib/rentabilite";
 
-interface DevisBrut { id: string; numero: string; objet: string | null; created_at: string; total_service: number; total_materiau: number; total_ttc: number; devis_lignes: LigneRentab[] | null }
+interface DevisBrut { id: string; statut: string; numero: string; objet: string | null; created_at: string; total_service: number; total_materiau: number; total_ttc: number; devis_lignes: LigneRentab[] | null }
 
 const couleurMarge = (p: number | null) => p == null ? "text-ink-400" : p < 0 ? "text-red-600" : p < 25 ? "text-amber-600" : "text-emerald-600";
 const heures = (h: number) => formaterMinutes(Math.round(h * 60));
@@ -22,7 +22,9 @@ export default function RentabilitePage() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
   const [tempsIndisponible, setTempsIndisponible] = useState(false);
-  const [resultats, setResultats] = useState<(ResultatDevis & { annee: string })[]>([]);
+  const [brut, setBrut] = useState<{ r: ResultatDevis; statut: string; ttc: number; factures: FactureRentab[]; annee: string }[]>([]);
+  const [source, setSource] = useState<SourceRentab>("devis");
+  const [facturesIndisponibles, setFacturesIndisponibles] = useState(false);
   const [annee, setAnnee] = useState<string>("toutes");
 
   useEffect(() => {
@@ -30,12 +32,13 @@ export default function RentabilitePage() {
     (async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        const [devisR, prestR, compR, projR, suiviDevisR, profilR] = await Promise.all([
-          supabase.from("devis").select("id,numero,objet,created_at,total_service,total_materiau,total_ttc,devis_lignes(*)").eq("statut", "signe").order("created_at", { ascending: false }),
+        const [devisR, prestR, compR, projR, suiviDevisR, facturesR, profilR] = await Promise.all([
+          supabase.from("devis").select("id,numero,objet,statut,created_at,total_service,total_materiau,total_ttc,devis_lignes(*)").order("created_at", { ascending: false }),
           supabase.from("prestations").select("id,categorie,prix_achat"),
           supabase.from("kit_composants").select("kit_id,composant_id,quantite"),
           supabase.from("projets").select("suivi_realisation"),
-          supabase.from("devis").select("id,suivi_realisation").eq("statut", "signe"),
+          supabase.from("devis").select("id,suivi_realisation"),
+          supabase.from("factures").select("devis_id,statut,total_ttc"),
           user ? supabase.from("profil").select("*").eq("id", user.id).maybeSingle() : Promise.resolve({ data: null, error: null }),
         ]);
         if (devisR.error) throw new Error(`Devis : ${devisR.error.message}`);
@@ -54,13 +57,19 @@ export default function RentabilitePage() {
         prestations.forEach(p => { infos[p.id] = p; });
         const prixAchat = construirePrixAchatMap(prestations, composants);
         const taux = tauxDepuisProfil(profilR.data as Record<string, number | null> | null);
+        const facturesParDevis = new Map<string, FactureRentab[]>();
+        if (!facturesR.error) ((facturesR.data ?? []) as FactureRentab[]).forEach(f => {
+          if (f.devis_id) facturesParDevis.set(f.devis_id, [...(facturesParDevis.get(f.devis_id) ?? []), f]);
+        });
         const res = ((devisR.data ?? []) as unknown as DevisBrut[]).map(d => ({
-          ...analyserDevis(d, d.devis_lignes ?? [], prixAchat, infos, taux, minutesReelles(d.id, projets, suiviParDevis.get(d.id))),
+          r: analyserDevis(d, d.devis_lignes ?? [], prixAchat, infos, taux, minutesReelles(d.id, projets, suiviParDevis.get(d.id))),
+          statut: d.statut, ttc: Number(d.total_ttc) || 0, factures: facturesParDevis.get(d.id) ?? [],
           annee: (d.created_at ?? "").slice(0, 4) || "—",
         }));
         if (annule) return;
         setTempsIndisponible(!!projR.error && !!suiviDevisR.error);
-        setResultats(res);
+        setFacturesIndisponibles(!!facturesR.error);
+        setBrut(res);
       } catch (e) {
         if (!annule) setErreur(e instanceof Error ? e.message : "Chargement impossible");
       } finally {
@@ -70,6 +79,11 @@ export default function RentabilitePage() {
     return () => { annule = true; };
   }, []);
 
+  // Source : devis signés, ou devis ayant au moins une facture émise / payée (montants ramenés à la part réellement facturée).
+  const resultats = useMemo(() => brut.flatMap(b => {
+    const part = partCouverte(source, b.statut, b.ttc, b.factures);
+    return part == null ? [] : [{ ...proratiser(b.r, part), annee: b.annee }];
+  }), [brut, source]);
   const annees = useMemo(() => Array.from(new Set(resultats.map(r => r.annee))).sort().reverse(), [resultats]);
   const filtres = useMemo(() => annee === "toutes" ? resultats : resultats.filter(r => r.annee === annee), [resultats, annee]);
   const groupes = useMemo(() => grouperParType(filtres), [filtres]);
@@ -84,16 +98,29 @@ export default function RentabilitePage() {
         <div className="flex items-end justify-between mb-6 gap-3">
           <div>
             <h1 className="font-display text-3xl text-ink-900">Rentabilité</h1>
-            <p className="text-ink-500 mt-1 text-sm">Devis signés · privé, jamais visible par les clients</p>
+            <p className="text-ink-500 mt-1 text-sm">Privé, jamais visible par les clients</p>
           </div>
+          <div className="flex flex-wrap gap-2 justify-end">
+          <select value={source} onChange={e => setSource(e.target.value as SourceRentab)} className="input !w-auto" aria-label="Source de l'analyse">
+            <option value="devis">Devis signés</option>
+            <option value="emises">Factures émises</option>
+            <option value="payees">Factures payées</option>
+          </select>
           {annees.length > 1 && (
             <select value={annee} onChange={e => setAnnee(e.target.value)} className="input !w-auto" aria-label="Année">
               <option value="toutes">Toutes les années</option>
               {annees.map(a => <option key={a} value={a}>{a}</option>)}
             </select>
           )}
+          </div>
         </div>
 
+        {source !== "devis" && (
+          <p className="text-xs text-ink-500 mb-3">
+            {facturesIndisponibles ? "Factures illisibles sur cette base : aucun résultat. " : ""}
+            Les achats et le net sont ramenés à la part du devis couverte par les factures {source === "payees" ? "payées" : "émises (hors « à envoyer »)"}. Les factures sans devis lié ne sont pas comptées.
+          </p>
+        )}
         {erreur && <div className="card card-inner text-red-700 text-sm mb-4" role="alert">Erreur : {erreur}</div>}
         {chargement && <p className="text-ink-500">Chargement…</p>}
 
@@ -101,8 +128,8 @@ export default function RentabilitePage() {
           <>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
               {[
-                { label: "Devis signés", value: String(filtres.length), sub: "analysés" },
-                { label: "Chiffre d'affaires", value: fmt(ca), sub: "total TTC des devis" },
+                { label: source === "devis" ? "Devis signés" : source === "emises" ? "Devis facturés" : "Devis encaissés", value: String(filtres.length), sub: "analysés" },
+                { label: "Chiffre d'affaires", value: fmt(ca), sub: source === "devis" ? "total TTC des devis" : "TTC facturé (au prorata du devis)" },
                 { label: "Net après charges", value: fmt(net), sub: "cotisations, impôt et achats déduits" },
                 { label: "Marge nette", value: margeGlobale == null ? "—" : `${margeGlobale} %`, sub: "du chiffre d'affaires", classe: couleurMarge(margeGlobale) },
               ].map(k => (
@@ -122,7 +149,7 @@ export default function RentabilitePage() {
             )}
 
             {filtres.length === 0 ? (
-              <div className="card card-inner text-ink-500 text-sm">Aucun devis signé{annee !== "toutes" ? ` en ${annee}` : ""} pour le moment.</div>
+              <div className="card card-inner text-ink-500 text-sm">{source === "devis" ? "Aucun devis signé" : source === "emises" ? "Aucune facture émise" : "Aucune facture payée"}{annee !== "toutes" ? ` en ${annee}` : ""} pour le moment.</div>
             ) : (
               <>
                 <h2 className="font-semibold text-ink-800 mb-2 flex items-center gap-2"><TrendingUp size={17} className="text-volt-600" /> Marge par type de chantier</h2>
