@@ -13,7 +13,7 @@ import {
   type InfoPrestation, type LigneRentab, type ResultatDevis,
 } from "@/lib/rentabilite";
 
-interface DevisBrut { id: string; numero: string; objet: string | null; date_emission: string; total_service: number; total_materiau: number; total_ttc: number; devis_lignes: LigneRentab[] | null }
+interface DevisBrut { id: string; numero: string; objet: string | null; created_at: string; total_service: number; total_materiau: number; total_ttc: number; devis_lignes: LigneRentab[] | null }
 
 const couleurMarge = (p: number | null) => p == null ? "text-ink-400" : p < 0 ? "text-red-600" : p < 25 ? "text-amber-600" : "text-emerald-600";
 const heures = (h: number) => formaterMinutes(Math.round(h * 60));
@@ -31,7 +31,7 @@ export default function RentabilitePage() {
       try {
         const { data: { user } } = await supabase.auth.getUser();
         const [devisR, prestR, compR, projR, profilR] = await Promise.all([
-          supabase.from("devis").select("id,numero,objet,date_emission,total_service,total_materiau,total_ttc,devis_lignes(*)").eq("statut", "signe").order("date_emission", { ascending: false }),
+          supabase.from("devis").select("id,numero,objet,created_at,total_service,total_materiau,total_ttc,devis_lignes(*)").eq("statut", "signe").order("created_at", { ascending: false }),
           supabase.from("prestations").select("id,categorie,prix_achat"),
           supabase.from("kit_composants").select("kit_id,composant_id,quantite"),
           supabase.from("projets").select("suivi_realisation"),
@@ -52,7 +52,7 @@ export default function RentabilitePage() {
         const taux = tauxDepuisProfil(profilR.data as Record<string, number | null> | null);
         const res = ((devisR.data ?? []) as unknown as DevisBrut[]).map(d => ({
           ...analyserDevis(d, d.devis_lignes ?? [], prixAchat, infos, taux, minutesReelles(d.id, projets)),
-          annee: (d.date_emission ?? "").slice(0, 4) || "—",
+          annee: (d.created_at ?? "").slice(0, 4) || "—",
         }));
         if (annule) return;
         setTempsIndisponible(!!projR.error);
