@@ -152,3 +152,26 @@ export function grouperParType(resultats: ResultatDevis[]): GroupeType[] {
   });
   return groupes.sort((a, b) => b.net - a.net || a.type.localeCompare(b.type, "fr"));
 }
+
+// ─── Source de l'analyse : devis signés, factures émises ou factures payées ─────────────────────────────────
+export type SourceRentab = "devis" | "emises" | "payees";
+export interface FactureRentab { devis_id?: string | null; statut: string; total_ttc?: number | null }
+
+/** Une facture « à envoyer » n'est pas encore émise. */
+export const STATUTS_EMIS = ["envoyee", "relance", "impayee", "payee"];
+
+/** Part du devis couverte par les factures de la source choisie (0 à 1) ; null = devis hors de la source. */
+export function partCouverte(source: SourceRentab, statutDevis: string, ttcDevis: number, factures: FactureRentab[]): number | null {
+  if (source === "devis") return statutDevis === "signe" ? 1 : null;
+  const retenues = factures.filter(f => source === "payees" ? f.statut === "payee" : STATUTS_EMIS.includes(f.statut));
+  if (retenues.length === 0) return null;
+  if (!(ttcDevis > 0)) return 1;
+  const somme = retenues.reduce((a, f) => a + nombre(f.total_ttc), 0);
+  return Math.max(0, Math.min(1, somme / ttcDevis));
+}
+
+/** Ramène un résultat à la part facturée (chiffre d'affaires, achats, charges, net) ; les heures ne sont pas proratisées. */
+export function proratiser(r: ResultatDevis, part: number): ResultatDevis {
+  if (part >= 1) return r;
+  return { ...r, ca: arrondi(r.ca * part), coutAchat: arrondi(r.coutAchat * part), cotisations: arrondi(r.cotisations * part), impots: arrondi(r.impots * part), net: arrondi(r.net * part) };
+}
