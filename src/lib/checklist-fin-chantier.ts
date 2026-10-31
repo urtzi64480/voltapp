@@ -12,28 +12,65 @@ export interface ControleDef {
   categorie: string;
   libelle: string;
   aide?: string;
-  parDefaut: boolean;
+  /** Proposé quel que soit le devis. */
+  universel?: boolean;
+  /** Proposé quand le devis (désignations, postes, objet) contient un de ces mots (sans accents, minuscules, début de mot). */
+  motsCles?: string[];
+  /** Repli : proposé par défaut quand AUCUN contrôle ne ressort du devis (devis très court ou atypique). */
+  parDefaut?: boolean;
   /** Si présent : valeur mesurée à consigner (ex. « Ω », « mA »). */
   mesure?: string;
 }
 
 export const CATALOGUE_CONTROLES: ControleDef[] = [
-  { id: "visuel-general", categorie: "Inspection", libelle: "Contrôle visuel de l'installation", aide: "Matériel fixé, sans dommage, conforme au devis", parDefaut: true },
-  { id: "serrage-bornes", categorie: "Inspection", libelle: "Serrage des connexions et bornes", aide: "Tableau, appareillages, luminaires", parDefaut: true },
-  { id: "reperage-circuits", categorie: "Inspection", libelle: "Repérage des circuits au tableau", aide: "Étiquetage lisible de chaque protection", parDefaut: true },
-  { id: "continuite-pe", categorie: "Mesures", libelle: "Continuité du conducteur de protection (terre)", parDefaut: true },
-  { id: "resistance-terre", categorie: "Mesures", libelle: "Résistance de la prise de terre", parDefaut: true, mesure: "Ω" },
-  { id: "isolement", categorie: "Mesures", libelle: "Résistance d'isolement des circuits", parDefaut: false, mesure: "MΩ" },
-  { id: "essai-dd", categorie: "Essais", libelle: "Essai de déclenchement des interrupteurs différentiels", aide: "Bouton test + essai en charge", parDefaut: true },
-  { id: "essai-disjoncteurs", categorie: "Essais", libelle: "Fonctionnement des disjoncteurs et circuits", parDefaut: true },
-  { id: "essai-prises", categorie: "Essais", libelle: "Test de chaque prise et point lumineux", aide: "Présence tension, polarité, terre", parDefaut: true },
-  { id: "essai-luminaires", categorie: "Essais", libelle: "Fonctionnement de l'éclairage et des commandes", parDefaut: false },
-  { id: "detecteur-fumee", categorie: "Sécurité", libelle: "Détecteur de fumée (présence et test)", parDefaut: false },
-  { id: "liaison-equipotentielle", categorie: "Sécurité", libelle: "Liaison équipotentielle (salle d'eau)", parDefaut: false },
-  { id: "parafoudre", categorie: "Sécurité", libelle: "Vérification du parafoudre (si installé)", parDefaut: false },
-  { id: "explications-client", categorie: "Remise", libelle: "Explications données au client (tableau, coupure, différentiels)", parDefaut: true },
-  { id: "nettoyage", categorie: "Remise", libelle: "Chantier nettoyé, déchets évacués", parDefaut: true },
+  { id: "visuel-general", categorie: "Inspection", libelle: "Contrôle visuel de l'installation", aide: "Matériel fixé, sans dommage, conforme au devis", universel: true },
+  { id: "serrage-bornes", categorie: "Inspection", libelle: "Serrage des connexions et bornes", aide: "Tableau, appareillages, luminaires", parDefaut: true,
+    motsCles: ["tableau", "coffret", "disjoncteur", "differentiel", "prise", "interrupteur", "luminaire", "eclairage", "spot", "appareillage", "circuit", "ligne", "cable", "raccord"] },
+  { id: "reperage-circuits", categorie: "Inspection", libelle: "Repérage des circuits au tableau", aide: "Étiquetage lisible de chaque protection", parDefaut: true,
+    motsCles: ["tableau", "coffret", "disjoncteur", "differentiel", "circuit", "ligne", "gtl"] },
+  { id: "continuite-pe", categorie: "Mesures", libelle: "Continuité du conducteur de protection (terre)", parDefaut: true,
+    motsCles: ["prise", "terre", "circuit", "tableau", "luminaire", "chauffe eau", "cumulus", "borne", "four", "plaque", "lave", "radiateur"] },
+  { id: "resistance-terre", categorie: "Mesures", libelle: "Résistance de la prise de terre", parDefaut: true, mesure: "Ω",
+    motsCles: ["terre", "tableau", "coffret", "piquet", "borne", "mise a la terre"] },
+  { id: "isolement", categorie: "Mesures", libelle: "Résistance d'isolement des circuits", mesure: "MΩ",
+    motsCles: ["tirage", "cable", "renovation", "installation", "circuit", "ligne", "neuf"] },
+  { id: "essai-dd", categorie: "Essais", libelle: "Essai de déclenchement des interrupteurs différentiels", aide: "Bouton test + essai en charge", parDefaut: true,
+    motsCles: ["differentiel", "tableau", "coffret", "30 ma", "30ma"] },
+  { id: "essai-disjoncteurs", categorie: "Essais", libelle: "Fonctionnement des disjoncteurs et circuits", parDefaut: true,
+    motsCles: ["disjoncteur", "tableau", "coffret", "circuit", "ligne"] },
+  { id: "essai-prises", categorie: "Essais", libelle: "Test de chaque prise", aide: "Présence tension, polarité, terre", parDefaut: true,
+    motsCles: ["prise", "pc16", "pc 16"] },
+  { id: "essai-luminaires", categorie: "Essais", libelle: "Fonctionnement de l'éclairage et des commandes",
+    motsCles: ["luminaire", "eclairage", "spot", "applique", "plafonnier", "interrupteur", "va et vient", "variateur", "led", "bandeau", "suspension", "detecteur de presence"] },
+  { id: "detecteur-fumee", categorie: "Sécurité", libelle: "Détecteur de fumée (présence et test)", motsCles: ["fumee", "daaf"] },
+  { id: "liaison-equipotentielle", categorie: "Sécurité", libelle: "Liaison équipotentielle (salle d'eau)",
+    motsCles: ["salle de bain", "salle d eau", "douche", "baignoire", "sdb", "equipotentiel"] },
+  { id: "parafoudre", categorie: "Sécurité", libelle: "Vérification du parafoudre", motsCles: ["parafoudre"] },
+  { id: "vmc", categorie: "Équipements", libelle: "Ventilation (VMC / extracteur) : alimentation et fonctionnement", motsCles: ["vmc", "ventilation", "extracteur", "aeration"] },
+  { id: "borne-irve", categorie: "Équipements", libelle: "Borne de recharge : protection dédiée et mise en service", motsCles: ["borne", "irve", "recharge", "wallbox", "vehicule electrique"] },
+  { id: "chauffage", categorie: "Équipements", libelle: "Chauffage / eau chaude : alimentation et protection dédiées", aide: "Radiateurs, chauffe-eau, plancher chauffant",
+    motsCles: ["radiateur", "convecteur", "chauffage", "plancher chauffant", "seche serviette", "chauffe eau", "cumulus", "ballon"] },
+  { id: "gros-electro", categorie: "Équipements", libelle: "Appareils de cuisine (plaque, four…) : alimentation dédiée et fonctionnement", motsCles: ["plaque", "four", "lave", "cuisiniere", "hotte", "cuisine"] },
+  { id: "communication", categorie: "Équipements", libelle: "Réseau / TV / interphone : test des prises et liaisons", motsCles: ["rj45", "ethernet", "tv", "antenne", "interphone", "visiophone", "portier", "fibre", "baie", "reseau"] },
+  { id: "motorisations", categorie: "Équipements", libelle: "Volets / portail / motorisations : fin de course et sécurités", motsCles: ["volet", "portail", "motorisation", "store", "porte de garage"] },
+  { id: "explications-client", categorie: "Remise", libelle: "Explications données au client (tableau, coupure, différentiels)", universel: true },
+  { id: "nettoyage", categorie: "Remise", libelle: "Chantier nettoyé, déchets évacués", universel: true },
 ];
+
+/** Texte du devis mis en forme pour la recherche : minuscules, sans accents, ponctuation → espaces. */
+export function contexteDevis(textes: (string | null | undefined)[]): string {
+  return " " + textes.filter(Boolean).join(" ").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim() + " ";
+}
+
+const correspond = (d: ControleDef, ctx: string): boolean => !!d.motsCles?.some(m => ctx.includes(` ${m}`));
+
+/** Contrôles proposés pour CE devis : les universels + ceux dont un mot clé figure dans le devis (repli sur les classiques si rien ne ressort). */
+export function idsProposes(ctx: string): string[] {
+  const lies = CATALOGUE_CONTROLES.filter(d => !d.universel && correspond(d, ctx));
+  const base = lies.length > 0 ? lies : CATALOGUE_CONTROLES.filter(d => d.parDefaut);
+  const choisis = new Set([...CATALOGUE_CONTROLES.filter(d => d.universel), ...base].map(d => d.id));
+  return CATALOGUE_CONTROLES.filter(d => choisis.has(d.id)).map(d => d.id);
+}
 
 export interface ControleFait { le: string; valeur?: string }
 export interface ControlePerso { id: string; libelle: string }
@@ -50,44 +87,43 @@ export const estVide = (c: Controles | undefined): boolean =>
   !c || (c.retenus === undefined && Object.keys(c.faits).length === 0 && c.perso.length === 0);
 
 export type ActionControles =
-  | { action: "retenir"; id: string; retenu: boolean }
+  /** `ids` = la sélection COMPLÈTE après le clic (absolue : rejouable hors ligne sans connaître le devis). */
+  | { action: "retenir"; id: string; retenu: boolean; ids: string[] }
   | { action: "fait"; id: string; fait: boolean; dateIso: string }
   | { action: "valeur"; id: string; valeur: string }
   | { action: "perso+"; id: string; libelle: string }
   | { action: "perso-"; id: string };
 
-const idsDefaut = () => CATALOGUE_CONTROLES.filter(c => c.parDefaut).map(c => c.id);
 const tousLesIds = (c: Controles) => [...CATALOGUE_CONTROLES.map(x => x.id), ...c.perso.map(p => p.id)];
 
 /** Identifiants retenus pour ce chantier (défauts si aucune sélection, contrôles perso inclus et déjà retenus). */
-export function idsRetenus(c: Controles | undefined): string[] {
+export function idsRetenus(c: Controles | undefined, ctx = ""): string[] {
   const base = c ?? controlesVides();
   const valides = new Set(tousLesIds(base));
-  const liste = base.retenus === undefined ? [...idsDefaut(), ...base.perso.map(p => p.id)] : base.retenus;
+  const liste = base.retenus === undefined ? [...idsProposes(ctx), ...base.perso.map(p => p.id)] : base.retenus;
   return liste.filter((id, i) => valides.has(id) && liste.indexOf(id) === i);
 }
 
-export interface ControleAffiche extends ControleDef { retenu: boolean; fait?: ControleFait }
+export interface ControleAffiche extends ControleDef { retenu: boolean; fait?: ControleFait; /** Proposé à cause d'un élément du devis. */ lieAuDevis: boolean }
 
 /** Catalogue + contrôles perso, avec l'état retenu / fait. */
-export function controlesAffiches(c: Controles | undefined): ControleAffiche[] {
+export function controlesAffiches(c: Controles | undefined, ctx = ""): ControleAffiche[] {
   const base = c ?? controlesVides();
-  const retenus = new Set(idsRetenus(base));
-  const perso: ControleDef[] = base.perso.map(p => ({ id: p.id, categorie: "Personnalisé", libelle: p.libelle, parDefaut: true }));
-  return [...CATALOGUE_CONTROLES, ...perso].map(d => ({ ...d, retenu: retenus.has(d.id), fait: base.faits[d.id] }));
+  const retenus = new Set(idsRetenus(base, ctx));
+  const perso: ControleDef[] = base.perso.map(p => ({ id: p.id, categorie: "Personnalisé", libelle: p.libelle, universel: true }));
+  return [...CATALOGUE_CONTROLES, ...perso].map(d => ({ ...d, retenu: retenus.has(d.id), fait: base.faits[d.id], lieAuDevis: !d.universel && correspond(d, ctx) }));
 }
 
 /** Contrôles à remettre au client : retenus ET réalisés. */
-export const controlesRemis = (c: Controles | undefined): ControleAffiche[] =>
-  controlesAffiches(c).filter(x => x.retenu && x.fait);
-export const controlesRestants = (c: Controles | undefined): ControleAffiche[] =>
-  controlesAffiches(c).filter(x => x.retenu && !x.fait);
+export const controlesRemis = (c: Controles | undefined, ctx = ""): ControleAffiche[] =>
+  controlesAffiches(c, ctx).filter(x => x.retenu && x.fait);
+export const controlesRestants = (c: Controles | undefined, ctx = ""): ControleAffiche[] =>
+  controlesAffiches(c, ctx).filter(x => x.retenu && !x.fait);
 
 /** Applique une action (mutation de `c`). Utilisé en ligne comme pour rejouer la file hors ligne. */
 export function appliquerActionControles(c: Controles, a: ActionControles): void {
   if (a.action === "retenir") {
-    const courant = idsRetenus(c);
-    c.retenus = a.retenu ? (courant.includes(a.id) ? courant : [...courant, a.id]) : courant.filter(i => i !== a.id);
+    c.retenus = a.ids.filter((id, i) => a.ids.indexOf(id) === i);
   } else if (a.action === "fait") {
     if (a.fait) { if (!c.faits[a.id]) c.faits[a.id] = { le: a.dateIso }; }
     else delete c.faits[a.id];

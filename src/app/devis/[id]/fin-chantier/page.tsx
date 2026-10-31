@@ -14,12 +14,13 @@ import { lireSuivi, type SuiviStocke } from "@/lib/suivi-persistance";
 import { appliquerFile, cleSuiviDevis, ecrireControles, enLigne, lireDevisMemorise, memoriserDevis, nbEnAttente, synchroniser, estErreurReseau, type ResultatEcritureSuivi } from "@/lib/suivi-hors-ligne";
 import {
   appliquerActionControles, controlesVides, copierControles, estVide,
-  controlesAffiches, controlesRemis, controlesRestants, nouvelIdPerso, type ActionControles, type Controles, type ControleAffiche,
+  contexteDevis, controlesAffiches, controlesRemis, controlesRestants, nouvelIdPerso, type ActionControles, type Controles, type ControleAffiche,
 } from "@/lib/checklist-fin-chantier";
 import { genPDFControlesBlob, nomFichierControles } from "@/lib/pdf-controles";
 
 interface DevisFin {
   id: string; numero: string; objet?: string | null; suivi_realisation?: string | null;
+  lignes?: { nom?: string | null; description?: string | null; poste?: string | null }[] | null;
   client?: { nom: string; prenom?: string | null; adresse?: string | null; telephone?: string | null; email?: string | null } | null;
 }
 
@@ -32,7 +33,7 @@ export default function FinChantierPage() {
   useEffect(() => {
     let annule = false;
     (async () => {
-      const SELECT = "id, numero, objet, client:clients(nom, prenom, adresse, telephone, email)";
+      const SELECT = "id, numero, objet, client:clients(nom, prenom, adresse, telephone, email), lignes:devis_lignes(*)";
       let res = await supabase.from("devis").select(`${SELECT}, suivi_realisation`).eq("id", id).single();
       let manque = false;
       if (res.error && /suivi_realisation/i.test(res.error.message)) {
@@ -107,15 +108,19 @@ function Fin({ devis, absenteInitial }: { devis: DevisFin; absenteInitial: boole
     return () => window.removeEventListener("online", envoyer);
   }, [cle, appliquer]);
 
-  const liste = useMemo(() => controlesAffiches(controles), [controles]);
+  const ctx = useMemo(
+    () => contexteDevis([devis.objet, ...(devis.lignes ?? []).flatMap(l => [l.nom, l.description, l.poste])]),
+    [devis.objet, devis.lignes],
+  );
+  const liste = useMemo(() => controlesAffiches(controles, ctx), [controles, ctx]);
   const parCategorie = useMemo(() => {
     const m = new Map<string, ControleAffiche[]>();
     liste.forEach(c => m.set(c.categorie, [...(m.get(c.categorie) ?? []), c]));
     return [...m.entries()];
   }, [liste]);
   const retenus = liste.filter(c => c.retenu).length;
-  const restants = controlesRestants(controles);
-  const remis = controlesRemis(controles);
+  const restants = controlesRestants(controles, ctx);
+  const remis = controlesRemis(controles, ctx);
 
   async function construirePdf(): Promise<{ blob: Blob; nom: string } | null> {
     if (remis.length === 0) { setInfo("Coche au moins un contrôle réalisé : le PDF ne contient que ce qui a été fait."); return null; }
@@ -124,7 +129,7 @@ function Fin({ devis, absenteInitial }: { devis: DevisFin; absenteInitial: boole
     if (!user) { setInfo("Session expirée : reconnecte-toi."); return null; }
     const { data: p } = await supabase.from("profil").select("*").eq("id", user.id).single();
     if (!p) { setInfo("Profil introuvable."); return null; }
-    const blob = await genPDFControlesBlob(controles, p as Profil, { numeroDevis: devis.numero, objet: devis.objet, client: devis.client, dateChantier: valideLe });
+    const blob = await genPDFControlesBlob(controles, p as Profil, { numeroDevis: devis.numero, objet: devis.objet, client: devis.client, dateChantier: valideLe, contexte: ctx });
     return { blob, nom: nomFichierControles(devis.numero) };
   }
 
@@ -195,7 +200,7 @@ function Fin({ devis, absenteInitial }: { devis: DevisFin; absenteInitial: boole
         <h1 className="font-display text-3xl text-ink-900">Contrôles de fin de chantier</h1>
         <p className="text-ink-500 text-sm mt-1">{devis.numero}{devis.objet ? ` · ${devis.objet}` : ""}{client ? ` · ${client}` : ""}</p>
         <p className="text-xs text-ink-500 mt-3">
-          Choisis les contrôles que tu fais sur ce chantier (une proposition est cochée par défaut), marque-les réalisés, puis envoie le PDF au client : il ne contient que les contrôles retenus <b>et</b> réalisés.
+          Choisis les contrôles que tu fais sur ce chantier (la proposition suit le contenu du devis), marque-les réalisés, puis envoie le PDF au client : il ne contient que les contrôles retenus <b>et</b> réalisés.
         </p>
 
         {(attente > 0) && (
@@ -220,10 +225,11 @@ function Fin({ devis, absenteInitial }: { devis: DevisFin; absenteInitial: boole
                   <li key={c.id} className="py-2.5">
                     <div className="flex items-start gap-3">
                       <label className="flex items-start gap-2 flex-1 min-w-0 cursor-pointer">
-                        <input type="checkbox" className="mt-1 h-4 w-4 shrink-0" checked={c.retenu} onChange={e => agir({ action: "retenir", id: c.id, retenu: e.target.checked })} aria-label={`Retenir : ${c.libelle}`} />
+                        <input type="checkbox" className="mt-1 h-4 w-4 shrink-0" checked={c.retenu} onChange={e => agir({ action: "retenir", id: c.id, retenu: e.target.checked, ids: liste.filter(x => x.id === c.id ? e.target.checked : x.retenu).map(x => x.id) })} aria-label={`Retenir : ${c.libelle}`} />
                         <span className="min-w-0">
                           <span className={cn("block text-sm", c.retenu ? "text-ink-900" : "text-ink-400")}>{c.libelle}</span>
                           {c.aide && <span className="block text-[11px] text-ink-400">{c.aide}</span>}
+                          {c.lieAuDevis && <span className="block text-[10px] font-semibold text-volt-600">Prévu dans ce devis</span>}
                         </span>
                       </label>
                       {c.categorie === "Personnalisé" && (
