@@ -9,6 +9,7 @@
 // Temps réel = minutes saisies dans le suivi de chantier des projets liés au devis (chantier.devis_id).
 // Temps estimé = heures vendues sur le devis (lignes de service facturées à l'heure).
 import { lireSuivi } from "@/lib/suivi-persistance";
+import { minutesDuSuivi } from "@/lib/suivi-devis";
 
 export interface TauxRentabilite { cotisService: number; cotisMateriau: number; irService: number; irMateriau: number }
 export const TAUX_PAR_DEFAUT: TauxRentabilite = { cotisService: 21.2, cotisMateriau: 12.3, irService: 0, irMateriau: 0 };
@@ -62,9 +63,12 @@ export function heuresEstimees(lignes: LigneRentab[]): number {
   return arrondi(h, 2);
 }
 
-/** Minutes saisies sur le chantier (circuits + postes) pour les projets rattachés à ce devis. */
-export function minutesReelles(devisId: string, projets: { suivi_realisation?: string | null }[]): number {
-  let total = 0;
+/**
+ * Minutes saisies sur le chantier : suivi propre au devis (page « Suivi » du devis) + suivi des projets (plans) qui lui sont
+ * rattachés (circuits + postes). Un temps noté à la fois à deux endroits serait compté deux fois : on en saisit un seul.
+ */
+export function minutesReelles(devisId: string, projets: { suivi_realisation?: string | null }[], suiviDevis?: string | null): number {
+  let total = minutesDuSuivi(suiviDevis);
   for (const p of projets) {
     const s = lireSuivi(p.suivi_realisation);
     if (s.chantier.devis_id !== devisId) continue;

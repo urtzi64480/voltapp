@@ -76,16 +76,23 @@ export type ResultatEcriture = { ok: true; coches: Coches } | { ok: false; messa
 const echec = (message: string): { ok: false; message: string; colonneAbsente: boolean } =>
   ({ ok: false, message, colonneAbsente: /suivi_realisation/i.test(message) });
 
+/** Où est stocké un suivi : un projet (plan) ou directement un devis (chantier sans plan). Même colonne, même format. */
+export type CibleSuivi = { table: "projets" | "devis"; id: string };
+
 /** Relit la base, applique `modif` sur le contenu relu, réécrit. */
-export async function modifierSuivi(projetId: string, modif: (s: SuiviStocke) => void): Promise<ResultatSuivi> {
-  const { data, error } = await supabase.from("projets").select("suivi_realisation").eq("id", projetId).single();
+export async function modifierSuiviCible(cible: CibleSuivi, modif: (s: SuiviStocke) => void): Promise<ResultatSuivi> {
+  const { data, error } = await supabase.from(cible.table).select("suivi_realisation").eq("id", cible.id).single();
   if (error) return echec(error.message);
   const suivi = lireSuivi((data as { suivi_realisation?: string | null } | null)?.suivi_realisation);
   modif(suivi);
-  const { error: errEcriture } = await supabase.from("projets").update({ suivi_realisation: serialiser(suivi) } as never).eq("id", projetId);
+  const { error: errEcriture } = await supabase.from(cible.table).update({ suivi_realisation: serialiser(suivi) } as never).eq("id", cible.id);
   if (errEcriture) return echec(errEcriture.message);
   return { ok: true, suivi };
 }
+
+/** Suivi d'un projet (plan). */
+export const modifierSuivi = (projetId: string, modif: (s: SuiviStocke) => void): Promise<ResultatSuivi> =>
+  modifierSuiviCible({ table: "projets", id: projetId }, modif);
 
 /** Relit le suivi complet en base (synchronisation entre appareils). */
 export async function relireSuivi(projetId: string): Promise<SuiviStocke | null> {

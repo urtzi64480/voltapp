@@ -30,11 +30,12 @@ export default function RentabilitePage() {
     (async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        const [devisR, prestR, compR, projR, profilR] = await Promise.all([
+        const [devisR, prestR, compR, projR, suiviDevisR, profilR] = await Promise.all([
           supabase.from("devis").select("id,numero,objet,created_at,total_service,total_materiau,total_ttc,devis_lignes(*)").eq("statut", "signe").order("created_at", { ascending: false }),
           supabase.from("prestations").select("id,categorie,prix_achat"),
           supabase.from("kit_composants").select("kit_id,composant_id,quantite"),
           supabase.from("projets").select("suivi_realisation"),
+          supabase.from("devis").select("id,suivi_realisation").eq("statut", "signe"),
           user ? supabase.from("profil").select("*").eq("id", user.id).maybeSingle() : Promise.resolve({ data: null, error: null }),
         ]);
         if (devisR.error) throw new Error(`Devis : ${devisR.error.message}`);
@@ -45,17 +46,20 @@ export default function RentabilitePage() {
         // « est_kit » n'est pas une colonne de la base : un kit = une prestation qui a des composants.
         const composants = (compR.data ?? []) as { kit_id: string; composant_id: string; quantite?: number | null }[];
         const idsKits = new Set(composants.map(c => c.kit_id));
+        // Suivi propre à chaque devis (migration 013) : s'il n'existe pas encore, seuls les suivis de plans comptent.
+        const suiviParDevis = new Map<string, string | null>();
+        if (!suiviDevisR.error) ((suiviDevisR.data ?? []) as { id: string; suivi_realisation?: string | null }[]).forEach(r => suiviParDevis.set(r.id, r.suivi_realisation ?? null));
         const prestations = ((prestR.data ?? []) as ({ id: string } & InfoPrestation)[]).map(p => ({ ...p, est_kit: idsKits.has(p.id) }));
         const infos: Record<string, InfoPrestation> = {};
         prestations.forEach(p => { infos[p.id] = p; });
         const prixAchat = construirePrixAchatMap(prestations, composants);
         const taux = tauxDepuisProfil(profilR.data as Record<string, number | null> | null);
         const res = ((devisR.data ?? []) as unknown as DevisBrut[]).map(d => ({
-          ...analyserDevis(d, d.devis_lignes ?? [], prixAchat, infos, taux, minutesReelles(d.id, projets)),
+          ...analyserDevis(d, d.devis_lignes ?? [], prixAchat, infos, taux, minutesReelles(d.id, projets, suiviParDevis.get(d.id))),
           annee: (d.created_at ?? "").slice(0, 4) || "—",
         }));
         if (annule) return;
-        setTempsIndisponible(!!projR.error);
+        setTempsIndisponible(!!projR.error && !!suiviDevisR.error);
         setResultats(res);
       } catch (e) {
         if (!annule) setErreur(e instanceof Error ? e.message : "Chargement impossible");
@@ -152,8 +156,8 @@ export default function RentabilitePage() {
                 </div>
 
                 <h2 className="font-semibold text-ink-800 mb-2 flex items-center gap-2"><Clock size={17} className="text-volt-600" /> Détail par devis</h2>
-                {tempsIndisponible && <p className="text-xs text-amber-700 mb-2">Le suivi de chantier n&apos;est pas disponible sur cette base (migration 008) : heures réelles non affichées.</p>}
-                {nbChrono === 0 && !tempsIndisponible && <p className="text-xs text-ink-400 mb-2">Aucun temps saisi : chronomètre les circuits dans le suivi de chantier et rattache le chantier à son devis pour comparer.</p>}
+                {tempsIndisponible && <p className="text-xs text-amber-700 mb-2">Le suivi de chantier n&apos;est pas disponible sur cette base (migrations 008 et 013) : heures réelles non affichées.</p>}
+                {nbChrono === 0 && !tempsIndisponible && <p className="text-xs text-ink-400 mb-2">Aucun temps saisi : ouvre un devis, bouton « Suivi de chantier », et note le temps passé par poste pour le comparer aux heures chiffrées.</p>}
                 <div className="card divide-y divide-ink-100">
                   {filtres.map(r => (
                     <Link key={r.id} href={`/devis/${r.id}/rentabilite`} className="flex items-center justify-between gap-3 p-3 hover:bg-ink-50">

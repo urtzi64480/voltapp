@@ -2,7 +2,7 @@
  *
  * Périmètre volontairement étroit :
  *   · /_next/static/*          → cache d'abord (fichiers à empreinte : immuables) ;
- *   · pages /plan/<client>/suivi → réseau d'abord, copie du cache si le réseau est coupé ;
+ *   · pages /plan/<client>/suivi et /devis/<id>/suivi → réseau d'abord, copie du cache si le réseau est coupé ;
  *   · TOUT LE RESTE (API, Supabase, autres pages, POST…) passe sans toucher au réseau ni au cache.
  * Aucune donnée de l'utilisateur n'est mise en cache ici : la page est une coquille, les données viennent de Supabase
  * (copie locale gérée par l'application, dans localStorage).
@@ -11,7 +11,7 @@ const VERSION = "v1";
 const CACHE_STATIC = "voltapp-static-" + VERSION;
 const CACHE_PAGES = "voltapp-pages-" + VERSION;
 
-const estPageSuivi = (url) => /^\/plan\/[^/]+\/suivi\/?$/.test(url.pathname);
+const estPageSuivi = (url) => /^\/(plan|devis)\/[^/]+\/suivi\/?$/.test(url.pathname);
 
 self.addEventListener("install", () => { self.skipWaiting(); });
 

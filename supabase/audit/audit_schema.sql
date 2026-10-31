@@ -134,6 +134,7 @@ with attendues(t, c) as (values
     ('devis', 'signature_token_expires_at'),
     ('devis', 'signe_le'),
     ('devis', 'statut'),
+    ('devis', 'suivi_realisation'),
     ('devis', 'total_materiau'),
     ('devis', 'total_service'),
     ('devis', 'total_ttc'),
