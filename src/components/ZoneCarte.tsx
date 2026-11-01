@@ -18,6 +18,7 @@
 // (tuiles/canvas, non indexable de toute façon).
 import { useEffect, useRef, useState } from "react";
 import { MapPin, ChevronDown } from "lucide-react";
+import { loadLeaflet } from "@/lib/leaflet-cdn";
 import {
   VILLE_PRINCIPALE,
   RAYON_KM,
@@ -26,42 +27,6 @@ import {
   VILLES_COORDS,
   VILLES_PHARES,
 } from "@/lib/seo-zone";
-
-const LEAFLET_VERSION = "1.9.4";
-
-declare global {
-  interface Window {
-    L?: any;
-    __leafletLoadPromise?: Promise<any>;
-  }
-}
-
-// Charge Leaflet (CSS + JS) une seule fois, même si plusieurs instances du
-// composant tentent de l'ouvrir en même temps.
-function loadLeaflet(): Promise<any> {
-  if (typeof window === "undefined") return Promise.reject(new Error("SSR"));
-  if (window.L) return Promise.resolve(window.L);
-  if (window.__leafletLoadPromise) return window.__leafletLoadPromise;
-
-  window.__leafletLoadPromise = new Promise((resolve, reject) => {
-    if (!document.querySelector('link[data-leaflet-css="true"]')) {
-      const link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
-      link.setAttribute("data-leaflet-css", "true");
-      document.head.appendChild(link);
-    }
-
-    const script = document.createElement("script");
-    script.src = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js`;
-    script.async = true;
-    script.onload = () => resolve(window.L);
-    script.onerror = () => reject(new Error("Échec du chargement de Leaflet"));
-    document.head.appendChild(script);
-  });
-
-  return window.__leafletLoadPromise;
-}
 
 export default function ZoneCarte() {
   const [open, setOpen] = useState(false);

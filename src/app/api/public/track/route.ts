@@ -51,6 +51,14 @@ export async function POST(req: NextRequest) {
     try { ville = decodeURIComponent(villeRaw); } catch { ville = villeRaw; } // en-tête mal encodé → valeur brute
   }
 
+  // Coordonnées approximatives de la ville (même source) : arrondies à ~1 km, ignorées si invalides.
+  const coord = (h: string, min: number, max: number): number | null => {
+    const n = Number(req.headers.get(h));
+    return req.headers.get(h) && Number.isFinite(n) && n >= min && n <= max ? Math.round(n * 100) / 100 : null;
+  };
+  const latitude = coord("x-vercel-ip-latitude", -90, 90);
+  const longitude = coord("x-vercel-ip-longitude", -180, 180);
+
   const row: Record<string, unknown> = {
     user_id,
     referrer: borne(referrer, 500),
@@ -73,7 +81,12 @@ export async function POST(req: NextRequest) {
     row.type_clic = borne(type_clic, 80) ?? "ajout_contact";
   }
 
-  const { error } = await supabase.from(table).insert(row);
+  // Les colonnes latitude/longitude n'existent que sur demande_visites et seulement après la migration 014 :
+  // si elles manquent, on enregistre la visite sans coordonnées plutôt que de la perdre.
+  let { error } = await supabase.from(table).insert(table === "demande_visites" && latitude != null && longitude != null ? { ...row, latitude, longitude } : row);
+  if (error && table === "demande_visites" && /latitude|longitude/i.test(error.message)) {
+    ({ error } = await supabase.from(table).insert(row));
+  }
   if (error) {
     console.error(`Erreur tracking (${table}):`, error);
     return NextResponse.json({ error: "Erreur d'enregistrement." }, { status: 500 });

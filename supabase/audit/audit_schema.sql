@@ -80,6 +80,8 @@ with attendues(t, c) as (values
     ('demande_visites', 'device_type'),
     ('demande_visites', 'id'),
     ('demande_visites', 'langue'),
+    ('demande_visites', 'latitude'),
+    ('demande_visites', 'longitude'),
     ('demande_visites', 'mode'),
     ('demande_visites', 'navigateur'),
     ('demande_visites', 'os'),
