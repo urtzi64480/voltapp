@@ -21,8 +21,11 @@ export default function CarteVisites({ visites }: { visites: VisiteCarte[] }) {
   const [erreur, setErreur] = useState(false);
   const [enCours, setEnCours] = useState(false);
   const conteneur = useRef<HTMLDivElement | null>(null);
+  const carteRef = useRef<any>(null);
+  const [tactile, setTactile] = useState(false);
+  const [active, setActive] = useState(false);
 
-  useEffect(() => { setCache(lireCache()); }, []);
+  useEffect(() => { setCache(lireCache()); setTactile(typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches); }, []);
 
   const extra = useMemo(() => {
     const m: Record<string, Coord> = {};
@@ -58,7 +61,13 @@ export default function CarteVisites({ visites }: { visites: VisiteCarte[] }) {
     let carte: any = null;
     loadLeaflet().then(L => {
       if (annule || !conteneur.current) return;
-      carte = L.map(conteneur.current, { scrollWheelZoom: false });
+      // Sur écran tactile, la carte reste figée tant qu'on ne l'a pas activée : elle ne capte ni le défilement de la page
+      // ni les pincements, et ne zoome plus toute seule.
+      const figee = window.matchMedia("(pointer: coarse)").matches;
+      carte = L.map(conteneur.current, {
+        scrollWheelZoom: false, dragging: !figee, touchZoom: !figee, doubleClickZoom: !figee, tap: false, boxZoom: false,
+      });
+      carteRef.current = carte;
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 18,
       }).addTo(carte);
@@ -68,11 +77,20 @@ export default function CarteVisites({ visites }: { visites: VisiteCarte[] }) {
           .addTo(carte).bindTooltip(p.libelle, { direction: "top" });
         bornes.extend([p.lat, p.lng]);
       });
-      carte.fitBounds(bornes, { padding: [30, 30], maxZoom: 11 });
+      carte.fitBounds(bornes, { padding: [30, 30], maxZoom: 9 });
       window.setTimeout(() => carte?.invalidateSize(), 150);
     }).catch(() => { if (!annule) setErreur(true); });
-    return () => { annule = true; if (carte) carte.remove(); };
+    return () => { annule = true; carteRef.current = null; if (carte) carte.remove(); };
   }, [points]);
+
+  const basculer = () => {
+    const c = carteRef.current;
+    const suivant = !active;
+    setActive(suivant);
+    if (!c) return;
+    const m = suivant ? "enable" : "disable";
+    c.dragging[m](); c.touchZoom[m](); c.doubleClickZoom[m]();
+  };
 
   return (
     <div>
@@ -82,7 +100,14 @@ export default function CarteVisites({ visites }: { visites: VisiteCarte[] }) {
       ) : erreur ? (
         <p className="text-sm text-ink-500">La carte n&apos;a pas pu se charger (réseau).</p>
       ) : (
-        <div ref={conteneur} className="h-72 w-full rounded-xl overflow-hidden border border-ink-200" role="img" aria-label="Carte de localisation des visiteurs" />
+        <div className="relative">
+          <div ref={conteneur} className="h-72 w-full rounded-xl overflow-hidden border border-ink-200" role="img" aria-label="Carte de localisation des visiteurs" />
+          {tactile && (
+            <button type="button" onClick={basculer} className="absolute bottom-2 right-2 z-[500] rounded-lg bg-white/95 border border-ink-200 px-2.5 py-1.5 text-xs font-semibold text-ink-700 shadow">
+              {active ? "Figer la carte" : "Déplacer / zoomer"}
+            </button>
+          )}
+        </div>
       )}
       <p className="text-[11px] text-ink-400 mt-1.5">
         {points.length} visiteur{points.length > 1 ? "s" : ""} placé{points.length > 1 ? "s" : ""} (position approximative : la ville).
