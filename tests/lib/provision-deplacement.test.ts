@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { provisionFactures } from "@/lib/provision";
 import { distanceKm, fraisDeplacement, kmRoute, lireReglage, REGLAGE_DEPLACEMENT_DEFAUT } from "@/lib/deplacement";
-import { lignesDepuisDevis, palierRecommande, totalInstalle, wattsAppeles } from "@/lib/puissance";
 import { TAUX_PAR_DEFAUT } from "@/lib/rentabilite";
 
 describe("provision", () => {
@@ -28,22 +27,6 @@ describe("déplacement", () => {
     expect(fraisDeplacement(20, { tarifKm: 1, kmOfferts: 0, allerRetour: false, minimum: 0 }).montant).toBe(20);
   });
   it("réglage tolérant", () => { expect(lireReglage({ tarifKm: -1, kmOfferts: "x", allerRetour: 3 })).toEqual(REGLAGE_DEPLACEMENT_DEFAUT); expect(lireReglage(null)).toEqual(REGLAGE_DEPLACEMENT_DEFAUT); });
-});
-
-describe("puissance", () => {
-  it("palier mono/tri", () => {
-    expect(palierRecommande(5900, false)).toBe(6); expect(palierRecommande(6001, false)).toBe(9);
-    expect(palierRecommande(37000, false)).toBeNull(); expect(palierRecommande(3000, true)).toBe(9);
-  });
-  it("somme pondérée par les coefficients", () => {
-    const l = [{ id: "a", libelle: "a", watts: 1000, quantite: 3, coef: 0.5 }, { id: "b", libelle: "b", watts: 2000, quantite: 1, coef: 1 }];
-    expect(wattsAppeles(l)).toBe(3500); expect(totalInstalle(l)).toBe(5000);
-    expect(wattsAppeles([{ id: "c", libelle: "c", watts: 100, quantite: 1, coef: 5 }])).toBe(100);
-  });
-  it("préremplissage depuis le devis", () => {
-    const ids = lignesDepuisDevis(["Borne de recharge 7 kW", "Remplacement chauffe-eau", "Prises cuisine"]).map(x => x.id);
-    expect(ids).toEqual(expect.arrayContaining(["borne", "chauffe-eau", "prises"]));
-  });
 });
 
 import { ajouterAnnees, garanties } from "@/lib/garanties";
