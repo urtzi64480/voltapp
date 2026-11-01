@@ -242,6 +242,9 @@ function Fin({ devis, absenteInitial }: { devis: DevisFin; absenteInitial: boole
                         </button>
                       )}
                     </div>
+                    {c.retenu && (
+                      <CommentaireInput valeur={c.commentaire ?? ""} onValider={t => agir({ action: "commentaire", id: c.id, texte: t })} />
+                    )}
                     {c.retenu && c.fait && c.mesure && (
                       <MesureInput valeur={c.fait.valeur ?? ""} unite={c.mesure} onValider={v => agir({ action: "valeur", id: c.id, valeur: v })} />
                     )}
@@ -272,6 +275,15 @@ function Fin({ devis, absenteInitial }: { devis: DevisFin; absenteInitial: boole
         </div>
       </div>
     </Shell>
+  );
+}
+
+function CommentaireInput({ valeur, onValider }: { valeur: string; onValider: (t: string) => void }) {
+  const [v, setV] = useState(valeur);
+  useEffect(() => setV(valeur), [valeur]);
+  return (
+    <input className="input !py-1 !text-sm mt-2 ml-6 w-[calc(100%-1.5rem)]" placeholder="Commentaire (affiché sur le rapport)" maxLength={300} value={v}
+      aria-label="Commentaire" onChange={e => setV(e.target.value)} onBlur={() => { if (v.trim() !== valeur) onValider(v); }} />
   );
 }
 

@@ -57,7 +57,7 @@ function operationValide(o: unknown): o is OperationSuivi {
   if (x.type === "chantier") return !!x.patch && typeof x.patch === "object";
   if (x.type === "controles") {
     const a = x.action as Record<string, unknown> | undefined;
-    return !!a && typeof a === "object" && ["retenir", "fait", "valeur", "perso+", "perso-"].includes(a.action as string) && typeof a.id === "string" && (a.action !== "retenir" || (Array.isArray(a.ids) && a.ids.every(i => typeof i === "string")));
+    return !!a && typeof a === "object" && ["retenir", "fait", "valeur", "commentaire", "perso+", "perso-"].includes(a.action as string) && typeof a.id === "string" && (a.action !== "retenir" || (Array.isArray(a.ids) && a.ids.every(i => typeof i === "string")));
   }
   return false;
 }

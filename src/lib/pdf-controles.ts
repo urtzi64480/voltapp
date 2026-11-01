@@ -57,19 +57,22 @@ export async function genPDFControlesBlob(controles: Controles | undefined, prof
   const remis = controlesRemis(controles, infos.contexte ?? "");
   autoTable(doc, {
     startY: y + 4,
-    head: [["Contrôle réalisé", "Catégorie", "Mesure", "Date"]],
+    head: [["Contrôle réalisé", "Catégorie", "Mesure / commentaire", "Date"]],
     body: remis.length === 0
       ? [[{ content: "Aucun contrôle consigné.", colSpan: 4, styles: { halign: "center" } }]]
       : remis.map(c => [
         c.libelle + (c.aide ? `\n${c.aide}` : ""),
         c.categorie,
-        c.fait?.valeur ? `${c.fait.valeur}${c.mesure && !c.fait.valeur.includes(c.mesure) ? ` ${c.mesure}` : ""}` : "—",
+        [
+          c.fait?.valeur ? `${c.fait.valeur}${c.mesure && !c.fait.valeur.includes(c.mesure) ? ` ${c.mesure}` : ""}` : "",
+          c.commentaire ?? "",
+        ].filter(Boolean).join("\n") || "—",
         c.fait ? fmtDate(c.fait.le) : "",
       ]),
     headStyles: { fillColor: [28, 25, 23], textColor: [251, 191, 36], fontStyle: "bold", fontSize: 8 },
     bodyStyles: { fontSize: 8.5, textColor: [44, 38, 34], valign: "middle" },
     alternateRowStyles: { fillColor: [250, 250, 249] },
-    columnStyles: { 0: { cellWidth: 74 }, 1: { cellWidth: 30 }, 2: { cellWidth: 34, halign: "center" }, 3: { cellWidth: 36, halign: "center" } },
+    columnStyles: { 0: { cellWidth: 74 }, 1: { cellWidth: 26 }, 2: { cellWidth: 52 }, 3: { cellWidth: 22, halign: "center" } },
     margin: { left: M, right: M, bottom: 24 },
   });
 

@@ -80,17 +80,20 @@ export interface Controles {
   retenus?: string[];
   faits: Record<string, ControleFait>;
   perso: ControlePerso[];
+  /** Commentaire libre par contrôle (affiché sur le rapport client). */
+  commentaires?: Record<string, string>;
 }
 
 export const controlesVides = (): Controles => ({ faits: {}, perso: [] });
 export const estVide = (c: Controles | undefined): boolean =>
-  !c || (c.retenus === undefined && Object.keys(c.faits).length === 0 && c.perso.length === 0);
+  !c || (c.retenus === undefined && Object.keys(c.faits).length === 0 && c.perso.length === 0 && Object.keys(c.commentaires ?? {}).length === 0);
 
 export type ActionControles =
   /** `ids` = la sélection COMPLÈTE après le clic (absolue : rejouable hors ligne sans connaître le devis). */
   | { action: "retenir"; id: string; retenu: boolean; ids: string[] }
   | { action: "fait"; id: string; fait: boolean; dateIso: string }
   | { action: "valeur"; id: string; valeur: string }
+  | { action: "commentaire"; id: string; texte: string }
   | { action: "perso+"; id: string; libelle: string }
   | { action: "perso-"; id: string };
 
@@ -104,14 +107,14 @@ export function idsRetenus(c: Controles | undefined, ctx = ""): string[] {
   return liste.filter((id, i) => valides.has(id) && liste.indexOf(id) === i);
 }
 
-export interface ControleAffiche extends ControleDef { retenu: boolean; fait?: ControleFait; /** Proposé à cause d'un élément du devis. */ lieAuDevis: boolean }
+export interface ControleAffiche extends ControleDef { commentaire?: string; retenu: boolean; fait?: ControleFait; /** Proposé à cause d'un élément du devis. */ lieAuDevis: boolean }
 
 /** Catalogue + contrôles perso, avec l'état retenu / fait. */
 export function controlesAffiches(c: Controles | undefined, ctx = ""): ControleAffiche[] {
   const base = c ?? controlesVides();
   const retenus = new Set(idsRetenus(base, ctx));
   const perso: ControleDef[] = base.perso.map(p => ({ id: p.id, categorie: "Personnalisé", libelle: p.libelle, universel: true }));
-  return [...CATALOGUE_CONTROLES, ...perso].map(d => ({ ...d, retenu: retenus.has(d.id), fait: base.faits[d.id], lieAuDevis: !d.universel && correspond(d, ctx) }));
+  return [...CATALOGUE_CONTROLES, ...perso].map(d => ({ ...d, retenu: retenus.has(d.id), fait: base.faits[d.id], commentaire: base.commentaires?.[d.id], lieAuDevis: !d.universel && correspond(d, ctx) }));
 }
 
 /** Contrôles à remettre au client : retenus ET réalisés. */
@@ -132,6 +135,10 @@ export function appliquerActionControles(c: Controles, a: ActionControles): void
     if (!f) return;
     const v = a.valeur.trim().slice(0, 40);
     if (v) f.valeur = v; else delete f.valeur;
+  } else if (a.action === "commentaire") {
+    const t = a.texte.trim().slice(0, 300);
+    if (t) c.commentaires = { ...c.commentaires, [a.id]: t };
+    else if (c.commentaires) { delete c.commentaires[a.id]; if (Object.keys(c.commentaires).length === 0) delete c.commentaires; }
   } else if (a.action === "perso+") {
     const libelle = a.libelle.trim().slice(0, 120);
     if (!libelle || c.perso.some(p => p.id === a.id)) return;
@@ -141,6 +148,7 @@ export function appliquerActionControles(c: Controles, a: ActionControles): void
   } else {
     c.perso = c.perso.filter(p => p.id !== a.id);
     delete c.faits[a.id];
+    if (c.commentaires) { delete c.commentaires[a.id]; if (Object.keys(c.commentaires).length === 0) delete c.commentaires; }
     if (c.retenus) c.retenus = c.retenus.filter(i => i !== a.id);
   }
 }
@@ -159,6 +167,11 @@ export function lireControles(brut: unknown): Controles | undefined {
       }
     });
   }
+  if (b.commentaires && typeof b.commentaires === "object") {
+    Object.entries(b.commentaires as Record<string, unknown>).forEach(([id, t]) => {
+      if (typeof t === "string" && t.trim()) c.commentaires = { ...c.commentaires, [id]: t.slice(0, 300) };
+    });
+  }
   if (Array.isArray(b.perso)) {
     b.perso.forEach(p => {
       const x = p as Partial<ControlePerso>;
@@ -169,6 +182,6 @@ export function lireControles(brut: unknown): Controles | undefined {
 }
 
 export const copierControles = (c: Controles | undefined): Controles | undefined =>
-  c ? { retenus: c.retenus ? [...c.retenus] : undefined, faits: Object.fromEntries(Object.entries(c.faits).map(([k, v]) => [k, { ...v }])), perso: c.perso.map(p => ({ ...p })) } : undefined;
+  c ? { retenus: c.retenus ? [...c.retenus] : undefined, faits: Object.fromEntries(Object.entries(c.faits).map(([k, v]) => [k, { ...v }])), perso: c.perso.map(p => ({ ...p })), ...(c.commentaires ? { commentaires: { ...c.commentaires } } : {}) } : undefined;
 
 export const nouvelIdPerso = (): string => `perso-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;

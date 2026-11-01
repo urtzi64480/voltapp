@@ -9,6 +9,7 @@ describe("PDF contrôles", () => {
     const c = controlesVides();
     appliquerActionControles(c, { action: "fait", id: "resistance-terre", fait: true, dateIso: "2026-10-01T10:00:00Z" });
     appliquerActionControles(c, { action: "valeur", id: "resistance-terre", valeur: "35" });
+    appliquerActionControles(c, { action: "commentaire", id: "resistance-terre", texte: "Mesure faite par temps sec, piquet accessible dans le jardin" });
     const infos = { numeroDevis: "D-2026/001", objet: "Rénovation", client: { nom: "Dupont", prenom: "Jean", adresse: "1 rue X" }, dateChantier: "2026-10-01" };
     for (const ctl of [c, undefined]) {
       const blob = await genPDFControlesBlob(ctl, profil, infos);

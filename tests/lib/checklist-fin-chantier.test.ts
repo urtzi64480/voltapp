@@ -88,4 +88,17 @@ describe("checklist fin de chantier", () => {
     expect(lireSuivi("{\"v\":1,\"controles\":{\"faits\":{\"nettoyage\":{\"le\":\"d\"}}}}").controles?.faits.nettoyage.le).toBe("d");
     expect(lireSuivi("{\"v\":1,\"controles\":42}").controles).toBeUndefined();
   });
+  it("commentaire par contrôle : enregistré, rendu dans « remis », effaçable, rejouable", () => {
+    const s = { coches: {}, chantier: {}, temps: {}, tempsPostes: {} } as SuiviStocke;
+    appliquerOperation(s, { type: "controles", action: { action: "commentaire", id: "essai-dd", texte: "  Déclenche à 22 mA  " } });
+    appliquerOperation(s, { type: "controles", action: { action: "fait", id: "essai-dd", fait: true, dateIso: "d" } });
+    expect(s.controles?.commentaires?.["essai-dd"]).toBe("Déclenche à 22 mA");
+    expect(controlesRemis(s.controles, " differentiel ").find(x => x.id === "essai-dd")?.commentaire).toBe("Déclenche à 22 mA");
+    expect(lireControles(JSON.parse(JSON.stringify(s.controles)))?.commentaires?.["essai-dd"]).toBe("Déclenche à 22 mA");
+    appliquerOperation(s, { type: "controles", action: { action: "commentaire", id: "essai-dd", texte: "" } });
+    expect(s.controles?.commentaires).toBeUndefined();
+    const seul = controlesVides();
+    appliquerActionControles(seul, { action: "commentaire", id: "nettoyage", texte: "ok" });
+    expect(estVide(seul)).toBe(false);
+  });
 });
