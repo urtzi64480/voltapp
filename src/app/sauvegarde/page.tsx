@@ -2,7 +2,7 @@
 // Sauvegarde complète en un clic : télécharge un fichier JSON avec toutes les données.
 import { useState } from "react";
 import { ecrireStockage } from "@/lib/safe-storage";
-import { CLE_DERNIERE_SAUVEGARDE, lireSauvegarde, restaurer, type RapportRestauration } from "@/lib/restauration";
+import { CLE_DERNIERE_SAUVEGARDE, TABLES_PARENTES, lireSauvegarde, restaurer, type RapportRestauration } from "@/lib/restauration";
 import { DatabaseBackup, Download, Upload } from "lucide-react";
 import Shell from "@/components/layout/Shell";
 import { supabase } from "@/lib/supabase";
@@ -16,6 +16,7 @@ export default function SauvegardePage() {
   const [aRestaurer, setARestaurer] = useState<FichierSauvegarde | null>(null);
   const [restauration, setRestauration] = useState<RapportRestauration | null>(null);
   const [restOccupe, setRestOccupe] = useState(false);
+  const [ecraser, setEcraser] = useState(false);
 
   async function telecharger(prefixe = "") {
     const f = await collecter((table, de, a) => supabase.from(table).select("*").range(de, a));
@@ -38,11 +39,17 @@ export default function SauvegardePage() {
   async function lancerRestauration() {
     if (!aRestaurer) return;
     const total = Object.values(aRestaurer.comptes).reduce((a, n) => a + n, 0);
-    if (!window.confirm(`Restaurer ${total} enregistrements ? Les données du fichier remplacent celles qui ont le même identifiant ; rien n'est supprimé. Une sauvegarde de l'état actuel est téléchargée d'abord.`)) return;
+    const question = ecraser
+      ? `Restaurer ${total} enregistrements en REMPLAÇANT ceux qui existent déjà (tes modifications depuis la sauvegarde seront perdues) ? Une sauvegarde de l'état actuel est téléchargée d'abord.`
+      : `Restaurer ce qui manque (jusqu'à ${total} enregistrements) ? Rien de ce qui existe déjà ne sera modifié. Une sauvegarde de l'état actuel est téléchargée d'abord.`;
+    if (!window.confirm(question)) return;
     setRestOccupe(true); setErreur(null); setRestauration(null);
     try {
       await telecharger("avant-restauration-");
-      setRestauration(await restaurer(aRestaurer, (table, lignes) => supabase.from(table).upsert(lignes as never)));
+      const existants = await collecter((table, de, a) => supabase.from(table).select("id").range(de, a), TABLES_PARENTES);
+      if (Object.keys(existants.erreurs).length > 0 && !ecraser) throw new Error(`Lecture de l'existant impossible (${Object.keys(existants.erreurs).join(", ")}) : restauration annulée.`);
+      const parentsExistants = Object.fromEntries(Object.entries(existants.tables).map(([t, l]) => [t, new Set((l as { id: string }[]).map(x => String(x.id)))]));
+      setRestauration(await restaurer(aRestaurer, (table, lignes, ignorer) => supabase.from(table).upsert(lignes as never, ignorer ? { onConflict: "id", ignoreDuplicates: true } : undefined), { ecraser, parentsExistants }));
     } catch (e) { setErreur(e instanceof Error ? e.message : "Restauration impossible"); } finally { setRestOccupe(false); }
   }
 
@@ -78,18 +85,20 @@ export default function SauvegardePage() {
         </div>
         <div className="card card-inner">
           <h2 className="font-semibold text-ink-800 mb-1 flex items-center gap-2"><Upload size={16} /> Restaurer depuis un fichier</h2>
-          <p className="text-xs text-ink-500 mb-3">Les données du fichier sont réécrites par identifiant : rien n&apos;est supprimé, et tes compteurs de numérotation (devis, factures) ne reculent jamais. Une sauvegarde de l&apos;état actuel est téléchargée juste avant.</p>
+          <p className="text-xs text-ink-500 mb-3">Par défaut, seul ce qui manque est remis : ce que tu as créé, modifié ou déjà en place n&apos;est jamais touché, et les lignes d&apos;un devis ou d&apos;une facture existant ne sont pas recréées (pas de doublons). Les compteurs de numérotation ne reculent jamais. Une sauvegarde de l&apos;état actuel est téléchargée juste avant.</p>
           <input type="file" accept="application/json,.json" className="text-sm" disabled={restOccupe} onChange={e => { void choisirFichier(e.target.files?.[0]); e.target.value = ""; }} />
           {aRestaurer && (
             <div className="mt-3 text-sm">
               <p className="text-ink-700">Sauvegarde du {aRestaurer.genere_le ? new Date(aRestaurer.genere_le).toLocaleString("fr-FR") : "date inconnue"} : {Object.values(aRestaurer.comptes).reduce((a, n) => a + n, 0)} enregistrements.</p>
               <ul className="mt-1 grid grid-cols-2 gap-x-4 text-xs text-ink-500">{Object.entries(aRestaurer.comptes).map(([t, n]) => <li key={t} className="flex justify-between"><span>{t}</span><span>{n}</span></li>)}</ul>
+              <label className="flex items-start gap-2 text-xs text-ink-600 mt-3"><input type="checkbox" className="mt-0.5" checked={ecraser} onChange={e => setEcraser(e.target.checked)} /> Remplacer aussi ce qui existe déjà (retour à l&apos;état exact de la sauvegarde : tes modifications récentes sont perdues)</label>
               <button type="button" className="btn-volt mt-3" disabled={restOccupe} onClick={() => void lancerRestauration()}>{restOccupe ? "Restauration en cours…" : "Restaurer ces données"}</button>
             </div>
           )}
           {restauration && (
             <div className="mt-3 text-sm" role="status">
-              <p className="font-semibold text-emerald-700">Restauration terminée : {Object.values(restauration.restaurees).reduce((a, n) => a + n, 0)} enregistrements écrits.</p>
+              <p className="font-semibold text-emerald-700">Restauration terminée : {Object.values(restauration.restaurees).reduce((a, n) => a + n, 0)} enregistrements traités{ecraser ? "" : " (ceux déjà présents sont restés tels quels)"}.</p>
+              {Object.keys(restauration.ignorees).length > 0 && <p className="text-xs text-ink-500 mt-1">Non recréées car déjà en place : {Object.entries(restauration.ignorees).map(([t, n]) => `${t} (${n})`).join(", ")}.</p>}
               {Object.keys(restauration.erreurs).length > 0 && (
                 <p className="text-xs text-amber-700 mt-1">Tables en erreur : {Object.entries(restauration.erreurs).map(([t, m]) => `${t} (${m})`).join(" ; ")}.</p>
               )}
