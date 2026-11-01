@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
     ]);
     const resume = composerResume({
       interventions: (inter ?? []).filter(i => jourParis(new Date(i.date_debut)) === aujourdhui),
-      payees: pay ?? [], enRetard: ret?.length ?? 0,
+      payees: pay ?? [], enRetard: ret?.length ?? 0, rappelSauvegarde: aujourdhui.endsWith("-01"),
     });
     for (const a of appareils) {
       if (resume) {

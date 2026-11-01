@@ -1,7 +1,10 @@
 "use client";
 // Installation de l'application sur l'écran d'accueil + notifications du matin (interventions du jour, factures payées / en retard).
 import { useEffect, useState } from "react";
-import { BellRing, Download, Smartphone } from "lucide-react";
+import { BellRing, Download, Smartphone, DatabaseBackup } from "lucide-react";
+import Link from "next/link";
+import { lireStockage } from "@/lib/safe-storage";
+import { CLE_DERNIERE_SAUVEGARDE, joursDepuis } from "@/lib/restauration";
 
 interface EvenementInstall extends Event { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> }
 const b64vers8 = (b64: string): Uint8Array => {
@@ -18,8 +21,10 @@ export default function InstallEtNotifications() {
   const [actif, setActif] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [occupe, setOccupe] = useState(false);
+  const [joursSauvegarde, setJoursSauvegarde] = useState<number | null | undefined>(undefined);
 
   useEffect(() => {
+    setJoursSauvegarde(joursDepuis(lireStockage("local", CLE_DERNIERE_SAUVEGARDE)));
     setInstallee(window.matchMedia("(display-mode: standalone)").matches || (navigator as unknown as { standalone?: boolean }).standalone === true);
     setIos(/iPad|iPhone|iPod/.test(navigator.userAgent));
     if ("Notification" in window && "serviceWorker" in navigator && "PushManager" in window) {
@@ -59,7 +64,16 @@ export default function InstallEtNotifications() {
     } catch { setMsg("Désactivation impossible."); } finally { setOccupe(false); }
   }
 
+  const sauvegardeAFaire = joursSauvegarde === null || (typeof joursSauvegarde === "number" && joursSauvegarde >= 30);
   return (
+    <>
+    {sauvegardeAFaire && (
+      <div className="card card-inner mb-6 border-amber-300 bg-amber-50 flex items-center gap-3 text-sm text-amber-900" role="status">
+        <DatabaseBackup size={18} className="shrink-0" />
+        <span className="flex-1">{joursSauvegarde === null ? "Aucune sauvegarde faite sur cet appareil." : `Dernière sauvegarde il y a ${joursSauvegarde} jours.`} Pense à sauvegarder tes données une fois par mois.</span>
+        <Link href="/sauvegarde" className="btn-ghost !py-1.5 !text-xs shrink-0">Sauvegarder</Link>
+      </div>
+    )}
     <div className="card card-inner mb-6">
       <h2 className="font-semibold text-ink-800 mb-3 flex items-center gap-2"><Smartphone size={17} className="text-volt-600" /> Application et notifications</h2>
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -73,5 +87,6 @@ export default function InstallEtNotifications() {
       {msg && <p className="text-xs text-ink-600 mt-2" role="status">{msg}</p>}
       <p className="text-[11px] text-ink-400 mt-2">Chaque matin : interventions du jour, factures payées depuis la veille et factures en retard (rien n&apos;est envoyé s&apos;il n&apos;y a rien à signaler).</p>
     </div>
+    </>
   );
 }
