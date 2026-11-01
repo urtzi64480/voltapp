@@ -55,33 +55,51 @@ export default function CarteVisites({ visites }: { visites: VisiteCarte[] }) {
     return () => { annule = true; };
   }, [visites, extra, cache]);
 
+  const aDesPoints = points.length > 0;
+  const [prete, setPrete] = useState(false);
+  const calqueRef = useRef<any>(null);
+  const touchee = useRef(false); // l'utilisateur a bougé / zoomé : on ne recadre plus la carte à sa place
+
+  // La carte est créée UNE seule fois (elle n'est plus détruite quand de nouvelles villes sont localisées).
   useEffect(() => {
-    if (points.length === 0) return;
+    if (!aDesPoints) return;
     let annule = false;
     let carte: any = null;
     loadLeaflet().then(L => {
       if (annule || !conteneur.current) return;
-      // Sur écran tactile, la carte reste figée tant qu'on ne l'a pas activée : elle ne capte ni le défilement de la page
-      // ni les pincements, et ne zoome plus toute seule.
+      // Écran tactile : carte figée tant qu'on ne l'active pas (ne capte ni le défilement ni les pincements).
+      // Souris : molette = zoom, glisser = déplacer.
       const figee = window.matchMedia("(pointer: coarse)").matches;
       carte = L.map(conteneur.current, {
-        scrollWheelZoom: false, dragging: !figee, touchZoom: !figee, doubleClickZoom: !figee, tap: false, boxZoom: false,
+        scrollWheelZoom: !figee, dragging: !figee, touchZoom: !figee, doubleClickZoom: !figee, tap: false, boxZoom: false,
       });
       carteRef.current = carte;
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 18,
       }).addTo(carte);
-      const bornes = L.latLngBounds([[COORDONNEES.lat, COORDONNEES.lng]]);
-      points.forEach(p => {
-        L.circleMarker([p.lat, p.lng], { radius: 6, color: "#fff", weight: 1.5, fillColor: "#D97706", fillOpacity: 0.85 })
-          .addTo(carte).bindTooltip(p.libelle, { direction: "top" });
-        bornes.extend([p.lat, p.lng]);
-      });
-      carte.fitBounds(bornes, { padding: [30, 30], maxZoom: 9 });
+      calqueRef.current = L.layerGroup().addTo(carte);
+      const marque = () => { touchee.current = true; };
+      ["wheel", "mousedown", "touchstart"].forEach(ev => conteneur.current?.addEventListener(ev, marque, { passive: true }));
+      carte.setView([COORDONNEES.lat, COORDONNEES.lng], 9);
       window.setTimeout(() => carte?.invalidateSize(), 150);
+      setPrete(true);
     }).catch(() => { if (!annule) setErreur(true); });
-    return () => { annule = true; carteRef.current = null; if (carte) carte.remove(); };
-  }, [points]);
+    return () => { annule = true; carteRef.current = null; calqueRef.current = null; setPrete(false); touchee.current = false; if (carte) carte.remove(); };
+  }, [aDesPoints]);
+
+  // Les points sont mis à jour sans toucher au cadrage choisi par l'utilisateur.
+  useEffect(() => {
+    const L = (window as any).L, carte = carteRef.current, calque = calqueRef.current;
+    if (!prete || !L || !carte || !calque) return;
+    calque.clearLayers();
+    const bornes = L.latLngBounds([[COORDONNEES.lat, COORDONNEES.lng]]);
+    points.forEach(p => {
+      L.circleMarker([p.lat, p.lng], { radius: 6, color: "#fff", weight: 1.5, fillColor: "#D97706", fillOpacity: 0.85 })
+        .addTo(calque).bindTooltip(p.libelle, { direction: "top" });
+      bornes.extend([p.lat, p.lng]);
+    });
+    if (!touchee.current) carte.fitBounds(bornes, { padding: [30, 30], maxZoom: 9 });
+  }, [points, prete]);
 
   const basculer = () => {
     const c = carteRef.current;
