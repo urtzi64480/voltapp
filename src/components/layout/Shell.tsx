@@ -4,32 +4,20 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, Users, FileText, BookOpen,
   TrendingUp, Settings, Zap, Menu, X, Receipt, CalendarDays, AlertTriangle, ClipboardList, Inbox, CalendarCheck, Camera,
-  LayoutTemplate, PiggyBank, FileSpreadsheet, BellRing, DatabaseBackup,
+  LayoutTemplate, PiggyBank, FileSpreadsheet, BellRing, DatabaseBackup, ChevronDown,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { cn, dateLocale } from "@/lib/utils";
+import { RUBRIQUES, estActif, lireOuvertes, rubriqueDe } from "@/lib/navigation";
+import { lireStockage, ecrireStockage } from "@/lib/safe-storage";
 import { supabase } from "@/lib/supabase";
 
-const NAV = [
-  { href: "/dashboard",     label: "Dashboard",     icon: LayoutDashboard },
-  { href: "/clients",       label: "Clients",       icon: Users },
-  { href: "/leads",         label: "Leads web",     icon: Inbox },
-  { href: "/rdv",           label: "RDV",           icon: CalendarCheck },
-  { href: "/demandes",      label: "Demandes",      icon: ClipboardList },
-  { href: "/devis",         label: "Devis",         icon: FileText },
-  { href: "/planning",      label: "Planning",      icon: CalendarDays },
-  { href: "/factures",      label: "Factures",      icon: Receipt },
-  { href: "/catalogue",     label: "Catalogue",     icon: BookOpen },
-  { href: "/tableau",       label: "Tableaux",      icon: Zap },
-  { href: "/plan",          label: "Plans interventions", icon: LayoutTemplate },
-  { href: "/realisations",  label: "Réalisations",  icon: Camera },
-  { href: "/crm",           label: "CRM",           icon: TrendingUp },
-  { href: "/rentabilite",   label: "Rentabilité",   icon: PiggyBank },
-  { href: "/export-comptable", label: "Livre des recettes", icon: FileSpreadsheet },
-  { href: "/entretiens",    label: "Rappels d'entretien", icon: BellRing },
-  { href: "/sauvegarde",    label: "Sauvegarde",    icon: DatabaseBackup },
-  { href: "/parametres",    label: "Paramètres",    icon: Settings },
-];
+const ICONES: Record<string, any> = {
+  "/clients": Users, "/leads": Inbox, "/demandes": ClipboardList, "/rdv": CalendarCheck, "/devis": FileText, "/factures": Receipt,
+  "/planning": CalendarDays, "/plan": LayoutTemplate, "/tableau": Zap, "/realisations": Camera, "/entretiens": BellRing,
+  "/crm": TrendingUp, "/rentabilite": PiggyBank, "/export-comptable": FileSpreadsheet,
+  "/catalogue": BookOpen, "/sauvegarde": DatabaseBackup, "/parametres": Settings,
+};
 
 const BOTTOM_NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -109,8 +97,49 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const [nomEntreprise, setNomEntreprise] = useState("VoltApp");
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
 
-  const isActive = (href: string) =>
-    href === "/dashboard" ? path === href : path.startsWith(href);
+  const isActive = (href: string) => estActif(path, href);
+
+  // Rubriques ouvertes : celle de la page active toujours ; le reste mémorisé sur l'appareil.
+  const [ouvertes, setOuvertes] = useState<string[]>([]);
+  useEffect(() => {
+    const memo = lireOuvertes(lireStockage("local", "voltapp:menu-ouvert")) ?? [];
+    const active = rubriqueDe(path);
+    setOuvertes(active && !memo.includes(active) ? [...memo, active] : memo);
+  }, [path]);
+  const basculerRubrique = (nom: string) => setOuvertes(prev => {
+    const suivant = prev.includes(nom) ? prev.filter(n => n !== nom) : [...prev, nom];
+    ecrireStockage("local", "voltapp:menu-ouvert", JSON.stringify(suivant));
+    return suivant;
+  });
+  const badgeDe = (href: string) =>
+    href === "/factures" ? facturesEnRetard : href === "/leads" ? leadsNouveaux : href === "/rdv" ? rdvNouveaux : undefined;
+
+  const menu = (onClick?: () => void) => (
+    <>
+      <NavLink href="/dashboard" label="Dashboard" Icon={LayoutDashboard} active={isActive("/dashboard")} onClick={onClick} />
+      {RUBRIQUES.map(r => {
+        const ouverte = ouvertes.includes(r.nom);
+        const alertes = r.items.reduce((a, i) => a + (badgeDe(i.href) ?? 0), 0);
+        return (
+          <div key={r.nom} className="pt-2">
+            <button type="button" onClick={() => basculerRubrique(r.nom)} aria-expanded={ouverte}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-ink-500 hover:text-ink-300">
+              <ChevronDown size={13} className={cn("transition-transform", !ouverte && "-rotate-90")} />
+              <span className="flex-1 text-left">{r.nom}</span>
+              {!ouverte && alertes > 0 && <span className="w-2 h-2 rounded-full bg-red-500" aria-label="Notifications dans cette rubrique" />}
+            </button>
+            {ouverte && (
+              <div className="space-y-0.5">
+                {r.items.map(i => (
+                  <NavLink key={i.href} href={i.href} label={i.label} Icon={ICONES[i.href] ?? Zap} active={isActive(i.href)} onClick={onClick} badge={badgeDe(i.href)} />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
 
   useEffect(() => {
     async function loadProfil() {
@@ -166,18 +195,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         </div>
 
         <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto">
-          {NAV.map(({ href, label, icon: Icon }) => (
-            <NavLink
-              key={href} href={href} label={label} Icon={Icon}
-              active={isActive(href)}
-              badge={
-                href === "/factures" ? facturesEnRetard :
-                href === "/leads" ? leadsNouveaux :
-                href === "/rdv" ? rdvNouveaux :
-                undefined
-              }
-            />
-          ))}
+          {menu()}
         </nav>
 
         <div className="p-3 border-t border-ink-700">
@@ -230,19 +248,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
               </button>
             </div>
             <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto">
-              {NAV.map(({ href, label, icon: Icon }) => (
-                <NavLink
-                  key={href} href={href} label={label} Icon={Icon}
-                  active={isActive(href)}
-                  onClick={() => setDrawer(false)}
-                  badge={
-                    href === "/factures" ? facturesEnRetard :
-                    href === "/leads" ? leadsNouveaux :
-                    href === "/rdv" ? rdvNouveaux :
-                    undefined
-                  }
-                />
-              ))}
+              {menu(() => setDrawer(false))}
             </nav>
           </aside>
         </div>
