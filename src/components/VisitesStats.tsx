@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Loader2, Smartphone, Monitor, Globe, Clock, UserPlus, FileSearch, X, ChevronRight } from "lucide-react";
 import { fondModal } from "@/lib/fond-modal";
+import CarteVisites from "@/components/CarteVisites";
 
 interface Visite {
   [colonne: string]: unknown;
@@ -201,6 +202,8 @@ export default function VisitesStats({ userId }: { userId: string }) {
           </p>
         </div>
       </div>
+
+      <CarteVisites visites={visites} />
 
       {topPages.length > 0 && (
         <div>
