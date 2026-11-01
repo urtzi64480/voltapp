@@ -2,9 +2,20 @@
   "redirects": [
     {
       "source": "/:path*",
-      "has": [{ "type": "host", "value": "voltapp-ten.vercel.app" }],
+      "has": [
+        {
+          "type": "host",
+          "value": "voltapp-ten.vercel.app"
+        }
+      ],
       "destination": "https://elektron-electricite.fr/:path*",
       "permanent": true
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/public/push-cron",
+      "schedule": "0 6 * * *"
     }
   ]
 }

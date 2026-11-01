@@ -11,7 +11,7 @@ const VERSION = "v1";
 const CACHE_STATIC = "voltapp-static-" + VERSION;
 const CACHE_PAGES = "voltapp-pages-" + VERSION;
 
-const estPageSuivi = (url) => /^\/(plan|devis)\/[^/]+\/(suivi|fin-chantier)\/?$/.test(url.pathname);
+const estPageSuivi = (url) => /^\/(plan|devis)\/[^/]+\/(suivi|fin-chantier|reception)\/?$/.test(url.pathname);
 
 self.addEventListener("install", () => { self.skipWaiting(); });
 
@@ -56,4 +56,25 @@ self.addEventListener("fetch", (event) => {
       }
     })());
   }
+});
+
+/* Notifications push (résumé du matin). Le contenu est un petit JSON { titre, corps, url } envoyé par /api/public/push-cron. */
+self.addEventListener("push", (event) => {
+  let d = {};
+  try { d = event.data ? event.data.json() : {}; } catch (e) { d = {}; }
+  const titre = typeof d.titre === "string" && d.titre ? d.titre : "VoltApp";
+  const url = typeof d.url === "string" && d.url.startsWith("/") ? d.url : "/dashboard";
+  event.waitUntil(self.registration.showNotification(titre, {
+    body: typeof d.corps === "string" ? d.corps : "", icon: "/icon-192.png", badge: "/icon-192.png", data: { url }, tag: "voltapp-resume",
+  }));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/dashboard";
+  event.waitUntil((async () => {
+    const fenetres = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const f of fenetres) { if ("focus" in f) { await f.focus(); if ("navigate" in f) { try { await f.navigate(url); } catch (e) { /* page d'une autre origine */ } } return; } }
+    await self.clients.openWindow(url);
+  })());
 });

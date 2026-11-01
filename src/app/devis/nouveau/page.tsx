@@ -1,4 +1,5 @@
 "use client";
+import BoutonDeplacement from "@/components/devis/BoutonDeplacement";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Client, DevisLigne, Prestation } from "@/types";
@@ -359,6 +360,7 @@ function NouveauDevisPage() {
                 prestations={prestations}
                 showUnite texteVide="Page vierge — commence ton devis"
               />
+              <BoutonDeplacement client={selectedClient} onAjouter={l => setLignes(prev => [...prev, l])} />
             </div>
 
             {lignes.length > 0 && (

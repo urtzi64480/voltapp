@@ -271,6 +271,7 @@ function Fin({ devis, absenteInitial }: { devis: DevisFin; absenteInitial: boole
           </div>
           {(!devis.client?.telephone || !devis.client?.email) && <p className="text-[11px] text-ink-400 mt-2">{!devis.client?.telephone ? "Pas de téléphone sur la fiche client : le SMS s'ouvrira sans destinataire. " : ""}{!devis.client?.email ? "Pas d'e-mail sur la fiche client : l'e-mail s'ouvrira sans destinataire." : ""}</p>}
           {info && <p className="text-xs text-amber-700 mt-2" role="status">{info}</p>}
+          <Link href={`/devis/${devis.id}/reception`} className="btn-ghost mt-3 inline-flex">Réception signée, photos et dossier complet →</Link>
           <p className="text-[11px] text-ink-400 mt-3">Le PDF précise qu&apos;il ne remplace ni une attestation Consuel ni un rapport de vérification réglementaire. Les valeurs mesurées sont celles que tu saisis : rien n&apos;est calculé ni validé automatiquement.</p>
         </div>
       </div>

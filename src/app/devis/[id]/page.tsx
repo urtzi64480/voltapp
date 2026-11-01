@@ -5,6 +5,7 @@ import { Devis, DevisLigne, Prestation, Client, Profil } from "@/types";
 import { fmt, fmtDate, fmtDatetime, STATUT_LABELS, STATUT_COLORS, cn, dateLocale, arrondi2, echecSupabase } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import PostesLignes from "@/components/devis/PostesLignes";
+import BoutonDeplacement from "@/components/devis/BoutonDeplacement";
 import LigneImage from "@/components/devis/LigneImage";
 import { extrairePostes, grouperParPoste, ordonnerLignes, posteDe, totalItems, trierParOrdre } from "@/lib/postes";
 import { attacherFournisseurs } from "@/lib/fournisseurs";
@@ -1071,6 +1072,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                     prestations={prestations}
                     showUnite texteVide="Page vierge — ajoute un poste ou un produit"
                   />
+                  <BoutonDeplacement client={devis?.client ?? null} onAjouter={l => setLignes(prev => [...prev, l])} />
                 </div>
 
                 {lignes.length > 0 && (

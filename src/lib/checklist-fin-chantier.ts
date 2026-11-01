@@ -75,6 +75,10 @@ export function idsProposes(ctx: string): string[] {
 export interface ControleFait { le: string; valeur?: string }
 export interface ControlePerso { id: string; libelle: string }
 
+/** Procès-verbal de réception signé par le client sur place. */
+export interface Reception { le: string; nom: string; reserves?: string; signature: string }
+export interface PhotoChantier { url: string; legende?: string }
+
 export interface Controles {
   /** undefined = propositions par défaut ; sinon la sélection explicite de l'électricien. */
   retenus?: string[];
@@ -82,11 +86,15 @@ export interface Controles {
   perso: ControlePerso[];
   /** Commentaire libre par contrôle (affiché sur le rapport client). */
   commentaires?: Record<string, string>;
+  reception?: Reception;
+  photos?: PhotoChantier[];
+  /** Date d'envoi du rappel d'entretien annuel au client (ISO). */
+  entretienEnvoyeLe?: string;
 }
 
 export const controlesVides = (): Controles => ({ faits: {}, perso: [] });
 export const estVide = (c: Controles | undefined): boolean =>
-  !c || (c.retenus === undefined && Object.keys(c.faits).length === 0 && c.perso.length === 0 && Object.keys(c.commentaires ?? {}).length === 0);
+  !c || (c.retenus === undefined && Object.keys(c.faits).length === 0 && c.perso.length === 0 && Object.keys(c.commentaires ?? {}).length === 0 && !c.reception && !(c.photos?.length) && !c.entretienEnvoyeLe);
 
 export type ActionControles =
   /** `ids` = la sélection COMPLÈTE après le clic (absolue : rejouable hors ligne sans connaître le devis). */
@@ -94,6 +102,10 @@ export type ActionControles =
   | { action: "fait"; id: string; fait: boolean; dateIso: string }
   | { action: "valeur"; id: string; valeur: string }
   | { action: "commentaire"; id: string; texte: string }
+  | { action: "reception"; id: string; reception: Reception | null }
+  | { action: "photo+"; id: string; photo: PhotoChantier }
+  | { action: "photo-"; id: string }
+  | { action: "entretien"; id: string; le: string | null }
   | { action: "perso+"; id: string; libelle: string }
   | { action: "perso-"; id: string };
 
@@ -139,6 +151,17 @@ export function appliquerActionControles(c: Controles, a: ActionControles): void
     const t = a.texte.trim().slice(0, 300);
     if (t) c.commentaires = { ...c.commentaires, [a.id]: t };
     else if (c.commentaires) { delete c.commentaires[a.id]; if (Object.keys(c.commentaires).length === 0) delete c.commentaires; }
+  } else if (a.action === "reception") {
+    if (a.reception) c.reception = { ...a.reception, nom: a.reception.nom.trim().slice(0, 120), ...(a.reception.reserves?.trim() ? { reserves: a.reception.reserves.trim().slice(0, 1000) } : {}) };
+    else delete c.reception;
+  } else if (a.action === "photo+") {
+    const photos = c.photos ?? [];
+    if (!photos.some(p => p.url === a.photo.url) && photos.length < 12) c.photos = [...photos, { url: a.photo.url, ...(a.photo.legende?.trim() ? { legende: a.photo.legende.trim().slice(0, 120) } : {}) }];
+  } else if (a.action === "photo-") {
+    c.photos = (c.photos ?? []).filter(p => p.url !== a.id);
+    if (c.photos.length === 0) delete c.photos;
+  } else if (a.action === "entretien") {
+    if (a.le) c.entretienEnvoyeLe = a.le; else delete c.entretienEnvoyeLe;
   } else if (a.action === "perso+") {
     const libelle = a.libelle.trim().slice(0, 120);
     if (!libelle || c.perso.some(p => p.id === a.id)) return;
@@ -172,6 +195,16 @@ export function lireControles(brut: unknown): Controles | undefined {
       if (typeof t === "string" && t.trim()) c.commentaires = { ...c.commentaires, [id]: t.slice(0, 300) };
     });
   }
+  const r = b.reception as Partial<Reception> | undefined;
+  if (r && typeof r === "object" && typeof r.le === "string" && typeof r.nom === "string" && typeof r.signature === "string" && r.signature.startsWith("data:image/")) {
+    c.reception = { le: r.le, nom: r.nom, signature: r.signature, ...(typeof r.reserves === "string" && r.reserves ? { reserves: r.reserves } : {}) };
+  }
+  if (Array.isArray(b.photos)) {
+    const ph = b.photos.filter((p): p is PhotoChantier => !!p && typeof (p as PhotoChantier).url === "string" && /^https?:\/\//.test((p as PhotoChantier).url))
+      .map(p => ({ url: p.url, ...(typeof p.legende === "string" && p.legende ? { legende: p.legende } : {}) }));
+    if (ph.length > 0) c.photos = ph;
+  }
+  if (typeof b.entretienEnvoyeLe === "string" && b.entretienEnvoyeLe) c.entretienEnvoyeLe = b.entretienEnvoyeLe;
   if (Array.isArray(b.perso)) {
     b.perso.forEach(p => {
       const x = p as Partial<ControlePerso>;
@@ -182,6 +215,6 @@ export function lireControles(brut: unknown): Controles | undefined {
 }
 
 export const copierControles = (c: Controles | undefined): Controles | undefined =>
-  c ? { retenus: c.retenus ? [...c.retenus] : undefined, faits: Object.fromEntries(Object.entries(c.faits).map(([k, v]) => [k, { ...v }])), perso: c.perso.map(p => ({ ...p })), ...(c.commentaires ? { commentaires: { ...c.commentaires } } : {}) } : undefined;
+  c ? { retenus: c.retenus ? [...c.retenus] : undefined, faits: Object.fromEntries(Object.entries(c.faits).map(([k, v]) => [k, { ...v }])), perso: c.perso.map(p => ({ ...p })), ...(c.commentaires ? { commentaires: { ...c.commentaires } } : {}), ...(c.reception ? { reception: { ...c.reception } } : {}), ...(c.photos ? { photos: c.photos.map(p => ({ ...p })) } : {}), ...(c.entretienEnvoyeLe ? { entretienEnvoyeLe: c.entretienEnvoyeLe } : {}) } : undefined;
 
 export const nouvelIdPerso = (): string => `perso-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;

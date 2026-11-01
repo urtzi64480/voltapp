@@ -4,7 +4,10 @@ import { supabase } from "@/lib/supabase";
 import { fmt, PLAFOND_SERVICE, PLAFOND_MATERIAU } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { Zap, TrendingUp, FileText, Receipt, AlertTriangle, Users } from "lucide-react";
+import { Zap, TrendingUp, FileText, Receipt, AlertTriangle, Users, Wallet } from "lucide-react";
+import InstallEtNotifications from "@/components/InstallEtNotifications";
+import { provisionFactures, type ResultatProvision } from "@/lib/provision";
+import { tauxDepuisProfil } from "@/lib/rentabilite";
 
 export default function DashboardPage() {
   const [stats, setStats] = useState({
@@ -13,6 +16,8 @@ export default function DashboardPage() {
     devis_attente: 0, factures_impayees: 0, nb_clients: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [provMois, setProvMois] = useState<ResultatProvision | null>(null);
+  const [provAnnee, setProvAnnee] = useState<ResultatProvision | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -28,7 +33,7 @@ export default function DashboardPage() {
         supabase.from("factures").select("total_service,total_materiau,total_ttc")
           .eq("statut", "payee").gte("paye_le", debutMois),
         // CA année : factures payées cette année, filtré sur paye_le
-        supabase.from("factures").select("total_service,total_materiau")
+        supabase.from("factures").select("total_service,total_materiau,total_ttc")
           .eq("statut", "payee").gte("paye_le", debutAnnee),
         supabase.from("devis").select("id").in("statut", ["brouillon", "envoye"]),
         supabase.from("factures").select("id").in("statut", ["impayee", "relance", "envoyee"]),
@@ -46,6 +51,12 @@ export default function DashboardPage() {
         factures_impayees: fI?.length ?? 0,
         nb_clients: cls?.length ?? 0,
       });
+      // « À mettre de côté » : cotisations + impôt d'après les taux du profil (valeurs par défaut sinon).
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: prof } = user ? await supabase.from("profil").select("*").eq("id", user.id).maybeSingle() : { data: null };
+      const taux = tauxDepuisProfil(prof as Record<string, number | null> | null);
+      setProvMois(provisionFactures(fM ?? [], taux));
+      setProvAnnee(provisionFactures(fA ?? [], taux));
       setLoading(false);
     }
     load();
@@ -84,6 +95,24 @@ export default function DashboardPage() {
           ))}
         </div>
 
+        {/* À mettre de côté */}
+        {provMois && provAnnee && (
+          <div className="card card-inner mb-6">
+            <h2 className="font-semibold text-ink-800 mb-3 flex items-center gap-2"><Wallet size={17} className="text-volt-600" /> À mettre de côté</h2>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              {[{ t: "Ce mois", r: provMois }, { t: `Année ${new Date().getFullYear()}`, r: provAnnee }].map(({ t, r }) => (
+                <div key={t} className="rounded-xl bg-ink-50 p-3">
+                  <p className="text-xs text-ink-500">{t}</p>
+                  <p className="text-lg font-semibold text-amber-600">{fmt(r.provision)}</p>
+                  <p className="text-xs text-ink-400">cotisations {fmt(r.cotisations)}{r.impots > 0 ? ` · impôt ${fmt(r.impots)}` : ""}</p>
+                  <p className="text-xs text-ink-700 mt-1">Disponible réel : <b>{fmt(r.disponible)}</b> <span className="text-ink-400">sur {fmt(r.encaisse)} encaissés</span></p>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-ink-400 mt-2">Calculé sur les factures payées avec les taux de ton profil, avant achats et autres dépenses.</p>
+          </div>
+        )}
+
         {/* Plafonds AE */}
         <div className="card card-inner mb-6">
           <h2 className="font-semibold text-ink-800 mb-5 flex items-center gap-2">
@@ -112,6 +141,8 @@ export default function DashboardPage() {
             ))}
           </div>
         </div>
+
+        <InstallEtNotifications />
 
         {/* Accès rapides */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
