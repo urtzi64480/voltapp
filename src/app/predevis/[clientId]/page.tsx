@@ -22,6 +22,7 @@ import {
 import { BobineField, FournisseursEditor, longueurValide } from "@/components/catalogue/EditeurArticle";
 import { UNITES, arrondi2, echecSupabase } from "@/lib/utils";
 import { colonnesFournisseur, colonnesImage } from "@/lib/devis-lignes";
+import { appliquerRegroupement, type RegroupementDevis } from "@/lib/regroupement-devis";
 import ProduitPicker from "@/components/devis/ProduitPicker";
 import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
 import Shell from "@/components/layout/Shell";
@@ -532,6 +533,9 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [fraisGenerauxPct, setFraisGenerauxPct] = useState("0");
   const [deplacementEur, setDeplacementEur] = useState("0");
   const [generating, setGenerating] = useState(false);
+  // Présentation du devis à la validation : « poste » = un poste par pièce / circuit (le mode déjà choisi, comportement
+  // historique) ; « produit » = une ligne par produit, quantités additionnées, sans postes (voir regroupement-devis.ts).
+  const [regroupement, setRegroupement] = useState<RegroupementDevis>("poste");
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
   const [choixAgrege, setChoixAgrege] = useState<Record<string, EtatChoix>>({});
@@ -1085,7 +1089,10 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) { alert("Session expirée."); setGenerating(false); return; }
 
-      const { lignesFinales, choixLignes } = assemblerLignes();
+      const { lignesFinales: lignesAssemblees, choixLignes } = assemblerLignes();
+      // Présentation choisie à la validation : postes pièce / circuit tels que chiffrés, ou une ligne par produit. Le regroupement
+      // se fait après l'assemblage (frais généraux compris) : les totaux sont ceux du pré-devis, seule la présentation change.
+      const lignesFinales = appliquerRegroupement(lignesAssemblees, regroupement);
       // Besoins ni exclus ni résolus : on prévient, puis ils deviennent des lignes « À compléter » à 0 €.
       const manquants = choixLignes.filter(c => c.aCompleter && !c.aDefinir);
       const nbADefinir = choixLignes.filter(c => c.aDefinir).length;
@@ -1733,9 +1740,15 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
           return (
             <div className={`card card-inner mb-4 ${aVerifier.length > 0 ? "bg-amber-50 border-amber-200" : "border-emerald-200"}`}>
               <h2 className="font-semibold text-ink-800 text-sm mb-1">Contrôle des pièces → postes du devis</h2>
-              <p className="text-xs text-ink-500 mb-2">
-                Chaque pièce chiffrée devient un <strong>poste</strong> du devis (même nom). Le tableau et les liaisons communes ont leur propre poste, les câbles/gaines/moulures forment le poste « {POSTE_CABLAGE} », et la main d'œuvre le poste « {POSTE_MAIN_OEUVRE} ».
-              </p>
+              {regroupement === "produit" ? (
+                <p className="text-xs text-ink-500 mb-2">
+                  Présentation <strong>regroupée par produits</strong> : les lignes de toutes les pièces seront fusionnées (une ligne par produit, sans postes). Cette liste sert à vérifier qu'aucune pièce n'est oubliée.
+                </p>
+              ) : (
+                <p className="text-xs text-ink-500 mb-2">
+                  Chaque pièce chiffrée devient un <strong>poste</strong> du devis (même nom). Le tableau et les liaisons communes ont leur propre poste, les câbles/gaines/moulures forment le poste « {POSTE_CABLAGE} », et la main d'œuvre le poste « {POSTE_MAIN_OEUVRE} ».
+                </p>
+              )}
               <div className="flex flex-wrap gap-1.5">
                 {lignesPlan.map((x, i) => (
                   <span key={`${x.niveau}-${x.nom}-${i}`}
@@ -1765,6 +1778,31 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
             </div>
           </div>
           <p className="text-xs text-ink-400 mt-2">Total approximatif (arrondis de bobines non appliqués ici) — le devis final, lui, applique la décomposition exacte en bobines.</p>
+        </div>
+
+        <div className="card card-inner mb-4">
+          <h2 className="font-semibold text-ink-800 text-sm mb-2">Présentation du devis</h2>
+          <div className="flex flex-col gap-2">
+            <label className="flex items-start gap-2 text-sm cursor-pointer">
+              <input type="radio" name="regroupement-devis" className="mt-1" checked={regroupement === "poste"} onChange={() => setRegroupement("poste")} />
+              <span>
+                <span className="font-medium text-ink-800">{mode === "circuit" ? "Un poste par circuit" : "Un poste par pièce"}</span>
+                <span className="block text-xs text-ink-500">Comme choisi au départ : le devis garde les postes du pré-devis.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-sm cursor-pointer">
+              <input type="radio" name="regroupement-devis" className="mt-1" checked={regroupement === "produit"} onChange={() => setRegroupement("produit")} />
+              <span>
+                <span className="font-medium text-ink-800">Regroupé par produits</span>
+                <span className="block text-xs text-ink-500">Une seule ligne par produit, quantités additionnées sur tout le projet, sans postes. Mêmes quantités et mêmes prix : seule la présentation change.</span>
+              </span>
+            </label>
+          </div>
+          {regroupement === "produit" && (
+            <p className="text-xs text-amber-700 mt-2">
+              La main d'œuvre est regroupée aussi : le suivi de réalisation comptera toutes les heures chiffrées comme générales (plus de comparaison poste par poste). Tu pourras toujours créer tes propres postes en modifiant le devis.
+            </p>
+          )}
         </div>
 
         <div className="flex gap-3">
