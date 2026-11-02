@@ -6,6 +6,7 @@ import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { Zap, TrendingUp, FileText, Receipt, AlertTriangle, Users, Wallet } from "lucide-react";
 import InstallEtNotifications from "@/components/InstallEtNotifications";
+import QrAvis from "@/components/QrAvis";
 import { provisionFactures, type ResultatProvision } from "@/lib/provision";
 import { tauxDepuisProfil } from "@/lib/rentabilite";
 
@@ -143,6 +144,8 @@ export default function DashboardPage() {
         </div>
 
         <InstallEtNotifications />
+
+        <QrAvis />
 
         {/* Accès rapides */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
