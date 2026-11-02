@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appliquerRegroupement, cleProduit, regrouperParProduit, type LigneGeneree } from "@/lib/regroupement-devis";
+import { appliquerRegroupement, cleProduit, libellePresentation, regrouperParProduit, type LigneGeneree } from "@/lib/regroupement-devis";
 import { PREFIXE_A_COMPLETER } from "@/lib/devis-lignes";
 import { arrondi2 } from "@/lib/utils";
 
@@ -20,18 +20,22 @@ describe("regrouperParProduit", () => {
     expect(res[0]).toMatchObject({ nom: "Prise 2P+T", quantite: 9, prix_unitaire: 10, prestation_id: "p-prise", fournisseur_id: "o-rexel", prix_achat: 6, poste: null });
   });
 
-  it("garde l'origine : la description devient la liste des pièces distinctes (sans doublon)", () => {
+  it("ne porte aucune description : les pièces / circuits d'origine ne surchargent pas le devis", () => {
     const res = regrouperParProduit([
-      ligne({ description: "Salon" }), ligne({ description: "Chambre" }), ligne({ description: "Salon" }),
+      ligne({ description: "Salon" }), ligne({ description: "Chambre" }), ligne({ description: "Salon" }), ligne({ nom: "Boîte", prestation_id: "p-boite", description: "Cuisine" }),
     ]);
-    expect(res[0].description).toBe("Salon, Chambre");
+    expect(res).toHaveLength(2);
     expect(res[0].quantite).toBe(3);
+    res.forEach(l => expect("description" in l).toBe(false));
   });
 
-  it("sans aucune description : pas de champ description", () => {
-    const res = regrouperParProduit([ligne({ description: undefined }), ligne({ description: "  " })]);
+  it("40 prises 16 A réparties dans plusieurs pièces : une seule ligne « 40 u » au prix unitaire", () => {
+    const pieces = ["Salon", "Cuisine", "Chambre 1", "Chambre 2", "Bureau"];
+    const entree = pieces.map(p => ligne({ nom: "Prise 2P+T 16 A", quantite: 8, poste: p, description: p, prix_unitaire: 7.5 }));
+    const res = regrouperParProduit(entree);
     expect(res).toHaveLength(1);
-    expect("description" in res[0]).toBe(false);
+    expect(res[0]).toMatchObject({ nom: "Prise 2P+T 16 A", quantite: 40, prix_unitaire: 7.5, unite: "u", poste: null });
+    expect(totalLignes(res)).toBe(300);
   });
 
   it("ne fusionne jamais deux lignes qui diffèrent par le prix, le fournisseur, l'unité, la branche ou la désignation", () => {
@@ -74,7 +78,7 @@ describe("regrouperParProduit", () => {
     const res = regrouperParProduit([manque("Salon"), manque("Chambre")]);
     expect(res).toHaveLength(1);
     expect(res[0].nom.startsWith(PREFIXE_A_COMPLETER)).toBe(true);
-    expect(res[0]).toMatchObject({ prix_unitaire: 0, quantite: 2, description: "Salon, Chambre" });
+    expect(res[0]).toMatchObject({ prix_unitaire: 0, quantite: 2 });
   });
 
   it("une ligne unique (frais, déplacement) passe sans changement de montant, hors poste", () => {
@@ -122,5 +126,14 @@ describe("appliquerRegroupement", () => {
     const res = appliquerRegroupement(entree, "produit");
     expect(res).toHaveLength(1);
     expect(res[0]).toMatchObject({ quantite: 2, poste: null });
+  });
+});
+
+describe("libellePresentation", () => {
+  it("décrit la présentation choisie", () => {
+    expect(libellePresentation("produit", "piece")).toBe("regroupé par produits");
+    expect(libellePresentation("poste", "circuit")).toBe("un poste par circuit");
+    expect(libellePresentation("poste", "piece")).toBe("un poste par pièce");
+    expect(libellePresentation("poste", null)).toBe("un poste par pièce");
   });
 });

@@ -20,9 +20,9 @@ import {
   chargerOffres, libelleOffre, marquesDe, miroirPrestation, normaliserDrafts, nouvelleOffreDraft, offresDe, synchroniserOffres, OffreDraft, OffreNormalisee,
 } from "@/lib/fournisseurs";
 import { BobineField, FournisseursEditor, longueurValide } from "@/components/catalogue/EditeurArticle";
-import { UNITES, arrondi2, echecSupabase } from "@/lib/utils";
+import { STATUT_LABELS, UNITES, arrondi2, echecSupabase } from "@/lib/utils";
 import { colonnesFournisseur, colonnesImage } from "@/lib/devis-lignes";
-import { appliquerRegroupement, type RegroupementDevis } from "@/lib/regroupement-devis";
+import { appliquerRegroupement, libellePresentation, type RegroupementDevis } from "@/lib/regroupement-devis";
 import ProduitPicker from "@/components/devis/ProduitPicker";
 import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
 import Shell from "@/components/layout/Shell";
@@ -536,6 +536,11 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   // Présentation du devis à la validation : « poste » = un poste par pièce / circuit (le mode déjà choisi, comportement
   // historique) ; « produit » = une ligne par produit, quantités additionnées, sans postes (voir regroupement-devis.ts).
   const [regroupement, setRegroupement] = useState<RegroupementDevis>("poste");
+  // Devis déjà généré depuis ce pré-devis (mémorisé dans le brouillon, qui reste enregistré après la validation) : permet de
+  // changer ensuite la présentation de ce devis sans tout refaire. `presentation` = celle de ses lignes actuelles.
+  const [devisLie, setDevisLie] = useState<{ id: string; numero: string; presentation: RegroupementDevis } | null>(null);
+  const [devisLieInfo, setDevisLieInfo] = useState<{ id: string; numero: string; statut: string } | null>(null);
+  const [bascule, setBascule] = useState<{ ok: boolean; texte: string } | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
   const [choixAgrege, setChoixAgrege] = useState<Record<string, EtatChoix>>({});
@@ -598,6 +603,12 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       }
       setDonnees({ niveaux, rows, prest: prestAvecFournisseurs, brouillon });
       if (brouillon?.mode === "piece" || brouillon?.mode === "circuit") setMode(brouillon.mode);
+      const lie = brouillon?.devisLie;
+      if (lie && typeof lie.id === "string" && typeof lie.numero === "string") {
+        const presentation: RegroupementDevis = lie.presentation === "produit" ? "produit" : "poste";
+        setDevisLie({ id: lie.id, numero: lie.numero, presentation });
+        setRegroupement(presentation); // le choix affiché est celui des lignes actuelles du devis
+      } else setDevisLie(null);
       setLoading(false);
     }
     load();
@@ -794,7 +805,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
   }
 
-  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, hCablage, hAppareils, ...(gainesOptimisees !== null ? { gainesOptimisees } : {}), mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, suiviV: VERSION_SUIVI_OK, poseEncastre, posesSection, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}) });
+  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, hCablage, hAppareils, ...(gainesOptimisees !== null ? { gainesOptimisees } : {}), mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, suiviV: VERSION_SUIVI_OK, poseEncastre, posesSection, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}), ...(devisLie ? { devisLie } : {}) });
 
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
@@ -1159,12 +1170,88 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       }
       const { error: errCompteur } = await supabase.from("profil").update({ compteur_devis: (prof?.compteur_devis ?? 0) + 1 }).eq("id", session.user.id);
       echecSupabase(errCompteur, "Mise à jour du compteur de devis");
-      // Le devis final matérialise le brouillon — on l'efface pour ne pas laisser un
-      // brouillon obsolète si le client revient sur cette page plus tard.
+      // Le pré-devis RESTE enregistré (choix, heures, validations) : il permet de changer ensuite la présentation du devis
+      // final. On y mémorise le devis généré. La sauvegarde automatique est coupée (on quitte la page juste après) : elle
+      // réécrirait un contenu sans ce lien.
       brouillonEfface.current = true;
-      await modifierProjet(projet.id, { predevis_config: null });
+      await modifierProjet(projet.id, {
+        predevis_config: JSON.stringify({ ...JSON.parse(contenuBrouillon()), devisLie: { id: devis.id, numero, presentation: regroupement } }),
+      });
 
       router.push(`/devis/${devis.id}`);
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  // Statut du devis déjà généré depuis ce pré-devis (pour savoir si on peut encore changer sa présentation).
+  useEffect(() => {
+    if (!devisLie) { setDevisLieInfo(null); return; }
+    let annule = false;
+    supabase.from("devis").select("id, numero, statut").eq("id", devisLie.id).maybeSingle()
+      .then(({ data }) => { if (!annule) setDevisLieInfo(data ? { id: (data as any).id, numero: (data as any).numero, statut: (data as any).statut } : null); });
+    return () => { annule = true; };
+  }, [devisLie?.id]);
+
+  // Change la présentation du devis déjà généré : ses lignes sont recalculées depuis ce pré-devis (avec la présentation choisie ici)
+  // et REMPLACENT les anciennes. Ordre sans risque : on insère les nouvelles lignes d'abord, on supprime les anciennes ensuite ; si la
+  // suppression échoue, on retire les nouvelles lignes (le devis reste comme avant). Réservé aux devis « brouillon » sans remise :
+  // un devis envoyé ou signé ne change plus, et les remises se recalculent depuis la page du devis.
+  async function appliquerPresentationAuDevis() {
+    if (!resultat || !devisLie) return;
+    setGenerating(true);
+    setBascule(null);
+    const echec = (texte: string) => setBascule({ ok: false, texte });
+    try {
+      const { data: d, error: errD } = await supabase.from("devis")
+        .select("id, numero, statut, remise_valeur, remise_fidelite_pct").eq("id", devisLie.id).maybeSingle();
+      if (errD || !d) { echec("Devis introuvable (supprimé ?) : rien n'a été modifié."); return; }
+      if (d.statut !== "brouillon") { echec(`Le devis ${d.numero} est « ${STATUT_LABELS[d.statut] ?? d.statut} » : seul un devis brouillon peut changer de présentation. Rien n'a été modifié.`); return; }
+      if ((d.remise_valeur ?? 0) > 0 || (d.remise_fidelite_pct ?? 0) > 0) { echec(`Le devis ${d.numero} a une remise : ses totaux se recalculent depuis la page du devis. Rien n'a été modifié.`); return; }
+
+      const { lignesFinales: lignesAssemblees, choixLignes } = assemblerLignes();
+      const lignes = appliquerRegroupement(lignesAssemblees, regroupement);
+      if (lignes.length === 0) { echec("Aucune ligne à générer depuis ce pré-devis : rien n'a été modifié."); return; }
+      const nbManquants = choixLignes.filter(c => c.aCompleter).length;
+      if (nbManquants > 0 && !confirm(`${nbManquants} besoin(s) sans produit ni prix : ils seront en lignes « À compléter » à 0 € dans le devis (envoi et signature bloqués tant qu'ils restent). Continuer ?`)) return;
+      if (!confirm(`Les lignes du devis ${d.numero} vont être remplacées par celles du pré-devis (${libellePresentation(regroupement, mode)}).\n\nLes modifications faites à la main sur ce devis depuis sa création (produit, fournisseur, quantité, postes…) seront perdues. Continuer ?`)) return;
+
+      const { data: anciennes, error: errA } = await supabase.from("devis_lignes").select("id").eq("devis_id", d.id);
+      if (errA) { echec("Lecture des lignes du devis impossible : rien n'a été modifié. " + errA.message); return; }
+      const idsAnciens = (anciennes ?? []).map((r: any) => r.id as string);
+
+      const colFournisseur = colonnesFournisseur(lignes as DevisLigne[]);
+      const colImage = colonnesImage(lignes);
+      const construire = (avecPoste: boolean) => lignes.map((l, i) => {
+        const { fournisseur_id, fournisseur_nom, prix_achat, image_url, poste, ...reste } = l;
+        return { ...reste, devis_id: d.id, ordre: i, ...(avecPoste ? { poste: poste ?? null } : {}), ...colFournisseur(l as DevisLigne), ...colImage(l) };
+      });
+      let { error: errIns } = await supabase.from("devis_lignes").insert(construire(true));
+      if (errIns && /poste/i.test(errIns.message)) ({ error: errIns } = await supabase.from("devis_lignes").insert(construire(false)));
+      if (errIns) { echec("Enregistrement des nouvelles lignes impossible : le devis est resté comme avant. " + errIns.message); return; }
+
+      if (idsAnciens.length > 0) {
+        const { error: errDel } = await supabase.from("devis_lignes").delete().in("id", idsAnciens);
+        if (errDel) {
+          await supabase.from("devis_lignes").delete().eq("devis_id", d.id).not("id", "in", `(${idsAnciens.join(",")})`);
+          echec("Suppression des anciennes lignes impossible : le devis est resté comme avant. " + errDel.message);
+          return;
+        }
+      }
+
+      const totalService = lignes.filter(l => l.type_branche === "service").reduce((s, l) => s + arrondi2(l.quantite * l.prix_unitaire), 0);
+      const totalMateriau = lignes.filter(l => l.type_branche === "materiau").reduce((s, l) => s + arrondi2(l.quantite * l.prix_unitaire), 0);
+      const { error: errTot } = await supabase.from("devis").update({
+        total_service: totalService, total_materiau: totalMateriau, total_ttc: arrondi2(totalService + totalMateriau),
+      }).eq("id", d.id);
+      if (errTot) { echec(`Lignes remplacées, mais les totaux du devis n'ont pas pu être mis à jour : ouvre le devis ${d.numero} et enregistre-le. ` + errTot.message); return; }
+
+      // Contrôle : le devis doit contenir exactement les nouvelles lignes (une suppression bloquée sans erreur laisserait des doublons).
+      const { count } = await supabase.from("devis_lignes").select("id", { count: "exact", head: true }).eq("devis_id", d.id);
+      setDevisLie({ ...devisLie, presentation: regroupement });
+      setBascule(count != null && count !== lignes.length
+        ? { ok: false, texte: `Devis ${d.numero} mis à jour, mais il contient ${count} lignes au lieu de ${lignes.length} : ouvre-le pour vérifier.` }
+        : { ok: true, texte: `Devis ${d.numero} mis à jour : ${libellePresentation(regroupement, mode)} (${lignes.length} lignes).` });
     } finally {
       setGenerating(false);
     }
@@ -1802,6 +1889,22 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
             <p className="text-xs text-amber-700 mt-2">
               La main d'œuvre est regroupée aussi : le suivi de réalisation comptera toutes les heures chiffrées comme générales (plus de comparaison poste par poste). Tu pourras toujours créer tes propres postes en modifiant le devis.
             </p>
+          )}
+          {devisLie && devisLieInfo && (
+            <div className="mt-3 pt-3 border-t border-ink-100">
+              <p className="text-xs text-ink-500">
+                Devis déjà généré depuis ce pré-devis : <Link href={`/devis/${devisLieInfo.id}`} className="font-semibold text-volt-600 hover:underline">{devisLieInfo.numero}</Link>
+                {" "}({STATUT_LABELS[devisLieInfo.statut] ?? devisLieInfo.statut} · présentation actuelle : {libellePresentation(devisLie.presentation, mode)}). Le pré-devis reste enregistré : tu peux changer la présentation de ce devis.
+              </p>
+              {devisLieInfo.statut === "brouillon" ? (
+                <button onClick={appliquerPresentationAuDevis} disabled={generating || !resultat} className="btn-ghost mt-2">
+                  <RefreshCw size={14} /> Appliquer « {libellePresentation(regroupement, mode)} » au devis {devisLieInfo.numero}
+                </button>
+              ) : (
+                <p className="text-xs text-amber-700 mt-1">Ce devis n'est plus un brouillon : sa présentation ne peut plus être changée ici.</p>
+              )}
+              {bascule && <p className={`text-xs mt-2 ${bascule.ok ? "text-emerald-700" : "text-red-600"}`}>{bascule.texte}</p>}
+            </div>
           )}
         </div>
 
