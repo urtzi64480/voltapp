@@ -25,10 +25,20 @@ function offreEffective(p: Prestation, offre?: PrestationFournisseur | null): Pr
 // Lignes « à compléter » : un besoin du pré-devis sans produit ni prix devient une ligne à 0 € portant ce
 // préfixe, pour que le manque reste visible dans le devis (et empêche de l'envoyer par erreur).
 export const PREFIXE_A_COMPLETER = "À compléter — ";
-export function estLigneACompleter(l: { nom?: string | null }): boolean {
-  return (l.nom ?? "").startsWith(PREFIXE_A_COMPLETER);
+// Une ligne n'est « à compléter » (bloquante) que tant qu'elle n'a pas de prix : dès qu'un prix unitaire est saisi, elle ne bloque plus
+// l'envoi ni la signature (son libellé peut rester tel quel ou être renommé).
+export function estLigneACompleter(l: { nom?: string | null; prix_unitaire?: number | string | null }): boolean {
+  return (l.nom ?? "").startsWith(PREFIXE_A_COMPLETER) && !(Number(l.prix_unitaire) > 0);
 }
-export function nbLignesACompleter(lignes: { nom?: string | null }[]): number {
+// Libellé à afficher / enregistrer : dès qu'un prix est saisi, le préfixe « À compléter — » (et la mention « à définir avec le client »)
+// disparaît ; tant qu'il n'y a pas de prix, le libellé reste inchangé.
+export function nomLigneSansACompleter(l: { nom?: string | null; prix_unitaire?: number | string | null }): string {
+  const nom = l.nom ?? "";
+  if (!nom.startsWith(PREFIXE_A_COMPLETER) || !(Number(l.prix_unitaire) > 0)) return nom;
+  const propre = nom.slice(PREFIXE_A_COMPLETER.length).replace(/\s*\(à définir avec le client\)\s*$/i, "").trim();
+  return propre || nom;
+}
+export function nbLignesACompleter(lignes: { nom?: string | null; prix_unitaire?: number | string | null }[]): number {
   return lignes.filter(estLigneACompleter).length;
 }
 

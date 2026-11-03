@@ -9,7 +9,7 @@ import BoutonDeplacement from "@/components/devis/BoutonDeplacement";
 import LigneImage from "@/components/devis/LigneImage";
 import { extrairePostes, grouperParPoste, ordonnerLignes, posteDe, totalItems, trierParOrdre } from "@/lib/postes";
 import { attacherFournisseurs } from "@/lib/fournisseurs";
-import { colonnesFournisseur, colonnesImage, estLigneACompleter, nbLignesACompleter, photosAffichees } from "@/lib/devis-lignes";
+import { colonnesFournisseur, colonnesImage, estLigneACompleter, nbLignesACompleter, nomLigneSansACompleter, photosAffichees } from "@/lib/devis-lignes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro, ListChecks } from "lucide-react";
@@ -164,7 +164,7 @@ function ApercuDocument({
                   {b.items.map(({ l, i }) => (
                     <tr key={i} className={cn("border-t border-ink-100", arr.some(x => x.poste !== null) ? (bi % 2 === 1 ? "bg-ink-100" : "bg-white") : (i % 2 === 1 ? "bg-ink-50/50" : "bg-white"))}>
                       <td className="px-4 py-2.5 text-ink-900">
-                        {photosAffichees(devis) && <LigneImage url={(l as any).image_url} taille={32} className="inline-block align-middle mr-2" />}<span className={cn("font-medium", estLigneACompleter(l) && "text-red-600")}>{l.nom}</span>
+                        {photosAffichees(devis) && <LigneImage url={(l as any).image_url} taille={32} className="inline-block align-middle mr-2" />}<span className={cn("font-medium", estLigneACompleter(l) && "text-red-600")}>{nomLigneSansACompleter(l)}</span>
                         {(l as any).kit_description && (
                           <p className="text-xs text-ink-400 italic mt-0.5">{(l as any).kit_description}</p>
                         )}
@@ -549,7 +549,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         ordonnerLignes(lignes, postes).map((l, i) => ({
           devis_id: id,
           ordre: i,
-          nom: l.nom,
+          nom: nomLigneSansACompleter(l),
           description: l.description ?? null,
           kit_description: (l as any).kit_description ?? null,
           quantite: l.quantite,

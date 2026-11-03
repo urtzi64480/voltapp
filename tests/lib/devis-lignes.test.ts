@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   colonnesFournisseur, colonnesImage, changerFournisseurLigne, estLigneACompleter, fusionnerLigne, ligneDepuisArticle,
-  nbLignesACompleter, PREFIXE_A_COMPLETER, remplacerProduitLigne, type LigneEdition,
+  nbLignesACompleter, nomLigneSansACompleter, PREFIXE_A_COMPLETER, remplacerProduitLigne, type LigneEdition,
 } from "@/lib/devis-lignes";
 import type { DevisLigne } from "@/types";
 import { offre, prestation } from "../helpers/fixtures";
@@ -106,5 +106,20 @@ describe("colonnes optionnelles (compatibilité base sans migration 003)", () =>
     const f = colonnesImage([{ image_url: "a.jpg" }, {}]);
     expect(f({ image_url: "a.jpg" })).toEqual({ image_url: "a.jpg" });
     expect(f({})).toEqual({ image_url: null });
+  });
+});
+
+describe("ligne « À compléter » avec un prix saisi", () => {
+  it("ne bloque plus et perd son préfixe dès qu'un prix unitaire est saisi", () => {
+    const sans = { nom: `${PREFIXE_A_COMPLETER}Spot (à définir avec le client)`, prix_unitaire: 0 };
+    const avec = { ...sans, prix_unitaire: 25 };
+    expect(estLigneACompleter(sans)).toBe(true);
+    expect(nomLigneSansACompleter(sans)).toBe(sans.nom);
+    expect(estLigneACompleter(avec)).toBe(false);
+    expect(nomLigneSansACompleter(avec)).toBe("Spot");
+    expect(nbLignesACompleter([sans, avec])).toBe(1);
+  });
+  it("laisse intact un nom ordinaire", () => {
+    expect(nomLigneSansACompleter({ nom: "Prise", prix_unitaire: 5 })).toBe("Prise");
   });
 });
