@@ -28,6 +28,8 @@ export const achatHtDepuisTtc = (ttc: number) => arrondi2(ttc / COEF_TVA);
 export interface LignePrix {
   cle: string;
   nom: string;
+  offreId: string | null;           // offre fournisseur retenue sur la ligne (pour son lien produit)
+  prestationId: string | null;      // produit du catalogue (lien de repli quand la ligne n'a pas d'offre)
   qty: number;
   unite?: string;
   reference?: string;
@@ -61,6 +63,28 @@ export interface VuePrix {
   nbKitsIgnores: number; // lignes kit : pas de prix d'achat par composant, non chiffrables
 }
 
+/** Clé de regroupement d'une ligne de devis dans la vue prix (même nom, mêmes prix) — aussi utilisée pour rattacher un prix à une case. */
+export function clePrixLigne(l: any): string {
+  const achat = l.prix_achat != null ? nombre(l.prix_achat) : null;
+  return `${String(l.nom).toLowerCase()}|${achat ?? "?"}|${nombre(l.prix_unitaire)}`;
+}
+
+/** Lien produit utilisable : http(s) uniquement (un lien saisi sans protocole reçoit https://). Tout autre schéma (javascript:, data:…) est refusé. */
+export function urlProduitSure(brut: unknown): string | null {
+  const t = String(brut ?? "").trim();
+  if (!t) return null;
+  const avecProtocole = /^[a-z][a-z0-9+.-]*:/i.test(t) ? t : `https://${t}`;
+  try {
+    const u = new URL(avecProtocole);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.toString() : null;
+  } catch { return null; }
+}
+
+/** Nom court du site d'un lien (« rexel.fr »), pour l'afficher à la place de l'adresse complète. */
+export function siteDeUrl(url: string): string {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+}
+
 const totauxVides = (): TotauxPrix => ({ vente: 0, achatTtc: 0, achatHt: 0, maxTtc: 0, maxHt: 0 });
 
 /**
@@ -77,7 +101,7 @@ export function buildVuePrix(lignes: any[], taux: TauxRentabilite, facteurRemise
     const qty = l.quantite || 1;
     const achatTtcUnitaire: number | null = l.prix_achat != null ? nombre(l.prix_achat) : null;
     const venteUnitaire = nombre(l.prix_unitaire);
-    const cle = `${String(l.nom).toLowerCase()}|${achatTtcUnitaire ?? "?"}|${venteUnitaire}`;
+    const cle = clePrixLigne(l);
     const groupe = parFournisseur.get(fournisseur) ?? new Map<string, LignePrix>();
     const existante = groupe.get(cle);
     if (existante) {
@@ -85,7 +109,8 @@ export function buildVuePrix(lignes: any[], taux: TauxRentabilite, facteurRemise
     } else {
       const maxTtcUnitaire = prixAchatMax(venteUnitaire, taux, facteurRemise);
       groupe.set(cle, {
-        cle, nom: String(l.nom), qty, unite: l.unite, reference: String(l.reference_fournisseur ?? "").trim() || undefined,
+        cle, nom: String(l.nom), offreId: l.fournisseur_id ? String(l.fournisseur_id) : null, prestationId: l.prestation_id ? String(l.prestation_id) : null,
+        qty, unite: l.unite, reference: String(l.reference_fournisseur ?? "").trim() || undefined,
         venteUnitaire, venteTotal: 0,
         achatTtcUnitaire, achatHtUnitaire: achatTtcUnitaire == null ? null : achatHtDepuisTtc(achatTtcUnitaire), achatTtcTotal: null, achatHtTotal: null,
         maxTtcUnitaire, maxHtUnitaire: plancher2(maxTtcUnitaire / COEF_TVA), maxTtcTotal: 0, maxHtTotal: 0,
@@ -123,4 +148,30 @@ export function buildVuePrix(lignes: any[], taux: TauxRentabilite, facteurRemise
   });
   (Object.keys(total) as (keyof TotauxPrix)[]).forEach(k => { total[k] = arrondi2(total[k]); });
   return { groupes, totaux: total, nbAPerte, nbSansPrix, nbKitsIgnores };
+}
+
+/**
+ * Rattache les lignes de prix d'un fournisseur aux cases à cocher de la liste : chaque prix est affiché UNE seule fois, sur la première
+ * case (dans l'ordre d'affichage) qui provient de cette ligne de devis — un article en plusieurs pièces a plusieurs cases, un seul prix.
+ * Les lignes de prix qu'aucune case ne porte sont rendues dans `orphelines` : aucun prix n'est jamais perdu.
+ */
+export function associerPrixAuxCases(
+  groupe: GroupePrix | undefined,
+  cases: { key: string; sources?: any[] }[],
+): { parCase: Map<string, LignePrix[]>; orphelines: LignePrix[] } {
+  const parCase = new Map<string, LignePrix[]>();
+  if (!groupe) return { parCase, orphelines: [] };
+  const parCle = new Map(groupe.lignes.map(l => [l.cle, l] as const));
+  const affichees = new Set<string>();
+  for (const c of cases) {
+    for (const src of c.sources ?? []) {
+      if (!src || src.type_branche !== "materiau" || src.kit_ratio_service != null) continue;
+      const cle = clePrixLigne(src);
+      const ligne = parCle.get(cle);
+      if (!ligne || affichees.has(cle)) continue;
+      affichees.add(cle);
+      parCase.set(c.key, [...(parCase.get(c.key) ?? []), ligne]);
+    }
+  }
+  return { parCase, orphelines: groupe.lignes.filter(l => !affichees.has(l.cle)) };
 }

@@ -4,12 +4,69 @@ import { supabase } from "@/lib/supabase";
 import Shell from "@/components/layout/Shell";
 import LigneImage from "@/components/devis/LigneImage";
 import Link from "next/link";
-import { ArrowLeft, Check, ShoppingCart, RotateCcw, Share2, Link2, MessageSquare, Mail, Copy, FileDown, Store, Euro, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Check, ShoppingCart, RotateCcw, Share2, Link2, MessageSquare, Mail, Copy, FileDown, Store, Euro, AlertTriangle, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buildCourseItems, buildCourseItemsParFournisseur, CourseItem } from "@/lib/courseItems";
 import { facteurRemiseMateriau, tauxDepuisProfil, type TauxRentabilite } from "@/lib/rentabilite";
-import { buildVuePrix, TVA_ACHAT_PCT } from "@/lib/courses-prix";
+import { associerPrixAuxCases, buildVuePrix, siteDeUrl, TVA_ACHAT_PCT, urlProduitSure, type LignePrix } from "@/lib/courses-prix";
 import { buildCourseText, genPDFListeCourses, courseFileName } from "@/lib/courseExport";
+
+const eur = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
+const qteLabel = (qty: number, unite?: string) => (unite && unite !== "u" && unite !== "forfait" ? `${qty} ${unite}` : `${qty}×`);
+
+interface ValeursPrix { vente: number; achatTtc: number | null; achatHt: number | null; maxTtc: number; maxHt: number }
+
+function Cellule({ titre, total, unite, ton }: { titre: string; total: string; unite?: string; ton?: "ok" | "perte" }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] uppercase tracking-wide text-ink-400 leading-tight">{titre}</p>
+      <p className={cn("text-sm font-semibold tabular-nums leading-snug", ton === "perte" ? "text-red-600" : ton === "ok" ? "text-emerald-700" : "text-ink-900")}>{total}</p>
+      {unite && <p className="text-[11px] text-ink-400 tabular-nums leading-tight">{unite}</p>}
+    </div>
+  );
+}
+
+// Cinq valeurs : vente annoncée, achat TTC, achat HT, achat max TTC, achat max HT. 3 colonnes sur téléphone (2 lignes), 5 sur grand écran.
+// u = valeurs à l'unité (affichées sous le total de la ligne) ; absent pour les totaux.
+function GrillePrix({ v, u, aPerte }: { v: ValeursPrix; u?: ValeursPrix; aPerte?: boolean }) {
+  return (
+    <div className="grid grid-cols-3 sm:grid-cols-5 gap-x-3 gap-y-2.5">
+      <Cellule titre="Vente client" total={eur(v.vente)} unite={u ? `${eur(u.vente)} / u.` : undefined} />
+      {v.achatTtc != null && v.achatHt != null ? (
+        <>
+          <Cellule titre="Achat TTC" total={eur(v.achatTtc)} unite={u && u.achatTtc != null ? `${eur(u.achatTtc)} / u.` : undefined} ton={aPerte ? "perte" : undefined} />
+          <Cellule titre="Achat HT" total={eur(v.achatHt)} unite={u && u.achatHt != null ? `${eur(u.achatHt)} / u.` : undefined} ton={aPerte ? "perte" : undefined} />
+        </>
+      ) : (
+        <p className="col-span-2 self-center text-xs text-amber-700">Prix d'achat non renseigné</p>
+      )}
+      <Cellule titre="Achat max TTC" total={eur(v.maxTtc)} unite={u ? `${eur(u.maxTtc)} / u.` : undefined} ton="ok" />
+      <Cellule titre="Achat max HT" total={eur(v.maxHt)} unite={u ? `${eur(u.maxHt)} / u.` : undefined} ton="ok" />
+    </div>
+  );
+}
+
+// Bloc de prix d'une ligne de devis, sous sa case à cocher. `titreArticle` : la case est une pièce (ou une partie de description) de cet
+// article — on rappelle de quel article viennent les prix.
+function BlocPrix({ l, titreArticle, url }: { l: LignePrix; titreArticle: boolean; url: string | null }) {
+  return (
+    <div className={cn("border-t border-ink-100 px-3 py-2.5", l.aPerte && "bg-red-50 rounded-b-xl")}>
+      {titreArticle && <p className="text-[11px] text-ink-500 mb-1.5">Prix de l'article « <span className="font-medium">{l.nom}</span> » ({qteLabel(l.qty, l.unite)})</p>}
+      <GrillePrix
+        v={{ vente: l.venteTotal, achatTtc: l.achatTtcTotal, achatHt: l.achatHtTotal, maxTtc: l.maxTtcTotal, maxHt: l.maxHtTotal }}
+        u={{ vente: l.venteUnitaire, achatTtc: l.achatTtcUnitaire, achatHt: l.achatHtUnitaire, maxTtc: l.maxTtcUnitaire, maxHt: l.maxHtUnitaire }}
+        aPerte={l.aPerte}
+      />
+      {l.aPerte && <p className="text-xs text-red-600 font-semibold mt-2 flex items-center gap-1.5"><AlertTriangle size={13} className="shrink-0" /> Vendu à perte : achat au-dessus du maximum</p>}
+      {url && (
+        <a href={url} target="_blank" rel="noopener noreferrer"
+          className="mt-1 inline-flex items-center gap-1.5 py-2.5 text-sm font-medium text-sky-700 hover:underline">
+          <ExternalLink size={13} className="shrink-0" /> Voir le produit · {siteDeUrl(url)}
+        </a>
+      )}
+    </div>
+  );
+}
 
 export default function ListeCoursesPage({ params }: { params: { id: string } }) {
   const { id } = params;
@@ -34,6 +91,9 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   // MAXIMUM sans vente à perte (vue privée). null tant que le profil n'est pas chargé → rien n'est affiché plutôt qu'un chiffre avec de faux taux.
   const [taux, setTaux] = useState<TauxRentabilite | null>(null);
   const [facteurRemise, setFacteurRemise] = useState(1);
+  // Liens des produits (vue privée uniquement) : par offre fournisseur retenue, et — pour un produit sans offre — lien du catalogue.
+  const [urlsOffres, setUrlsOffres] = useState<Record<string, string>>({});
+  const [liensProduits, setLiensProduits] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setCanShare(typeof navigator !== "undefined" && typeof (navigator as any).share === "function");
@@ -69,11 +129,31 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
               setLignesBrutes(enrichies);
               setItems(buildCourseItems(enrichies));
             });
+            // Lien produit de chaque offre retenue (requête à part : ne casse ni les références ni les pièces si elle échoue).
+            supabase.from("prestation_fournisseurs").select("id, url").in("id", idsOffres).then(({ data: liens, error }) => {
+              if (error || !liens) return;
+              const m: Record<string, string> = {};
+              (liens as any[]).forEach(o => { if (String(o.url ?? "").trim()) m[o.id] = String(o.url).trim(); });
+              setUrlsOffres(m);
+            });
             supabase.from("prestation_fournisseurs").select("id, pieces").in("id", idsOffres).then(({ data: offres, error }) => {
               if (error || !offres) return;
               const m: Record<string, { nom: string; quantite: number; reference?: string | null }[]> = {};
               (offres as any[]).forEach(o => { if (Array.isArray(o.pieces) && o.pieces.length > 0) m[o.id] = o.pieces; });
               setPiecesParOffre(m);
+            });
+          }
+          // Produits sans offre fournisseur : lien du catalogue (le 1er renseigné).
+          const idsProduits = Array.from(new Set(lignes.filter((l: any) => !l.fournisseur_id && l.prestation_id).map((l: any) => l.prestation_id))) as string[];
+          if (idsProduits.length > 0) {
+            supabase.from("prestations").select("id, liens_fournisseurs").in("id", idsProduits).then(({ data: prods, error }) => {
+              if (error || !prods) return;
+              const m: Record<string, string> = {};
+              (prods as any[]).forEach(p => {
+                const premier = (Array.isArray(p.liens_fournisseurs) ? p.liens_fournisseurs : []).find((x: unknown) => urlProduitSure(x));
+                if (premier) m[p.id] = String(premier).trim();
+              });
+              setLiensProduits(m);
             });
           }
         }
@@ -242,40 +322,90 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
     }
   }
 
-  const eur = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
   // Vue prix et marge : seulement une fois les taux du profil connus (jamais de plafond calculé avec de faux taux).
   const vuePrix = taux ? buildVuePrix(lignesBrutes, taux, facteurRemise) : null;
 
   const totalChecked = items.filter(it => checked[it.key]).length;
   const aDesFournisseurs = lignesBrutes.some(l => String(l.fournisseur_nom ?? "").trim() !== "");
   const groupes = parFournisseur && aDesFournisseurs ? buildCourseItemsParFournisseur(lignesBrutes, piecesParOffre) : null;
+  // En vue « Prix et marge », les prix sont rattachés fournisseur par fournisseur : la liste est donc groupée même sans fournisseur renseigné.
+  const groupesAffiches = groupes ?? (vuePrixOuverte && vuePrix ? buildCourseItemsParFournisseur(lignesBrutes, piecesParOffre) : null);
 
-  function renderItem(it: CourseItem, cle: string) {
+  // Lien du produit pour une ligne de prix : celui de l'offre retenue ; sans offre, celui du catalogue. Jamais le lien d'un AUTRE fournisseur.
+  function lienDe(l: LignePrix): string | null {
+    if (l.offreId) return urlProduitSure(urlsOffres[l.offreId]);
+    return l.prestationId ? urlProduitSure(liensProduits[l.prestationId]) : null;
+  }
+
+  // prix : blocs de prix rattachés à cette case (vue « Prix et marge ») — la case reste cochable d'un appui sur toute sa ligne.
+  function renderItem(it: CourseItem, cle: string, prix?: LignePrix[]) {
     const isChecked = !!checked[it.key];
     return (
-      <button
+      <div
         key={cle}
-        onClick={() => toggle(it.key)}
-        className={cn(
-          "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left",
-          isChecked ? "bg-emerald-50 border-emerald-200" : "bg-white border-ink-100 hover:border-ink-200"
-        )}
+        className={cn("rounded-xl border transition-all", isChecked ? "bg-emerald-50 border-emerald-200" : "bg-white border-ink-100 hover:border-ink-200")}
       >
-        <div className={cn(
-          "w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-colors",
-          isChecked ? "bg-emerald-500 border-emerald-500" : "border-ink-300 bg-white"
-        )}>
-          {isChecked && <Check size={13} className="text-white" />}
+        <button onClick={() => toggle(it.key)} className="w-full flex items-center gap-3 px-3 py-2.5 min-h-[48px] rounded-xl text-left">
+          <div className={cn(
+            "w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-colors",
+            isChecked ? "bg-emerald-500 border-emerald-500" : "border-ink-300 bg-white"
+          )}>
+            {isChecked && <Check size={13} className="text-white" />}
+          </div>
+          <LigneImage url={it.image} taille={36} />
+          <span className={cn("flex-1 min-w-0 text-sm", isChecked ? "text-ink-400 line-through" : "text-ink-800")}>
+            {it.nom}
+            {it.reference && <span className="block text-[11px] text-ink-400 no-underline">Réf. {it.reference}</span>}
+          </span>
+          <span className={cn("text-sm font-semibold shrink-0", isChecked ? "text-ink-300" : "text-ink-900")}>
+            {it.qty}{it.unite && it.unite !== "u" && it.unite !== "forfait" ? ` ${it.unite}` : "×"}
+          </span>
+        </button>
+        {prix?.map(l => (
+          <div key={l.cle} className={cn(isChecked && "opacity-60")}>
+            <BlocPrix l={l} titreArticle={it.nom.toLowerCase() !== l.nom.toLowerCase()} url={lienDe(l)} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Une carte par fournisseur. En vue « Prix et marge », chaque case porte ses prix et l'en-tête le total du fournisseur.
+  function renderGroupe(g: { fournisseur: string | null; items: CourseItem[]; achat: number | null }, avecTitre: boolean) {
+    const vg = vuePrixOuverte && vuePrix ? vuePrix.groupes.find(x => x.fournisseur === g.fournisseur) : undefined;
+    const assoc = vg ? associerPrixAuxCases(vg, g.items) : null;
+    return (
+      <div key={g.fournisseur ?? "__sans"} className="card card-inner">
+        {avecTitre && (
+          <div className="flex items-baseline justify-between gap-3 mb-2">
+            <h2 className="font-semibold text-ink-900 text-sm">{g.fournisseur ?? "Fournisseur non précisé"}</h2>
+            <span className="text-xs text-ink-400 shrink-0">
+              {g.items.filter(it => checked[it.key]).length} / {g.items.length}
+              {g.achat !== null && ` · achat ${eur(g.achat)}`}
+            </span>
+          </div>
+        )}
+        {vg && (
+          <div className="mb-3 pb-3 border-b border-ink-100">
+            <p className="text-[11px] text-ink-400 mb-1.5">Total {g.fournisseur ?? "fournisseur non précisé"} (lignes avec prix d'achat)</p>
+            <GrillePrix v={vg.totaux} aPerte={vg.totaux.achatTtc > vg.totaux.maxTtc + 0.005} />
+          </div>
+        )}
+        <div className="space-y-1.5">
+          {g.items.map(it => renderItem(it, `${g.fournisseur ?? "_"}-${it.key}`, assoc?.parCase.get(it.key)))}
         </div>
-        <LigneImage url={it.image} taille={36} />
-        <span className={cn("flex-1 text-sm", isChecked ? "text-ink-400 line-through" : "text-ink-800")}>
-          {it.nom}
-          {it.reference && <span className="block text-[11px] text-ink-400 no-underline">Réf. {it.reference}</span>}
-        </span>
-        <span className={cn("text-sm font-semibold shrink-0", isChecked ? "text-ink-300" : "text-ink-900")}>
-          {it.qty}{it.unite && it.unite !== "u" && it.unite !== "forfait" ? ` ${it.unite}` : "×"}
-        </span>
-      </button>
+        {assoc && assoc.orphelines.length > 0 && (
+          <div className="mt-3 space-y-1.5">
+            <p className="text-[11px] text-ink-400">Autres lignes du devis (hors liste à cocher)</p>
+            {assoc.orphelines.map(l => (
+              <div key={l.cle} className="rounded-xl border border-ink-100 bg-white">
+                <p className="px-3 pt-2.5 text-sm text-ink-800"><span className="font-semibold">{qteLabel(l.qty, l.unite)}</span> {l.nom}</p>
+                <BlocPrix l={l} titreArticle={false} url={lienDe(l)} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -386,7 +516,7 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
             {vuePrix && vuePrix.groupes.length > 0 && (
               <div className="mb-4">
                 <button onClick={() => setVuePrixOuverte(v => !v)}
-                  className={cn("inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all",
+                  className={cn("inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-all",
                     vuePrixOuverte ? "bg-ink-900 text-volt-400 border-ink-900" : "bg-white border-ink-200 text-ink-600 hover:bg-ink-50")}>
                   <Euro size={13} /> Prix et marge (perso)
                 </button>
@@ -394,98 +524,27 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
                 {vuePrixOuverte && taux && (
                   <div className="card card-inner mt-3 border-sky-200">
                     <p className="text-[11px] text-ink-400 mb-1">
-                      Vue perso, à l'écran uniquement : rien de tout ça n'est dans les exports de la liste ni dans le lien envoyé au client.
+                      Vue perso, à l'écran uniquement : prix et liens ne figurent ni dans les exports de la liste ni dans le lien envoyé au client. Tu peux cocher les produits comme d'habitude.
                     </p>
-                    <p className="text-[11px] text-ink-400 mb-3">
+                    <p className="text-[11px] text-ink-400">
                       <strong className="text-ink-600">Achat max TTC</strong> = prix de vente × (1 − cotisations {taux.cotisMateriau.toLocaleString("fr-FR")} %{taux.irMateriau > 0 ? ` − impôt ${taux.irMateriau.toLocaleString("fr-FR")} %` : ""})
                       {facteurRemise < 1 ? `, après la remise du devis (tu encaisses ${(facteurRemise * 100).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} % du prix affiché)` : ""}.
                       {" "}<strong className="text-ink-600">HT</strong> = TTC ÷ {(1 + TVA_ACHAT_PCT / 100).toLocaleString("fr-FR")} (TVA {TVA_ACHAT_PCT} %, comme le catalogue). Au-dessus du max, la ligne est vendue à perte.
                     </p>
-
                     {vuePrix.nbAPerte > 0 && (
-                      <p className="text-xs text-red-600 font-semibold mb-3 flex items-center gap-1.5">
+                      <p className="text-xs text-red-600 font-semibold mt-3 flex items-center gap-1.5">
                         <AlertTriangle size={14} className="shrink-0" />
                         {vuePrix.nbAPerte} ligne{vuePrix.nbAPerte > 1 ? "s" : ""} vendue{vuePrix.nbAPerte > 1 ? "s" : ""} à perte : prix d'achat au-dessus du maximum.
                       </p>
                     )}
-
-                    <div className="space-y-5">
-                      {vuePrix.groupes.map(g => (
-                        <div key={g.fournisseur ?? "__sans"}>
-                          <h3 className="font-semibold text-ink-900 text-sm mb-1">{g.fournisseur ?? "Fournisseur non précisé"}</h3>
-                          <div className="overflow-x-auto">
-                            <table className="w-full min-w-[640px] text-sm tabular-nums">
-                              <thead>
-                                <tr className="text-[11px] text-ink-400 border-b border-ink-100">
-                                  <th className="text-left font-medium pb-1">Produit</th>
-                                  <th className="text-right font-medium pb-1 px-1.5">Vente client</th>
-                                  <th className="text-right font-medium pb-1 px-1.5">Achat TTC</th>
-                                  <th className="text-right font-medium pb-1 px-1.5">Achat HT</th>
-                                  <th className="text-right font-medium pb-1 px-1.5">Achat max TTC</th>
-                                  <th className="text-right font-medium pb-1 pl-1.5">Achat max HT</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {g.lignes.map(l => (
-                                  <tr key={l.cle} className={cn("border-b border-ink-50 align-top", l.aPerte && "bg-red-50")}>
-                                    <td className="py-1.5 pr-2 text-ink-800">
-                                      <span className="font-semibold">{l.unite && l.unite !== "u" && l.unite !== "forfait" ? `${l.qty} ${l.unite}` : `${l.qty}×`}</span> {l.nom}
-                                      {l.reference && <span className="block text-[11px] text-ink-400">Réf. {l.reference}</span>}
-                                    </td>
-                                    <td className="py-1.5 px-1.5 text-right">
-                                      <span className="block font-medium text-ink-900">{eur(l.venteTotal)}</span>
-                                      <span className="block text-[11px] text-ink-400">{eur(l.venteUnitaire)} / u.</span>
-                                    </td>
-                                    {l.achatTtcUnitaire != null ? (
-                                      <>
-                                        <td className="py-1.5 px-1.5 text-right">
-                                          <span className={cn("block font-medium", l.aPerte ? "text-red-600" : "text-ink-900")}>{l.aPerte ? "⚠ " : ""}{eur(l.achatTtcTotal ?? 0)}</span>
-                                          <span className="block text-[11px] text-ink-400">{eur(l.achatTtcUnitaire)} / u.</span>
-                                        </td>
-                                        <td className="py-1.5 px-1.5 text-right">
-                                          <span className="block font-medium text-ink-900">{eur(l.achatHtTotal ?? 0)}</span>
-                                          <span className="block text-[11px] text-ink-400">{eur(l.achatHtUnitaire ?? 0)} / u.</span>
-                                        </td>
-                                      </>
-                                    ) : (
-                                      <td colSpan={2} className="py-1.5 px-1.5 text-right text-xs text-amber-700">prix d'achat non renseigné</td>
-                                    )}
-                                    <td className="py-1.5 px-1.5 text-right">
-                                      <span className="block font-medium text-emerald-700">{eur(l.maxTtcTotal)}</span>
-                                      <span className="block text-[11px] text-ink-400">{eur(l.maxTtcUnitaire)} / u.</span>
-                                    </td>
-                                    <td className="py-1.5 pl-1.5 text-right">
-                                      <span className="block font-medium text-emerald-700">{eur(l.maxHtTotal)}</span>
-                                      <span className="block text-[11px] text-ink-400">{eur(l.maxHtUnitaire)} / u.</span>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                              <tfoot>
-                                <tr className="font-semibold text-ink-900">
-                                  <td className="pt-2 pr-2 text-xs text-ink-600">Total {g.fournisseur ?? "non précisé"}</td>
-                                  <td className="pt-2 px-1.5 text-right">{eur(g.totaux.vente)}</td>
-                                  <td className="pt-2 px-1.5 text-right">{eur(g.totaux.achatTtc)}</td>
-                                  <td className="pt-2 px-1.5 text-right">{eur(g.totaux.achatHt)}</td>
-                                  <td className={cn("pt-2 px-1.5 text-right", g.totaux.achatTtc > g.totaux.maxTtc + 0.005 ? "text-red-600" : "text-emerald-700")}>{eur(g.totaux.maxTtc)}</td>
-                                  <td className={cn("pt-2 pl-1.5 text-right", g.totaux.achatHt > g.totaux.maxHt + 0.005 ? "text-red-600" : "text-emerald-700")}>{eur(g.totaux.maxHt)}</td>
-                                </tr>
-                              </tfoot>
-                            </table>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
                     {vuePrix.groupes.length > 1 && (
-                      <div className="mt-4 pt-3 border-t border-ink-200 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-sm">
-                        <span className="text-ink-600">Vente client (total)</span><span className="text-right font-semibold text-ink-900">{eur(vuePrix.totaux.vente)}</span>
-                        <span className="text-ink-600">Achat (total TTC · HT)</span><span className="text-right font-semibold text-ink-900">{eur(vuePrix.totaux.achatTtc)} · {eur(vuePrix.totaux.achatHt)}</span>
-                        <span className="text-ink-600">Achat max (total TTC · HT)</span><span className="text-right font-semibold text-emerald-700">{eur(vuePrix.totaux.maxTtc)} · {eur(vuePrix.totaux.maxHt)}</span>
+                      <div className="mt-3 pt-3 border-t border-ink-100">
+                        <p className="text-[11px] text-ink-400 mb-1.5">Total général (lignes avec prix d'achat)</p>
+                        <GrillePrix v={vuePrix.totaux} aPerte={vuePrix.totaux.achatTtc > vuePrix.totaux.maxTtc + 0.005} />
                       </div>
                     )}
                     {(vuePrix.nbSansPrix > 0 || vuePrix.nbKitsIgnores > 0) && (
-                      <p className="text-[11px] text-amber-700 mt-2">
+                      <p className="text-[11px] text-amber-700 mt-3">
                         {vuePrix.nbSansPrix > 0 && `${vuePrix.nbSansPrix} ligne${vuePrix.nbSansPrix > 1 ? "s" : ""} sans prix d'achat renseigné : exclue${vuePrix.nbSansPrix > 1 ? "s" : ""} des totaux (à compléter dans le catalogue). `}
                         {vuePrix.nbKitsIgnores > 0 && `${vuePrix.nbKitsIgnores} kit${vuePrix.nbKitsIgnores > 1 ? "s" : ""} non chiffrable${vuePrix.nbKitsIgnores > 1 ? "s" : ""} (pas de prix d'achat par composant).`}
                       </p>
@@ -495,26 +554,13 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
               </div>
             )}
 
-            {groupes ? (
+            {groupesAffiches ? (
               <div className="space-y-4">
-                {groupes.map(g => (
-                  <div key={g.fournisseur ?? "__sans"} className="card card-inner">
-                    <div className="flex items-baseline justify-between gap-3 mb-2">
-                      <h2 className="font-semibold text-ink-900 text-sm">{g.fournisseur ?? "Fournisseur non précisé"}</h2>
-                      <span className="text-xs text-ink-400 shrink-0">
-                        {g.items.filter(it => checked[it.key]).length} / {g.items.length}
-                        {g.achat !== null && ` · achat ${eur(g.achat)}`}
-                      </span>
-                    </div>
-                    <div className="space-y-1">
-                      {g.items.map(it => renderItem(it, `${g.fournisseur ?? "_"}-${it.key}`))}
-                    </div>
-                  </div>
-                ))}
+                {groupesAffiches.map(g => renderGroupe(g, g.fournisseur !== null || groupesAffiches.length > 1))}
               </div>
             ) : (
               <div className="card card-inner">
-                <div className="space-y-1">
+                <div className="space-y-1.5">
                   {items.map(it => renderItem(it, it.key))}
                 </div>
               </div>

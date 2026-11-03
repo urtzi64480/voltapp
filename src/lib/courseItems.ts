@@ -6,6 +6,9 @@ export interface CourseItem {
   image?: string;
   // Référence du produit chez le fournisseur retenu (offre du catalogue) — affichée sous le nom, vue privée comme liste du client.
   reference?: string;
+  // Lignes du devis dont provient cette case (références vers les lignes déjà chargées, rien de copié) : sert à la vue privée à
+  // rattacher le bon prix à la bonne case. Une case en regroupe plusieurs quand le même article est sur plusieurs lignes.
+  sources?: any[];
 }
 
 // Termes désignant une prestation (main d'œuvre, déplacement, étude...) à exclure de la liste d'achat
@@ -36,12 +39,14 @@ export function buildCourseItems(lignes: any[]): CourseItem[] {
         const key = nom.toLowerCase();
         // Image : seulement pour une ligne « article » (pas un vrai kit, dont les composants n'ont pas d'image).
         const image = l.kit_ratio_service == null && l.image_url ? String(l.image_url) : undefined;
+        const origine = l.origine ?? l;
         if (map.has(key)) {
           const ex = map.get(key)!;
           ex.qty += qty;
           if (!ex.image && image) ex.image = image;
+          if (!ex.sources!.includes(origine)) ex.sources!.push(origine);
         } else {
-          map.set(key, { key, nom, qty, image });
+          map.set(key, { key, nom, qty, image, sources: [origine] });
         }
       }
     } else if (l.type_branche === "materiau") {
@@ -50,13 +55,15 @@ export function buildCourseItems(lignes: any[]): CourseItem[] {
       const qty = l.quantite || 1;
       const image = l.image_url ? String(l.image_url) : undefined;
       const reference = String(l.reference_fournisseur ?? "").trim() || undefined;
+      const origine = l.origine ?? l;
       if (map.has(key)) {
         const ex = map.get(key)!;
         ex.qty += qty;
         if (!ex.image && image) ex.image = image;
         if (!ex.reference && reference) ex.reference = reference;
+        if (!ex.sources!.includes(origine)) ex.sources!.push(origine);
       } else {
-        map.set(key, { key, nom: nomLigne, qty, unite: l.unite, image, reference });
+        map.set(key, { key, nom: nomLigne, qty, unite: l.unite, image, reference, sources: [origine] });
       }
     }
   }
@@ -86,6 +93,7 @@ function eclaterEnPieces(l: any, piecesParOffre?: Record<string, { nom: string; 
     quantite: (pc.quantite > 0 ? pc.quantite : 1) * (l.quantite || 1),
     type_branche: "materiau", unite: l.unite, fournisseur_nom: l.fournisseur_nom, fournisseur_id: l.fournisseur_id,
     reference_fournisseur: pc.reference ?? undefined,
+    origine: l,
   }));
 }
 

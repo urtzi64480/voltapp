@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { achatHtDepuisTtc, buildVuePrix, TVA_ACHAT_PCT } from "@/lib/courses-prix";
+import { achatHtDepuisTtc, associerPrixAuxCases, buildVuePrix, clePrixLigne, siteDeUrl, TVA_ACHAT_PCT, urlProduitSure } from "@/lib/courses-prix";
 import { TAUX_PAR_DEFAUT } from "@/lib/rentabilite";
 
 const mat = (o: Record<string, unknown> = {}) => ({ nom: "Prise", quantite: 1, prix_unitaire: 10, type_branche: "materiau", unite: "u", fournisseur_nom: "Rexel", ...o });
@@ -107,5 +107,74 @@ describe("buildVuePrix — regroupement et totaux", () => {
     const l = buildVuePrix([mat({ quantite: 3, prix_unitaire: 0.1, prix_achat: 0.07 })], taux).groupes[0].lignes[0];
     expect(l.venteTotal).toBe(0.3);
     expect(l.achatTtcTotal).toBe(0.21);
+  });
+});
+
+describe("urlProduitSure / siteDeUrl", () => {
+  it("accepte http(s) ; ajoute https:// à un lien saisi sans protocole", () => {
+    expect(urlProduitSure("https://www.rexel.fr/p/123")).toBe("https://www.rexel.fr/p/123");
+    expect(urlProduitSure("http://exemple.fr/a?b=1")).toBe("http://exemple.fr/a?b=1");
+    expect(urlProduitSure("  cged.fr/produit/9 ")).toBe("https://cged.fr/produit/9");
+  });
+  it("refuse tout autre schéma (javascript:, data:, file:…), le vide et l'illisible", () => {
+    expect(urlProduitSure("javascript:alert(1)")).toBeNull();
+    expect(urlProduitSure("JaVaScRiPt:alert(1)")).toBeNull();
+    expect(urlProduitSure("data:text/html,<script>1</script>")).toBeNull();
+    expect(urlProduitSure("file:///etc/passwd")).toBeNull();
+    expect(urlProduitSure("")).toBeNull();
+    expect(urlProduitSure(null)).toBeNull();
+    expect(urlProduitSure("http://")).toBeNull();
+  });
+  it("nom court du site sans www", () => {
+    expect(siteDeUrl("https://www.rexel.fr/p/123")).toBe("rexel.fr");
+    expect(siteDeUrl("https://cged.fr")).toBe("cged.fr");
+  });
+});
+
+describe("clePrixLigne", () => {
+  it("même clé que les lignes de la vue prix (nom en minuscules, achat, vente)", () => {
+    const l = mat({ nom: "Prise 2P+T", prix_achat: 6, prix_unitaire: 10 });
+    const v = buildVuePrix([l], taux);
+    expect(clePrixLigne(l)).toBe(v.groupes[0].lignes[0].cle);
+    expect(clePrixLigne(mat({ nom: "PRISE 2P+T", prix_achat: 6, prix_unitaire: 10 }))).toBe(clePrixLigne(l));
+    expect(clePrixLigne(mat({ prix_achat: undefined }))).toContain("|?|");
+  });
+});
+
+describe("associerPrixAuxCases", () => {
+  const A = mat({ nom: "Prise", prix_achat: 6, quantite: 4 });
+  const B = mat({ nom: "Disjoncteur", prix_achat: 9, prix_unitaire: 20 });
+  const groupe = () => buildVuePrix([A, B], taux).groupes[0];
+
+  it("chaque case reçoit le prix de la ligne dont elle provient", () => {
+    const r = associerPrixAuxCases(groupe(), [{ key: "disjoncteur", sources: [B] }, { key: "prise", sources: [A] }]);
+    expect(r.parCase.get("prise")![0].nom).toBe("Prise");
+    expect(r.parCase.get("disjoncteur")![0].nom).toBe("Disjoncteur");
+    expect(r.orphelines).toEqual([]);
+  });
+  it("article en plusieurs pièces : un seul prix, sur la première case ; les autres cases n'en ont pas", () => {
+    const r = associerPrixAuxCases(groupe(), [
+      { key: "mécanisme — prise", sources: [A] }, { key: "enjoliveur — prise", sources: [A] }, { key: "disjoncteur", sources: [B] },
+    ]);
+    expect(r.parCase.get("mécanisme — prise")).toHaveLength(1);
+    expect(r.parCase.has("enjoliveur — prise")).toBe(false);
+    expect(r.parCase.get("disjoncteur")).toHaveLength(1);
+  });
+  it("une case issue de plusieurs lignes du devis cumule leurs prix", () => {
+    const A2 = mat({ nom: "Prise", prix_achat: 7, quantite: 1 });
+    const g = buildVuePrix([A, A2], taux).groupes[0];
+    const r = associerPrixAuxCases(g, [{ key: "prise", sources: [A, A2] }]);
+    expect(r.parCase.get("prise")).toHaveLength(2);
+  });
+  it("aucun prix perdu : une ligne que nulle case ne porte est rendue en orpheline", () => {
+    const r = associerPrixAuxCases(groupe(), [{ key: "prise", sources: [A] }]);
+    expect(r.orphelines.map(l => l.nom)).toEqual(["Disjoncteur"]);
+  });
+  it("kits, services et sources vides ignorés ; groupe absent → rien", () => {
+    const kit = mat({ nom: "Kit", kit_ratio_service: 0.5 });
+    const r = associerPrixAuxCases(groupe(), [{ key: "kit", sources: [kit, null as unknown as object] }, { key: "x" }]);
+    expect(r.parCase.size).toBe(0);
+    expect(r.orphelines).toHaveLength(2);
+    expect(associerPrixAuxCases(undefined, [{ key: "a", sources: [A] }])).toEqual({ parCase: new Map(), orphelines: [] });
   });
 });
