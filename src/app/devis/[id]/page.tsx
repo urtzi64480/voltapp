@@ -9,7 +9,7 @@ import BoutonDeplacement from "@/components/devis/BoutonDeplacement";
 import LigneImage from "@/components/devis/LigneImage";
 import { extrairePostes, grouperParPoste, ordonnerLignes, posteDe, totalItems, trierParOrdre } from "@/lib/postes";
 import { attacherFournisseurs } from "@/lib/fournisseurs";
-import { colonnesFournisseur, colonnesImage, estLigneACompleter, nbLignesACompleter } from "@/lib/devis-lignes";
+import { colonnesFournisseur, colonnesImage, estLigneACompleter, nbLignesACompleter, photosAffichees } from "@/lib/devis-lignes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro, ListChecks } from "lucide-react";
@@ -164,7 +164,7 @@ function ApercuDocument({
                   {b.items.map(({ l, i }) => (
                     <tr key={i} className={cn("border-t border-ink-100", arr.some(x => x.poste !== null) ? (bi % 2 === 1 ? "bg-ink-100" : "bg-white") : (i % 2 === 1 ? "bg-ink-50/50" : "bg-white"))}>
                       <td className="px-4 py-2.5 text-ink-900">
-                        <LigneImage url={(l as any).image_url} taille={32} className="inline-block align-middle mr-2" /><span className={cn("font-medium", estLigneACompleter(l) && "text-red-600")}>{l.nom}</span>
+                        {photosAffichees(devis) && <LigneImage url={(l as any).image_url} taille={32} className="inline-block align-middle mr-2" />}<span className={cn("font-medium", estLigneACompleter(l) && "text-red-600")}>{l.nom}</span>
                         {(l as any).kit_description && (
                           <p className="text-xs text-ink-400 italic mt-0.5">{(l as any).kit_description}</p>
                         )}
@@ -622,6 +622,18 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     router.push("/devis");
   }
 
+  // Photos des produits sur le devis (PDF, aperçu, page de signature) : enregistré tout de suite, les images des lignes ne sont pas touchées.
+  async function basculerPhotos(v: boolean) {
+    if (!devis) return;
+    const { error } = await supabase.from("devis").update({ afficher_photos: v }).eq("id", id);
+    if (error) {
+      if (/afficher_photos/i.test(error.message)) alert("Option indisponible : lance d'abord dans Supabase (SQL Editor) :\nalter table devis add column if not exists afficher_photos boolean not null default true;");
+      else echecSupabase(error, "Enregistrement de l'option photos");
+      return;
+    }
+    setDevis({ ...devis, afficher_photos: v });
+  }
+
   async function dl() {
     if (!devis) return;
     const nbManques = nbLignesACompleter(lignes);
@@ -663,7 +675,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       const lignesDevis = trierParOrdre((devis.lignes ?? []) as any[]);
       const lignesFacture = ordonnerLignes(lignesDevis, extrairePostes(lignesDevis));
       const facturePostes = lignesFacture.some(l => posteDe(l) !== null);
-      const colImageFacture = colonnesImage(lignesFacture as any[]);
+      const colImageFacture = photosAffichees(devis) ? colonnesImage(lignesFacture as any[]) : (() => ({}));
       const { error: errLignes } = await supabase.from("facture_lignes").insert(lignesFacture.map((l: any, i: number) => ({
         facture_id: f.id,
         nom: l.nom,
@@ -815,7 +827,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                             <span className={cn("badge text-xs mr-1.5", l.type_branche === "service" ? "bg-volt-100 text-volt-700" : "bg-emerald-100 text-emerald-700")}>
                               {l.type_branche === "service" ? "S" : "M"}
                             </span>
-                            <LigneImage url={l.image_url} taille={28} className="inline-block align-middle mr-2" /><span className="font-medium">{l.nom}</span>
+                            {photosAffichees(devis) && <LigneImage url={l.image_url} taille={28} className="inline-block align-middle mr-2" />}<span className="font-medium">{l.nom}</span>
                             {l.fournisseur_nom && <span className="text-xs text-ink-400 ml-1.5">· {l.fournisseur_nom}</span>}
                             {l.kit_description && (
                               <p className="text-xs text-ink-400 italic mt-0.5 ml-6">{l.kit_description}</p>
@@ -977,6 +989,10 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                 {nbLignesACompleter(lignes)} ligne{nbLignesACompleter(lignes) > 1 ? "s" : ""} « À compléter » (besoin du pré-devis sans produit ni prix) : remplace-les par un produit ou supprime-les. Envoi et signature sont bloqués tant qu'il en reste.
               </div>
             )}
+            <label className="flex items-center gap-2 text-sm text-ink-700 mb-3 cursor-pointer select-none">
+              <input type="checkbox" className="h-4 w-4" checked={photosAffichees(devis)} onChange={ev => basculerPhotos(ev.target.checked)} />
+              Afficher les photos des produits sur le devis (aperçu, PDF, lien de signature)
+            </label>
             <div className="flex flex-wrap gap-3">
               <button onClick={dl} className="btn-ghost flex-1 justify-center"><Download size={15} /> Télécharger PDF</button>
               <button onClick={planifierIntervention} className="btn-ghost flex-1 justify-center"><CalendarDays size={15} /> Planifier</button>

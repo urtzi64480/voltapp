@@ -188,6 +188,8 @@ export interface Devis {
   signature_data?: string;
   acompte_pct?: number;
   acompte_paye?: boolean;
+  // Photos des produits sur le devis (PDF, aperçu, signature) — colonne migration 016. Absent = affichées.
+  afficher_photos?: boolean;
   notes_internes?: string;
   created_at: string;
   updated_at: string;

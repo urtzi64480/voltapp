@@ -196,7 +196,7 @@ export default function SignerPage({ params }: { params: { token: string } }) {
                   )}
                   {b.items.map(({ l }, k) => (
                     <tr key={k} className={`border-b border-gray-50 ${aDesPostes && bi % 2 === 1 ? "bg-gray-100" : ""}`}>
-                      <td className="py-2 text-gray-700"><LigneImage url={l.image_url} taille={32} className="inline-block align-middle mr-2" />{l.nom}</td>
+                      <td className="py-2 text-gray-700">{devis.afficher_photos !== false && <LigneImage url={l.image_url} taille={32} className="inline-block align-middle mr-2" />}{l.nom}</td>
                       <td className="py-2 text-right text-gray-500">{l.quantite}</td>
                       <td className="py-2 text-right font-medium">{fmt(l.prix_unitaire * l.quantite)}</td>
                     </tr>

@@ -147,3 +147,6 @@ export function colonnesImage(lignes: { image_url?: string | null }[]): (l: { im
   const utilise = lignes.some(l => !!l.image_url);
   return l => utilise ? { image_url: l.image_url ?? null } : {};
 }
+
+// Photos des produits visibles sur ce devis ? (colonne devis.afficher_photos, migration 016 ; absente ou null = oui)
+export const photosAffichees = (d?: { afficher_photos?: boolean | null } | null) => d?.afficher_photos !== false;

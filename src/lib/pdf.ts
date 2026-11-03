@@ -192,7 +192,7 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string, ima
   // Lignes triées par `ordre`, puis regroupées par poste (titre + sous-total par poste).
   // Sans aucun poste, le tableau reste identique à l'ancien (lignes à plat).
   const lignes = trierParOrdre(devis.lignes ?? []);
-  const images: ImagesPdf = imagesInjectees ?? await chargerImagesPdf(lignes.map((l: any) => l.image_url));
+  const images: ImagesPdf = devis.afficher_photos === false ? new Map() : (imagesInjectees ?? await chargerImagesPdf(lignes.map((l: any) => l.image_url)));
   const blocs = grouperParPoste(lignes);
   const aDesPostes = blocs.some(b => b.poste !== null);
   if (aDesPostes) {

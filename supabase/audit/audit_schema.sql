@@ -117,6 +117,7 @@ with attendues(t, c) as (values
     ('demandes_client', 'user_id'),
     ('devis', 'acompte_paye'),
     ('devis', 'acompte_pct'),
+    ('devis', 'afficher_photos'),
     ('devis', 'apporteur_id'),
     ('devis', 'client_id'),
     ('devis', 'created_at'),
