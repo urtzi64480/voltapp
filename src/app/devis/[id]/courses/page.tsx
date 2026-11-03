@@ -4,9 +4,10 @@ import { supabase } from "@/lib/supabase";
 import Shell from "@/components/layout/Shell";
 import LigneImage from "@/components/devis/LigneImage";
 import Link from "next/link";
-import { ArrowLeft, Check, ShoppingCart, RotateCcw, Share2, Link2, MessageSquare, Mail, Copy, FileDown, Store, Euro, Scale } from "lucide-react";
+import { ArrowLeft, Check, ShoppingCart, RotateCcw, Share2, Link2, MessageSquare, Mail, Copy, FileDown, Store, Euro, Scale, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buildCourseItems, buildCourseItemsParFournisseur, buildComparatifAchat, CourseItem } from "@/lib/courseItems";
+import { facteurRemiseMateriau, prixAchatMax, tauxDepuisProfil, type TauxRentabilite } from "@/lib/rentabilite";
 import { buildCourseText, genPDFListeCourses, courseFileName, buildPrixFournisseursText, genPDFPrixFournisseurs, comparatifFileName } from "@/lib/courseExport";
 
 export default function ListeCoursesPage({ params }: { params: { id: string } }) {
@@ -30,6 +31,10 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   const [vuePrix, setVuePrix] = useState<null | "achat" | "comparatif">(null);
   const [prixCopie, setPrixCopie] = useState(false);
   const [prixPdfBusy, setPrixPdfBusy] = useState(false);
+  // Taux de cotisations / IR du profil (branche matériau) et part du prix réellement encaissée (remise du devis) : servent au prix d'achat
+  // MAXIMUM sans vente à perte. null tant que le profil n'est pas chargé → rien n'est affiché plutôt qu'un chiffre avec de faux taux.
+  const [taux, setTaux] = useState<TauxRentabilite | null>(null);
+  const [facteurRemise, setFacteurRemise] = useState(1);
 
   useEffect(() => {
     setCanShare(typeof navigator !== "undefined" && typeof (navigator as any).share === "function");
@@ -38,7 +43,7 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   useEffect(() => {
     supabase
       .from("devis")
-      .select("numero, statut, objet, liste_courses_token, liste_courses_checked, client:clients(nom, prenom, email, telephone), lignes:devis_lignes(*)")
+      .select("numero, statut, objet, total_materiau, remise_valeur, liste_courses_token, liste_courses_checked, client:clients(nom, prenom, email, telephone), lignes:devis_lignes(*)")
       .eq("id", id)
       .single()
       .then(({ data }) => {
@@ -47,6 +52,7 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
           const lignes = (data as any).lignes ?? [];
           setItems(buildCourseItems(lignes));
           setLignesBrutes(lignes);
+          setFacteurRemise(facteurRemiseMateriau(lignes, (data as any).total_materiau, (data as any).remise_valeur));
           // Vue par fournisseur proposée (et activée) dès qu'une ligne en porte un.
           setParFournisseur(lignes.some((l: any) => String(l.fournisseur_nom ?? "").trim() !== ""));
           setChecked(((data as any).liste_courses_checked as Record<string, boolean>) || {});
@@ -75,6 +81,17 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
         setLoading(false);
       });
   }, [id]);
+
+  // Profil de l'utilisateur connecté (taux de cotisations / IR) — mêmes taux, mêmes défauts que la page de rentabilité.
+  useEffect(() => {
+    let annule = false;
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session?.user) return;
+      const { data } = await supabase.from("profil").select("taux_cotisations_materiau, taux_ir_materiau, taux_cotisations_service, taux_ir_service").eq("id", session.user.id).maybeSingle();
+      if (!annule) setTaux(tauxDepuisProfil(data as any));
+    });
+    return () => { annule = true; };
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -226,7 +243,9 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
     }
   }
 
-  const comparatif = buildComparatifAchat(lignesBrutes);
+  // Prix d'achat maximum sans vente à perte : seulement une fois les taux du profil connus.
+  const optsMax = taux ? { achatMax: (vente: number) => prixAchatMax(vente, taux, facteurRemise) } : undefined;
+  const comparatif = buildComparatifAchat(lignesBrutes, optsMax);
   const eur = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
 
   async function handleCopyPrix() {
@@ -266,7 +285,7 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
 
   const totalChecked = items.filter(it => checked[it.key]).length;
   const aDesFournisseurs = lignesBrutes.some(l => String(l.fournisseur_nom ?? "").trim() !== "");
-  const groupes = parFournisseur && aDesFournisseurs ? buildCourseItemsParFournisseur(lignesBrutes, piecesParOffre) : null;
+  const groupes = parFournisseur && aDesFournisseurs ? buildCourseItemsParFournisseur(lignesBrutes, piecesParOffre, optsMax) : null;
 
   function renderItem(it: CourseItem, cle: string) {
     const isChecked = !!checked[it.key];
@@ -424,6 +443,13 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
                         ? "Vue perso : prix TTC chez le fournisseur (sans marge) contre le prix du devis. Le lien public de la liste n'en reprend rien — seuls les exports ci-dessous, que tu envoies toi-même, le montrent."
                         : "Prix TTC chez le fournisseur retenu, sans marge — ce que le client paie s'il fait ses courses lui-même. Le lien public de la liste n'en reprend rien."}
                     </p>
+                    {taux && (
+                      <p className="text-[11px] text-ink-400 mb-3">
+                        <strong className="text-ink-600">Achat max</strong> = prix de vente × (1 − cotisations {taux.cotisMateriau.toLocaleString("fr-FR")} %{taux.irMateriau > 0 ? ` − impôt ${taux.irMateriau.toLocaleString("fr-FR")} %` : ""})
+                        {facteurRemise < 1 ? `, après la remise du devis (tu encaisses ${(facteurRemise * 100).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} % du prix affiché)` : ""}.
+                        Au-dessus, la ligne est vendue à perte. Écran uniquement : absent des exports et du lien public.
+                      </p>
+                    )}
                     <div className="space-y-4">
                       {comparatif.groupes.map(g => (
                         <div key={g.fournisseur ?? "__sans"}>
@@ -442,10 +468,18 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
                                   <span className="shrink-0 text-right">
                                     <span className="block text-ink-900 font-medium">{eur(l.achatTotal ?? 0)}</span>
                                     <span className="block text-[11px] text-ink-400">{eur(l.achatUnitaire)} / u.</span>
+                                    {l.achatMaxUnitaire != null && (
+                                      <span className={cn("block text-[11px]", l.aPerte ? "text-red-600 font-semibold" : "text-emerald-700")}>
+                                        {l.aPerte ? "⚠ " : ""}achat max : {eur(l.achatMaxUnitaire)} / u.
+                                      </span>
+                                    )}
                                     {vuePrix === "comparatif" && <span className="block text-[11px] text-sky-700">devis : {eur(l.venteTotal)}</span>}
                                   </span>
                                 ) : (
-                                  <span className="shrink-0 text-xs text-amber-700">prix d'achat non renseigné</span>
+                                  <span className="shrink-0 text-right">
+                                    <span className="block text-xs text-amber-700">prix d'achat non renseigné</span>
+                                    {l.achatMaxUnitaire != null && <span className="block text-[11px] text-emerald-700">achat max : {eur(l.achatMaxUnitaire)} / u.</span>}
+                                  </span>
                                 )}
                               </div>
                             ))}
@@ -454,8 +488,20 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
                       ))}
                     </div>
 
+                    {comparatif.nbAPerte > 0 && (
+                      <p className="text-xs text-red-600 font-semibold mt-3 flex items-center gap-1.5">
+                        <AlertTriangle size={14} className="shrink-0" />
+                        {comparatif.nbAPerte} ligne{comparatif.nbAPerte > 1 ? "s" : ""} vendue{comparatif.nbAPerte > 1 ? "s" : ""} à perte : prix d'achat au-dessus du maximum.
+                      </p>
+                    )}
                     <div className="mt-4 pt-3 border-t border-ink-200 flex flex-col gap-1 text-sm">
                       <div className="flex justify-between"><span className="text-ink-600">En achetant soi-même (TTC)</span><span className="font-semibold text-ink-900">{eur(comparatif.totalAchat)}</span></div>
+                      {comparatif.totalAchatMax != null && (
+                        <div className="flex justify-between">
+                          <span className="text-ink-600">Achat maximum sans perte</span>
+                          <span className={cn("font-semibold", comparatif.totalAchat > comparatif.totalAchatMax + 0.005 ? "text-red-600" : "text-emerald-700")}>{eur(comparatif.totalAchatMax)}</span>
+                        </div>
+                      )}
                       {vuePrix === "comparatif" && (
                         <>
                           <div className="flex justify-between"><span className="text-ink-600">Même matériel sur le devis (avec ma marge)</span><span className="font-semibold text-ink-900">{eur(comparatif.totalVente)}</span></div>
@@ -495,7 +541,12 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
                       <h2 className="font-semibold text-ink-900 text-sm">{g.fournisseur ?? "Fournisseur non précisé"}</h2>
                       <span className="text-xs text-ink-400 shrink-0">
                         {g.items.filter(it => checked[it.key]).length} / {g.items.length}
-                        {g.achat !== null && ` · achat ${g.achat.toLocaleString("fr-FR", { style: "currency", currency: "EUR" })}`}
+                        {g.achat !== null && ` · achat ${eur(g.achat)}`}
+                        {g.achatMax !== null && (
+                          <span className={g.achat !== null && g.achat > g.achatMax + 0.005 ? "text-red-600 font-semibold" : "text-emerald-700"}>
+                            {` · achat max ${eur(g.achatMax)}`}
+                          </span>
+                        )}
                       </span>
                     </div>
                     <div className="space-y-1">

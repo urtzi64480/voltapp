@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  analyserDevis, construirePrixAchatMap, grouperParType, heuresEstimees, minutesReelles, TAUX_PAR_DEFAUT, tauxDepuisProfil, TYPE_AUTRE, typeChantier,
+  analyserDevis, construirePrixAchatMap, facteurRemiseMateriau, grouperParType, heuresEstimees, minutesReelles, prixAchatMax, TAUX_PAR_DEFAUT, tauxDepuisProfil, TYPE_AUTRE, typeChantier,
   type InfoPrestation, type LigneRentab,
 } from "@/lib/rentabilite";
 
@@ -134,5 +134,68 @@ describe("source de l'analyse (devis / factures émises / payées)", () => {
     const p = proratiser(r, 0.5);
     expect([p.ca, p.coutAchat, p.cotisations, p.net, p.heuresEstimees, p.heuresReelles, p.margePct]).toEqual([50, 10, 5, 35, 5, 6, 70]);
     expect(proratiser(r, 1)).toBe(r);
+  });
+});
+
+describe("prixAchatMax (liste de courses, vue privée)", () => {
+  const taux = { cotisService: 21.2, cotisMateriau: 12.3, irService: 0, irMateriau: 0 };
+  it("= prix de vente × (1 − cotisations matériau), au centime inférieur", () => {
+    expect(prixAchatMax(10, taux)).toBe(8.77);   // 10 × 0,877
+    expect(prixAchatMax(100, taux)).toBe(87.7);
+    expect(prixAchatMax(7.5, taux)).toBe(6.57);  // 6,5775 → 6,57 (jamais arrondi vers le haut)
+  });
+  it("sans perte exactement au plafond, à perte au centime au-dessus (cohérent avec la rentabilité du devis)", () => {
+    const vente = 12.9, max = prixAchatMax(vente, taux);
+    const net = (achat: number) => vente - vente * taux.cotisMateriau / 100 - achat;
+    expect(net(max)).toBeGreaterThanOrEqual(0);
+    expect(net(max + 0.01)).toBeLessThan(0);
+  });
+  it("l'impôt sur le revenu (versement libératoire) s'ajoute aux cotisations", () => {
+    expect(prixAchatMax(100, { ...taux, irMateriau: 1 })).toBe(86.7);
+  });
+  it("remise sur le devis : le plafond suit ce qui est réellement encaissé", () => {
+    expect(prixAchatMax(100, taux, 0.9)).toBe(78.93); // 90 × 0,877
+    expect(prixAchatMax(100, taux, 1)).toBe(87.7);
+  });
+  it("valeurs aberrantes : jamais négatif, facteur borné entre 0 et 1, texte non numérique = 0", () => {
+    expect(prixAchatMax(100, { ...taux, cotisMateriau: 150 })).toBe(0);
+    expect(prixAchatMax(100, taux, 5)).toBe(87.7);
+    expect(prixAchatMax(100, taux, -1)).toBe(0);
+    expect(prixAchatMax(NaN, taux)).toBe(0);
+    expect(prixAchatMax(0, taux)).toBe(0);
+  });
+  it("taux 0 % : plafond = prix de vente", () => {
+    expect(prixAchatMax(42.42, { ...taux, cotisMateriau: 0 })).toBe(42.42);
+  });
+  it("valeurs par défaut du profil : 12,3 % de cotisations matériau", () => {
+    expect(prixAchatMax(100, tauxDepuisProfil(null))).toBe(87.7);
+  });
+});
+
+describe("facteurRemiseMateriau", () => {
+  const lignes = [
+    { prix_unitaire: 10, quantite: 6, type_branche: "materiau" },   // 60
+    { prix_unitaire: 20, quantite: 2, type_branche: "materiau" },   // 40 → brut matériaux 100
+    { prix_unitaire: 50, quantite: 1, type_branche: "service" },
+  ];
+  it("sans remise (remise_valeur ≤ 0,01) : 1", () => {
+    expect(facteurRemiseMateriau(lignes, 100, 0)).toBe(1);
+    expect(facteurRemiseMateriau(lignes, 100, 0.01)).toBe(1);
+    expect(facteurRemiseMateriau(lignes, 90, null)).toBe(1);
+  });
+  it("remise matériaux : total après remise ÷ brut", () => {
+    expect(facteurRemiseMateriau(lignes, 90, 10)).toBe(0.9);
+    expect(facteurRemiseMateriau(lignes, 75, 25)).toBe(0.75);
+  });
+  it("kits : seule la part matériau (1 − ratio service) compte dans le brut", () => {
+    const avecKit = [{ prix_unitaire: 100, quantite: 1, type_branche: "service", kit_ratio_service: 0.6 }]; // 40 de matériau
+    expect(facteurRemiseMateriau(avecKit, 36, 4)).toBe(0.9);
+  });
+  it("chiffres inexploitables (pas de brut, total absent) → 1 ; jamais au-dessus de 1", () => {
+    expect(facteurRemiseMateriau([], 50, 10)).toBe(1);
+    expect(facteurRemiseMateriau([{ prix_unitaire: 0, quantite: 1, type_branche: "materiau" }], 0, 10)).toBe(1);
+    expect(facteurRemiseMateriau(lignes, undefined, 10)).toBe(1);
+    expect(facteurRemiseMateriau(lignes, 150, 10)).toBe(1);
+    expect(facteurRemiseMateriau(null as unknown as [], 10, 10)).toBe(1);
   });
 });

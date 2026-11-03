@@ -85,3 +85,67 @@ describe("buildComparatifAchat", () => {
     expect(buildComparatifAchat(null as unknown as [])).toMatchObject({ groupes: [], totalAchat: 0, economiePct: null });
   });
 });
+
+describe("prix d'achat maximum (vue privée)", () => {
+  // Plafond injecté : 87,7 % du prix de vente, au centime inférieur (12,3 % de cotisations matériau).
+  const opts = { achatMax: (v: number) => Math.floor(v * 0.877 * 100 + 1e-9) / 100 };
+
+  it("sans calcul demandé : aucun champ de plafond rempli (rien ne fuit par défaut)", () => {
+    const c = buildComparatifAchat([mat({ prix_achat: 5, fournisseur_nom: "R" })]);
+    expect(c.totalAchatMax).toBeNull();
+    expect(c.groupes[0].achatMax).toBeNull();
+    expect(c.groupes[0].lignes[0].achatMaxUnitaire).toBeNull();
+    expect(c.groupes[0].lignes[0].aPerte).toBe(false);
+    expect(buildCourseItemsParFournisseur([mat({ prix_achat: 5, fournisseur_nom: "R" })])[0].achatMax).toBeNull();
+  });
+
+  it("40 prises à 10 € : plafond unitaire 8,77 €, total 350,80 €", () => {
+    const c = buildComparatifAchat([mat({ nom: "Prise 16 A", quantite: 40, prix_unitaire: 10, prix_achat: 6, fournisseur_nom: "Rexel" })], opts);
+    const l = c.groupes[0].lignes[0];
+    expect(l).toMatchObject({ achatMaxUnitaire: 8.77, aPerte: false });
+    expect(c.totalAchatMax).toBe(350.8);
+    expect(c.nbAPerte).toBe(0);
+  });
+
+  it("achat au-dessus du plafond → ligne à perte, comptée ; au plafond exact → pas à perte", () => {
+    const c = buildComparatifAchat([
+      mat({ nom: "A", prix_unitaire: 10, prix_achat: 8.78, fournisseur_nom: "R" }),
+      mat({ nom: "B", prix_unitaire: 10, prix_achat: 8.77, fournisseur_nom: "R" }),
+      mat({ nom: "C", prix_unitaire: 10, prix_achat: 3, fournisseur_nom: "R" }),
+    ], opts);
+    const parNom = Object.fromEntries(c.groupes[0].lignes.map(l => [l.nom, l.aPerte]));
+    expect(parNom).toEqual({ A: true, B: false, C: false });
+    expect(c.nbAPerte).toBe(1);
+  });
+
+  it("ligne sans prix d'achat : plafond affiché mais exclu du total (même périmètre que l'achat)", () => {
+    const c = buildComparatifAchat([mat({ nom: "A", prix_unitaire: 10, prix_achat: 5, fournisseur_nom: "R" }), mat({ nom: "B", prix_unitaire: 100, fournisseur_nom: "R" })], opts);
+    const b = c.groupes[0].lignes.find(l => l.nom === "B")!;
+    expect(b.achatMaxUnitaire).toBe(87.7);
+    expect(b.aPerte).toBe(false);
+    expect(c.totalAchatMax).toBe(8.77);
+    expect(c.groupes[0].achatMax).toBe(8.77);
+  });
+
+  it("kits et services : pas de plafond", () => {
+    const c = buildComparatifAchat([mat({ kit_ratio_service: 0.5 }), { nom: "Pose", type_branche: "service", prix_unitaire: 50, quantite: 1 }], opts);
+    expect(c.groupes).toEqual([]);
+    expect(c.totalAchatMax).toBe(0);
+  });
+
+  it("groupe fournisseur de la liste privée : plafond = Σ plafond unitaire × quantité (même périmètre que l'achat, kits exclus)", () => {
+    const g = buildCourseItemsParFournisseur([
+      mat({ nom: "A", quantite: 4, prix_unitaire: 10, prix_achat: 5, fournisseur_nom: "Rexel" }),
+      mat({ nom: "B", quantite: 1, prix_unitaire: 20, prix_achat: 9, fournisseur_nom: "Rexel" }),
+      mat({ nom: "Kit", kit_ratio_service: 0.5, prix_unitaire: 99, kit_description: "2 × X", fournisseur_nom: "Rexel" }),
+    ], undefined, opts);
+    expect(g[0]).toMatchObject({ fournisseur: "Rexel", achat: 29 });
+    expect(g[0].achatMax).toBe(52.62); // 4 × 8,77 + 17,54
+  });
+
+  it("le plafond ne modifie ni les totaux d'achat/vente ni l'écart existants", () => {
+    const lignes = [mat({ nom: "A", quantite: 2, prix_unitaire: 10, prix_achat: 6, fournisseur_nom: "Rexel" }), mat({ nom: "B", prix_unitaire: 20, prix_achat: 15, fournisseur_nom: "Rexel" })];
+    const sans = buildComparatifAchat(lignes), avec = buildComparatifAchat(lignes, opts);
+    expect(avec).toMatchObject({ totalAchat: sans.totalAchat, totalVente: sans.totalVente, ecart: sans.ecart, economiePct: sans.economiePct });
+  });
+});

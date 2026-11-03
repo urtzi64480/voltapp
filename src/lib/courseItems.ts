@@ -73,6 +73,14 @@ export interface GroupeFournisseur {
   items: CourseItem[];
   // Coût d'achat total du groupe (TTC) — null si une ligne matériau n'a pas de prix d'achat.
   achat: number | null;
+  // Achat MAXIMUM du groupe pour ne pas vendre à perte (vue privée) — null si le calcul n'est pas demandé (voir OptionsAchatMax).
+  achatMax: number | null;
+}
+
+// Calcul du prix d'achat maximum acceptable pour un prix de vente unitaire (fourni par la page privée, voir rentabilite.prixAchatMax) :
+// injecté ici pour que ce module — que la liste publique du client importe aussi — ne contienne aucune formule de marge.
+export interface OptionsAchatMax {
+  achatMax: (venteUnitaire: number) => number;
 }
 
 // piecesParOffre : pièces à acheter par offre fournisseur (id d'offre -> pièces). Une ligne matériau dont
@@ -89,7 +97,7 @@ function eclaterEnPieces(l: any, piecesParOffre?: Record<string, { nom: string; 
   }));
 }
 
-export function buildCourseItemsParFournisseur(lignes: any[], piecesParOffre?: Record<string, { nom: string; quantite: number; reference?: string | null }[]>): GroupeFournisseur[] {
+export function buildCourseItemsParFournisseur(lignes: any[], piecesParOffre?: Record<string, { nom: string; quantite: number; reference?: string | null }[]>, opts?: OptionsAchatMax): GroupeFournisseur[] {
   const parNom = new Map<string, any[]>();
   for (const l of lignes ?? []) {
     const nom = String(l.fournisseur_nom ?? "").trim();
@@ -104,7 +112,11 @@ export function buildCourseItemsParFournisseur(lignes: any[], piecesParOffre?: R
     const matieres = ls.filter(l => l.type_branche === "materiau" && l.kit_ratio_service == null);
     const complet = matieres.length > 0 && matieres.every(l => l.prix_achat != null);
     const achat = complet ? matieres.reduce((a, l) => a + (l.prix_achat as number) * (l.quantite || 1), 0) : null;
-    groupes.push({ fournisseur: nom || null, items, achat });
+    // Même périmètre que l'achat (matériaux hors kits) : somme des plafonds unitaires × quantité, ligne par ligne.
+    const achatMax = opts && matieres.length > 0
+      ? arrondi2(matieres.reduce((a, l) => a + opts.achatMax(Number(l.prix_unitaire) || 0) * (l.quantite || 1), 0))
+      : null;
+    groupes.push({ fournisseur: nom || null, items, achat, achatMax });
   });
   return groupes.sort((a, b) => {
     if (a.fournisseur === null) return 1;
@@ -133,6 +145,10 @@ export interface LigneComparatif {
   achatTotal: number | null;
   venteUnitaire: number;        // prix du devis (avec ma marge)
   venteTotal: number;
+  // Prix d'achat unitaire MAXIMUM pour ne pas vendre à perte (cotisations déduites) — null si le calcul n'est pas demandé.
+  achatMaxUnitaire: number | null;
+  // true si le prix d'achat renseigné dépasse ce maximum : la ligne est vendue à perte.
+  aPerte: boolean;
 }
 
 export interface GroupeComparatif {
@@ -140,6 +156,7 @@ export interface GroupeComparatif {
   lignes: LigneComparatif[];
   achat: number;  // total fournisseur TTC des lignes qui ont un prix d'achat
   vente: number;  // total devis de ces mêmes lignes (comparaison à périmètre égal)
+  achatMax: number | null; // plafond d'achat de ces mêmes lignes (périmètre égal) — null si non demandé
   sansPrix: number; // lignes sans prix d'achat, exclues des deux totaux ci-dessus
 }
 
@@ -147,6 +164,8 @@ export interface ComparatifAchat {
   groupes: GroupeComparatif[];
   totalAchat: number;
   totalVente: number;
+  totalAchatMax: number | null; // plafond d'achat total des lignes qui ont un prix d'achat (périmètre de totalAchat) — null si non demandé
+  nbAPerte: number;         // lignes dont le prix d'achat dépasse le plafond
   ecart: number;            // totalVente − totalAchat : ce que la prestation (marge) ajoute
   economiePct: number | null; // part du prix devis économisée en achetant soi-même
   nbSansPrix: number;
@@ -155,7 +174,7 @@ export interface ComparatifAchat {
 
 const arrondi2 = (n: number) => Math.round(n * 100) / 100;
 
-export function buildComparatifAchat(lignes: any[]): ComparatifAchat {
+export function buildComparatifAchat(lignes: any[], opts?: OptionsAchatMax): ComparatifAchat {
   const parFournisseur = new Map<string, Map<string, LigneComparatif>>();
   let nbKitsIgnores = 0;
   for (const l of lignes ?? []) {
@@ -171,25 +190,31 @@ export function buildComparatifAchat(lignes: any[]): ComparatifAchat {
     if (existante) {
       existante.qty += qty;
     } else {
-      groupe.set(cle, { cle, nom: l.nom, qty, unite: l.unite, reference: String(l.reference_fournisseur ?? "").trim() || undefined, achatUnitaire, achatTotal: null, venteUnitaire, venteTotal: 0 });
+      const achatMaxUnitaire = opts ? opts.achatMax(venteUnitaire) : null;
+      groupe.set(cle, {
+        cle, nom: l.nom, qty, unite: l.unite, reference: String(l.reference_fournisseur ?? "").trim() || undefined, achatUnitaire, achatTotal: null,
+        venteUnitaire, venteTotal: 0, achatMaxUnitaire, aPerte: achatMaxUnitaire != null && achatUnitaire != null && achatUnitaire > achatMaxUnitaire + 1e-9,
+      });
     }
     parFournisseur.set(fournisseur, groupe);
   }
 
   const groupes: GroupeComparatif[] = [];
-  let totalAchat = 0, totalVente = 0, nbSansPrix = 0;
+  let totalAchat = 0, totalVente = 0, nbSansPrix = 0, totalAchatMax = 0, nbAPerte = 0;
   parFournisseur.forEach((map, nom) => {
     const lignesGroupe = Array.from(map.values()).sort((a, b) => a.nom.localeCompare(b.nom, "fr"));
-    let achat = 0, vente = 0, sansPrix = 0;
+    let achat = 0, vente = 0, sansPrix = 0, achatMax = 0;
     lignesGroupe.forEach(l => {
       l.venteTotal = arrondi2(l.venteUnitaire * l.qty);
       if (l.achatUnitaire == null) { sansPrix++; return; }
       l.achatTotal = arrondi2(l.achatUnitaire * l.qty);
       achat += l.achatTotal;
       vente += l.venteTotal;
+      if (l.achatMaxUnitaire != null) achatMax += arrondi2(l.achatMaxUnitaire * l.qty);
+      if (l.aPerte) nbAPerte++;
     });
-    totalAchat += achat; totalVente += vente; nbSansPrix += sansPrix;
-    groupes.push({ fournisseur: nom || null, lignes: lignesGroupe, achat: arrondi2(achat), vente: arrondi2(vente), sansPrix });
+    totalAchat += achat; totalVente += vente; nbSansPrix += sansPrix; totalAchatMax += achatMax;
+    groupes.push({ fournisseur: nom || null, lignes: lignesGroupe, achat: arrondi2(achat), vente: arrondi2(vente), achatMax: opts ? arrondi2(achatMax) : null, sansPrix });
   });
   groupes.sort((a, b) => {
     if (a.fournisseur === null) return 1;
@@ -198,7 +223,7 @@ export function buildComparatifAchat(lignes: any[]): ComparatifAchat {
   });
   totalAchat = arrondi2(totalAchat); totalVente = arrondi2(totalVente);
   return {
-    groupes, totalAchat, totalVente, ecart: arrondi2(totalVente - totalAchat),
+    groupes, totalAchat, totalVente, totalAchatMax: opts ? arrondi2(totalAchatMax) : null, nbAPerte, ecart: arrondi2(totalVente - totalAchat),
     economiePct: totalVente > 0 ? Math.round(((totalVente - totalAchat) / totalVente) * 1000) / 10 : null,
     nbSansPrix, nbKitsIgnores,
   };

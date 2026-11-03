@@ -27,6 +27,40 @@ export const TYPE_AUTRE = "Autre";
 const arrondi = (n: number, d = 2) => { const f = 10 ** d; return Math.round((n + Number.EPSILON) * f) / f; };
 const nombre = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 
+// ─── Prix d'achat maximum acceptable (liste de courses, vue PRIVÉE) ──────────────────────────────────────
+// Même formule que la rentabilité d'un devis : net matériaux = ventes − cotisations − IR − coût d'achat.
+// Le net d'une ligne est ≥ 0 tant que : achat ≤ vente × (1 − (cotisations + IR) / 100). C'est ce plafond (prix d'achat unitaire
+// à ne pas dépasser pour ne pas vendre à perte), arrondi au centime INFÉRIEUR pour ne jamais l'afficher trop haut.
+// `facteurRemise` : part du prix affiché réellement encaissée quand le devis porte une remise matériaux (1 = pas de remise).
+
+/** Prix d'achat unitaire maximum pour ne pas vendre à perte (cotisations et IR de la branche matériau déduits). */
+export function prixAchatMax(venteUnitaire: number, taux: TauxRentabilite, facteurRemise = 1): number {
+  const vente = nombre(venteUnitaire) * Math.min(1, Math.max(0, nombre(facteurRemise)));
+  const part = 1 - (nombre(taux.cotisMateriau) + nombre(taux.irMateriau)) / 100;
+  const max = vente * Math.max(0, part);
+  return Math.floor(max * 100 + 1e-9) / 100;
+}
+
+/**
+ * Part du prix matériaux affiché qui est réellement encaissée : totalMateriau (après remise, stocké sur le devis) ÷ brut matériaux
+ * des lignes (kits ventilés par kit_ratio_service, comme la page du devis). 1 si le devis n'a pas de remise (même condition que la
+ * page du devis : remise_valeur > 0,01) ou si les chiffres ne sont pas exploitables.
+ */
+export function facteurRemiseMateriau(
+  lignes: { prix_unitaire?: number | null; quantite?: number | null; type_branche?: string | null; kit_ratio_service?: number | null }[],
+  totalMateriau: number | null | undefined,
+  remiseValeur: number | null | undefined,
+): number {
+  if (!(nombre(remiseValeur) > 0.01) || totalMateriau == null) return 1;
+  const brut = (lignes ?? []).reduce((a, l) => {
+    const total = nombre(l.prix_unitaire) * (l.quantite == null ? 1 : nombre(l.quantite));
+    if (l.kit_ratio_service != null) return a + total * (1 - nombre(l.kit_ratio_service));
+    return l.type_branche === "materiau" ? a + total : a;
+  }, 0);
+  if (!(brut > 0)) return 1;
+  return Math.min(1, Math.max(0, nombre(totalMateriau) / brut));
+}
+
 export interface LigneRentab {
   prestation_id?: string | null;
   quantite?: number | null;
