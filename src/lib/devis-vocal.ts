@@ -10,7 +10,68 @@ import { ligneDepuisArticle, PREFIXE_A_COMPLETER } from "./devis-lignes";
 // ─── Texte ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 const sansAccent = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "");
-const minuscules = (t: string) => sansAccent(t).toLowerCase();
+const minuscules = (t: string) => sansAccent(t).toLowerCase().replace(/œ/g, "oe").replace(/æ/g, "ae");
+
+// ─── Erreurs classiques de la reconnaissance vocale ──────────────────────────────────────────────────────────────
+
+const CORRECTIONS_VOCALES: [RegExp, string][] = [
+  [/\b(\d+)\s+virgule\s+(\d+)\b/gi, "$1,$2"],                                   // « 2 virgule 5 » → 2,5
+  [/\b(?:des?|dis|dit|disque|dix)\s*[-]?\s*joncteurs?\b/gi, "disjoncteur"],        // « des joncteurs », « disque joncteur »
+  [/\bdisjoncteu?rs?\b/gi, "disjoncteur"],
+  [/\bva\s*(?:et\s*)?vien[st]?\b/gi, "va et vient"],
+  [/\br\.?\s*j\.?\s*45\b/gi, "rj45"],
+  [/\b(\d+(?:[.,]\d+)?)\s*(?:mm|millim[eè]tres?)\s*(?:carr[eé]s?|²|2)(?![a-z0-9àâäçéèêëîïôöùûü])/gi, "$1 mm"],
+  [/\bprises?\s+de\s+courants?\b/gi, "prise"],
+  [/\bmain\s+d[' ]?\s*œuvre\b/gi, "main d'oeuvre"],
+];
+
+/** Corrige les erreurs de transcription les plus fréquentes du vocabulaire électrique. Idempotent. */
+export function corrigerReconnaissance(texte: string): string {
+  return CORRECTIONS_VOCALES.reduce((t, [re, to]) => t.replace(re, to), texte ?? "");
+}
+
+// ─── Proximité phonétique (« prisent » ≈ « prises », « spotte » ≈ « spot ») ──────────────────────────────────────
+
+const cacheSon = new Map<string, string>();
+
+/** Clé phonétique approximative du français : deux mots qui se prononcent presque pareil ont des clés proches. */
+export function cleSon(mot: string): string {
+  const memo = cacheSon.get(mot);
+  if (memo !== undefined) return memo;
+  let s = minuscules(mot).replace(/[^a-z]/g, "");
+  s = s.replace(/ph/g, "f").replace(/ch/g, "5").replace(/qu/g, "k").replace(/ck/g, "k").replace(/gu(?=[eiy])/g, "g")
+    .replace(/c(?=[eiy])/g, "s").replace(/c/g, "k").replace(/g(?=[eiy])/g, "j")
+    .replace(/eau|au/g, "o").replace(/ou/g, "u").replace(/oi/g, "wa").replace(/ai|ei/g, "e")
+    .replace(/(?:an|am|en|em)(?![aeiouy])/g, "a").replace(/(?:on|om)(?![aeiouy])/g, "o").replace(/(?:ain|ein|in|im|un)(?![aeiouy])/g, "1")
+    .replace(/y/g, "i").replace(/h/g, "").replace(/(?<=[aeiou1])s(?=[aeiou1])/g, "z")
+    .replace(/(.)\1+/g, "$1");
+  if (s.length > 3) s = s.replace(/(?:nt|[sxtd])+$/, "").replace(/e$/, "");
+  cacheSon.set(mot, s);
+  return s;
+}
+
+function distance(a: string, b: string): number {
+  const d: number[] = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prec = d[0]; d[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = d[j];
+      d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prec + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prec = tmp;
+    }
+  }
+  return d[b.length];
+}
+
+/** Deux mots (≥ 4 lettres, non numériques) qui sonnent presque pareil. */
+export function sonProche(a: string, b: string): boolean {
+  if (a.length < 4 || b.length < 4 || /\d/.test(a) || /\d/.test(b)) return false;
+  const ka = cleSon(a), kb = cleSon(b);
+  if (ka.length < 3 || kb.length < 3) return false;
+  if (ka === kb) return true;
+  if (ka[0] !== kb[0]) return false;
+  return distance(ka, kb) <= (Math.max(ka.length, kb.length) >= 7 ? 2 : 1);
+}
 
 const UNITES: Record<string, number> = {
   zero: 0, un: 1, une: 1, deux: 2, trois: 3, quatre: 4, cinq: 5, six: 6, sept: 7, huit: 8, neuf: 9, dix: 10, onze: 11, douze: 12,
@@ -95,7 +156,7 @@ function nombreDe(t: string): number {
 
 /** Découpe une dictée en segments (un article ou une prestation chacun). Le nom du client doit avoir été retiré avant. */
 export function decouperDictee(texte: string): SegmentDicte[] {
-  let t = (texte ?? "").replace(/[\n\r]+/g, ", ").replace(/\s+/g, " ").trim();
+  let t = corrigerReconnaissance(texte ?? "").replace(/[\n\r]+/g, ", ").replace(/\s+/g, " ").trim();
   if (!t) return [];
   t = heuresDemies(chiffrer(t));
   PROTEGES.forEach(([re, to]) => { t = t.replace(re, to); });
@@ -165,7 +226,7 @@ const SYNONYMES: Record<string, string> = {
 
 /** Mots significatifs d'un texte : minuscules, sans accent, singulier approximatif, synonymes, « 16A » → « 16 », « a ». */
 export function motsCles(t: string): string[] {
-  const propre = minuscules(t).replace(/(\d)\s*([a-z])/g, "$1 $2").replace(/(\d),(\d)/g, "$1.$2").replace(/[^a-z0-9.]+/g, " ");
+  const propre = minuscules(t).replace(/(\d)\s*([a-z])/g, "$1 $2").replace(/([a-z])(\d)/g, "$1 $2").replace(/(\d),(\d)/g, "$1.$2").replace(/[^a-z0-9.]+/g, " ");
   const mots: string[] = [];
   propre.split(/\s+/).filter(Boolean).forEach(w0 => {
     let w = w0.replace(/^\.+|\.+$/g, "");
@@ -202,6 +263,7 @@ export function chercherArticles(libelle: string, prestations: Prestation[], max
       if (nom.includes(w)) pts = nb ? 3 : 3;
       else if (!nb && w.length >= 4 && nom.some(x => x.startsWith(w) || w.startsWith(x) && x.length >= 4)) pts = 2;
       else if (autres.includes(w)) pts = 1;
+      else if (!nb && w.length >= 4 && nom.some(x => sonProche(w, x))) pts = 2;
       if (pts > 0) { trouve++; score += pts; if (!nb) retrouvesNonNombre++; }
       else if (nb && nom.some(estNombre)) score -= 2;   // un calibre / une section différente éloigne l'article
     }
@@ -232,14 +294,28 @@ export interface AnalyseDictee { client: ClientCourt | null; lignes: LigneVocale
 
 const SEUIL_AUTO = 0.75;
 
-export function analyserDictee(texte: string, prestations: Prestation[], clients: ClientCourt[]): AnalyseDictee {
-  const { client, reste } = detecterClient(texte, clients);
+/** Clé d'un libellé dicté pour retenir une correction de l'électricien (« prises 16 A » → l'article qu'il a choisi). */
+export const cleAlias = (libelle: string): string => motsCles(libelle).join(" ");
+
+/** Articles appris : libellé dicté (cleAlias) → id de prestation. */
+export type Alias = Record<string, string>;
+
+export function analyserDictee(texte: string, prestations: Prestation[], clients: ClientCourt[], alias: Alias = {}): AnalyseDictee {
+  const { client, reste } = detecterClient(corrigerReconnaissance(texte), clients);
   const segments = decouperDictee(reste);
   const vus = new Map<string, number>();
   const lignes: LigneVocale[] = segments.map(segment => {
     const base = minuscules(segment.brut).replace(/\s+/g, " ");
     const n = (vus.get(base) ?? 0) + 1; vus.set(base, n);
     const candidats = segment.heures ? chercherArticles("main d'oeuvre", prestations.filter(p => p.sous_categorie === "main_oeuvre" || /main d.?oeuvre/.test(minuscules(p.nom))), 3) : chercherArticles(segment.libelle, prestations);
+    const idAlias = segment.heures ? undefined : alias[cleAlias(segment.libelle)];
+    const appris = idAlias ? prestations.find(x => x.id === idAlias && x.actif !== false) : undefined;
+    if (appris) {
+      const deja = candidats.findIndex(c => c.prestation.id === appris.id);
+      if (deja >= 0) candidats.splice(deja, 1);
+      candidats.unshift({ prestation: appris, score: 99, couverture: 1 });
+      return { cle: `${base}#${n}`, segment, candidats: candidats.slice(0, 5), choixAuto: appris.id, confiance: "haute" as ConfianceLigne };
+    }
     const meilleur = candidats[0];
     const second = candidats[1];
     const net = meilleur && (!second || meilleur.score - second.score >= 0.75 || meilleur.couverture - second.couverture >= 0.25);
@@ -251,6 +327,31 @@ export function analyserDictee(texte: string, prestations: Prestation[], clients
     };
   });
   return { client, lignes };
+}
+
+/** Parmi les variantes proposées par la reconnaissance vocale, celle qui se rapproche le mieux du catalogue (et d'un client connu). */
+export function meilleureAlternative(variantes: string[], prestations: Prestation[], clients: ClientCourt[], alias: Alias = {}): string {
+  const propres = variantes.map(v => v.trim()).filter(Boolean);
+  if (propres.length <= 1) return propres[0] ?? "";
+  let meilleur = propres[0], meilleurScore = -1;
+  propres.forEach((v, i) => {
+    const a = analyserDictee(v, prestations, clients, alias);
+    const couvertures = a.lignes.map(l => l.candidats[0]?.couverture ?? 0);
+    const moyenne = couvertures.length ? couvertures.reduce((x, y) => x + y, 0) / couvertures.length : 0;
+    const score = moyenne + (a.client ? 0.5 : 0) + (a.lignes.length > 0 ? 0.05 : 0) - i * 0.001;   // à égalité, la variante la plus probable
+    if (score > meilleurScore) { meilleurScore = score; meilleur = v; }
+  });
+  return meilleur;
+}
+
+const JARGON = ["disjoncteur", "différentiel", "interrupteur", "va-et-vient", "prise", "spot", "luminaire", "tableau", "parafoudre", "gaine", "câble", "ampères", "main d'œuvre", "heures", "mètres", "télérupteur", "applique", "détecteur", "volet roulant", "chauffe-eau", "plaque de cuisson", "lave-linge"];
+
+/** Mots à « souffler » au moteur de dictée (biais de vocabulaire) : jargon électrique + mots les plus fréquents du catalogue. */
+export function motsPourReconnaissance(prestations: Prestation[], max = 120): string[] {
+  const freq = new Map<string, number>();
+  prestations.forEach(p => (p.nom ?? "").split(/[\s/,()]+/).map(w => w.trim()).filter(w => w.length >= 4 && !/\d/.test(w)).forEach(w => freq.set(w.toLowerCase(), (freq.get(w.toLowerCase()) ?? 0) + 1)));
+  const top = Array.from(freq.entries()).sort((a, b) => b[1] - a[1]).map(([w]) => w);
+  return Array.from(new Set([...JARGON, ...top])).slice(0, max);
 }
 
 // ─── Lignes de devis ──────────────────────────────────────────────────────────────────────────────────────────────

@@ -10,15 +10,20 @@ import { supabase } from "@/lib/supabase";
 import { attacherFournisseurs } from "@/lib/fournisseurs";
 import { creerDevisBrouillon } from "@/lib/devis-creation";
 import { totauxLignesDevis } from "@/lib/tableau-predevis";
-import { analyserDictee, chercherArticles, libelleClient, lignesDepuisDictee, type ChoixLigneVocale, type ClientCourt, type LigneVocale } from "@/lib/devis-vocal";
+import {
+  analyserDictee, chercherArticles, cleAlias, libelleClient, lignesDepuisDictee, meilleureAlternative, motsPourReconnaissance,
+  type Alias, type ChoixLigneVocale, type ClientCourt, type LigneVocale,
+} from "@/lib/devis-vocal";
+import { ecrireStockage, lireStockage } from "@/lib/safe-storage";
 import type { Prestation } from "@/types";
 
+const CLE_ALIAS = "voltapp:dictee-alias";
 const eur = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
 
 // ─── Reconnaissance vocale du navigateur (gratuite ; Chrome / Edge / Safari — sinon, micro du clavier du téléphone) ───
 
 interface ReconnaissanceVocale {
-  lang: string; continuous: boolean; interimResults: boolean;
+  lang: string; continuous: boolean; interimResults: boolean; maxAlternatives: number;
   start(): void; stop(): void; abort(): void;
   onresult: ((e: { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null;
   onerror: ((e: { error: string }) => void) | null;
@@ -32,7 +37,7 @@ function fabrique(): FabriqueReconnaissance | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
-function useDictee(surPhrase: (t: string) => void) {
+function useDictee(surPhrase: (variantes: string[]) => void, mots: string[]) {
   const [supporte, setSupporte] = useState(false);
   const [ecoute, setEcoute] = useState(false);
   const [interim, setInterim] = useState("");
@@ -42,6 +47,9 @@ function useDictee(surPhrase: (t: string) => void) {
   const redemarrages = useRef(0);
   const surPhraseRef = useRef(surPhrase);
   surPhraseRef.current = surPhrase;
+  const motsRef = useRef(mots);
+  motsRef.current = mots;
+  const derniere = useRef({ texte: "", instant: 0 });
 
   useEffect(() => {
     setSupporte(fabrique() !== null);
@@ -52,13 +60,28 @@ function useDictee(surPhrase: (t: string) => void) {
     const F = fabrique();
     if (!F) return;
     const r = new F();
-    r.lang = "fr-FR"; r.continuous = true; r.interimResults = true;
+    r.lang = "fr-FR"; r.continuous = true; r.interimResults = true; r.maxAlternatives = 5;
+    // Biais de vocabulaire (Chrome récent) : souffle au moteur les mots du métier et du catalogue. Ignoré silencieusement ailleurs.
+    try {
+      const Phrase = (window as unknown as { SpeechRecognitionPhrase?: new (texte: string, poids: number) => unknown }).SpeechRecognitionPhrase;
+      if (Phrase && motsRef.current.length > 0) (r as unknown as { phrases: unknown[] }).phrases = motsRef.current.slice(0, 100).map(m => new Phrase(m, 3));
+    } catch { /* non supporté */ }
     r.onresult = e => {
       let provisoire = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const res = e.results[i];
         const t = res[0]?.transcript ?? "";
-        if (res.isFinal) { if (t.trim()) surPhraseRef.current(t.trim()); redemarrages.current = 0; } else provisoire += t;
+        if (res.isFinal) {
+          redemarrages.current = 0;
+          const variantes = Array.from({ length: res.length }, (_, k) => (res[k]?.transcript ?? "").trim()).filter(Boolean);
+          // Certains Android renvoient deux fois le même résultat final : on ignore le doublon immédiat.
+          const cle = (variantes[0] ?? "").toLowerCase();
+          const maintenant = Date.now();
+          if (cle && !(cle === derniere.current.texte && maintenant - derniere.current.instant < 2500)) {
+            derniere.current = { texte: cle, instant: maintenant };
+            surPhraseRef.current(variantes);
+          }
+        } else provisoire += t;
       }
       setInterim(provisoire);
     };
@@ -158,7 +181,30 @@ export default function DevisRapidePage() {
   const [creation, setCreation] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
 
-  const dictee = useDictee(t => setTexte(x => (x.trim() ? `${x.trim()}, ${t}` : t)));
+  const [alias, setAlias] = useState<Alias>({});
+  useEffect(() => {
+    try { const v = JSON.parse(lireStockage("local", CLE_ALIAS) ?? "{}"); if (v && typeof v === "object" && !Array.isArray(v)) setAlias(v as Alias); } catch { /* corrections mémorisées illisibles : ignorées */ }
+  }, []);
+  function apprendre(libelle: string, prestationId: string) {
+    const cle = cleAlias(libelle);
+    if (!cle) return;
+    setAlias(a => {
+      const { [cle]: _ancien, ...reste } = a; void _ancien;
+      const suivant = Object.entries({ ...reste, [cle]: prestationId }).slice(-200);   // 200 corrections mémorisées au plus
+      const obj = Object.fromEntries(suivant);
+      ecrireStockage("local", CLE_ALIAS, JSON.stringify(obj));
+      return obj;
+    });
+  }
+  const motsReco = useMemo(() => motsPourReconnaissance(prestations ?? []), [prestations]);
+  // Données courantes pour choisir, parmi les variantes du moteur de dictée, celle qui colle le mieux au catalogue.
+  const donnees = useRef({ prestations: [] as Prestation[], clients: [] as ClientCourt[], alias: {} as Alias });
+  donnees.current = { prestations: prestations ?? [], clients, alias };
+  const dictee = useDictee(variantes => {
+    const d = donnees.current;
+    const t = meilleureAlternative(variantes, d.prestations, d.clients, d.alias);
+    if (t) setTexte(x => (x.trim() ? `${x.trim()}, ${t}` : t));
+  }, motsReco);
 
   useEffect(() => {
     let annule = false;
@@ -185,7 +231,7 @@ export default function DevisRapidePage() {
   }, []);
 
   const texteDiffere = useDeferredValue(texte);
-  const analyse = useMemo(() => (prestations ? analyserDictee(texteDiffere, prestations, clients) : { client: null, lignes: [] as LigneVocale[] }), [texteDiffere, prestations, clients]);
+  const analyse = useMemo(() => (prestations ? analyserDictee(texteDiffere, prestations, clients, alias) : { client: null, lignes: [] as LigneVocale[] }), [texteDiffere, prestations, clients, alias]);
   const clientId = clientManuel ?? analyse.client?.id ?? "";
   const clientDetecte = clientManuel === null && analyse.client !== null;
 
@@ -242,6 +288,7 @@ export default function DevisRapidePage() {
               {dictee.supporte
                 ? dictee.ecoute ? "Je t'écoute… parle normalement, appuie de nouveau pour arrêter." : "Appuie sur le micro puis dicte. Exemple : « pour Monsieur Dupont, 5 prises 16 ampères, 3 spots et 2 heures de main d'œuvre »."
                 : "Ce navigateur n'a pas de dictée intégrée : utilise le micro du clavier de ton téléphone dans la zone de texte, ou tape."}
+              {" "}Astuce : le micro du clavier du téléphone est souvent plus précis ; le texte reste modifiable, et chaque article que tu corriges est retenu pour la prochaine fois.
             </p>
           </div>
           {dictee.erreur && <p className="text-sm text-red-700" role="alert">{dictee.erreur}</p>}
@@ -270,7 +317,10 @@ export default function DevisRapidePage() {
         <div className="space-y-2">
           {analyse.lignes.map(l => (
             <LigneRapide key={l.cle} l={l} etat={etatDe(l)} prestations={prestations ?? []}
-              onChange={c => setCorrections(x => ({ ...x, [l.cle]: { ...x[l.cle], ...c } }))} />
+              onChange={c => {
+                setCorrections(x => ({ ...x, [l.cle]: { ...x[l.cle], ...c } }));
+                if (c.prestationId && !l.segment.heures) apprendre(l.segment.libelle, c.prestationId);   // la prochaine fois, ce mot dicté donnera cet article
+              }} />
           ))}
         </div>
         {erreur && <p className="text-sm text-red-700 mt-3" role="alert">{erreur}</p>}

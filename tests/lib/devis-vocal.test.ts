@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyserDictee, chiffrer, chercherArticles, decouperDictee, detecterClient, lignesDepuisDictee, motsCles } from "@/lib/devis-vocal";
+import { analyserDictee, chiffrer, chercherArticles, cleAlias, cleSon, corrigerReconnaissance, decouperDictee, detecterClient, lignesDepuisDictee, meilleureAlternative, motsCles, motsPourReconnaissance, sonProche } from "@/lib/devis-vocal";
 import type { Prestation } from "@/types";
 
 let n = 0;
@@ -113,5 +113,50 @@ describe("analyserDictee + lignesDepuisDictee", () => {
   it("clés stables et uniques pour deux segments identiques", () => {
     const b = analyserDictee("2 spots, 2 spots", catalogue, []);
     expect(new Set(b.lignes.map(x => x.cle)).size).toBe(2);
+  });
+});
+
+describe("erreurs de reconnaissance vocale", () => {
+  it("corrige les transcriptions fréquentes", () => {
+    expect(corrigerReconnaissance("2 virgule 5")).toBe("2,5");
+    expect(corrigerReconnaissance("des joncteurs 16 ampères")).toBe("disjoncteur 16 ampères");
+    expect(corrigerReconnaissance("disque joncteur")).toBe("disjoncteur");
+    expect(corrigerReconnaissance("interrupteur va et viens")).toBe("interrupteur va et vient");
+    expect(corrigerReconnaissance("RJ 45")).toBe("rj45");
+    expect(corrigerReconnaissance("2,5 mm carré")).toBe("2,5 mm");
+  });
+  it("trouve le bon article malgré une transcription approximative", () => {
+    expect(nom(analyserDictee("5 prisent 16 A", catalogue, []).lignes[0].choixAuto)).toBe("Prise 2P+T 16A");
+    expect(nom(analyserDictee("3 spotte", catalogue, []).lignes[0].choixAuto)).toBe("Spot LED encastrable");
+    expect(nom(analyserDictee("2 des joncteurs 20 ampères", catalogue, []).lignes[0].choixAuto)).toBe("Disjoncteur 20A");
+    expect(nom(analyserDictee("20 mètres de câble 2 virgule 5", catalogue, []).lignes[0].choixAuto)).toBe("Câble R2V 3G2,5");
+  });
+  it("proximité phonétique prudente : pas de faux amis évidents", () => {
+    expect(sonProche("prises", "prisent")).toBe(true);
+    expect(sonProche("prise", "pile")).toBe(false);
+    expect(sonProche("cable", "table")).toBe(false);
+    expect(cleSon("")).toBe("");
+  });
+  it("« main d'œuvre » du catalogue est retrouvée même sans sous-catégorie", () => {
+    const cat = [p("Main d'œuvre électricien", 50, { type_branche: "service", unite: "heure" })];
+    expect(analyserDictee("2 heures de main d'oeuvre", cat, []).lignes[0].choixAuto).toBe(cat[0].id);
+  });
+  it("retient une correction de l'électricien (alias) et la réapplique", () => {
+    const cible = catalogue.find(x => x.nom === "Interrupteur simple")!;
+    const alias = { [cleAlias("bouton lumière")]: cible.id };
+    expect(analyserDictee("2 bouton lumière", catalogue, [], alias).lignes[0]).toMatchObject({ choixAuto: cible.id, confiance: "haute" });
+    expect(analyserDictee("2 bouton lumière", catalogue, [], {}).lignes[0].choixAuto).not.toBe(cible.id);
+  });
+  it("choisit la meilleure variante proposée par le moteur de dictée", () => {
+    expect(meilleureAlternative(["5 brise 16 A", "5 prises 16 A"], catalogue, [])).toBe("5 prises 16 A");
+    expect(meilleureAlternative(["pour Dupont 5 prises", "pour du pont 5 prises"], catalogue, clients)).toBe("pour Dupont 5 prises");
+    expect(meilleureAlternative([], catalogue, [])).toBe("");
+    expect(meilleureAlternative(["seule"], catalogue, [])).toBe("seule");
+  });
+  it("liste de mots pour souffler au moteur de dictée", () => {
+    const m = motsPourReconnaissance(catalogue);
+    expect(m).toContain("disjoncteur");
+    expect(m).toContain("encastrable");
+    expect(m.length).toBeLessThanOrEqual(120);
   });
 });
