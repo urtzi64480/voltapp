@@ -254,3 +254,18 @@ describe("découpage guidé par le catalogue", () => {
     expect(Date.now() - t0).toBeLessThan(300);
   });
 });
+
+describe("heures dictées en h/min", () => {
+  const h = (t: string) => decouperDictee(t).map(x => [x.quantite, x.heures]);
+  it("2h30, 2 h 30, deux heures trente → 2,5 h", () => {
+    expect(h("2h30 de main d'oeuvre")).toEqual([[2.5, true]]);
+    expect(h("2 h 30 de main d'oeuvre")).toEqual([[2.5, true]]);
+    expect(h("deux heures trente de main d'oeuvre")).toEqual([[2.5, true]]);
+    expect(h("1h15 de main d'oeuvre")).toEqual([[1.25, true]]);
+    expect(h("45 minutes de main d'oeuvre")).toEqual([[0.75, true]]);
+    expect(h("2 heures et quart de main d'oeuvre")).toEqual([[2.25, true]]);
+  });
+  it("ne confond pas « 2 heures, 30 prises »", () => {
+    expect(h("2 heures de main d'oeuvre, 30 prises").map(x => x[0])).toEqual([2, 30]);
+  });
+});

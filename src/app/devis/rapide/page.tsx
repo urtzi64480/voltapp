@@ -179,7 +179,7 @@ export default function DevisRapidePage() {
 
   return (
     <Shell>
-      <div className="p-4 md:p-8 max-w-3xl mx-auto pb-32">
+      <div className="p-4 md:p-8 max-w-3xl mx-auto pb-56 md:pb-32">
         <div className="flex items-center gap-2 mb-5">
           <Link href="/devis" className="btn-ghost !px-2" aria-label="Retour aux devis"><ArrowLeft size={16} /></Link>
           <div>
@@ -235,7 +235,7 @@ export default function DevisRapidePage() {
         {erreur && <p className="text-sm text-red-700 mt-3" role="alert">{erreur}</p>}
       </div>
 
-      <div className="fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-ink-200 px-4 py-3 md:pl-56">
+      <div className="fixed bottom-[calc(3.75rem+env(safe-area-inset-bottom))] md:bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur border-t border-ink-200 px-4 py-3 md:pl-56">
         <div className="max-w-3xl mx-auto flex items-center justify-between gap-3">
           <div className="text-sm">
             <div className="font-semibold text-ink-900">{eur(totaux.total)}</div>

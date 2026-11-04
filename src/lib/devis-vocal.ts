@@ -148,7 +148,15 @@ const REMPLISSAGE = /\b(je veux|je voudrais|il faut|il me faut|on veut|on a beso
 
 /** « 2 heures et demie » → « 2.5 heures » ; « une demi-heure » → « 0.5 heure ». */
 function heuresDemies(t: string): string {
+  const dec = (h: string, m: number) => String(Math.round((parseFloat(h.replace(",", ".")) + m / 60) * 100) / 100);
   return t
+    // « 2h30 », « 2 h 30 », « 1h15 » → heures décimales.
+    .replace(/\b(\d+)\s*h\s*([0-5]\d)\b/gi, (_m, h: string, mn: string) => `${dec(h, parseInt(mn, 10))} heures`)
+    // « 2 heures 30 » (mais pas « 2 heures, 30 prises »).
+    .replace(/\b(\d+)\s*heures?\s+([0-5]\d)\b(?!\s*(?!de\b|d')[a-zà-ÿ])/gi, (_m, h: string, mn: string) => `${dec(h, parseInt(mn, 10))} heures`)
+    .replace(/\b(\d+)\s*heures?\s+([0-5]\d)\s*(?:minutes?|min)\b/gi, (_m, h: string, mn: string) => `${dec(h, parseInt(mn, 10))} heures`)
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*heures?\s+et\s+quart\b/gi, (_m, h: string) => `${dec(h, 15)} heures`)
+    .replace(/\b(\d+)\s*(?:minutes?|min)\b/gi, (_m, mn: string) => `${dec("0", parseInt(mn, 10))} heures`)
     .replace(/\b(\d+(?:[.,]\d+)?)\s*(heures?|h)\s+et\s+demie?\b/gi, (_m, n: string, u: string) => `${parseFloat(n.replace(",", ".")) + 0.5} ${u}`)
     .replace(/\b(?:1\s+)?demi[\s-]*heure\b/gi, "0.5 heure");
 }
