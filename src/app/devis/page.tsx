@@ -7,7 +7,7 @@ import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, cn } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Link from "next/link";
-import { Plus, Search, FileText, ChevronRight, ChevronDown, ChevronUp, Receipt, CalendarDays, CalendarX, Trash2 } from "lucide-react";
+import { Mic, Plus, Search, FileText, ChevronRight, ChevronDown, ChevronUp, Receipt, CalendarDays, CalendarX, Trash2 } from "lucide-react";
 
 const FILTRES = ["tous", "brouillon", "envoye", "signe", "refuse", "non_planifie"] as const;
 const STATUTS_VISIBLES = ["envoye", "signe", "brouillon", "refuse"];
@@ -121,7 +121,10 @@ export default function DevisPage() {
             <h1 className="font-display text-3xl text-ink-900">Devis</h1>
             <p className="text-ink-500 text-sm mt-1">{devis.length} devis</p>
           </div>
-          <Link href="/devis/nouveau" className="btn-volt"><Plus size={16} /> Nouveau</Link>
+          <div className="flex items-center gap-2">
+            <Link href="/devis/rapide" className="btn-ghost" aria-label="Devis par dictée" title="Devis par dictée"><Mic size={16} /><span className="hidden sm:inline">Dictée</span></Link>
+            <Link href="/devis/nouveau" className="btn-volt"><Plus size={16} /> Nouveau</Link>
+          </div>
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3 mb-4">

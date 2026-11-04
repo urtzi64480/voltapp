@@ -36,6 +36,7 @@ git push -u origin main
 | **Dashboard** | KPIs, CA mensuel, plafonds AE, accès rapides |
 | **Clients** | Fiche complète, logement, code d'accès, photos, notes, historique devis |
 | **Devis** | Éditeur terrain : catalogue cliquable, lignes libres, aperçu PDF, signature tactile |
+| **Devis par dictée** | Bouton 🎤 de la liste des devis : on dicte (ou tape) « pour M. Dupont, 5 prises 16 A, 3 spots, 2 heures de main d'œuvre » ; le client est reconnu, chaque ligne est rapprochée du catalogue (prix du catalogue, jamais inventés ; sans article : « À compléter » à 0 €), puis devis brouillon. Gratuit : dictée du navigateur, aucune API. |
 | **Factures** | Suivi statuts, marquer payée, PDF |
 | **Catalogue** | Vierge — à alimenter : nom, description, prix, unité, catégorie, branche AE |
 | **CRM** | CA par branche, graphique mensuel, taux de conversion, top clients, impayés |
