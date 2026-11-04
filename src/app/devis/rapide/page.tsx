@@ -4,14 +4,14 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, FileText, Loader2, Mic, MicOff, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, FileText, Loader2, Mic, Search, Trash2, X } from "lucide-react";
 import Shell from "@/components/layout/Shell";
 import { supabase } from "@/lib/supabase";
 import { attacherFournisseurs } from "@/lib/fournisseurs";
 import { creerDevisBrouillon } from "@/lib/devis-creation";
 import { totauxLignesDevis } from "@/lib/tableau-predevis";
 import {
-  analyserDictee, auMetreDisponible, chercherArticles, cleAlias, enMetres, libelleClient, lignesDeLaLigne, lignesDepuisDictee, meilleureAlternative, motsPourReconnaissance,
+  analyserDictee, auMetreDisponible, chercherArticles, cleAlias, enMetres, libelleClient, lignesDeLaLigne, lignesDepuisDictee,
   type Alias, type ChoixLigneVocale, type ClientCourt, type LigneVocale,
 } from "@/lib/devis-vocal";
 import { ecrireStockage, lireStockage } from "@/lib/safe-storage";
@@ -19,101 +19,6 @@ import type { Prestation } from "@/types";
 
 const CLE_ALIAS = "voltapp:dictee-alias";
 const eur = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
-
-// ─── Reconnaissance vocale du navigateur (gratuite ; Chrome / Edge / Safari — sinon, micro du clavier du téléphone) ───
-
-interface ReconnaissanceVocale {
-  lang: string; continuous: boolean; interimResults: boolean; maxAlternatives: number;
-  start(): void; stop(): void; abort(): void;
-  onresult: ((e: { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null;
-  onerror: ((e: { error: string }) => void) | null;
-  onend: (() => void) | null;
-}
-type FabriqueReconnaissance = new () => ReconnaissanceVocale;
-
-function fabrique(): FabriqueReconnaissance | null {
-  if (typeof window === "undefined") return null;
-  const w = window as unknown as { SpeechRecognition?: FabriqueReconnaissance; webkitSpeechRecognition?: FabriqueReconnaissance };
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
-}
-
-function useDictee(surPhrase: (variantes: string[]) => void, mots: string[]) {
-  const [supporte, setSupporte] = useState(false);
-  const [ecoute, setEcoute] = useState(false);
-  const [interim, setInterim] = useState("");
-  const [erreur, setErreur] = useState<string | null>(null);
-  const rec = useRef<ReconnaissanceVocale | null>(null);
-  const voulu = useRef(false);
-  const redemarrages = useRef(0);
-  const surPhraseRef = useRef(surPhrase);
-  surPhraseRef.current = surPhrase;
-  const motsRef = useRef(mots);
-  motsRef.current = mots;
-  const derniere = useRef({ texte: "", instant: 0 });
-
-  useEffect(() => {
-    setSupporte(fabrique() !== null);
-    return () => { voulu.current = false; try { rec.current?.abort(); } catch { /* déjà arrêtée */ } };
-  }, []);
-
-  function lancer() {
-    const F = fabrique();
-    if (!F) return;
-    const r = new F();
-    r.lang = "fr-FR"; r.continuous = true; r.interimResults = true; r.maxAlternatives = 5;
-    // Biais de vocabulaire (Chrome récent) : souffle au moteur les mots du métier et du catalogue. Ignoré silencieusement ailleurs.
-    try {
-      const Phrase = (window as unknown as { SpeechRecognitionPhrase?: new (texte: string, poids: number) => unknown }).SpeechRecognitionPhrase;
-      if (Phrase && motsRef.current.length > 0) (r as unknown as { phrases: unknown[] }).phrases = motsRef.current.slice(0, 100).map(m => new Phrase(m, 3));
-    } catch { /* non supporté */ }
-    r.onresult = e => {
-      let provisoire = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const res = e.results[i];
-        const t = res[0]?.transcript ?? "";
-        if (res.isFinal) {
-          redemarrages.current = 0;
-          const variantes = Array.from({ length: res.length }, (_, k) => (res[k]?.transcript ?? "").trim()).filter(Boolean);
-          // Certains Android renvoient deux fois le même résultat final : on ignore le doublon immédiat.
-          const cle = (variantes[0] ?? "").toLowerCase();
-          const maintenant = Date.now();
-          if (cle && !(cle === derniere.current.texte && maintenant - derniere.current.instant < 2500)) {
-            derniere.current = { texte: cle, instant: maintenant };
-            surPhraseRef.current(variantes);
-          }
-        } else provisoire += t;
-      }
-      setInterim(provisoire);
-    };
-    r.onerror = e => {
-      if (e.error === "no-speech" || e.error === "aborted") return;
-      voulu.current = false;
-      setErreur(
-        e.error === "not-allowed" || e.error === "service-not-allowed" ? "Micro refusé : autorise-le dans les réglages du navigateur (cadenas à côté de l'adresse)."
-        : e.error === "audio-capture" ? "Aucun micro détecté."
-        : e.error === "network" ? "Dictée indisponible sans connexion. Tape le texte, ou utilise le micro du clavier."
-        : `Dictée interrompue (${e.error}).`);
-    };
-    r.onend = () => {
-      setInterim("");
-      if (!voulu.current) { setEcoute(false); return; }
-      // Le navigateur coupe l'écoute après un silence : on relance, sauf boucle d'échecs.
-      if (++redemarrages.current > 6) { voulu.current = false; setEcoute(false); setErreur("La dictée s'est arrêtée. Appuie de nouveau sur le micro."); return; }
-      setTimeout(() => { if (voulu.current) { try { r.start(); } catch { voulu.current = false; setEcoute(false); } } }, 250);
-    };
-    rec.current = r;
-    try { r.start(); setEcoute(true); } catch { voulu.current = false; setEcoute(false); setErreur("Impossible de démarrer le micro."); }
-  }
-
-  return {
-    supporte, ecoute, interim, erreur,
-    basculer() {
-      setErreur(null);
-      if (voulu.current) { voulu.current = false; try { rec.current?.stop(); } catch { /* déjà arrêtée */ } setEcoute(false); return; }
-      voulu.current = true; redemarrages.current = 0; lancer();
-    },
-  };
-}
 
 // ─── Sous-composants ──────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -209,15 +114,15 @@ export default function DevisRapidePage() {
       return obj;
     });
   }
-  const motsReco = useMemo(() => motsPourReconnaissance(prestations ?? []), [prestations]);
-  // Données courantes pour choisir, parmi les variantes du moteur de dictée, celle qui colle le mieux au catalogue.
-  const donnees = useRef({ prestations: [] as Prestation[], clients: [] as ClientCourt[], alias: {} as Alias });
-  donnees.current = { prestations: prestations ?? [], clients, alias };
-  const dictee = useDictee(variantes => {
-    const d = donnees.current;
-    const t = meilleureAlternative(variantes, d.prestations, d.clients, d.alias);
-    if (t) setTexte(x => (x.trim() ? `${x.trim()}, ${t}` : t));
-  }, motsReco);
+  const zoneTexte = useRef<HTMLTextAreaElement>(null);
+  // Le micro du clavier (Android, iPhone) ou la dictée du système (Windows + H, macOS) écrit directement dans cette zone : on ne fait que l'ouvrir.
+  function dicter() {
+    const z = zoneTexte.current;
+    if (!z) return;
+    z.focus();
+    z.setSelectionRange(z.value.length, z.value.length);
+    z.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
 
   useEffect(() => {
     let annule = false;
@@ -288,27 +193,18 @@ export default function DevisRapidePage() {
 
         <div className="card card-inner space-y-3 mb-4">
           <div className="flex items-center gap-3">
-            {dictee.supporte ? (
-              <button onClick={dictee.basculer}
-                className={`shrink-0 w-16 h-16 rounded-full grid place-items-center shadow-md transition-all ${dictee.ecoute ? "bg-red-500 text-white animate-pulse" : "bg-volt-500 text-ink-900"}`}
-                aria-label={dictee.ecoute ? "Arrêter la dictée" : "Dicter"}>
-                {dictee.ecoute ? <MicOff size={26} /> : <Mic size={26} />}
-              </button>
-            ) : (
-              <div className="shrink-0 w-16 h-16 rounded-full grid place-items-center bg-ink-100 text-ink-400"><MicOff size={26} /></div>
-            )}
+            <button onClick={dicter} className="shrink-0 w-16 h-16 rounded-full grid place-items-center shadow-md bg-volt-500 text-ink-900 active:scale-95 transition-transform" aria-label="Dicter">
+              <Mic size={26} />
+            </button>
             <p className="text-xs text-ink-500">
-              {dictee.supporte
-                ? dictee.ecoute ? "Je t'écoute… parle normalement, appuie de nouveau pour arrêter." : "Appuie sur le micro puis dicte d'une traite, sans séparateur : annonce simplement la quantité avant chaque article. Exemple : « pour Monsieur Dupont, 5 prises 16 ampères, 3 spots, 20 mètres de câble 2,5 et 2 heures de main d'œuvre »."
-                : "Ce navigateur n'a pas de dictée intégrée : utilise le micro du clavier de ton téléphone dans la zone de texte, ou tape."}
-              {" "}Astuce : le micro du clavier du téléphone est souvent plus précis ; le texte reste modifiable, et chaque article que tu corriges est retenu pour la prochaine fois.
+              Appuie sur le micro : le clavier s&apos;ouvre, touche alors <strong>le micro du clavier</strong> (à côté de la barre d&apos;espace) et dicte d&apos;une traite : annonce simplement la quantité avant chaque article.
+              Sur PC : <strong>Windows + H</strong> (Windows) ou le raccourci de dictée du Mac.
+              Exemple : « pour Monsieur Dupont, 5 prises 16 ampères, 3 spots, 20 mètres de câble 2,5 et 2 heures de main d&apos;œuvre ».
             </p>
           </div>
-          {dictee.erreur && <p className="text-sm text-red-700" role="alert">{dictee.erreur}</p>}
           <div className="relative">
-            <textarea className="input !text-sm" rows={5} value={texte} onChange={e => setTexte(e.target.value)} aria-label="Texte de la demande"
+            <textarea ref={zoneTexte} className="input !text-sm" rows={6} lang="fr" spellCheck={false} autoCapitalize="sentences" autoCorrect="off" enterKeyHint="done" value={texte} onChange={e => setTexte(e.target.value)} aria-label="Texte de la demande"
               placeholder="Pour Monsieur Dupont, 5 prises 16 A, 3 spots, un disjoncteur différentiel 40 A et 2 heures de main d'œuvre" />
-            {dictee.interim && <p className="text-xs text-ink-400 italic mt-1">{dictee.interim}…</p>}
             {texte && <button className="absolute top-2 right-2 btn-ghost !px-1.5 !py-1" onClick={() => { setTexte(""); setCorrections({}); setClientManuel(null); }} aria-label="Tout effacer"><Trash2 size={14} /></button>}
           </div>
         </div>

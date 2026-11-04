@@ -380,31 +380,6 @@ export function analyserDictee(texte: string, prestations: Prestation[], clients
   return { client, lignes };
 }
 
-/** Parmi les variantes proposées par la reconnaissance vocale, celle qui se rapproche le mieux du catalogue (et d'un client connu). */
-export function meilleureAlternative(variantes: string[], prestations: Prestation[], clients: ClientCourt[], alias: Alias = {}): string {
-  const propres = variantes.map(v => v.trim()).filter(Boolean);
-  if (propres.length <= 1) return propres[0] ?? "";
-  let meilleur = propres[0], meilleurScore = -1;
-  propres.forEach((v, i) => {
-    const a = analyserDictee(v, prestations, clients, alias);
-    const couvertures = a.lignes.map(l => l.candidats[0]?.couverture ?? 0);
-    const moyenne = couvertures.length ? couvertures.reduce((x, y) => x + y, 0) / couvertures.length : 0;
-    const score = moyenne + (a.client ? 0.5 : 0) + (a.lignes.length > 0 ? 0.05 : 0) - i * 0.001;   // à égalité, la variante la plus probable
-    if (score > meilleurScore) { meilleurScore = score; meilleur = v; }
-  });
-  return meilleur;
-}
-
-const JARGON = ["disjoncteur", "différentiel", "interrupteur", "va-et-vient", "prise", "spot", "luminaire", "tableau", "parafoudre", "gaine", "câble", "ampères", "main d'œuvre", "heures", "mètres", "télérupteur", "applique", "détecteur", "volet roulant", "chauffe-eau", "plaque de cuisson", "lave-linge"];
-
-/** Mots à « souffler » au moteur de dictée (biais de vocabulaire) : jargon électrique + mots les plus fréquents du catalogue. */
-export function motsPourReconnaissance(prestations: Prestation[], max = 120): string[] {
-  const freq = new Map<string, number>();
-  prestations.forEach(p => (p.nom ?? "").split(/[\s/,()]+/).map(w => w.trim()).filter(w => w.length >= 4 && !/\d/.test(w)).forEach(w => freq.set(w.toLowerCase(), (freq.get(w.toLowerCase()) ?? 0) + 1)));
-  const top = Array.from(freq.entries()).sort((a, b) => b[1] - a[1]).map(([w]) => w);
-  return Array.from(new Set([...JARGON, ...top])).slice(0, max);
-}
-
 // ─── Lignes de devis ──────────────────────────────────────────────────────────────────────────────────────────────
 
 export interface ChoixLigneVocale { inclus: boolean; quantite: number; prestationId: string | null; conditionnement?: Conditionnement }

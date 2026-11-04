@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyserDictee, auMetreDisponible, chiffrer, chercherArticles, cleAlias, cleSon, corrigerReconnaissance, decouperDictee, detecterClient, lignesDeLaLigne, lignesDepuisDictee, meilleureAlternative, motsCles, motsPourReconnaissance, sonProche } from "@/lib/devis-vocal";
+import { analyserDictee, auMetreDisponible, chiffrer, chercherArticles, cleAlias, cleSon, corrigerReconnaissance, decouperDictee, detecterClient, lignesDeLaLigne, lignesDepuisDictee, motsCles, sonProche } from "@/lib/devis-vocal";
 import type { Prestation } from "@/types";
 
 let n = 0;
@@ -146,18 +146,6 @@ describe("erreurs de reconnaissance vocale", () => {
     const alias = { [cleAlias("bouton lumière")]: cible.id };
     expect(analyserDictee("2 bouton lumière", catalogue, [], alias).lignes[0]).toMatchObject({ choixAuto: cible.id, confiance: "haute" });
     expect(analyserDictee("2 bouton lumière", catalogue, [], {}).lignes[0].choixAuto).not.toBe(cible.id);
-  });
-  it("choisit la meilleure variante proposée par le moteur de dictée", () => {
-    expect(meilleureAlternative(["5 brise 16 A", "5 prises 16 A"], catalogue, [])).toBe("5 prises 16 A");
-    expect(meilleureAlternative(["pour Dupont 5 prises", "pour du pont 5 prises"], catalogue, clients)).toBe("pour Dupont 5 prises");
-    expect(meilleureAlternative([], catalogue, [])).toBe("");
-    expect(meilleureAlternative(["seule"], catalogue, [])).toBe("seule");
-  });
-  it("liste de mots pour souffler au moteur de dictée", () => {
-    const m = motsPourReconnaissance(catalogue);
-    expect(m).toContain("disjoncteur");
-    expect(m).toContain("encastrable");
-    expect(m.length).toBeLessThanOrEqual(120);
   });
 });
 
