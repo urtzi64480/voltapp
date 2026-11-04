@@ -40,6 +40,7 @@ git push -u origin main
 | **Catalogue** | Vierge — à alimenter : nom, description, prix, unité, catégorie, branche AE |
 | **CRM** | CA par branche, graphique mensuel, taux de conversion, top clients, impayés |
 | **Paramètres** | Profil artisan, SIRET, numérotation, mentions légales |
+| **Tableau — Photos IA** | Bouton ✨ du module Tableau : photos du tableau existant → relevé corrigeable → tableau refait à la NF C 15-100 (avant / après, écarts, contrôles) → pré-devis catalogue → devis brouillon. Rien n'est appliqué sans clic, et l'application est annulable. |
 
 ---
 
@@ -61,3 +62,14 @@ Chaque prestation contient :
 git add . && git commit -m "Fix: description du correctif" && git push
 ```
 Vercel redéploie automatiquement.
+
+
+---
+
+## Tableau — Photos IA (configuration)
+
+1. **Vercel → Settings → Environment Variables** : ajouter `ANTHROPIC_API_KEY` (clé créée sur console.anthropic.com), puis redéployer.
+   Facultatif : `TABLEAU_IA_MODEL` (modèle de lecture, `claude-sonnet-5-5` par défaut) et `TABLEAU_IA_QUOTA_JOUR` (analyses par utilisateur et par 24 h, 25 par défaut).
+2. **Supabase → SQL Editor** : exécuter `supabase/migrations/017_tableau_ia_usages.sql` (journal des analyses pour le quota ; sans lui l'outil fonctionne mais sans limite).
+
+L'IA ne fait que lire les photos ; calibres, sections, différentiels, parafoudre et contrôles viennent des règles de l'application (`normes-nfc`, `tableau-reel`).

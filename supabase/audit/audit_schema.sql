@@ -337,7 +337,12 @@ with attendues(t, c) as (values
     ('realisations', 'id'),
     ('realisations', 'photo_url'),
     ('realisations', 'position'),
-    ('realisations', 'user_id')
+    ('realisations', 'user_id'),
+    ('tableau_ia_usages', 'created_at'),
+    ('tableau_ia_usages', 'id'),
+    ('tableau_ia_usages', 'modele'),
+    ('tableau_ia_usages', 'nb_photos'),
+    ('tableau_ia_usages', 'user_id')
 ),
 rpc_attendues(nom) as (values
     ('get_devis_public_liste'),

@@ -49,6 +49,15 @@ export const NORME_TABLEAU = {
   sectionnementPlaque: n(32, "Infographie Legrand : plaques de cuisson 32 A / 6 mm²"),
 } as const;
 
+// ─── Circuits (infographie Legrand « Les lumières » / « La protection des biens et des circuits ») ───────────────
+export const NORME_CIRCUITS = {
+  eclairageCircuitsMini: n(2, "Infographie Legrand « Les lumières » : 2 circuits d'éclairage minimum par logement (un seul pour un studio)"),
+  eclairageSeuilSurfaceM2: n(35, "Infographie Legrand « Protection des biens et des circuits » : au moins 2 circuits d'éclairage par logement de plus de 35 m²"),
+  specialisesMini: n(3, "Infographie Legrand : au moins 3 circuits spécialisés par logement (lave-linge, lave-vaisselle, sèche-linge, four, congélateur…) — source unique", "a_verifier"),
+  fusibleInterdit: n(true, "Infographie Legrand : disjoncteur obligatoire, coupe-circuit (fusible) interdit en installation neuve ou entièrement rénovée"),
+  sensibiliteDifferentielMa: n(30, "NF C 15-100 / infographie Legrand : interrupteurs différentiels 30 mA"),
+} as const;
+
 // ─── Parafoudre (infographie Legrand) ───────────────────────────────────────────────────────────────────────
 export const NORME_PARAFOUDRE = {
   obligatoireSi: n([

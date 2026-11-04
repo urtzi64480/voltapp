@@ -9,7 +9,7 @@ import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, ShieldCheck, ShieldAlert,
-  ShieldX, Plus, Trash2, Zap, Settings2, QrCode,
+  ShieldX, Plus, Trash2, Zap, Settings2, QrCode, Sparkles, Undo2,
 } from "lucide-react";
 import {
   CommandeType, GroupeLumineux, PieceConfig, Breaker, BreakerRow,
@@ -20,6 +20,7 @@ import {
 
 
 import { fondModal } from "@/lib/fond-modal";
+import TableauIAModal from "@/components/tableau/TableauIAModal";
 
 // ─── CONSTANTES LOCALES (mise en page du tableau, propres à cette page) ────────
 
@@ -1622,6 +1623,9 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [schemaBreaker, setSchemaBreaker] = useState<{ breaker: Breaker; rowBreakers: (Breaker|null)[] } | null>(null);
   const [showReport, setShowReport]       = useState(false);
   const [showQR, setShowQR]               = useState(false);
+  const [showIA, setShowIA]               = useState(false);
+  // Tableau tel qu'il était avant l'application d'un tableau refait par l'IA (annulation, tant que la page reste ouverte).
+  const [avantIA, setAvantIA]             = useState<BreakerRow[] | null>(null);
   const [avisPose, setAvisPose]           = useState<string | null>(null);   // pose / déplacement refusé faute de place
   useEffect(() => {
     if (!avisPose) return;
@@ -1697,6 +1701,7 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
 
   const basculerTableau = (id: string) => {
     if (id === actifId) return;
+    setAvantIA(null);
     setStock(st => ({ ...st, [actifId]: rows }));
     setRows(stock[id] ?? []);
     setActifId(id);
@@ -1794,6 +1799,9 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
               className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all ${scoreColor}`}>
               <ScoreIcon size={13} /> NFC {compliance.score}/100
             </button>
+            <button onClick={() => setShowIA(true)} className="btn-ghost" aria-label="Refaire le tableau à partir de photos (IA)" title="Refaire le tableau à partir de photos (IA)">
+              <Sparkles size={15} /><span className="hidden md:inline">Photos IA</span>
+            </button>
             <button onClick={() => printLabels(rows, client?.nom ?? "")} className="btn-ghost hidden md:flex">
               <Printer size={15} /> Étiquettes
             </button>
@@ -1806,6 +1814,16 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
             </button>
           </div>
         </div>
+
+        {avantIA && (
+          <div className="flex items-center justify-between gap-3 px-4 md:px-6 py-2 bg-volt-50 border-b border-volt-200 text-xs text-ink-800 shrink-0" role="status">
+            <span>Tableau remplacé par la version refaite à partir des photos.</span>
+            <span className="flex items-center gap-1">
+              <button className="btn-ghost !py-1" onClick={() => { setRows(avantIA); setAvantIA(null); setSelectedSlot(null); setEditBreaker(null); }}><Undo2 size={14} />Annuler</button>
+              <button className="btn-ghost !px-2 !py-1" onClick={() => setAvantIA(null)} aria-label="Fermer">×</button>
+            </span>
+          </div>
+        )}
 
         {erreurSauvegarde && (
           <div className="flex items-center justify-between gap-3 px-4 md:px-6 py-2 bg-red-50 border-b border-red-200 text-xs text-red-800 shrink-0" role="alert">
@@ -1914,6 +1932,10 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
         />
       )}
       {showReport && <CompliancePanel result={compliance} onClose={() => setShowReport(false)} onApply={run => setRows(rs => run(rs))} />}
+      {showIA && (
+        <TableauIAModal clientId={clientId} client={client} rowsActuelles={rows} onClose={() => setShowIA(false)}
+          onAppliquer={neuves => { setAvantIA(rows); setRows(normaliserRows(neuves)); setSelectedSlot(null); setEditBreaker(null); }} />
+      )}
       {showQR && <QRModal clientId={clientId} projetId={projet.id} clientName={client?.nom ?? ""} onClose={() => setShowQR(false)} />}
       {schemaBreaker && <CircuitSchema breaker={schemaBreaker.breaker} rowBreakers={schemaBreaker.rowBreakers} onClose={() => setSchemaBreaker(null)} />}
     </Shell>
