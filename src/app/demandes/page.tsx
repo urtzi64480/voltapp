@@ -11,6 +11,7 @@ import {
   User, Calendar, FileText, CheckCircle, Clock,
 } from "lucide-react";
 import { fondModal } from "@/lib/fond-modal";
+import ChampDicte from "@/components/ChampDicte";
 
 interface Demande {
   id: string;
@@ -486,16 +487,16 @@ export default function DemandesPage() {
 
                 <div>
                   <label className="label">Description de la demande</label>
-                  <textarea className="input resize-none" rows={5}
+                  <ChampDicte className="input resize-none" rows={5}
                     placeholder="Décrivez la demande du client, les travaux à réaliser, les contraintes…"
-                    value={formDescription} onChange={e => setFormDescription(e.target.value)} />
+                    value={formDescription} onChange={setFormDescription} />
                 </div>
 
                 <div>
                   <label className="label">Notes internes</label>
-                  <textarea className="input resize-none" rows={2}
+                  <ChampDicte className="input resize-none" rows={3}
                     placeholder="Notes pour vous uniquement…"
-                    value={formNotes} onChange={e => setFormNotes(e.target.value)} />
+                    value={formNotes} onChange={setFormNotes} />
                 </div>
 
                 <div>
