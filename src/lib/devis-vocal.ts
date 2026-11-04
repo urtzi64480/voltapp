@@ -193,6 +193,7 @@ export function couperAuxQuantites(texte: string): string {
       const s = mot(suivant);
       if (estNombreTok(cur) && !UNITES_SPEC.has(s) && !LIAISONS.has(s) && !AVANT_SPEC.has(precedent)) coupe = true;
       else if ((m === "un" || m === "une") && !PREPOSITIONS.has(precedent) && !LIAISONS.has(s)) coupe = true;
+      else if (m === "main" && /^d['’]?oeuvre/.test(minuscules(suivant)) && !["de", "d", "heure", "heures", "h"].includes(precedent)) coupe = true;
     }
     if (coupe && sortie.length > 0 && !/[,;.]$/.test(sortie[sortie.length - 1])) sortie[sortie.length - 1] += ",";
     if (coupe) motsDansSegment = 0;
@@ -202,19 +203,74 @@ export function couperAuxQuantites(texte: string): string {
   return sortie.join(" ");
 }
 
-/** Découpe une dictée en segments (un article ou une prestation chacun). Le nom du client doit avoir été retiré avant. */
-export function decouperDictee(texte: string): SegmentDicte[] {
+const LAMBDA_SEGMENT = 0.8;
+const MAX_TOKENS_MORCEAU = 60;
+const MAX_TOKENS_SEGMENT = 14;
+
+/** Qualité d'un groupe de mots comme libellé d'article : mots retrouvés dans le catalogue, moins les mots orphelins, moins le coût d'un segment. */
+function scoreSegment(span: string, prestations: Prestation[]): number {
+  const sans = span
+    .replace(/^(?:x\s*)?\d+(?:[.,]\d+)?\s*(?:x|fois)?\s+/i, "")
+    .replace(/^(?:metres?|m|ml|heures?|h|bobines?|rouleaux?|couronnes?)(?:\s+|$)/i, "")
+    .replace(/^(?:de\s+|d')?(?:un|une|des|du|de la|de l'|le|la|les)\s+/i, "");
+  const q = motsCles(sans);
+  // Un groupe sans aucun vrai mot (« 2 », « 16 A ») n'est jamais un article : il se rattache à son voisin.
+  if (q.every(w => /^\d/.test(w))) return -10;
+  const meilleur = chercherArticles(sans, prestations, 1)[0];
+  const trouves = meilleur ? Math.round(meilleur.couverture * q.length) : 0;
+  return trouves - 0.6 * (q.length - trouves) - LAMBDA_SEGMENT;
+}
+
+/**
+ * Découpe un morceau sans séparateur (« prises 16 A spots interrupteur simple ») en articles du catalogue : programmation dynamique qui
+ * maximise la qualité du rapprochement. Sans catalogue, ou si rien ne se rapproche mieux en coupant, le morceau reste entier.
+ */
+function decouperParCatalogue(morceau: string, prestations: Prestation[]): string[] {
+  const tok = morceau.split(/\s+/).filter(Boolean);
+  const n = tok.length;
+  if (n < 2 || n > MAX_TOKENS_MORCEAU || prestations.length === 0) return [morceau];
+  const memo = new Map<string, number>();
+  const score = (i: number, j: number) => {
+    const k = tok.slice(i, j).join(" ");
+    let v = memo.get(k);
+    if (v === undefined) { v = scoreSegment(k, prestations); memo.set(k, v); }
+    return v;
+  };
+  const best: number[] = new Array(n + 1).fill(-Infinity);
+  const prec: number[] = new Array(n + 1).fill(0);
+  const nb: number[] = new Array(n + 1).fill(0);
+  best[0] = 0;
+  for (let j = 1; j <= n; j++) {
+    for (let i = Math.max(0, j - MAX_TOKENS_SEGMENT); i < j; i++) {
+      if (best[i] === -Infinity) continue;
+      const v = best[i] + score(i, j);
+      const segs = nb[i] + 1;
+      if (v > best[j] + 1e-9 || (Math.abs(v - best[j]) <= 1e-9 && segs < nb[j])) { best[j] = v; prec[j] = i; nb[j] = segs; }
+    }
+  }
+  const morceaux: string[] = [];
+  for (let j = n; j > 0; j = prec[j]) morceaux.unshift(tok.slice(prec[j], j).join(" "));
+  return morceaux;
+}
+
+/** Découpe une dictée en segments (un article ou une prestation chacun). Le nom du client doit avoir été retiré avant. Le catalogue affine le découpage. */
+export function decouperDictee(texte: string, prestations: Prestation[] = []): SegmentDicte[] {
   let t = corrigerReconnaissance(texte ?? "").replace(/[\n\r]+/g, ", ").replace(/\s+/g, " ").trim();
   if (!t) return [];
   t = heuresDemies(chiffrer(t));
   PROTEGES.forEach(([re, to]) => { t = t.replace(re, to); });
   t = t.replace(REMPLISSAGE, " ").replace(/\s+/g, " ");
+  // Client mentionné mais non reconnu (« pour monsieur Zorglub ») : il ne doit pas coller à l'article précédent.
+  t = t.replace(/\b(?:(?:pour|chez)\s+(?:monsieur|madame|mademoiselle|mme|mlle|mr)\.?|client(?:e)?)\s+[a-zà-ÿœ'-]+/gi, ", ");
   t = couperAuxQuantites(t);
-  const morceaux = t.split(/\s*(?:(?<!\d)[,;.]|[,;.](?!\d)|\bet\b|\bpuis\b|\bplus\b|\bensuite\b|\bavec\b|\bainsi que\b|[+&])\s*/i).map(s => s.trim()).filter(Boolean);
+  const bruts = t.split(/\s*(?:(?<!\d)[,;.]|[,;.](?!\d)|\bet\b|\bpuis\b|\bplus\b|\bensuite\b|\bavec\b|\bainsi que\b|[+&])\s*/i).map(s => s.trim()).filter(Boolean);
+  const morceaux = bruts.flatMap(b => decouperParCatalogue(b.replace(/va_et_vient/g, "va et vient").replace(/aller_et_retour/g, "aller et retour").trim(), prestations));
   const segments: SegmentDicte[] = [];
   for (const morceau of morceaux) {
-    const m = morceau.replace(/va_et_vient/g, "va et vient").replace(/aller_et_retour/g, "aller et retour").trim();
+    const m = morceau.trim();
     if (!/[a-z0-9]/i.test(minuscules(m))) continue;
+    // Mention de client non reconnue (« pour monsieur Martin ») : ce n'est pas un article.
+    if (/^(?:pour|chez|client|cliente)\b/.test(minuscules(m)) && !/\d/.test(m)) continue;
     let quantite = 1;
     let reste = m;
     // Quantité : « 5 prises », « x5 prises », « prises x 5 », « 5 fois … ».
@@ -294,8 +350,16 @@ export interface Candidat { prestation: Prestation; score: number; couverture: n
 
 const estNombre = (w: string) => /^\d+(\.\d+)?$/.test(w);
 
+const CACHE_CHAMPS = new WeakMap<Prestation, { sig: string; champs: { nom: string[]; autres: string[] } }>();
+
 function champsPrestation(p: Prestation): { nom: string[]; autres: string[] } {
-  return { nom: motsCles(p.nom), autres: motsCles(`${p.marque ?? ""} ${p.sous_categorie ?? ""} ${p.categorie ?? ""} ${p.description ?? ""}`) };
+  const autresTexte = `${p.marque ?? ""} ${p.sous_categorie ?? ""} ${p.categorie ?? ""} ${p.description ?? ""}`;
+  const sig = `${p.nom}|${autresTexte}`;
+  const hit = CACHE_CHAMPS.get(p);
+  if (hit && hit.sig === sig) return hit.champs;
+  const champs = { nom: motsCles(p.nom), autres: motsCles(autresTexte) };
+  CACHE_CHAMPS.set(p, { sig, champs });
+  return champs;
 }
 
 /** Meilleurs articles du catalogue pour un libellé dicté. `couverture` ∈ [0 ; 1] : part des mots dictés retrouvés (nombres inclus). */
@@ -353,7 +417,7 @@ export type Alias = Record<string, string>;
 
 export function analyserDictee(texte: string, prestations: Prestation[], clients: ClientCourt[], alias: Alias = {}): AnalyseDictee {
   const { client, reste } = detecterClient(corrigerReconnaissance(texte), clients);
-  const segments = decouperDictee(reste);
+  const segments = decouperDictee(reste, prestations);
   const vus = new Map<string, number>();
   const lignes: LigneVocale[] = segments.map(segment => {
     const base = minuscules(segment.brut).replace(/\s+/g, " ");

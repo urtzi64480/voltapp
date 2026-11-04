@@ -221,3 +221,36 @@ describe("articles au mètre, comme dans le pré-devis", () => {
     expect(l.map(x => [x.quantite, x.prestation_id])).toEqual([[30, auMetre.id]]);
   });
 });
+
+describe("découpage guidé par le catalogue", () => {
+  const lib = (t: string) => decouperDictee(t, catalogue).map(x => [x.quantite, x.libelle]);
+  it("coupe une dictée sans virgule ni quantité entre les articles reconnus", () => {
+    expect(decouperDictee("prises 16 A spots interrupteur simple", catalogue)).toHaveLength(3);
+    expect(decouperDictee("5 prises 16 A prises 20 A", catalogue)).toHaveLength(2);
+  });
+  it("ne coupe pas un article dont le nom contient plusieurs mots", () => {
+    expect(lib("disjoncteur différentiel 40 A type A")).toHaveLength(1);
+    expect(lib("interrupteur va et vient")).toHaveLength(1);
+  });
+  it("un texte inconnu reste entier", () => {
+    expect(decouperDictee("machin truc bidule chose", catalogue)).toHaveLength(1);
+  });
+  it("sans catalogue, comportement inchangé", () => {
+    expect(decouperDictee("prises 16 A spots interrupteur simple")).toHaveLength(1);
+  });
+  it("coupe avant « main d'oeuvre » mais pas dans « 3 heures de main d'oeuvre »", () => {
+    expect(decouperDictee("5 spots main d'oeuvre").length).toBe(2);
+    expect(decouperDictee("3 heures de main d'oeuvre")).toHaveLength(1);
+  });
+  it("ignore une mention de client non reconnue", () => {
+    const l = analyserDictee("5 prises 16 A pour monsieur Zorglub", catalogue, clients).lignes;
+    expect(l).toHaveLength(1);
+    expect(nom(l[0].choixAuto)).toBe("Prise 2P+T 16A");
+  });
+  it("reste rapide sur un gros catalogue", () => {
+    const gros = Array.from({ length: 400 }, (_, i) => p(`Article ${i} réf ${i * 7} modèle ${i % 13}`, 10));
+    const t0 = Date.now();
+    decouperDictee(Array.from({ length: 40 }, (_, i) => (i % 3 === 0 ? "prise" : i % 3 === 1 ? "spot" : "article")).join(" "), [...catalogue, ...gros]);
+    expect(Date.now() - t0).toBeLessThan(300);
+  });
+});
