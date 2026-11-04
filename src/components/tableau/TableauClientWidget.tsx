@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import { qsProjet } from "@/lib/projets";
+import { scoreNFC } from "@/lib/nfc-check";
 import { Zap, ShieldCheck, ShieldAlert, ShieldX, Plus } from "lucide-react";
 
 interface Breaker {
@@ -62,20 +63,8 @@ function safeBreakers(row: BreakerRow): Breaker[] {
   );
 }
 
-function quickScore(rows: BreakerRow[]): number {
-  if (!Array.isArray(rows) || rows.length === 0) return 100;
-  let errors = 0;
-  const all = rows.flatMap(r => safeBreakers(r));
-  const diffs = all.filter(b => !!BREAKER_TYPES[b.type]?.isDiff);
-  if (diffs.length < 2) errors++;
-  all.forEach(b => {
-    if (BREAKER_TYPES[b.type]?.isDiff || b.circuit === "general" || b.circuit === "parafoudre") return;
-    const spec = CIRCUITS[b.circuit];
-    if (!spec) return;
-    if (spec.ampMax && b.amperes > spec.ampMax) errors++;
-  });
-  return Math.max(0, Math.round(100 - errors * 15));
-}
+// Même calcul que le tableau ouvert (src/lib/nfc-check.ts) : un seul score pour toute l'application.
+const quickScore = (rows: BreakerRow[]): number => scoreNFC(rows);
 
 interface Item { projetId: string | null; nom: string | null; rows: BreakerRow[]; annexes: { nom: string; nbCircuits: number }[]; }
 

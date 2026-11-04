@@ -9,33 +9,10 @@ import Link from "next/link";
 import { Zap, Plus, ShieldCheck, ShieldAlert, ShieldX, Search, ChevronRight, X } from "lucide-react";
 import { Breaker, BreakerRow, BREAKER_TYPES, CIRCUITS, DIFF_HIERARCHY } from "@/lib/electrical-constants";
 import { fondModal } from "@/lib/fond-modal";
+import { scoreNFC } from "@/lib/nfc-check";
 
-function quickScore(rows: BreakerRow[]) {
-  let errors = 0;
-  const all = rows.flatMap(r => (r.slots ?? []).filter((b): b is Breaker => b != null && typeof b?.type === "string"));
-  const diffs = all.filter(b => BREAKER_TYPES[b?.type ?? ""]?.isDiff);
-  if (diffs.length < 2) errors++;
-  all.forEach(b => {
-    if (BREAKER_TYPES[b?.type ?? ""]?.isDiff || b.circuit === "general" || b.circuit === "parafoudre") return;
-    const spec = CIRCUITS[b.circuit];
-    if (!spec) return;
-    if (spec.ampMax && b.amperes > spec.ampMax) errors++;
-    let cov: typeof all[0] | null = null;
-    for (const row of rows) {
-      let last: typeof all[0] | null = null;
-      for (const rb of row.slots) {
-        if (!rb) continue;
-        if (BREAKER_TYPES[rb?.type ?? ""]?.isDiff) last = rb;
-        if (rb.id === b.id) { cov = last; break; }
-      }
-    }
-    if (!cov) errors++;
-    else if (spec.diffType && BREAKER_TYPES[cov?.type ?? ""]?.diffType) {
-      if ((DIFF_HIERARCHY[BREAKER_TYPES[cov?.type ?? ""].diffType!] ?? -1) < (DIFF_HIERARCHY[spec.diffType] ?? -1)) errors++;
-    }
-  });
-  return Math.max(0, Math.round(100 - errors * 15));
-}
+// Même calcul que le tableau ouvert (src/lib/nfc-check.ts) : un seul score pour toute l'application.
+const quickScore = (rows: BreakerRow[]): number => scoreNFC(rows);
 
 // ─── CLIENT PICKER MODAL ─────────────────────────────────────────────────────
 
