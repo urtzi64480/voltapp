@@ -12,7 +12,7 @@ import { attacherFournisseurs } from "@/lib/fournisseurs";
 import { colonnesFournisseur, colonnesImage, estLigneACompleter, nbLignesACompleter, nomLigneSansACompleter, photosAffichees } from "@/lib/devis-lignes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro, ListChecks } from "lucide-react";
+import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro, ListChecks, History } from "lucide-react";
 
 type PrestationExt = Prestation & { est_kit?: boolean; kit_description?: string | null };
 type Mode = "view" | "edit";
@@ -721,6 +721,17 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     }
   }
 
+  // Rouvre le pré-devis d'origine de ce devis (version enregistrée à sa création, sinon reconstitution depuis ses lignes).
+  async function rechargerPredevis() {
+    if (!devis?.client_id) return;
+    const { data } = await supabase.from("projets").select("id, predevis_config").eq("client_id", devis.client_id);
+    const projet = ((data ?? []) as { id: string; predevis_config: string | null }[]).find(p => (p.predevis_config ?? "").includes(id));
+    const qs = new URLSearchParams();
+    if (projet) qs.set("projet", projet.id);
+    qs.set("restaurer", id);
+    router.push(`/predevis/${devis.client_id}?${qs.toString()}`);
+  }
+
   function planifierIntervention() {
     if (!devis) return;
     const params = new URLSearchParams({
@@ -777,6 +788,9 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
           <span className={cn("badge", STATUT_COLORS[devis.statut])}>{STATUT_LABELS[devis.statut]}</span>
           {/* Rentabilité déplacée sur sa propre page (jamais affichée dans le flux client —
               aperçu/signature) : accès direct pour Ben uniquement, en un clic. */}
+          {(devis.objet ?? "").startsWith("Pré-devis électrique") && (
+            <button onClick={rechargerPredevis} className="btn-ghost !px-2.5 !py-2 text-ink-400 hover:text-volt-600" title="Recharger le pré-devis d'origine" aria-label="Recharger le pré-devis d'origine"><History size={16} /></button>
+          )}
           <Link href={`/devis/${id}/suivi`} className="btn-ghost !px-2.5 !py-2 text-ink-400 hover:text-volt-600" title="Suivi de chantier (avancement, heures prévues / réelles)"><ListChecks size={16} /></Link>
           <Link href={`/devis/${id}/rentabilite`} className="btn-ghost !px-2.5 !py-2 text-ink-400 hover:text-volt-600" title="Rentabilité (privé)"><Euro size={16} /></Link>
           <button onClick={() => setConfirmDelete(true)} className="btn-ghost !px-2.5 !py-2 text-red-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={16} /></button>

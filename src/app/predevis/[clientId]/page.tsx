@@ -23,6 +23,7 @@ import { BobineField, FournisseursEditor, longueurValide } from "@/components/ca
 import { STATUT_LABELS, UNITES, arrondi2, echecSupabase } from "@/lib/utils";
 import { colonnesFournisseur, colonnesImage } from "@/lib/devis-lignes";
 import { reporterChoix } from "@/lib/predevis-mode";
+import { ajouterVersion, detecterMode as detecterModeDevis, reconstruireDepuisDevis, type LigneDevisLue, type VersionPredevis } from "@/lib/predevis-depuis-devis";
 import { appliquerRegroupement, libellePresentation, type RegroupementDevis } from "@/lib/regroupement-devis";
 import ProduitPicker from "@/components/devis/ProduitPicker";
 import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
@@ -511,6 +512,10 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   type ReglagesMode = { choix: Record<string, EtatChoix>; choixAgrege: Record<string, EtatChoix>; hCablage: Record<string, string>; hAppareils: Record<string, string>; postesOk: Record<string, boolean>; postesSig: Record<string, string> };
   const autresModes = useRef<Partial<Record<"piece" | "circuit", ReglagesMode>>>({});
   // Besoins et choix du mode quitté : sert à reporter les articles déjà choisis quand le nouveau mode n'a pas encore de réglages propres.
+  // Instantanés du brouillon (à chaque devis généré, et avant tout rechargement) : permettent de retrouver un pré-devis écrasé.
+  const [versions, setVersions] = useState<VersionPredevis[]>([]);
+  const [aReconstruire, setAReconstruire] = useState<{ numero: string; lignes: LigneDevisLue[]; mode: "piece" | "circuit" | null } | null>(null);
+  const restaurerTraite = useRef(false);
   const modePrecedent = useRef<{ besoins: BesoinApparie[]; choix: Record<string, EtatChoix>; choixAgrege: Record<string, EtatChoix> } | null>(null);
   const forcerSauvegarde = useRef(false); // l'hydratation a complété / retiré des validations : à enregistrer même sans autre modification
   const [rentabOuverte, setRentabOuverte] = useState(false); // panneau « rentabilité » (privé, jamais dans le devis)
@@ -607,6 +612,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       if (projet.predevis_config) {
         try { brouillon = JSON.parse(projet.predevis_config); } catch {}
       }
+      setVersions(Array.isArray(brouillon?.versions) ? brouillon.versions.filter((v: any) => v && typeof v.contenu === "string") : []);
       if (brouillon?.autresModes && typeof brouillon.autresModes === "object") {
         const autre = (brouillon.mode ?? "piece") === "circuit" ? "piece" : "circuit";
         if (brouillon.autresModes[autre]) autresModes.current = { [autre]: brouillon.autresModes[autre] };
@@ -825,7 +831,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
   }
 
-  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, hCablage, hAppareils, ...(gainesOptimisees !== null ? { gainesOptimisees } : {}), mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, suiviV: VERSION_SUIVI_OK, poseEncastre, posesSection, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}), ...(devisLie ? { devisLie } : {}), ...(Object.keys(autresModes.current).length > 0 ? { autresModes: autresModes.current } : {}) });
+  const contenuBrouillon = (avecVersions = true) => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, hCablage, hAppareils, ...(gainesOptimisees !== null ? { gainesOptimisees } : {}), mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, suiviV: VERSION_SUIVI_OK, poseEncastre, posesSection, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}), ...(devisLie ? { devisLie } : {}), ...(Object.keys(autresModes.current).length > 0 ? { autresModes: autresModes.current } : {}), ...(avecVersions && versions.length > 0 ? { versions } : {}) });
 
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
@@ -1194,8 +1200,9 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       // final. On y mémorise le devis généré. La sauvegarde automatique est coupée (on quitte la page juste après) : elle
       // réécrirait un contenu sans ce lien.
       brouillonEfface.current = true;
+      const versionsApres = ajouterVersion(versions, { id: `${Date.now()}`, date: new Date().toISOString(), label: `Devis ${numero}`, devisId: devis.id, contenu: contenuBrouillon(false) });
       await modifierProjet(projet.id, {
-        predevis_config: JSON.stringify({ ...JSON.parse(contenuBrouillon()), devisLie: { id: devis.id, numero, presentation: regroupement } }),
+        predevis_config: JSON.stringify({ ...JSON.parse(contenuBrouillon()), devisLie: { id: devis.id, numero, presentation: regroupement }, versions: versionsApres }),
       });
 
       router.push(`/devis/${devis.id}`);
@@ -1203,6 +1210,72 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       setGenerating(false);
     }
   }
+
+  // ─── Rechargement d'un pré-devis d'origine (depuis un devis, ou depuis la liste des versions) ───────────────────────────────────────
+  // Avant tout rechargement, l'état actuel est mis de côté comme version : rien ne se perd.
+  function versionsAvecEtatActuel(): VersionPredevis[] {
+    return ajouterVersion(versions, { id: `${Date.now()}`, date: new Date().toISOString(), label: "Avant un rechargement", contenu: contenuBrouillon(false) });
+  }
+  function appliquerInstantane(v: VersionPredevis) {
+    let parsed: any;
+    try { parsed = JSON.parse(v.contenu); } catch { alert("Cette version est illisible."); return; }
+    const cible: "piece" | "circuit" = parsed.mode === "circuit" ? "circuit" : "piece";
+    const nouvelles = versionsAvecEtatActuel();
+    const autre = cible === "circuit" ? "piece" : "circuit";
+    autresModes.current = parsed.autresModes?.[autre] ? { [autre]: parsed.autresModes[autre] } : {};
+    modePrecedent.current = null;
+    setVersions(nouvelles);
+    setDonnees(d => (d ? { ...d, brouillon: { ...parsed, mode: cible, devisLie: devisLie ?? parsed.devisLie, versions: nouvelles } } : d));
+    setResultat(null);
+    setMode(cible); // même mode : le changement de « donnees » relance le calcul
+  }
+  // Ouverture depuis la page d'un devis : /predevis/<client>?restaurer=<id du devis>.
+  useEffect(() => {
+    if (!donnees || restaurerTraite.current || typeof window === "undefined") return;
+    const idDevis = new URLSearchParams(window.location.search).get("restaurer");
+    if (!idDevis) return;
+    restaurerTraite.current = true;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("restaurer");
+    window.history.replaceState(null, "", url.toString());
+    (async () => {
+      const { data: d } = await supabase.from("devis").select("id, numero").eq("id", idDevis).maybeSingle();
+      if (!d) { alert("Devis introuvable."); return; }
+      const numero = (d as any).numero as string;
+      const instantane = versions.find(v => v.devisId === idDevis);
+      if (instantane) {
+        if (window.confirm(`Recharger le pré-devis tel qu'il était à la création du devis ${numero} ? Ton pré-devis actuel est mis de côté (version « Avant un rechargement »).`)) appliquerInstantane(instantane);
+        return;
+      }
+      const { data: lignes } = await supabase.from("devis_lignes").select("nom, quantite, prix_unitaire, unite, type_branche, prestation_id, poste").eq("devis_id", idDevis).order("ordre");
+      if (!lignes || lignes.length === 0) { alert("Ce devis n'a aucune ligne : rien à reconstituer."); return; }
+      if (!window.confirm(`Aucune sauvegarde du pré-devis d'origine pour le devis ${numero}. Je peux le reconstituer à partir des lignes du devis (mode, articles, heures par poste, frais, déplacement). Ton pré-devis actuel est mis de côté. Continuer ?`)) return;
+      const lues = lignes as unknown as LigneDevisLue[];
+      const detecte = detecterModeDevis(lues);
+      setVersions(versionsAvecEtatActuel());
+      setAReconstruire({ numero, lignes: lues, mode: detecte });
+      const cible = detecte ?? mode ?? "piece";
+      if (cible !== mode) { setResultat(null); setMode(cible); }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [donnees]);
+  // Application de la reconstitution une fois les besoins du bon mode calculés.
+  useEffect(() => {
+    if (!aReconstruire || !resultat || !mode) return;
+    if (aReconstruire.mode && aReconstruire.mode !== mode) return;
+    const besoins = [...Object.values(resultat.parPiece).flat().filter(b => !estBobinable(b.sousCategorie)), ...agreger(resultat.parPiece)];
+    const r = reconstruireDepuisDevis(aReconstruire.lignes, besoins, prestations);
+    setChoix(prev => ({ ...prev, ...r.choix }));
+    setChoixAgrege(prev => ({ ...prev, ...r.choixAgrege }));
+    setHCablage(r.hCablage); setHAppareils(r.hAppareils);
+    if (r.mainOeuvreHeures != null) setMainOeuvreHeures(r.mainOeuvreHeures);
+    if (r.fraisGenerauxPct != null) setFraisGenerauxPct(r.fraisGenerauxPct);
+    if (r.deplacementEur != null) setDeplacementEur(r.deplacementEur);
+    setPostesOk({}); setPostesSig({});
+    setAReconstruire(null);
+    alert(`Pré-devis reconstitué depuis le devis ${aReconstruire.numero}.${r.avertissements.length ? "\n\n" + r.avertissements.join("\n") : ""}\n\nVérifie les postes, puis enregistre.`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aReconstruire, resultat, mode]);
 
   // Statut du devis déjà généré depuis ce pré-devis (pour savoir si on peut encore changer sa présentation).
   useEffect(() => {
@@ -1331,6 +1404,19 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     setResultat(null); setMode(autre);
                   }
                 }}>passer {mode === "circuit" ? "à la pièce" : "par circuit"}</button>
+                {versions.length > 0 && (
+                  <>
+                    {" · "}
+                    <select className="text-xs border border-ink-200 rounded-md px-1 py-0.5 bg-white" value="" aria-label="Recharger une version enregistrée du pré-devis"
+                      onChange={e => {
+                        const v = versions.find(x => x.id === e.target.value);
+                        if (v && window.confirm(`Recharger la version « ${v.label} » du ${new Date(v.date).toLocaleString("fr-FR")} ? Ton pré-devis actuel est mis de côté.`)) appliquerInstantane(v);
+                      }}>
+                      <option value="">Versions enregistrées…</option>
+                      {[...versions].reverse().map(v => <option key={v.id} value={v.id}>{v.label} — {new Date(v.date).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</option>)}
+                    </select>
+                  </>
+                )}
               </p>
             )}
           </div>
