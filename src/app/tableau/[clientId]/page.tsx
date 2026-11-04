@@ -9,7 +9,7 @@ import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import Link from "next/link";
 import {
   ArrowLeft, Save, Printer, ShieldCheck, ShieldAlert,
-  ShieldX, Plus, Trash2, Zap, Settings2, QrCode, Sparkles, Undo2,
+  ShieldX, Plus, Trash2, Zap, Settings2, QrCode, Sparkles, Undo2, FileText,
 } from "lucide-react";
 import {
   CommandeType, GroupeLumineux, PieceConfig, Breaker, BreakerRow,
@@ -22,6 +22,7 @@ import {
 import { fondModal } from "@/lib/fond-modal";
 import { checkNFC, safeBreakers } from "@/lib/nfc-check";
 import TableauIAModal from "@/components/tableau/TableauIAModal";
+import PredevisTableauModal from "@/components/tableau/PredevisTableauModal";
 
 // ─── CONSTANTES LOCALES (mise en page du tableau, propres à cette page) ────────
 
@@ -1383,6 +1384,7 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [showReport, setShowReport]       = useState(false);
   const [showQR, setShowQR]               = useState(false);
   const [showIA, setShowIA]               = useState(false);
+  const [showPredevis, setShowPredevis]     = useState(false);
   // Tableau tel qu'il était avant l'application d'un tableau refait par l'IA (annulation, tant que la page reste ouverte).
   const [avantIA, setAvantIA]             = useState<BreakerRow[] | null>(null);
   const [avisPose, setAvisPose]           = useState<string | null>(null);   // pose / déplacement refusé faute de place
@@ -1558,6 +1560,9 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
               className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all ${scoreColor}`}>
               <ScoreIcon size={13} /> NFC {compliance.score}/100
             </button>
+            <button onClick={() => setShowPredevis(true)} className="btn-ghost" aria-label="Générer un pré-devis de ce tableau" title="Générer un pré-devis de ce tableau (catalogue)">
+              <FileText size={15} /><span className="hidden md:inline">Pré-devis</span>
+            </button>
             <button onClick={() => setShowIA(true)} className="btn-ghost" aria-label="Refaire le tableau à partir de photos (IA)" title="Refaire le tableau à partir de photos (IA)">
               <Sparkles size={15} /><span className="hidden md:inline">Photos IA</span>
             </button>
@@ -1691,6 +1696,9 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
         />
       )}
       {showReport && <CompliancePanel result={compliance} onClose={() => setShowReport(false)} onApply={run => setRows(rs => run(rs))} />}
+      {showPredevis && (
+        <PredevisTableauModal clientId={clientId} rows={rows} nomTableau={annexes.find(a => a.id === actifId)?.nom} onClose={() => setShowPredevis(false)} />
+      )}
       {showIA && (
         <TableauIAModal clientId={clientId} client={client} rowsActuelles={rows} onClose={() => setShowIA(false)}
           onAppliquer={neuves => { setAvantIA(rows); setRows(normaliserRows(neuves)); setSelectedSlot(null); setEditBreaker(null); }} />

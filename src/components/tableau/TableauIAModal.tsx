@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { AlertTriangle, Check, ClipboardCopy, ClipboardPaste, FileText, Info, Loader2, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { consigneReleve, lireReponseClaude } from "@/lib/tableau-ia-import";
-import { attacherFournisseurs } from "@/lib/fournisseurs";
+import { chargerCatalogueEtTaux } from "@/lib/tableau-catalogue";
 import { fondModal } from "@/lib/fond-modal";
 import type { BreakerRow } from "@/lib/electrical-constants";
 import type { Client, Prestation, Profil } from "@/types";
@@ -239,7 +239,7 @@ function ListeControles({ p }: { p: Proposition }) {
   );
 }
 
-function PanneauPredevis({ lignes, setLignes, prestations, chargement, erreur, heures, setHeures, taux, nbSansArticle, onCreer, creation }: {
+export function PanneauPredevis({ lignes, setLignes, prestations, chargement, erreur, heures, setHeures, taux, nbSansArticle, onCreer, creation }: {
   lignes: LignePredevisTableau[]; setLignes: (l: LignePredevisTableau[]) => void; prestations: Prestation[] | null; chargement: boolean; erreur: string | null;
   heures: string; setHeures: (s: string) => void; taux: number; nbSansArticle: number; onCreer: () => void; creation: boolean;
 }) {
@@ -330,15 +330,8 @@ export default function TableauIAModal({ clientId, client, rowsActuelles, onAppl
     setChargementCatalogue(true); setErreurCatalogue(null);
     (async () => {
       try {
-        const { data: sess } = await supabase.auth.getSession();
-        const uid = sess.session?.user.id;
-        const [{ data, error }, { data: prof }] = await Promise.all([
-          supabase.from("prestations").select("*").eq("actif", true),
-          uid ? supabase.from("profil").select("taux_horaire").eq("id", uid).single() : Promise.resolve({ data: null }),
-        ]);
-        if (error) throw new Error(error.message);
-        const avec = await attacherFournisseurs((data ?? []) as Prestation[]);
-        if (!annule) { setPrestations(avec); setProfil((prof as Pick<Profil, "taux_horaire"> | null) ?? null); }
+        const r = await chargerCatalogueEtTaux();
+        if (!annule) { setPrestations(r.prestations); setProfil(r.profil); }
       } catch (e) {
         if (!annule) setErreurCatalogue(`Catalogue indisponible : ${(e as Error).message}`);
       } finally {
