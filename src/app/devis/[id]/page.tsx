@@ -788,7 +788,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
           <span className={cn("badge", STATUT_COLORS[devis.statut])}>{STATUT_LABELS[devis.statut]}</span>
           {/* Rentabilité déplacée sur sa propre page (jamais affichée dans le flux client —
               aperçu/signature) : accès direct pour Ben uniquement, en un clic. */}
-          {(devis.objet ?? "").startsWith("Pré-devis électrique") && (
+          {devis.client_id && (
             <button onClick={rechargerPredevis} className="btn-ghost !px-2.5 !py-2 text-ink-400 hover:text-volt-600" title="Recharger le pré-devis d'origine" aria-label="Recharger le pré-devis d'origine"><History size={16} /></button>
           )}
           <Link href={`/devis/${id}/suivi`} className="btn-ghost !px-2.5 !py-2 text-ink-400 hover:text-volt-600" title="Suivi de chantier (avancement, heures prévues / réelles)"><ListChecks size={16} /></Link>
@@ -1011,6 +1011,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
               <button onClick={dl} className="btn-ghost flex-1 justify-center"><Download size={15} /> Télécharger PDF</button>
               <button onClick={planifierIntervention} className="btn-ghost flex-1 justify-center"><CalendarDays size={15} /> Planifier</button>
               <Link href={`/devis/${id}/courses`} className="btn-ghost flex-1 justify-center"><ShoppingCart size={15} /> Liste de courses</Link>
+              {devis.client_id && <button onClick={rechargerPredevis} className="btn-ghost flex-1 justify-center"><History size={15} /> Recharger le pré-devis</button>}
               {devis.statut !== "signe" && (
                 <button className="flex-1 flex items-center justify-center gap-2 bg-ink-200 text-ink-400 font-semibold rounded-xl px-4 py-2.5 text-sm cursor-not-allowed">
                   <Receipt size={15} /> Convertir en facture
