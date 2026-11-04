@@ -1,11 +1,11 @@
 "use client";
 // Outil IA du module Tableau : photos du tableau existant → relevé (corrigeable) → tableau refait à la norme → écarts → pré-devis.
 // Rien n'est appliqué sans clic explicite ; la NF C 15-100 alerte, elle ne bloque jamais.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Camera, Check, FileText, Info, Loader2, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, ClipboardCopy, ClipboardPaste, FileText, Info, Loader2, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { compresserPhoto } from "@/lib/image-compress";
+import { consigneReleve, lireReponseClaude } from "@/lib/tableau-ia-import";
 import { attacherFournisseurs } from "@/lib/fournisseurs";
 import { fondModal } from "@/lib/fond-modal";
 import type { BreakerRow } from "@/lib/electrical-constants";
@@ -19,19 +19,6 @@ import { lignesDevisTableau, preparerPredevisTableau, totauxLignesDevis, type Li
 import { optionsPourSousCategorie } from "@/lib/predevis-engine";
 import { creerDevisBrouillon } from "@/lib/devis-creation";
 
-const MAX_PHOTOS = 6;
-const LIMITE_CARACTERES = 3_900_000;   // total base64 accepté par l'API (limite de corps Vercel 4,5 Mo)
-
-interface Photo { id: number; apercu: string; type: "image/jpeg"; base64: string }
-
-const blobVersBase64 = (b: Blob): Promise<string> =>
-  new Promise((ok, ko) => {
-    const r = new FileReader();
-    r.onload = () => { const s = String(r.result); ok(s.slice(s.indexOf(",") + 1)); };
-    r.onerror = () => ko(new Error("Lecture de la photo impossible"));
-    r.readAsDataURL(b);
-  });
-
 const eur = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
 const GRIS = () => "#64748b";
 
@@ -42,35 +29,58 @@ function Pastille({ ton, children }: { ton: "ok" | "warn" | "info" | "ajout"; ch
   return <span className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded border ${c}`}>{children}</span>;
 }
 
-function EtapePhotos({ photos, contexte, setContexte, notes, setNotes, onAjouter, onRetirer, occupe, erreur, caracteres, onAnalyser }: {
-  photos: Photo[]; contexte: ContexteTableau; setContexte: (c: ContexteTableau) => void; notes: string; setNotes: (s: string) => void;
-  onAjouter: (f: FileList | null) => void; onRetirer: (id: number) => void; occupe: boolean; erreur: string | null; caracteres: number; onAnalyser: () => void;
+async function copier(texte: string): Promise<boolean> {
+  try { await navigator.clipboard.writeText(texte); return true; } catch { /* repli ci-dessous (anciens navigateurs, http) */ }
+  try {
+    const t = document.createElement("textarea");
+    t.value = texte; t.style.position = "fixed"; t.style.opacity = "0";
+    document.body.appendChild(t); t.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(t);
+    return ok;
+  } catch { return false; }
+}
+
+function EtapeConsigne({ contexte, setContexte, notes, setNotes, reponse, setReponse, erreur, onLire }: {
+  contexte: ContexteTableau; setContexte: (c: ContexteTableau) => void; notes: string; setNotes: (s: string) => void;
+  reponse: string; setReponse: (s: string) => void; erreur: string | null; onLire: () => void;
 }) {
-  const trop = caracteres > LIMITE_CARACTERES;
+  const [copie, setCopie] = useState<"non" | "oui" | "echec">("non");
+  const [avisColler, setAvisColler] = useState<string | null>(null);
+  const consigne = useMemo(() => consigneReleve(notes), [notes]);
+  async function copierConsigne() { setCopie((await copier(consigne)) ? "oui" : "echec"); }
+  async function coller() {
+    setAvisColler(null);
+    try { setReponse(await navigator.clipboard.readText()); } catch { setAvisColler("Collage automatique refusé par le navigateur : appuyez longuement dans la zone et choisissez « Coller »."); }
+  }
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px] h-full min-h-0">
-      <div className="card card-inner overflow-auto">
-        <h3 className="font-semibold text-ink-900 mb-1">Photos du tableau existant</h3>
-        <p className="text-xs text-ink-500 mb-3">1 à {MAX_PHOTOS} photos, de face, nettes et bien éclairées : une vue d&apos;ensemble, puis un gros plan par rangée si les étiquettes sont petites. Capot ouvert.</p>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {photos.map(p => (
-            <div key={p.id} className="relative rounded-lg overflow-hidden border border-ink-200 bg-ink-50 aspect-[4/3]">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={p.apercu} alt="Photo du tableau" className="w-full h-full object-cover" />
-              <button onClick={() => onRetirer(p.id)} className="absolute top-1 right-1 bg-white/90 rounded-full p-1 text-ink-700 hover:text-red-600" aria-label="Retirer la photo"><X size={14} /></button>
-            </div>
-          ))}
-          {photos.length < MAX_PHOTOS && (
-            <label className="rounded-lg border-2 border-dashed border-ink-300 aspect-[4/3] grid place-items-center text-ink-500 hover:border-volt-500 hover:text-volt-700 cursor-pointer text-xs text-center p-2">
-              <span className="flex flex-col items-center gap-1"><Camera size={22} />Ajouter des photos</span>
-              <input type="file" accept="image/*" multiple className="hidden" onChange={e => { onAjouter(e.target.files); e.target.value = ""; }} />
-            </label>
-          )}
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px] h-full min-h-0 overflow-auto lg:overflow-visible content-start">
+      <div className="card card-inner lg:overflow-auto space-y-4">
+        <div>
+          <h3 className="font-semibold text-ink-900">Lire les photos avec Claude (compris dans ton abonnement)</h3>
+          <p className="text-xs text-ink-500 mt-1">Aucune clé ni coût en plus : tu envoies les photos à Claude, puis tu rapportes sa réponse ici. Fonctionne pareil sur PC et sur téléphone.</p>
         </div>
-        {trop && <p className="mt-3 text-xs text-red-700" role="alert">Photos trop lourdes au total : retirez-en une ou deux.</p>}
-        {erreur && <p className="mt-3 text-sm text-red-700" role="alert">{erreur}</p>}
+        <ol className="space-y-4 text-sm">
+          <li className="space-y-2">
+            <p><strong>1.</strong> Copie la consigne.</p>
+            <button className="btn-volt" onClick={copierConsigne}><ClipboardCopy size={15} />{copie === "oui" ? "Consigne copiée" : "Copier la consigne"}</button>
+            {copie === "echec" && <div><p className="text-xs text-amber-800 mb-1">Copie automatique impossible : sélectionnez le texte ci-dessous et copiez-le.</p><textarea readOnly className="input !text-xs" rows={6} value={consigne} onFocus={e => e.currentTarget.select()} /></div>}
+          </li>
+          <li><strong>2.</strong> Ouvre <strong>Claude</strong> (appli ou claude.ai), démarre une conversation, joins tes <strong>photos du tableau</strong> (une vue d&apos;ensemble, puis un gros plan par rangée si les étiquettes sont petites, capot ouvert), colle la consigne et envoie.</li>
+          <li><strong>3.</strong> Copie <strong>toute la réponse</strong> de Claude (bouton « copier » sous la réponse).</li>
+          <li className="space-y-2">
+            <p><strong>4.</strong> Colle-la ici.</p>
+            <div className="flex flex-wrap gap-2">
+              <button className="btn-ghost" onClick={coller}><ClipboardPaste size={15} />Coller depuis le presse-papiers</button>
+              {reponse && <button className="btn-ghost" onClick={() => setReponse("")}><X size={14} />Effacer</button>}
+            </div>
+            <textarea className="input !text-xs font-mono" rows={8} value={reponse} onChange={e => setReponse(e.target.value)} placeholder="Réponse de Claude (JSON)…" aria-label="Réponse de Claude" />
+            {avisColler && <p className="text-xs text-amber-800">{avisColler}</p>}
+            {erreur && <p className="text-sm text-red-700" role="alert">{erreur}</p>}
+          </li>
+        </ol>
       </div>
-      <div className="card card-inner overflow-auto space-y-3">
+      <div className="card card-inner lg:overflow-auto space-y-3">
         <h3 className="font-semibold text-ink-900">Contexte du logement</h3>
         <label className="block"><span className="label">Surface habitable (m²)</span>
           <input className="input" type="number" min={0} inputMode="decimal" value={contexte.surfaceM2 ?? ""} onChange={e => { const v = parseFloat(e.target.value); setContexte({ ...contexte, surfaceM2: Number.isFinite(v) && v > 0 ? v : null }); }} />
@@ -78,13 +88,10 @@ function EtapePhotos({ photos, contexte, setContexte, notes, setNotes, onAjouter
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={contexte.collectif} onChange={e => setContexte({ ...contexte, collectif: e.target.checked })} />Logement collectif</label>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={contexte.parafoudreRequis} onChange={e => setContexte({ ...contexte, parafoudreRequis: e.target.checked })} />Parafoudre requis (zone AQ2, paratonnerre, ligne aérienne…)</label>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={contexte.porte} onChange={e => setContexte({ ...contexte, porte: e.target.checked })} />Tableau derrière une porte</label>
-        <label className="block"><span className="label">Précisions pour la lecture (facultatif)</span>
+        <label className="block"><span className="label">Précisions pour Claude (facultatif)</span>
           <textarea className="input" rows={3} maxLength={300} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Ex. maison de 1975, tableau 2 rangées Legrand" />
         </label>
-        <button className="btn-volt w-full" disabled={occupe || photos.length === 0 || trop} onClick={onAnalyser}>
-          {occupe ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}{occupe ? "Analyse en cours…" : "Analyser les photos"}
-        </button>
-        <p className="text-[11px] text-ink-400">Les photos sont envoyées au service d&apos;analyse pour lecture uniquement ; elles ne sont pas conservées par VoltApp.</p>
+        <button className="btn-volt w-full" disabled={reponse.trim().length === 0} onClick={onLire}><Sparkles size={15} />Lire la réponse</button>
       </div>
     </div>
   );
@@ -167,7 +174,7 @@ function EtapeReleve({ releve, setReleve, onSuite, onRetour }: { releve: ReleveT
         )}
       </div>
       <div className="flex justify-between shrink-0">
-        <button className="btn-ghost" onClick={onRetour}>Photos</button>
+        <button className="btn-ghost" onClick={onRetour}>Réponse de Claude</button>
         <button className="btn-volt" onClick={onSuite} disabled={releve.rangees.every(r => r.appareils.length === 0)}><Sparkles size={15} />Refaire le tableau à la norme</button>
       </div>
     </div>
@@ -284,19 +291,18 @@ function PanneauPredevis({ lignes, setLignes, prestations, chargement, erreur, h
 
 // ─── Composant principal ──────────────────────────────────────────────────────────────────────────────────────────
 
-type Etape = "photos" | "releve" | "proposition";
+type Etape = "consigne" | "releve" | "proposition";
 type Onglet = "tableau" | "ecarts" | "controles" | "predevis";
 
 export default function TableauIAModal({ clientId, client, rowsActuelles, onAppliquer, onClose }: {
   clientId: string; client: Client | null; rowsActuelles: BreakerRow[]; onAppliquer: (rows: BreakerRow[]) => void; onClose: () => void;
 }) {
   const router = useRouter();
-  const [etape, setEtape] = useState<Etape>("photos");
+  const [etape, setEtape] = useState<Etape>("consigne");
   const [onglet, setOnglet] = useState<Onglet>("tableau");
-  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [reponse, setReponse] = useState("");
   const [contexte, setContexte] = useState<ContexteTableau>({ ...CONTEXTE_DEFAUT, surfaceM2: client?.surface_m2 && client.surface_m2 > 0 ? client.surface_m2 : null });
   const [notes, setNotes] = useState(client?.tableau_marque ? `Marque : ${client.tableau_marque}` : "");
-  const [occupe, setOccupe] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
   const [releve, setReleve] = useState<ReleveTableau | null>(null);
   const [ajouts, setAjouts] = useState<CircuitReleve[]>([]);
@@ -308,55 +314,11 @@ export default function TableauIAModal({ clientId, client, rowsActuelles, onAppl
   const [heures, setHeures] = useState("");
   const [creation, setCreation] = useState(false);
   const [confirmation, setConfirmation] = useState(false);
-  const idPhoto = useRef(0);
-  const ctrl = useRef<AbortController | null>(null);
-  const apercus = useRef<string[]>([]);
 
-  useEffect(() => () => { ctrl.current?.abort(); apercus.current.forEach(u => URL.revokeObjectURL(u)); }, []);
-
-  const caracteres = photos.reduce((s, p) => s + p.base64.length, 0);
-
-  const ajouterPhotos = useCallback(async (liste: FileList | null) => {
-    if (!liste || liste.length === 0) return;
-    setErreur(null);
-    const places = MAX_PHOTOS - photos.length;
-    const fichiers = Array.from(liste).filter(f => f.type.startsWith("image/")).slice(0, Math.max(0, places));
-    if (fichiers.length === 0) { setErreur("Aucune image valide sélectionnée."); return; }
-    const nouvelles: Photo[] = [];
-    for (const f of fichiers) {
-      try {
-        const blob = await compresserPhoto(f, 1568, 0.72);
-        const url = URL.createObjectURL(blob);
-        apercus.current.push(url);
-        nouvelles.push({ id: ++idPhoto.current, apercu: url, type: "image/jpeg", base64: await blobVersBase64(blob) });
-      } catch { setErreur("Une photo n'a pas pu être lue (format non pris en charge ?)."); }
-    }
-    setPhotos(p => [...p, ...nouvelles].slice(0, MAX_PHOTOS));
-  }, [photos.length]);
-
-  const retirerPhoto = (id: number) => setPhotos(p => p.filter(x => x.id !== id));
-
-  async function analyser() {
-    if (occupe) return;
-    setOccupe(true); setErreur(null);
-    const c = new AbortController();
-    ctrl.current = c;
-    try {
-      const rep = await fetch("/api/tableau/analyser", {
-        method: "POST", headers: { "content-type": "application/json" }, signal: c.signal,
-        body: JSON.stringify({ images: photos.map(p => ({ type: p.type, base64: p.base64 })), contexte: notes }),
-      });
-      const json = await rep.json().catch(() => ({}));
-      if (!rep.ok) { setErreur(json?.error ?? `Analyse impossible (erreur ${rep.status}).`); return; }
-      if (!json?.releve) { setErreur("Réponse d'analyse vide. Réessayez."); return; }
-      setReleve(json.releve as ReleveTableau);
-      setAjouts([]);
-      setEtape("releve");
-    } catch (e) {
-      if ((e as Error)?.name !== "AbortError") setErreur("Connexion impossible. Vérifiez le réseau puis réessayez.");
-    } finally {
-      setOccupe(false);
-    }
+  function lireReponse() {
+    const r = lireReponseClaude(reponse);
+    if (!r.releve) { setErreur(r.erreur ?? "Réponse illisible."); return; }
+    setErreur(null); setReleve(r.releve); setAjouts([]); setEtape("releve");
   }
 
   const proposition = useMemo<Proposition | null>(() => (releve && etape === "proposition" ? construireProposition(releve, ajouts, contexte) : null), [releve, ajouts, contexte, etape]);
@@ -429,7 +391,7 @@ export default function TableauIAModal({ clientId, client, rowsActuelles, onAppl
     return (78 + r.coffret.modulesParRail * 27 + 150) / (118 + r.rails.length * 232 + 60);
   }, [proposition]);
 
-  const titres: Record<Etape, string> = { photos: "1 · Photos", releve: "2 · Relevé", proposition: "3 · Tableau à la norme" };
+  const titres: Record<Etape, string> = { consigne: "1 · Lecture", releve: "2 · Relevé", proposition: "3 · Tableau à la norme" };
   const appliquer = () => {
     if (!proposition) return;
     onAppliquer(appliquerAuTableau(rowsActuelles, proposition.rows));
@@ -458,11 +420,10 @@ export default function TableauIAModal({ clientId, client, rowsActuelles, onAppl
                 <button className="btn-volt" onClick={onClose}>Voir le tableau</button>
               </div>
             </div>
-          ) : etape === "photos" ? (
-            <EtapePhotos photos={photos} contexte={contexte} setContexte={setContexte} notes={notes} setNotes={setNotes} onAjouter={ajouterPhotos} onRetirer={retirerPhoto}
-              occupe={occupe} erreur={erreur} caracteres={caracteres} onAnalyser={analyser} />
+          ) : etape === "consigne" ? (
+            <EtapeConsigne contexte={contexte} setContexte={setContexte} notes={notes} setNotes={setNotes} reponse={reponse} setReponse={setReponse} erreur={erreur} onLire={lireReponse} />
           ) : etape === "releve" && releve ? (
-            <EtapeReleve releve={releve} setReleve={setReleve} onRetour={() => setEtape("photos")} onSuite={() => { setOnglet("tableau"); setEtape("proposition"); }} />
+            <EtapeReleve releve={releve} setReleve={setReleve} onRetour={() => setEtape("consigne")} onSuite={() => { setOnglet("tableau"); setEtape("proposition"); }} />
           ) : proposition ? (
             <div className="h-full min-h-0 flex flex-col gap-3">
               <div className="flex items-center gap-1 shrink-0 overflow-x-auto">
