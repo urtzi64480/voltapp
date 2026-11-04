@@ -22,6 +22,7 @@ import {
 import { BobineField, FournisseursEditor, longueurValide } from "@/components/catalogue/EditeurArticle";
 import { STATUT_LABELS, UNITES, arrondi2, echecSupabase } from "@/lib/utils";
 import { colonnesFournisseur, colonnesImage } from "@/lib/devis-lignes";
+import { reporterChoix } from "@/lib/predevis-mode";
 import { appliquerRegroupement, libellePresentation, type RegroupementDevis } from "@/lib/regroupement-devis";
 import ProduitPicker from "@/components/devis/ProduitPicker";
 import BadgeConditionnement from "@/components/devis/BadgeConditionnement";
@@ -506,6 +507,11 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [autoSauve, setAutoSauve] = useState<string | null>(null); // heure de la dernière sauvegarde automatique
   const dernierContenuSauve = useRef<string | null>(null);
   const brouillonEfface = useRef(false);
+  // Réglages propres à l'autre mode (pièce ↔ circuit), gardés pour qu'un aller-retour ne perde ni choix d'articles ni heures par poste.
+  type ReglagesMode = { choix: Record<string, EtatChoix>; choixAgrege: Record<string, EtatChoix>; hCablage: Record<string, string>; hAppareils: Record<string, string>; postesOk: Record<string, boolean>; postesSig: Record<string, string> };
+  const autresModes = useRef<Partial<Record<"piece" | "circuit", ReglagesMode>>>({});
+  // Besoins et choix du mode quitté : sert à reporter les articles déjà choisis quand le nouveau mode n'a pas encore de réglages propres.
+  const modePrecedent = useRef<{ besoins: BesoinApparie[]; choix: Record<string, EtatChoix>; choixAgrege: Record<string, EtatChoix> } | null>(null);
   const forcerSauvegarde = useRef(false); // l'hydratation a complété / retiré des validations : à enregistrer même sans autre modification
   const [rentabOuverte, setRentabOuverte] = useState(false); // panneau « rentabilité » (privé, jamais dans le devis)
   const [resultat, setResultat] = useState<ResultatPreDevis | null>(null);
@@ -601,6 +607,10 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       if (projet.predevis_config) {
         try { brouillon = JSON.parse(projet.predevis_config); } catch {}
       }
+      if (brouillon?.autresModes && typeof brouillon.autresModes === "object") {
+        const autre = (brouillon.mode ?? "piece") === "circuit" ? "piece" : "circuit";
+        if (brouillon.autresModes[autre]) autresModes.current = { [autre]: brouillon.autresModes[autre] };
+      }
       setDonnees({ niveaux, rows, prest: prestAvecFournisseurs, brouillon });
       if (brouillon?.mode === "piece" || brouillon?.mode === "circuit") setMode(brouillon.mode);
       const lie = brouillon?.devisLie;
@@ -636,21 +646,30 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setAlertesGeometrie(alertes);
     setPiecesSelectionnees(null);
     // Les choix du brouillon ne se réappliquent que si le brouillon a été fait dans le même mode (les clés de besoin diffèrent).
+    // Réglages de ce mode : ceux gardés en mémoire lors d'un aller-retour (les plus récents), sinon ceux du brouillon s'il est dans ce mode.
+    const gardes = autresModes.current[mode];
+    delete autresModes.current[mode];
     const memeMode = !!brouillon && (brouillon.mode ?? "piece") === mode;
+    const source: Partial<ReglagesMode> | null = gardes ?? (memeMode ? brouillon : null);
     const initChoix: Record<string, EtatChoix> = {};
-    Object.values(res.parPiece).flat().forEach(b => {
-      initChoix[b.cle] = { ...etatParDefaut(b), ...(memeMode ? (brouillon?.choix?.[b.cle] ?? {}) : {}) };
+    const tousBesoins = Object.values(res.parPiece).flat();
+    // Pas de réglages pour ce mode : on reporte les articles déjà choisis dans l'autre (par sous-catégorie, si le choix était le même partout).
+    const reportes = !source && modePrecedent.current
+      ? reporterChoix(modePrecedent.current.besoins, modePrecedent.current.choix, tousBesoins)
+      : {};
+    tousBesoins.forEach(b => {
+      initChoix[b.cle] = { ...etatParDefaut(b), ...(source ? (source.choix?.[b.cle] ?? {}) : (reportes[b.cle] ?? {})) };
     });
     setChoix(initChoix);
     // Validations « devis OK » : reprises du brouillon, SAUF celles dont le poste a changé sur le plan depuis (signature différente) :
     // elles perdent leur « OK » et se dépliiront ; les postes toujours valides restent repliés.
     {
-      const okSauve: Record<string, boolean> = memeMode && brouillon?.postesOk && typeof brouillon.postesOk === "object" ? brouillon.postesOk : {};
+      const okSauve: Record<string, boolean> = source?.postesOk && typeof source.postesOk === "object" ? source.postesOk : {};
       // Brouillon antérieur au suivi (pas de version) : on ne sait pas dans quel état était le plan à la validation → impossible de dire
       // si des modifications ont eu lieu depuis. Par prudence ces validations tombent UNE fois (dépliées, à re-cocher) ; les suivantes sont suivies.
       const suiviOk = brouillon?.suiviV === VERSION_SUIVI_OK;
       const anciens = suiviOk ? [] : Object.keys(okSauve).filter(k => okSauve[k]);
-      const sigSauve: Record<string, string> = memeMode && brouillon?.postesSig && typeof brouillon.postesSig === "object" ? brouillon.postesSig : {};
+      const sigSauve: Record<string, string> = source?.postesSig && typeof source.postesSig === "object" ? source.postesSig : {};
       const sigAct = signaturesActuelles(res.parPiece);
       const invalides = [...new Set([...postesInvalides(sigAct, okSauve, sigSauve), ...anciens])];
       const okFinal: Record<string, boolean> = {};
@@ -667,21 +686,22 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
       setPostesModifies(invalides.filter(k => !anciens.includes(k)));
       setPostesOuverts(Object.fromEntries(invalides.map(k => [k, true])));
     }
-    setChoixAgrege(memeMode && brouillon?.choixAgrege ? brouillon.choixAgrege : {});
-    if (brouillon) {
-      if (brouillon.mainOeuvreHeures != null) setMainOeuvreHeures(brouillon.mainOeuvreHeures);
+    // Câbles / gaines / moulures : le choix est par sous-catégorie, donc identique dans les deux modes → reporté tel quel.
+    setChoixAgrege(source ? (source.choixAgrege ?? {}) : (modePrecedent.current?.choixAgrege ?? {}));
+    if (brouillon || source) {
+      if (brouillon?.mainOeuvreHeures != null) setMainOeuvreHeures(brouillon.mainOeuvreHeures);
       // Les postes (pièces / circuits) dépendent du mode : les heures par poste ne se reprennent que dans le même mode.
-      const ancien: Record<string, string> = memeMode && brouillon.heuresPostes && typeof brouillon.heuresPostes === "object" ? brouillon.heuresPostes : {};
+      const ancien: Record<string, string> = !gardes && memeMode && brouillon?.heuresPostes && typeof brouillon.heuresPostes === "object" ? brouillon.heuresPostes : {};
       // Ancien champ unique « Main d'œuvre » du poste : conservé tel quel (câblage = ancienne valeur, appareillage = 0) pour ne rien changer aux devis déjà préparés.
-      const cabl: Record<string, string> = memeMode && brouillon.hCablage && typeof brouillon.hCablage === "object" ? { ...brouillon.hCablage } : {};
-      const appa: Record<string, string> = memeMode && brouillon.hAppareils && typeof brouillon.hAppareils === "object" ? { ...brouillon.hAppareils } : {};
+      const cabl: Record<string, string> = source?.hCablage && typeof source.hCablage === "object" ? { ...source.hCablage } : {};
+      const appa: Record<string, string> = source?.hAppareils && typeof source.hAppareils === "object" ? { ...source.hAppareils } : {};
       Object.entries(ancien).forEach(([poste, v]) => { if (cabl[poste] == null && appa[poste] == null && (parseFloat(String(v).replace(",", ".")) || 0) > 0) { cabl[poste] = String(v); appa[poste] = "0"; } });
       setHCablage(cabl); setHAppareils(appa);
 
-      if (brouillon.mainOeuvreIndex != null) setMainOeuvreIndex(brouillon.mainOeuvreIndex);
-      if (brouillon.fraisGenerauxPct != null) setFraisGenerauxPct(brouillon.fraisGenerauxPct);
-      if (brouillon.deplacementEur != null) setDeplacementEur(brouillon.deplacementEur);
-      if (typeof brouillon.inclureTableau === "boolean") setInclureTableau(brouillon.inclureTableau);
+      if (brouillon?.mainOeuvreIndex != null) setMainOeuvreIndex(brouillon?.mainOeuvreIndex);
+      if (brouillon?.fraisGenerauxPct != null) setFraisGenerauxPct(brouillon?.fraisGenerauxPct);
+      if (brouillon?.deplacementEur != null) setDeplacementEur(brouillon?.deplacementEur);
+      if (typeof brouillon?.inclureTableau === "boolean") setInclureTableau(brouillon?.inclureTableau);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [donnees, mode]);
@@ -805,7 +825,7 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
     }
   }
 
-  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, hCablage, hAppareils, ...(gainesOptimisees !== null ? { gainesOptimisees } : {}), mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, suiviV: VERSION_SUIVI_OK, poseEncastre, posesSection, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}), ...(devisLie ? { devisLie } : {}) });
+  const contenuBrouillon = () => JSON.stringify({ choix, choixAgrege, mainOeuvreHeures, hCablage, hAppareils, ...(gainesOptimisees !== null ? { gainesOptimisees } : {}), mainOeuvreIndex, fraisGenerauxPct, deplacementEur, postesOk, postesSig, suiviV: VERSION_SUIVI_OK, poseEncastre, posesSection, ...(mode ? { mode } : {}), ...(inclureTableau !== null ? { inclureTableau } : {}), ...(devisLie ? { devisLie } : {}), ...(Object.keys(autresModes.current).length > 0 ? { autresModes: autresModes.current } : {}) });
 
   async function sauvegarderBrouillon() {
     setSavingDraft(true);
@@ -1302,7 +1322,14 @@ function PreDevisEditor({ clientId, projet, projets, onSelect, onChanged }: {
               <p className="text-xs text-ink-500 mt-0.5">
                 Mode : <strong>{mode === "circuit" ? "par circuit" : "à la pièce"}</strong>{" · "}
                 <button className="text-volt-600 font-medium" onClick={() => {
-                  if (window.confirm("Changer de mode recalcule le pré-devis : les choix d'articles faits dans ce mode seront perdus. Continuer ?")) { setResultat(null); setMode(mode === "circuit" ? "piece" : "circuit"); }
+                  const nbHeures = Math.round([...Object.values(hCablage), ...Object.values(hAppareils)].reduce((t, v) => t + (parseFloat(String(v).replace(",", ".")) || 0), 0) * 100) / 100;
+                  const autre = mode === "circuit" ? "piece" : "circuit";
+                  const msg = `Passer ${autre === "circuit" ? "par circuit" : "à la pièce"} regroupe le matériel autrement : les postes changent, donc les heures de main d'œuvre saisies par poste${nbHeures > 0 ? ` (${nbHeures} h au total)` : ""} ne sont pas reprises dans le nouveau mode — le total sera différent tant que tu ne les as pas ressaisies. Elles sont gardées : en revenant dans ce mode tu les retrouves. Les articles choisis sont reportés quand ils sont identiques partout. Continuer ?`;
+                  if (window.confirm(msg)) {
+                    if (resultat) modePrecedent.current = { besoins: Object.values(resultat.parPiece).flat(), choix, choixAgrege };
+                    autresModes.current[mode] = { choix, choixAgrege, hCablage, hAppareils, postesOk, postesSig };
+                    setResultat(null); setMode(autre);
+                  }
                 }}>passer {mode === "circuit" ? "à la pièce" : "par circuit"}</button>
               </p>
             )}
