@@ -961,20 +961,22 @@ export function optionsPourSousCategorie(sousCategorie: string, prestations: Pre
   return optionsPourBesoin(sousCategorie, prestations);
 }
 
+/** Option du pré-devis pour UN article du catalogue (offre principale du produit) — même construction que les options proposées par sous-catégorie. */
+export function optionDepuisPrestation(p: Prestation, sousCategorie: string): OptionArticle {
+  const o = offrePrincipale(p.fournisseurs);
+  return {
+    prestation_id: p.id, nom: designationProduit(p, o), prix_unitaire: prixVenteOffre(p, o), unite: p.unite,
+    type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire && p.longueur_unitaire > 0 ? p.longueur_unitaire : null,
+    quantiteMultiplicateur: 1, sousCategorieArticle: sousCategorie,
+    image_url: imageOffre(p, o),
+    ...champsFournisseurOption(o),
+  };
+}
+
 function optionsPour(sousCategorie: string, prestations: Prestation[]): OptionArticle[] {
   const items = prestations.filter(p => p.actif !== false && aSousCategorie(p, sousCategorie));
   const gammes: Gamme[] = ["entree", "moyenne", "haut"];
-  const versOption = (p: Prestation): OptionArticle => {
-    // Par défaut : l'offre principale du produit (celle recopiée dans prestations.prix_unitaire).
-    const o = offrePrincipale(p.fournisseurs);
-    return {
-      prestation_id: p.id, nom: designationProduit(p, o), prix_unitaire: prixVenteOffre(p, o), unite: p.unite,
-      type_branche: p.type_branche, gamme: p.gamme ?? null, longueur_unitaire: p.longueur_unitaire && p.longueur_unitaire > 0 ? p.longueur_unitaire : null,
-      quantiteMultiplicateur: 1, sousCategorieArticle: sousCategorie,
-      image_url: imageOffre(p, o),
-      ...champsFournisseurOption(o),
-    };
-  };
+  const versOption = (p: Prestation): OptionArticle => optionDepuisPrestation(p, sousCategorie);
   const gammees = gammes.map(g => items.find(p => p.gamme === g)).filter((p): p is Prestation => !!p).map(versOption);
   if (gammees.length > 0) return gammees;
   // Compatibilité : aucun article "gammé" pour cette sous-catégorie — on propose le

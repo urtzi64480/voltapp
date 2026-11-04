@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyserDictee, chiffrer, chercherArticles, cleAlias, cleSon, corrigerReconnaissance, decouperDictee, detecterClient, lignesDepuisDictee, meilleureAlternative, motsCles, motsPourReconnaissance, sonProche } from "@/lib/devis-vocal";
+import { analyserDictee, auMetreDisponible, chiffrer, chercherArticles, cleAlias, cleSon, corrigerReconnaissance, decouperDictee, detecterClient, lignesDeLaLigne, lignesDepuisDictee, meilleureAlternative, motsCles, motsPourReconnaissance, sonProche } from "@/lib/devis-vocal";
 import type { Prestation } from "@/types";
 
 let n = 0;
@@ -158,5 +158,78 @@ describe("erreurs de reconnaissance vocale", () => {
     expect(m).toContain("disjoncteur");
     expect(m).toContain("encastrable");
     expect(m.length).toBeLessThanOrEqual(120);
+  });
+});
+
+describe("dictée naturelle (sans dire « plus »)", () => {
+  const lib = (t: string) => decouperDictee(t).map(s => [s.quantite, s.libelle]);
+  it("coupe à chaque nouvelle quantité", () => {
+    expect(lib("5 prises 16 ampères 3 spots 1 disjoncteur différentiel 40 A 2 heures de main d'oeuvre")).toEqual([
+      [5, "prises 16 ampères"], [3, "spots"], [1, "disjoncteur différentiel 40 A"], [2, "main d'oeuvre"],
+    ]);
+    expect(lib("cinq prises seize ampères trois spots un disjoncteur différentiel quarante ampères deux heures de main d'oeuvre")).toEqual([
+      [5, "prises 16 ampères"], [3, "spots"], [1, "disjoncteur différentiel 40 ampères"], [2, "main d'oeuvre"],
+    ]);
+  });
+  it("« un / une » après une préposition reste un article ; un nombre après « type » est une caractéristique", () => {
+    expect(lib("deux prises pour une cuisine trois spots")).toEqual([[2, "prises pour une cuisine"], [3, "spots"]]);
+    expect(lib("un parafoudre type 2 trois spots")).toEqual([[1, "parafoudre type 2"], [3, "spots"]]);
+  });
+  it("les nombres nus du libellé (section, calibre) ne coupent pas", () => {
+    expect(lib("20 mètres de câble 2,5 trois spots")).toEqual([[20, "câble 2,5"], [3, "spots"]]);
+    expect(lib("disjoncteur 16 trois prises")).toEqual([[1, "disjoncteur 16"], [3, "prises"]]);
+    expect(lib("disjoncteur 16 un spot")).toEqual([[1, "disjoncteur 16"], [1, "spot"]]);
+  });
+  it("accepte aussi « + » (transcription de « plus ») et les anciens séparateurs", () => {
+    expect(lib("5 prises + 3 spots")).toEqual([[5, "prises"], [3, "spots"]]);
+    expect(lib("5 prises plus 3 spots et 2 interrupteurs")).toEqual([[5, "prises"], [3, "spots"], [2, "interrupteurs"]]);
+  });
+  it("dictée complète avec client, sans aucun séparateur", () => {
+    const a = analyserDictee("devis pour Monsieur Dupont cinq prises seize ampères trois spots un disjoncteur différentiel quarante ampères deux heures de main d'oeuvre", catalogue, clients);
+    expect(a.client?.id).toBe("c1");
+    expect(a.lignes.map(l => nom(l.choixAuto))).toEqual(["Prise 2P+T 16A", "Spot LED encastrable", "Disjoncteur différentiel 40A type A", "Main d'œuvre électricien"]);
+  });
+});
+
+describe("articles au mètre, comme dans le pré-devis", () => {
+  const bobine = p("Câble 2,5 bobine", 90, { sous_categorie: "cable_2.5", longueur_unitaire: 50, unite: "u" });
+  const auMetre = p("Câble 2,5 au mètre", 2, { sous_categorie: "cable_2.5", unite: "m" });
+  const cat = [bobine, auMetre];
+  const ligne = (t: string) => analyserDictee(t, cat, []).lignes[0];
+  const choix = (q: number, id: string, cond?: "auto" | "metre") => ({ inclus: true, quantite: q, prestationId: id, conditionnement: cond });
+  it("repère la longueur dictée", () => {
+    expect(decouperDictee("20 mètres de câble 2,5")[0]).toMatchObject({ quantite: 20, metres: true, libelle: "câble 2,5" });
+    expect(decouperDictee("2 bobines de câble 2,5")[0]).toMatchObject({ quantite: 2, bobines: true, libelle: "câble 2,5" });
+  });
+  it("bobines entières + reliquat au mètre (défaut du pré-devis)", () => {
+    const l = lignesDeLaLigne(ligne("120 mètres de câble 2,5"), choix(120, bobine.id), cat, 0);
+    expect(l.map(x => [x.quantite, x.prix_unitaire, x.prestation_id])).toEqual([[2, 90, bobine.id], [20, 2, auMetre.id]]);
+    expect(l.every(x => x.poste === null)).toBe(true);
+  });
+  it("moins d'une bobine : tout le reliquat au mètre", () => {
+    const l = lignesDeLaLigne(ligne("20 mètres de câble 2,5"), choix(20, bobine.id), cat, 0);
+    expect(l.map(x => [x.quantite, x.prestation_id])).toEqual([[20, auMetre.id]]);
+  });
+  it("« tout au mètre » remplace les bobines", () => {
+    const l = lignesDeLaLigne(ligne("120 mètres de câble 2,5"), choix(120, bobine.id, "metre"), cat, 0);
+    expect(l.map(x => [x.quantite, x.prestation_id])).toEqual([[120, auMetre.id]]);
+    expect(auMetreDisponible(bobine, cat)).toBe(true);
+    expect(auMetreDisponible(bobine, [bobine])).toBe(false);
+  });
+  it("sans reliquat disponible : une bobine de plus, comme le pré-devis", () => {
+    const l = lignesDeLaLigne(ligne("20 mètres de câble 2,5"), choix(20, bobine.id), [bobine], 0);
+    expect(l.map(x => [x.quantite, x.prestation_id])).toEqual([[1, bobine.id]]);
+  });
+  it("« 2 bobines » : pas de découpage en mètres ; article ordinaire : ligne simple", () => {
+    const l = lignesDeLaLigne(ligne("2 bobines de câble 2,5"), choix(2, bobine.id), cat, 0);
+    expect(l.map(x => [x.quantite, x.prix_unitaire])).toEqual([[2, 90]]);
+    const prise = catalogue[0];
+    const lp = lignesDeLaLigne(analyserDictee("5 prises 16 A", catalogue, []).lignes[0], choix(5, prise.id), catalogue, 0);
+    expect(lp).toHaveLength(1);
+    expect(lp[0]).toMatchObject({ quantite: 5, prix_unitaire: 6 });
+  });
+  it("un câble dicté sans unité est compté en mètres", () => {
+    const l = lignesDeLaLigne(ligne("30 câble 2,5"), choix(30, bobine.id), cat, 0);
+    expect(l.map(x => [x.quantite, x.prestation_id])).toEqual([[30, auMetre.id]]);
   });
 });

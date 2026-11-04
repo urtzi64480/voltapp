@@ -11,7 +11,7 @@ import { attacherFournisseurs } from "@/lib/fournisseurs";
 import { creerDevisBrouillon } from "@/lib/devis-creation";
 import { totauxLignesDevis } from "@/lib/tableau-predevis";
 import {
-  analyserDictee, chercherArticles, cleAlias, libelleClient, lignesDepuisDictee, meilleureAlternative, motsPourReconnaissance,
+  analyserDictee, auMetreDisponible, chercherArticles, cleAlias, enMetres, libelleClient, lignesDeLaLigne, lignesDepuisDictee, meilleureAlternative, motsPourReconnaissance,
   type Alias, type ChoixLigneVocale, type ClientCourt, type LigneVocale,
 } from "@/lib/devis-vocal";
 import { ecrireStockage, lireStockage } from "@/lib/safe-storage";
@@ -119,7 +119,7 @@ function useDictee(surPhrase: (variantes: string[]) => void, mots: string[]) {
 
 type Correction = Partial<ChoixLigneVocale>;
 
-function LigneRapide({ l, etat, prestations, onChange }: { l: LigneVocale; etat: ChoixLigneVocale; prestations: Prestation[]; onChange: (c: Correction) => void }) {
+function LigneRapide({ l, etat, prestations, taux, onChange }: { l: LigneVocale; etat: ChoixLigneVocale; prestations: Prestation[]; taux: number; onChange: (c: Correction) => void }) {
   const [recherche, setRecherche] = useState<string | null>(null);
   const choisi = etat.prestationId ? prestations.find(p => p.id === etat.prestationId) : undefined;
   const options = useMemo(() => {
@@ -129,7 +129,11 @@ function LigneRapide({ l, etat, prestations, onChange }: { l: LigneVocale; etat:
     return Array.from(m.values());
   }, [l.candidats, choisi]);
   const trouves = useMemo(() => (recherche && recherche.trim().length >= 2 ? chercherArticles(recherche, prestations, 8) : []), [recherche, prestations]);
-  const total = choisi ? choisi.prix_unitaire * etat.quantite : 0;
+  const lignesCalculees = useMemo(() => lignesDeLaLigne(l, etat, prestations, taux), [l, etat, prestations, taux]);
+  const total = lignesCalculees.reduce((s, x) => s + x.quantite * x.prix_unitaire, 0);
+  const longueur = !!choisi && enMetres(l, choisi);
+  const enBobines = longueur && !!choisi?.longueur_unitaire;
+  const detail = longueur && lignesCalculees.length > 0 ? lignesCalculees.map(x => `${x.quantite} × ${x.nom}`).join(" + ") : null;
 
   return (
     <div className={`card card-inner !p-3 ${etat.inclus ? "" : "opacity-50"}`}>
@@ -139,14 +143,23 @@ function LigneRapide({ l, etat, prestations, onChange }: { l: LigneVocale; etat:
           <p className="text-xs text-ink-400 truncate" title={l.segment.brut}>« {l.segment.brut} »</p>
           <div className="flex flex-wrap items-center gap-2">
             <input className="input !py-1 w-20 !text-sm" type="number" min={0} step={l.segment.heures ? 0.5 : 1} inputMode="decimal" value={etat.quantite}
-              onChange={e => { const v = parseFloat(e.target.value); onChange({ quantite: Number.isFinite(v) && v >= 0 ? v : 0 }); }} aria-label="Quantité" />
+              onChange={e => { const v = parseFloat(e.target.value); onChange({ quantite: Number.isFinite(v) && v >= 0 ? v : 0 }); }} aria-label={longueur ? "Longueur (m)" : l.segment.heures ? "Heures" : "Quantité"} />
+            {(longueur || l.segment.heures) && <span className="text-xs text-ink-500 -ml-1">{longueur ? "m" : "h"}</span>}
             <select className="input !py-1 flex-1 min-w-[180px] !text-sm" value={etat.prestationId ?? ""} onChange={e => onChange({ prestationId: e.target.value || null })} aria-label="Article du catalogue">
               <option value="">{l.segment.heures ? "Main d'œuvre au taux horaire" : "À compléter (sans article)"}</option>
               {options.map(p => <option key={p.id} value={p.id}>{p.nom} — {eur(p.prix_unitaire)}</option>)}
             </select>
             <button className="btn-ghost !px-2" onClick={() => setRecherche(r => (r === null ? "" : null))} aria-label="Chercher un autre article"><Search size={15} /></button>
-            <span className="ml-auto font-mono text-sm text-ink-700 w-24 text-right">{choisi ? eur(total) : "—"}</span>
+            <span className="ml-auto font-mono text-sm text-ink-700 w-24 text-right">{choisi || l.segment.heures ? eur(total) : "—"}</span>
           </div>
+          {detail && <p className="text-xs text-ink-500">{detail}</p>}
+          {enBobines && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-600">
+              <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={etat.conditionnement !== "metre"} onChange={() => onChange({ conditionnement: "auto" })} /> Bobines + reliquat au mètre</label>
+              <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={etat.conditionnement === "metre"} onChange={() => onChange({ conditionnement: "metre" })} /> Tout au mètre (pas de bobine)</label>
+              {etat.conditionnement === "metre" && choisi && !auMetreDisponible(choisi, prestations) && <span className="text-amber-700">Pas d&apos;article « au mètre » dans le catalogue : la bobine est conservée.</span>}
+            </div>
+          )}
           {!choisi && !l.segment.heures && <p className="text-xs text-amber-700">Aucun article sûr : choisis-en un, ou laisse « À compléter » (ligne à 0 €).</p>}
           {recherche !== null && (
             <div className="space-y-1">
@@ -237,7 +250,7 @@ export default function DevisRapidePage() {
 
   const etatDe = (l: LigneVocale): ChoixLigneVocale => {
     const c = corrections[l.cle] ?? {};
-    return { inclus: c.inclus ?? true, quantite: c.quantite ?? l.segment.quantite, prestationId: c.prestationId !== undefined ? c.prestationId : l.choixAuto };
+    return { inclus: c.inclus ?? true, quantite: c.quantite ?? l.segment.quantite, prestationId: c.prestationId !== undefined ? c.prestationId : l.choixAuto, conditionnement: c.conditionnement ?? "auto" };
   };
   const lignesDevis = useMemo(
     () => lignesDepuisDictee(analyse.lignes, etatDe, prestations ?? [], taux),
@@ -286,7 +299,7 @@ export default function DevisRapidePage() {
             )}
             <p className="text-xs text-ink-500">
               {dictee.supporte
-                ? dictee.ecoute ? "Je t'écoute… parle normalement, appuie de nouveau pour arrêter." : "Appuie sur le micro puis dicte. Exemple : « pour Monsieur Dupont, 5 prises 16 ampères, 3 spots et 2 heures de main d'œuvre »."
+                ? dictee.ecoute ? "Je t'écoute… parle normalement, appuie de nouveau pour arrêter." : "Appuie sur le micro puis dicte d'une traite, sans séparateur : annonce simplement la quantité avant chaque article. Exemple : « pour Monsieur Dupont, 5 prises 16 ampères, 3 spots, 20 mètres de câble 2,5 et 2 heures de main d'œuvre »."
                 : "Ce navigateur n'a pas de dictée intégrée : utilise le micro du clavier de ton téléphone dans la zone de texte, ou tape."}
               {" "}Astuce : le micro du clavier du téléphone est souvent plus précis ; le texte reste modifiable, et chaque article que tu corriges est retenu pour la prochaine fois.
             </p>
@@ -316,7 +329,7 @@ export default function DevisRapidePage() {
         {prestations && analyse.lignes.length === 0 && texte.trim() !== "" && <p className="text-sm text-ink-500">Je n&apos;ai trouvé aucune ligne dans ce texte.</p>}
         <div className="space-y-2">
           {analyse.lignes.map(l => (
-            <LigneRapide key={l.cle} l={l} etat={etatDe(l)} prestations={prestations ?? []}
+            <LigneRapide key={l.cle} l={l} etat={etatDe(l)} prestations={prestations ?? []} taux={taux}
               onChange={c => {
                 setCorrections(x => ({ ...x, [l.cle]: { ...x[l.cle], ...c } }));
                 if (c.prestationId && !l.segment.heures) apprendre(l.segment.libelle, c.prestationId);   // la prochaine fois, ce mot dicté donnera cet article

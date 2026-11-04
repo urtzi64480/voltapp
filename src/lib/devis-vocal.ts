@@ -6,6 +6,8 @@
 
 import type { Client, DevisLigne, Prestation } from "@/types";
 import { ligneDepuisArticle, PREFIXE_A_COMPLETER } from "./devis-lignes";
+import { articleAuMetre, estBobinable, genererLignesDevis, optionDepuisPrestation, type BesoinApparie, type Conditionnement } from "./predevis-engine";
+import { sousCategoriesDe } from "./sous-categories";
 
 // ─── Texte ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -131,6 +133,10 @@ export interface SegmentDicte {
   libelle: string;
   /** Segment de main d'œuvre : la quantité est un nombre d'heures. */
   heures: boolean;
+  /** « 20 mètres de câble » : la quantité est une longueur. */
+  metres: boolean;
+  /** « 2 bobines de câble » : la quantité est un nombre de bobines / rouleaux (pas de découpage en mètres). */
+  bobines: boolean;
 }
 
 const PROTEGES: [RegExp, string][] = [
@@ -154,6 +160,48 @@ function nombreDe(t: string): number {
   return parseFloat(t.replace(",", "."));
 }
 
+// ─── Dictée naturelle : on coupe là où une nouvelle quantité commence, sans besoin de dire « plus » ─────────────────
+
+// Mots qui suivent un nombre SANS en faire une quantité : « 16 ampères », « 2,5 mm », « 230 volts »…
+const UNITES_SPEC = new Set(["a", "amp", "amps", "ampere", "amperes", "ma", "mm", "mm2", "millimetre", "millimetres", "v", "volt", "volts", "w", "watt", "watts", "kw", "kva", "va", "pole", "poles", "p", "m2", "degre", "degres", "lumens", "lm", "k", "mhz"]);
+const LIAISONS = new Set(["un", "une", "de", "du", "des", "d", "et", "ou", "x", "fois", "le", "la", "les"]);
+// Un nombre précédé de ces mots est une caractéristique (« type 2 », « calibre 16 »), pas une quantité.
+const AVANT_SPEC = new Set(["type", "n", "no", "numero", "num", "ref", "reference", "calibre", "section", "diametre", "taille", "de", "du", "d", "x", "fois", "au", "aux", "en", "sur", "sous", "jusqu", "environ", "ou"]);
+// « un / une » après ces mots est un article (« pour une cuisine »), pas une quantité.
+const PREPOSITIONS = new Set(["pour", "dans", "sur", "sous", "de", "du", "d", "en", "a", "au", "aux", "chez", "avec", "par", "entre", "vers", "sans", "comme", "ou", "dont", "que", "qui"]);
+
+const mot = (tok: string) => minuscules(tok).replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "").replace(/'$/, "");
+const estNombreTok = (tok: string) => /^\d+(?:[.,]\d+)?$/.test(tok);
+const estMotTok = (tok: string) => /^[a-zà-ÿœ][a-zà-ÿœ'’-]*$/i.test(tok.replace(/[.,;:!?]+$/, ""));
+
+/**
+ * Insère une virgule avant chaque nouvelle quantité : « 5 prises 16 ampères 3 spots un disjoncteur 40 A » → « 5 prises 16 ampères, 3 spots, un disjoncteur 40 A ».
+ * Un nombre est une quantité s'il est suivi d'un mot qui n'est pas une unité technique (ampères, mm…) et si l'article précédent est déjà décrit ;
+ * « un / une » en est une sauf après une préposition. Les nombres nus (« câble 2,5 ») restent des caractéristiques.
+ */
+export function couperAuxQuantites(texte: string): string {
+  const tok = texte.split(/\s+/).filter(Boolean);
+  const sortie: string[] = [];
+  let motsDansSegment = 0;
+  for (let i = 0; i < tok.length; i++) {
+    const cur = tok[i], suivant = tok[i + 1], precedent = i > 0 ? mot(tok[i - 1]) : "";
+    const m = mot(cur);
+    const fin = /[,;.]$/.test(sortie[sortie.length - 1] ?? "");
+    if (fin || sortie.length === 0) motsDansSegment = 0;
+    let coupe = false;
+    if (motsDansSegment > 0 && suivant !== undefined && estMotTok(suivant)) {
+      const s = mot(suivant);
+      if (estNombreTok(cur) && !UNITES_SPEC.has(s) && !LIAISONS.has(s) && !AVANT_SPEC.has(precedent)) coupe = true;
+      else if ((m === "un" || m === "une") && !PREPOSITIONS.has(precedent) && !LIAISONS.has(s)) coupe = true;
+    }
+    if (coupe && sortie.length > 0 && !/[,;.]$/.test(sortie[sortie.length - 1])) sortie[sortie.length - 1] += ",";
+    if (coupe) motsDansSegment = 0;
+    sortie.push(cur);
+    if (estMotTok(cur) && !LIAISONS.has(m)) motsDansSegment++;
+  }
+  return sortie.join(" ");
+}
+
 /** Découpe une dictée en segments (un article ou une prestation chacun). Le nom du client doit avoir été retiré avant. */
 export function decouperDictee(texte: string): SegmentDicte[] {
   let t = corrigerReconnaissance(texte ?? "").replace(/[\n\r]+/g, ", ").replace(/\s+/g, " ").trim();
@@ -161,7 +209,8 @@ export function decouperDictee(texte: string): SegmentDicte[] {
   t = heuresDemies(chiffrer(t));
   PROTEGES.forEach(([re, to]) => { t = t.replace(re, to); });
   t = t.replace(REMPLISSAGE, " ").replace(/\s+/g, " ");
-  const morceaux = t.split(/\s*(?:(?<!\d)[,;.]|[,;.](?!\d)|\bet\b|\bpuis\b|\bplus\b|\bensuite\b|\bavec\b|\bainsi que\b)\s*/i).map(s => s.trim()).filter(Boolean);
+  t = couperAuxQuantites(t);
+  const morceaux = t.split(/\s*(?:(?<!\d)[,;.]|[,;.](?!\d)|\bet\b|\bpuis\b|\bplus\b|\bensuite\b|\bavec\b|\bainsi que\b|[+&])\s*/i).map(s => s.trim()).filter(Boolean);
   const segments: SegmentDicte[] = [];
   for (const morceau of morceaux) {
     const m = morceau.replace(/va_et_vient/g, "va et vient").replace(/aller_et_retour/g, "aller et retour").trim();
@@ -177,12 +226,14 @@ export function decouperDictee(texte: string): SegmentDicte[] {
     const premier = minuscules(reste).split(/\s+/)[0] ?? "";
     const heures = MOTS_HEURES.test(premier) || (debut !== null && MOTS_MO.test(minuscules(reste)) && /\b(heures?|h)\b/.test(minuscules(m)));
     let libelle = reste;
+    let metres = false, bobines = false;
     if (heures) libelle = reste.replace(/^(heures?|h|hr|hrs)\b\s*(de|d')?\s*/i, "");
-    else libelle = reste.replace(/^(metres?|m|ml|mètres?)\s+(de|d')\s*/i, "");
+    else if (/^(metres?|mètres?|m|ml)(?=\s)/i.test(reste) && debut) { metres = true; libelle = reste.replace(/^(metres?|mètres?|m|ml)\s+(?:(?:de|d')\s*)?/i, ""); }
+    else if (/^(bobines?|rouleaux?|couronnes?|bottes?|barres?)(?=\s)/i.test(minuscules(reste)) && debut) { bobines = true; libelle = reste.replace(/^\S+\s+(?:(?:de|d')\s*)?/i, ""); }
     libelle = libelle.replace(/\b(de|d')\s*$/i, "").trim();
     if (!Number.isFinite(quantite) || quantite <= 0) quantite = 1;
     if (!libelle && !heures) continue;
-    segments.push({ brut: m, quantite, libelle: libelle || "main d'oeuvre", heures: heures || (!debut && MOTS_MO.test(minuscules(m)) && /\b(heures?)\b/.test(minuscules(m))) });
+    segments.push({ brut: m, quantite, libelle: libelle || "main d'oeuvre", heures: heures || (!debut && MOTS_MO.test(minuscules(m)) && /\b(heures?)\b/.test(minuscules(m))), metres, bobines });
   }
   return segments;
 }
@@ -356,36 +407,71 @@ export function motsPourReconnaissance(prestations: Prestation[], max = 120): st
 
 // ─── Lignes de devis ──────────────────────────────────────────────────────────────────────────────────────────────
 
-export interface ChoixLigneVocale { inclus: boolean; quantite: number; prestationId: string | null }
+export interface ChoixLigneVocale { inclus: boolean; quantite: number; prestationId: string | null; conditionnement?: Conditionnement }
 export type LigneNouvelle = Omit<DevisLigne, "devis_id" | "ordre">;
 
 /**
- * Lignes du devis. Article choisi → prix de vente du catalogue ; main d'œuvre sans article → taux horaire du profil ; sinon ligne « À compléter » à 0 €.
- * Une même ligne dictée deux fois (même article) est additionnée.
+ * Sous-catégories d'un article vendu au mètre / en bobine : celle du « besoin » du pré-devis et celle de l'article. Un câble « cable_2.5 » répond
+ * au besoin « cablage_2.5 » ; fils, gaines, moulures, RJ45 et coax portent le même code des deux côtés. null = pas un article de métrage.
  */
+function metrage(p: Prestation): { besoin: string; article: string } | null {
+  for (const code of sousCategoriesDe(p)) {
+    if (estBobinable(code)) return { besoin: code, article: code };
+    if (code.startsWith("cable_")) return { besoin: `cablage_${code.slice("cable_".length)}`, article: code };
+  }
+  return null;
+}
+
+/** La quantité dictée est-elle une longueur ? Oui si « mètres » a été dit, ou si l'article est un câble / une gaine / une moulure (comme dans le pré-devis). */
+export function enMetres(l: LigneVocale, p: Prestation): boolean {
+  if (l.segment.bobines || l.segment.heures) return false;
+  if (l.segment.metres) return true;
+  return ["m", "ml"].includes((p.unite ?? "").toLowerCase()) || metrage(p) !== null;
+}
+
+/**
+ * Lignes d'UNE ligne dictée. Un câble / une gaine en bobine suit le pré-devis : bobines entières + reliquat au mètre (ou « tout au mètre »).
+ * Sans article : main d'œuvre au taux horaire, sinon ligne « À compléter » à 0 €.
+ */
+export function lignesDeLaLigne(l: LigneVocale, c: ChoixLigneVocale, prestations: Prestation[], tauxHoraire: number): LigneNouvelle[] {
+  if (!c.inclus || !(c.quantite > 0)) return [];
+  const p = c.prestationId ? prestations.find(x => x.id === c.prestationId) : undefined;
+  if (p) {
+    const m = metrage(p);
+    if (m && enMetres(l, p)) {
+      const option = optionDepuisPrestation(p, m.article);
+      const besoin: BesoinApparie = { cle: "VOCAL", sousCategorie: m.besoin, label: p.nom, piece: "", quantite: c.quantite, unite: "m", options: [option] };
+      return genererLignesDevis([{ besoin, optionCatalogue: option, conditionnement: c.conditionnement }], prestations)
+        .map(x => ({ ...x, description: undefined, poste: null }));
+    }
+    return [{ ...ligneDepuisArticle(p, undefined, null), quantite: c.quantite }];
+  }
+  if (l.segment.heures && tauxHoraire > 0) return [{ nom: "Main d'œuvre", quantite: c.quantite, prix_unitaire: tauxHoraire, unite: "heure", type_branche: "service" }];
+  return [{
+    nom: `${PREFIXE_A_COMPLETER}${l.segment.libelle}`, quantite: c.quantite, prix_unitaire: 0,
+    unite: l.segment.heures ? "heure" : l.segment.metres ? "ml" : "u", type_branche: l.segment.heures ? "service" : "materiau",
+  }];
+}
+
+/** Lignes du devis. Un même article dicté deux fois est additionné. */
 export function lignesDepuisDictee(
   lignes: LigneVocale[], choix: (l: LigneVocale) => ChoixLigneVocale, prestations: Prestation[], tauxHoraire: number,
 ): LigneNouvelle[] {
   const sortie: LigneNouvelle[] = [];
   for (const l of lignes) {
-    const c = choix(l);
-    if (!c.inclus || !(c.quantite > 0)) continue;
-    const p = c.prestationId ? prestations.find(x => x.id === c.prestationId) : undefined;
-    if (p) {
-      const base = ligneDepuisArticle(p, undefined, null);
-      const existante = sortie.find(x => x.prestation_id === p.id);
-      if (existante) existante.quantite += c.quantite;
-      else sortie.push({ ...base, quantite: c.quantite });
-    } else if (l.segment.heures && tauxHoraire > 0) {
-      sortie.push({ nom: "Main d'œuvre", quantite: c.quantite, prix_unitaire: tauxHoraire, unite: "heure", type_branche: "service" });
-    } else {
-      sortie.push({
-        nom: `${PREFIXE_A_COMPLETER}${l.segment.libelle}`, quantite: c.quantite, prix_unitaire: 0,
-        unite: l.segment.heures ? "heure" : "u", type_branche: l.segment.heures ? "service" : "materiau",
-      });
+    for (const nouvelle of lignesDeLaLigne(l, choix(l), prestations, tauxHoraire)) {
+      const existante = nouvelle.prestation_id ? sortie.find(x => x.prestation_id === nouvelle.prestation_id && x.nom === nouvelle.nom) : undefined;
+      if (existante) existante.quantite += nouvelle.quantite;
+      else sortie.push(nouvelle);
     }
   }
   return sortie;
+}
+
+/** L'article « au mètre » existe-t-il (pour « tout au mètre ») ? Sert à prévenir comme le pré-devis. */
+export function auMetreDisponible(p: Prestation, prestations: Prestation[]): boolean {
+  const m = metrage(p);
+  return !!m && !!articleAuMetre(m.article, p.gamme, prestations);
 }
 
 export const libelleClient = (c: ClientCourt | Client): string => [c.prenom, c.nom].filter(Boolean).join(" ");
