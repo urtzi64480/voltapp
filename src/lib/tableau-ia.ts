@@ -10,6 +10,8 @@
 import type { Breaker, BreakerRow } from "./electrical-constants";
 import { CIRCUITS, emplacementsPourModules, largeurAppareil, premierEmplacementLibre, redimensionnerRangee, uid } from "./electrical-constants";
 import { assemblerTableau, maxIdRows, remapperIdsRows } from "./maison-engine";
+import { emballerEnRails } from "./disposition-tableau";
+export { emballerEnRails };
 import { NORME_CIRCUITS, type StatutNorme } from "./normes-nfc";
 import { calculerTableauReel, fusionnerParamsTableau, sectionMiniPourCalibre, type ParamsTableauReel, type ResultatTableauReel } from "./tableau-reel";
 
@@ -428,40 +430,6 @@ function paramsPour(ctx: ContexteTableau, modulesParRail: number): ParamsTableau
 }
 
 export const MODULES_PAR_RAIL_CANDIDATS = [13, 18, 24] as const;
-
-/**
- * Range des groupes « un différentiel + ses départs » (les rangées logiques de assemblerTableau) sur des rails de `modules` modules : un rail
- * reçoit plusieurs groupes tant qu'il y a la place (2 modules par différentiel + les départs), dans l'ordre ; le suivant ouvre un nouveau rail.
- * Le différentiel de tête est en case 0, les suivants dans les emplacements (2 modules) et protègent les départs à leur droite. Rien n'est jamais perdu.
- */
-export function emballerEnRails(rows: BreakerRow[], modules: number): BreakerRow[] {
-  const nbEmpl = emplacementsPourModules(modules);
-  const rails: BreakerRow[] = [];
-  let courant: { row: BreakerRow; slots: (Breaker | null)[]; idx: number } | null = null;
-  const ouvrir = (base: BreakerRow) => {
-    courant = { row: base, slots: Array(nbEmpl + 1).fill(null), idx: 1 };
-    rails.push(base);   // remplacé à la fin par la version remplie
-  };
-  const fermer = () => {
-    if (!courant) return;
-    const i = rails.indexOf(courant.row);
-    rails[i] = { ...courant.row, modules, slots: courant.slots };
-  };
-  rows.forEach(r => {
-    const id = r.slots[0] ?? null;
-    const departs = r.slots.slice(1).filter((b): b is Breaker => !!b);
-    const w = departs.reduce((n, b) => n + largeurAppareil(b), 0);
-    const tient = courant != null && id != null && courant.idx + 1 + w <= nbEmpl;
-    if (!tient) { fermer(); ouvrir(r); courant!.slots[0] = id; }
-    else { courant!.slots[courant!.idx] = id; courant!.idx += 2; }
-    const c = courant!;
-    // garde-fou : un groupe plus large que le rail (inatteignable avec 8 départs) agrandit les cases plutôt que de perdre un appareil
-    while (c.slots.length < c.idx + w) c.slots.push(null);
-    departs.forEach(b => { c.slots[c.idx] = b; c.idx += largeurAppareil(b); });
-  });
-  fermer();
-  return rails;
-}
 
 /**
  * Refait le tableau à la norme à partir du relevé (corrigé par l'électricien), des circuits ajoutés et du contexte.

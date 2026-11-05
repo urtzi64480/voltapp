@@ -33,6 +33,7 @@ import type { PieceType } from "@/lib/maison-types";
 import { calculerEscalier, hauteurTotaleEscalierCm, escaliersEntrants as lireEscaliersEntrants, nouvelEscalier, LABEL_ESCALIER_TYPE, LABEL_STRUCTURE, LABEL_RAMPE, LABEL_MATERIAU, COULEUR_MATERIAU, DIAMETRE_HELICE_DEFAUT_CM, DIAMETRE_POTEAU_DEFAUT_CM } from "@/lib/escaliers";
 import { AppareillageSymbol, AppareillageGlyphe, labelAppareillage, labelAppareillagePlace, initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 import { cotesOuvertures, cotesExterieures, coteHorsTout } from "@/lib/cotes-archi";
+import { assemblerTableauDispose, CHOIX_DISPOSITION_DEFAUT, LARGEURS_RAIL, type ChoixDisposition } from "@/lib/disposition-tableau";
 import { normaliserAngle } from "@/lib/soleil";
 import { posesTroncons, hauteursTroncons, appliquerPoseEntre, reconformerTracesNiveau } from "@/lib/pose-circuits";
 import { creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurCircuit } from "@/lib/longueurs-circuits";
@@ -46,7 +47,7 @@ import { placerEtiquettePiece, carreAutour, RectPx } from "@/lib/etiquette-piece
 import { disposerPlaque, normaliserPlaques, infosPlaques, InfoPlaque, droiteFaceAuMur, ancrageMurLePlusProche, pieceLaPlusProche, estMural, TOLERANCE_MUR_M, baieDuVolet, recentrerVolet, cotesAppareillage, filtrerCotesLisibles, geometrieCote, Cote, GeoCote } from "@/lib/appareillage-mur";
 import type { Vue3DHandle } from "@/components/plan/Vue3D";
 import { toutesBoitesNiveau, segmentsDepuisMarche } from "@/lib/maison-engine";
-import { genererCircuits, assemblerTableau, remapperIdsRows, maxIdRows, integrerCoffretCommunication, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, genererCircuitsManuelsSeuls, appliquerReglagesTableau, segmentsPourCircuit, ResultatGeneration } from "@/lib/maison-engine";
+import { genererCircuits, remapperIdsRows, maxIdRows, integrerCoffretCommunication, genererGainesNiveaux, construireColorMap, breakersDuNiveau, controlerCircuits, ProblemeCircuit, messageDepassement, genererCircuitsManuelsSeuls, appliquerReglagesTableau, segmentsPourCircuit, ResultatGeneration } from "@/lib/maison-engine";
 import { CIRCUITS, BreakerRow, Breaker, estCircuitSansDisjoncteur, estAccessoireTableau, BREAKER_TYPES, effectiveSection, gaineRecommandee, gaineCommunication } from "@/lib/electrical-constants";
 import { verifierEclairageManuel } from "@/lib/controle-eclairage";
 import { coudesSegment } from "@/lib/routage-circuits";
@@ -255,6 +256,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [showCotesExt, setShowCotesExt] = useState(false);   // cotes extérieures des murs + hors-tout
   const [showCotesOuv, setShowCotesOuv] = useState(false);   // chaîne de cotes des ouvertures
   const [menuCotesOuvert, setMenuCotesOuvert] = useState(false);
+  // Disposition du tableau poussé / affiché : largeur des rails (13, 18, 24 modules) et plusieurs différentiels par rail. « auto » = proposition calculée selon la NF C 15-100.
+  const [choixDispo, setChoixDispo] = useState<ChoixDisposition>(CHOIX_DISPOSITION_DEFAUT);
+  const [menuDispoOuvert, setMenuDispoOuvert] = useState(false);
   const [menuEffacerOuvert, setMenuEffacerOuvert] = useState(false);
   // Déplacer la vue sans risque : outil « Main » (tout glisser déplace le plan, rien d'autre), ou Espace maintenu,
   // ou bouton du milieu / droit de la souris — les pièces et appareillages ne bougent jamais dans ces cas.
@@ -3511,12 +3515,13 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     // sans nouveau circuit : un niveau rattaché à un autre tableau doit disparaître de l'ancien.
     const remplacerLotPlan = (existantes: BreakerRow[], circuits: typeof breakersAvecNoms, rj45: Breaker[] = []) => {
       const rowsConservees = existantes.filter(r => r.origine !== "plan");
-      const nouvelles = circuits.length > 0 ? assemblerTableau(circuits) : [];
+      const dispo = assemblerTableauDispose(circuits, choixDispo);
+      const nouvelles = dispo.rows;
       const offset = maxIdRows(rowsConservees) + 100000;
       const nbDejaRangees = rowsConservees.filter(r => r.kind !== "multimedia").length;
       const remap = remapperIdsRows(nouvelles, offset).map((r, i) => ({ ...r, name: `Rangée ${nbDejaRangees + i + 1}` }));
       // Coffret de communication : un port RJ45 par prise RJ45 du plan (voir integrerCoffretCommunication).
-      return { rowsFinal: integrerCoffretCommunication([...rowsConservees, ...remap], rj45), nbRangees: remap.length };
+      return { rowsFinal: integrerCoffretCommunication([...rowsConservees, ...remap], rj45), nbRangees: remap.length, raison: circuits.length > 0 ? dispo.proposition.raison : "", modules: dispo.disposition.modules };
     };
     // Circuits RJ45 (sans disjoncteur) par tableau cible — leurs ports vont dans le coffret de communication de ce tableau.
     const rj45Pousses = resultat_.breakers.filter(b => estCircuitSansDisjoncteur(b)).map(b => ({ ...b, label: tousNomsCircuits[b.label] ?? b.label }));
@@ -3558,7 +3563,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setRowsTableauxSauves([...resPrincipal.rowsFinal, ...annexesPourEtat.flatMap(a => a.rows ?? [])]);
     setPushing(false);
     setPushMsg(
-      `${resPrincipal.nbRangees} rangée(s) et ${groupes[TABLEAU_PRINCIPAL].length} circuit(s) mis à jour dans le tableau principal.` +
+      `${resPrincipal.nbRangees} rangée(s) et ${groupes[TABLEAU_PRINCIPAL].length} circuit(s) mis à jour dans le tableau principal` + (resPrincipal.raison ? ` (${resPrincipal.raison.replace(/\.$/, "")}).` : ".") +
       (annexes.length > 0 ? ` Annexes : ${nbRangeesAnnexes} rangée(s), ${nbCircuitsAnnexes} circuit(s).` : "") +
       (nbExclus > 0 ? ` ${nbExclus} circuit(s) déjà existant(s) non poussé(s).` : "")+
       (recalcules ? " Circuits recalculés avant la poussée (le plan avait changé)." : "")+
@@ -3777,8 +3782,15 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       vus.add(b.id);
       liste.push({ ...b, label: noms[b.label] ?? b.label });
     }));
-    return liste.length > 0 ? assemblerTableau(liste) : [];
-  }, [panneauTableauOuvert, reglagesTR.source, rowsEnregistres, resultat, niveaux, tableauReelEffectif]);
+    return liste.length > 0 ? assemblerTableauDispose(liste, choixDispo).rows : [];
+  }, [panneauTableauOuvert, reglagesTR.source, rowsEnregistres, resultat, niveaux, tableauReelEffectif, choixDispo]);
+
+  // Proposition automatique pour l'ensemble des circuits du plan (affichée dans le menu « Disposition du tableau »).
+  const dispoPlan = useMemo(() => {
+    if (!menuDispoOuvert || !resultat) return null;
+    const liste = resultat.breakers.filter(b => !estCircuitSansDisjoncteur(b));
+    return liste.length > 0 ? assemblerTableauDispose(liste, choixDispo) : null;
+  }, [menuDispoOuvert, resultat, choixDispo]);
 
   /** Clic sur un disjoncteur du tableau réaliste → isole son circuit sur le plan ; clic de nouveau → tous les circuits. */
   const [breakerPanneauId, setBreakerPanneauId] = useState<number | null>(null);
@@ -4783,6 +4795,42 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                     </label>
                   ))}
                   <p className="text-[11px] text-ink-400 border-t border-ink-100 pt-2">Cotes en cm. L&apos;appareillage sélectionné affiche toujours les siennes.</p>
+                </div>
+              </>
+            )}
+          </div>
+          <div className="relative">
+            <Outil label="Disposition du tableau" aide="Largeur des rails (13, 18 ou 24 modules) et plusieurs différentiels par rail, pour « Pousser vers le tableau »" onClick={() => setMenuDispoOuvert(o => !o)} actif={choixDispo.largeur !== "auto" || choixDispo.plusieursId !== "auto"}>
+              <SlidersHorizontal size={16} /><ChevronDown size={11} />
+            </Outil>
+            {menuDispoOuvert && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setMenuDispoOuvert(false)} />
+                <div className="absolute left-0 top-full mt-1 z-40 w-80 card p-3 flex flex-col gap-3 shadow-lg">
+                  <p className="text-xs font-semibold text-ink-800">Disposition du tableau</p>
+                  <label className="block"><span className="text-[11px] text-ink-500">Largeur des rails</span>
+                    <select className="input" value={String(choixDispo.largeur)} onChange={e => { const v = e.target.value; setChoixDispo(c => ({ ...c, largeur: v === "auto" || v === "historique" ? v : (parseInt(v, 10) as 13 | 18 | 24) })); }}>
+                      <option value="auto">Automatique (recommandé)</option>
+                      {LARGEURS_RAIL.map(m => <option key={m} value={m}>{m} modules par rail</option>)}
+                      <option value="historique">Historique (8 emplacements, un différentiel par rangée)</option>
+                    </select>
+                  </label>
+                  <label className="block"><span className="text-[11px] text-ink-500">Différentiels par rail</span>
+                    <select className="input" value={String(choixDispo.plusieursId)} disabled={choixDispo.largeur === "historique"} onChange={e => { const v = e.target.value; setChoixDispo(c => ({ ...c, plusieursId: v === "auto" ? "auto" : v === "true" })); }}>
+                      <option value="auto">Automatique (recommandé)</option>
+                      <option value="false">Un seul par rail</option>
+                      <option value="true">Plusieurs par rail</option>
+                    </select>
+                  </label>
+                  {dispoPlan && (
+                    <div className="text-[11px] leading-snug rounded-lg bg-ink-50 border border-ink-100 p-2 text-ink-600">
+                      <span className="font-semibold text-ink-800">Proposition automatique (NF C 15-100) :</span> {dispoPlan.proposition.raison}
+                      {(choixDispo.largeur !== "auto" || choixDispo.plusieursId !== "auto") && (
+                        <button className="block mt-1 underline text-ink-700" onClick={() => setChoixDispo(CHOIX_DISPOSITION_DEFAUT)}>Revenir à la proposition automatique</button>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-[11px] text-ink-400">S&apos;applique au prochain « Pousser vers le tableau » et au tableau réaliste. La norme alerte, elle ne bloque jamais : tu peux toujours forcer un autre choix.</p>
                 </div>
               </>
             )}
