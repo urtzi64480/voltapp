@@ -58,8 +58,9 @@
 //    (le câble suit les murs et les gaines, pas la ligne droite) PLUS les montées / descentes (coffret → gaine → prise).
 //  - TABLEAU (poste « Tableau électrique ») : TOUS les appareils des rangées (principal + annexes) sont chiffrés — chaque
 //    disjoncteur par calibre (disjoncteur_XA), chaque différentiel par calibre et type (differentiel_XA_T), classés
-//    d'après leur TYPE et non leur position — plus UNE goulotte de montage (sous_categorie "goulotte_tableau") par
-//    rangée équipée. La page du pré-devis demande si ce poste doit entrer dans le devis (voir estPieceTableau).
+//    d'après leur TYPE et non leur position — plus trois postes GTL / tableau, adaptés au nombre de rangées et à la largeur
+//    de leurs rails (13, 18, 24 modules) : le coffret (« coffret_tableau_… »), sa porte (« porte_tableau_… ») et la goulotte GTL
+//    (sous_categorie "goulotte_tableau", une par rangée équipée). La page du pré-devis demande si ce poste doit entrer dans le devis (voir estPieceTableau).
 //  - Les appareils "dédiés" (four, plaque, lave-linge…, y compris chauffage) ne sont
 //    jamais chiffrés en tant qu'appareil — uniquement leur prise/sortie de câble
 //    spécialisée (sous_categorie "prise_specialisee").
@@ -273,7 +274,8 @@ interface IndexTableau {
   parLabel: Map<string, TableauBreaker>;
   disjoncteurs: TableauBreaker[]; // tout appareil qui n'est PAS un différentiel, où qu'il soit dans la rangée
   differentiels: TableauBreaker[]; // tout interrupteur différentiel (BREAKER_TYPES[type].isDiff), où qu'il soit
-  nbRangees: number;               // rangées portant au moins un appareil (une goulotte de montage chacune)
+  nbRangees: number;               // rangées portant au moins un appareil (coffret de communication compris)
+  rails: number[];                 // largeur en modules (13, 18, 24…) de chaque rangée de tableau équipée, coffret de communication exclu : dimensionne coffret, porte et goulotte
   sectionneurs: TableauBreaker[];  // coupures générales (interrupteurs-sectionneurs)
   prisesModulaires: number;        // prises 16 A modulaires posées sur le rail
   coffretCommunication: boolean;   // un coffret de communication (case annexe multimédia) existe dans le tableau
@@ -290,6 +292,7 @@ function indexerTableau(rows: BreakerRow[]): IndexTableau {
   const differentiels: TableauBreaker[] = [];
   const sectionneurs: TableauBreaker[] = [];
   let prisesModulaires = 0, coffretCommunication = false, nbRangees = 0, emplacementsLibres = 0, parafoudres = 0;
+  const rails: number[] = [];
   rows.forEach(row => {
     let rangeeUtilisee = false;
     if (row.kind === "multimedia") coffretCommunication = true;
@@ -305,10 +308,12 @@ function indexerTableau(rows: BreakerRow[]): IndexTableau {
       if (b.label) parLabel.set(b.label, b);
     });
     if (rangeeUtilisee) nbRangees++;
+    // Largeur du rail : celle choisie pour la rangée (13, 18 ou 24 modules), sinon 13 (coffret usuel, comme les rangées historiques).
+    if (rangeeUtilisee && row.kind !== "multimedia") rails.push(typeof row.modules === "number" && row.modules >= 4 ? Math.round(row.modules) : 13);
     // Emplacements libres en modules : la coupure générale et la prise modulaire en occupent 2 (la case vide qui suit n'est pas libre).
     if (rangeeUtilisee && row.kind !== "multimedia") emplacementsLibres += emplacementsLibresRangee(row.slots, false);
   });
-  return { parLabel, disjoncteurs, differentiels, nbRangees, sectionneurs, prisesModulaires, coffretCommunication, emplacementsLibres, parafoudres };
+  return { parLabel, disjoncteurs, differentiels, nbRangees, rails, sectionneurs, prisesModulaires, coffretCommunication, emplacementsLibres, parafoudres };
 }
 
 // ─── PASSE 1 — BESOINS BRUTS (géométrie + tableau, sans catalogue) ─────────
@@ -354,51 +359,40 @@ function ajouterBesoinsTableau(ajouter: AjouterBesoin, alertes: string[], indexT
   const parSectionneur = new Map<number, number>();
   indexTableau.sectionneurs.forEach(b => parSectionneur.set(b.amperes, (parSectionneur.get(b.amperes) ?? 0) + 1));
   parSectionneur.forEach((nb, amperes) => ajouter(`interrupteur_sectionneur_${amperes}A`, `interrupteur_sectionneur_${amperes}A`, `Interrupteur-sectionneur ${amperes}A (coupure générale)`, PSEUDO_TABLEAU, nb, "u"));
-  // ─── GTL : gaine technique du logement (poste « Tableau électrique », retiré si le tableau n'entre pas dans le devis) ──────────
-  // NF C 15-100 : la GTL (60 cm × 25 cm mini, sol-plafond) réunit le disjoncteur d'abonné, le tableau de répartition et le coffret de
-  // communication. Tout ce qui l'équipe est compté ici d'après le tableau enregistré et les prises RJ45 / TV du plan. Les quantités marquées
-  // « forfait » (moulure, liaison d'abonné, liaison équipotentielle, visserie) sont des estimations à ajuster sur place.
-  const nbR = indexTableau.nbRangees;
+  // ─── GTL / tableau : TROIS postes seulement — goulotte GTL, tableau (coffret), porte de tableau ─────────────────────────────────
+  // Ils suivent le tableau enregistré : nombre de rangées (rails équipés) et largeur de leurs rails (13, 18 ou 24 modules). Le coffret et sa porte
+  // se découpent en blocs de 4 rangées maxi, à la largeur du rail le plus large ; la goulotte GTL est comptée à raison d'une par rangée. Les appareils
+  // (disjoncteurs, différentiels, coupure générale, prise modulaire, parafoudre) sont chiffrés plus haut ; le coffret de communication, avec les
+  // prises RJ45 / TV du plan, juste en dessous.
+  const rails = indexTableau.rails;
+  const nbR = rails.length;
   const avecCommunication = indexTableau.coffretCommunication || nbRj45 > 0 || nbTv > 0;
-  if (nbR > 0 || avecCommunication) {
-    const g = (code: string, label: string, quantite: number, unite: UniteBesoin = "u") => ajouter(code, code, label, PSEUDO_TABLEAU, quantite, unite);
-    g("kit_gtl", "Gaine technique logement GTL 60 × 25 cm (cloisons de séparation courants forts / faibles, panneau de fond)", 1);
-    g("panneau_controle_gtl", "Panneau de contrôle GTL (support compteur et disjoncteur d'abonné)", 1);
-    g("moulure_gtl", "Moulure GTL 2,5 m (passage des câbles : arrivée, départs, courants faibles) — forfait", 2 + (avecCommunication ? 1 : 0));
-    g("boitier_derivation_gtl", "Boîtier de raccordement / dérivation de la GTL", 1);
-    if (nbR > 0) {
-      const quatre = Math.floor(nbR / 4), reste = nbR % 4;
-      if (quatre > 0) g("coffret_tableau_4r", "Coffret de tableau 4 rangées de 13 modules (avec porte)", quatre);
-      if (reste > 0) g(`coffret_tableau_${reste}r`, `Coffret de tableau ${reste} rangée${reste > 1 ? "s" : ""} de 13 modules (avec porte)`, 1);
-      g("plastron_tableau", "Plastron de finition (1 par rangée)", nbR);
-      g("peigne_tableau", "Peigne de distribution (1 par rangée)", nbR);
-      g("bornier_terre_tableau", "Répartiteur / barrette de terre (1 par rangée)", nbR);
-      g("bornier_neutre_tableau", "Répartiteur de neutre (1 par rangée)", nbR);
-      if (indexTableau.emplacementsLibres > 0) g("obturateur_module", "Obturateur de module vide (réserve du tableau)", indexTableau.emplacementsLibres);
-      g("liaison_abonne_10mm", "Câble 10 mm² liaison disjoncteur d'abonné → tableau (phase + neutre) — forfait", 6, "m");
-      g("etiquettes_tableau", "Lot d'étiquettes de repérage des circuits", 1);
-      if (indexTableau.parafoudres > 0) g("parafoudre_type2", "Parafoudre type 2 (cartouche débrochable)", indexTableau.parafoudres);
-    }
-    g("barrette_terre_principale", "Barrette de terre principale (coupure / mesure) et borne de terre de la GTL", 1);
-    g("liaison_equipotentielle_6mm", "Conducteur vert/jaune 6 mm² de liaison équipotentielle principale — forfait", 10, "m");
-    g("visserie_gtl", "Visserie, colliers, chevilles et gaine de liaison de la GTL (lot)", 1);
-    if (avecCommunication) {
-      g("coffret_communication", "Coffret de communication grade 3 (avec répartiteur RJ45 et alimentation)", 1);
-      g("dti_rj45", "DTI — dispositif de terminaison intérieur RJ45", 1);
-      g("repartiteur_tv", "Répartiteur TV (arrivée antenne / satellite)", 1);
-      if (nbRj45 > 0) {
-        g("bandeau_brassage_rj45", "Bandeau de brassage RJ45 cat. 6 STP 4 ports", Math.ceil(nbRj45 / 4));
-        g("cordon_brassage_rj45", "Cordon de brassage RJ45 cat. 6 0,3 m", nbRj45);
-      }
-      g("support_box_gtl", "Support / tablette pour box et switch (espace attenant du coffret)", 1);
-    }
-    // Prise 16 A modulaire : celles posées sur le tableau ; le coffret de communication en exige au moins une (alimentation box / switch).
-    g("prise_modulaire_16A", "Prise de courant modulaire 16A 2P+T (rail DIN)", Math.max(indexTableau.prisesModulaires, avecCommunication ? 1 : 0));
-    alertes.push("Pré-devis : poste GTL — moulure, liaison d'abonné (6 m), liaison équipotentielle (10 m) et visserie sont des forfaits à ajuster selon la hauteur et la configuration réelles de la GTL.");
+  const g = (code: string, label: string, quantite: number, unite: UniteBesoin = "u") => ajouter(code, code, label, PSEUDO_TABLEAU, quantite, unite);
+  if (nbR > 0) {
+    const modules = Math.max(...rails);
+    // Référence : « coffret_tableau_3r » (13 modules, références historiques) ou « coffret_tableau_3r_24m » (18 / 24 modules).
+    const suffixe = (n: number) => (modules === 13 ? `${n}r` : `${n}r_${modules}m`);
+    const libelle = (n: number) => `${n} rangée${n > 1 ? "s" : ""} de ${modules} modules`;
+    const blocs: number[] = [...Array(Math.floor(nbR / 4)).fill(4), ...(nbR % 4 > 0 ? [nbR % 4] : [])];
+    const parTaille = new Map<number, number>();
+    blocs.forEach(n => parTaille.set(n, (parTaille.get(n) ?? 0) + 1));
+    parTaille.forEach((nb, n) => g(`coffret_tableau_${suffixe(n)}`, `Tableau — coffret ${libelle(n)} (sans porte)`, nb));
+    parTaille.forEach((nb, n) => g(`porte_tableau_${suffixe(n)}`, `Porte de tableau pour coffret ${libelle(n)}`, nb));
+    ajouter("goulotte_tableau", "goulotte_tableau", "Goulotte GTL (1 par rangée du tableau)", PSEUDO_TABLEAU, nbR, "u");
+    if (indexTableau.parafoudres > 0) g("parafoudre_type2", "Parafoudre type 2 (cartouche débrochable)", indexTableau.parafoudres);
   }
-
-  // Goulottes de montage du tableau : une par rangée équipée (principal + annexes), chiffrées avec les appareils.
-  ajouter("goulotte_tableau", "goulotte_tableau", "Goulotte de montage du tableau (1 par rangée)", PSEUDO_TABLEAU, indexTableau.nbRangees, "u");
+  if (avecCommunication) {
+    g("coffret_communication", "Coffret de communication grade 3 (avec répartiteur RJ45 et alimentation)", 1);
+    g("dti_rj45", "DTI — dispositif de terminaison intérieur RJ45", 1);
+    g("repartiteur_tv", "Répartiteur TV (arrivée antenne / satellite)", 1);
+    if (nbRj45 > 0) {
+      g("bandeau_brassage_rj45", "Bandeau de brassage RJ45 cat. 6 STP 4 ports", Math.ceil(nbRj45 / 4));
+      g("cordon_brassage_rj45", "Cordon de brassage RJ45 cat. 6 0,3 m", nbRj45);
+    }
+    g("support_box_gtl", "Support / tablette pour box et switch (espace attenant du coffret)", 1);
+  }
+  // Prise 16 A modulaire : celles posées sur le tableau ; le coffret de communication en exige au moins une (alimentation box / switch).
+  if (nbR > 0 || avecCommunication) g("prise_modulaire_16A", "Prise de courant modulaire 16A 2P+T (rail DIN)", Math.max(indexTableau.prisesModulaires, avecCommunication ? 1 : 0));
 }
 
 /** Pré-devis d'un tableau seul (sans plan) : mêmes besoins que le poste « Tableau électrique » du pré-devis du plan. */
