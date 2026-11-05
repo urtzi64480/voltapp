@@ -105,6 +105,8 @@ export interface DepartReel {
   /** Identifiant de gaine (option « gaines optimisées »), sinon une gaine par départ. */
   gaineId: string;
   accessoire: boolean;
+  /** Type du différentiel qui protège ce départ (celui de tête, ou l'ID supplémentaire posé à sa gauche). Absent = différentiel de tête. */
+  diffTypeProtecteur?: string;
 }
 
 export interface RailReel {
@@ -114,7 +116,11 @@ export interface RailReel {
   diffType: string;
   calibreId: number | null;
   capaciteModules: number;
-  modulesId: number;
+  modulesId: number;              // modules du différentiel de tête (les ID supplémentaires sont dans idsSupplementaires)
+  /** Différentiels posés après celui de tête (plusieurs ID sur un même rail) : position en modules depuis le début du rail. */
+  /** Un groupe par différentiel de la rangée (tête puis ID supplémentaires) : calibre, type et nombre de circuits protégés. */
+  groupes: { calibreA: number | null; diffType: string; nbCircuits: number }[];
+  idsSupplementaires: { breakerId: number; diffType: string; calibreA: number; positionModule: number; modules: number }[];
   modulesDeparts: number;
   modulesUtilises: number;
   modulesLibres: number;
@@ -227,29 +233,42 @@ export function calculerTableauReel(rows: BreakerRow[], opts: OptionsCalculTable
   rowsPuissance.forEach((row, index) => {
     const slots = row.slots ?? [];
     const id = slots.find(b => b != null && estId(b)) ?? null;
-    const departsBruts: { b: Breaker; slot: number }[] = [];
-    slots.forEach((b, i) => { if (b && !estId(b) && b.type) departsBruts.push({ b, slot: i }); });
     const modulesId = id ? Math.max(1, BREAKER_TYPES[id.type]?.width ?? 2) : 0;
     let curseur = modulesId;
     const departs: DepartReel[] = [];
-    departsBruts.sort((a, b) => a.slot - b.slot).forEach(({ b }) => {
+    const idsSupplementaires: RailReel["idsSupplementaires"] = [];
+    const groupes: RailReel["groupes"] = [{ calibreA: id?.amperes ?? null, diffType: id ? diffTypeDe(id) : "—", nbCircuits: 0 }];
+    // Lecture dans l'ordre du rail : les différentiels posés après le premier (plusieurs ID sur une rangée) occupent leurs modules à leur place.
+    slots.forEach(b => {
+      if (!b || !b.type || b === id) return;
+      if (estId(b)) {
+        const modules = Math.max(1, BREAKER_TYPES[b.type]?.width ?? 2);
+        groupes.push({ calibreA: b.amperes, diffType: diffTypeDe(b), nbCircuits: 0 });
+        idsSupplementaires.push({ breakerId: b.id, diffType: diffTypeDe(b), calibreA: b.amperes, positionModule: curseur, modules });
+        curseur += modules;
+        return;
+      }
       const modules = largeurAppareil(b);
       const accessoire = estAccessoireTableau(b);
-      if (!accessoire) tousBreakers.push(b);
+      if (!accessoire) { tousBreakers.push(b); groupes[groupes.length - 1].nbCircuits++; }
       departs.push({
         breakerId: b.id, label: b.label || CIRCUITS[b.circuit]?.label || b.circuit, circuit: b.circuit, amperes: b.amperes, type: b.type,
         sectionMm2: sectionDe(b), modules, positionModule: curseur, rangee: index,
         gaineId: opts.gaineDeBreaker?.[b.id] ?? `dep-${b.id}`, accessoire,
+        ...(groupes.length > 1 ? { diffTypeProtecteur: groupes[groupes.length - 1].diffType } : {}),
       });
       curseur += modules;
     });
     const modulesDeparts = departs.reduce((s, d) => s + d.modules, 0);
-    const utilises = modulesId + modulesDeparts;
+    const modulesIdTotal = modulesId + idsSupplementaires.reduce((t, x) => t + x.modules, 0);
+    const utilises = modulesIdTotal + modulesDeparts;
+    // Largeur du rail : celle choisie pour la rangée (13, 18 ou 24 modules), sinon le réglage général du coffret.
+    const capaciteRail = typeof row.modules === "number" && row.modules >= 4 ? Math.round(row.modules) : p.modulesParRail;
     const manette = p.basManetteM + (rowsPuissance.length - 1 - index) * (p.pasRangeeMm / 1000); // rangée 0 = tout en haut
     rails.push({
       index, nom: row.name || `Rangée ${index + 1}`, rangeeId: row.id, diffType: id ? diffTypeDe(id) : "—", calibreId: id?.amperes ?? null,
-      capaciteModules: p.modulesParRail, modulesId, modulesDeparts, modulesUtilises: utilises, modulesLibres: Math.max(0, p.modulesParRail - utilises),
-      nbCircuits: departs.filter(d => !d.accessoire).length, departs, hauteurManetteM: manette, depassement: utilises > p.modulesParRail,
+      capaciteModules: capaciteRail, modulesId, groupes, idsSupplementaires, modulesDeparts, modulesUtilises: utilises, modulesLibres: Math.max(0, capaciteRail - utilises),
+      nbCircuits: departs.filter(d => !d.accessoire).length, departs, hauteurManetteM: manette, depassement: utilises > capaciteRail,
     });
   });
 
@@ -261,7 +280,7 @@ export function calculerTableauReel(rows: BreakerRow[], opts: OptionsCalculTable
   const libres = Math.max(0, capacite - utilises);
   const reservePct = capacite > 0 ? (100 * libres) / capacite : 0;
   const reserveRequisePct = p.collectif ? (capacite > 0 ? (100 * NORME_GTL.reserveModulesCollectif.valeur) / capacite : 0) : NORME_GTL.reservePctMaison.valeur;
-  const nbId = rails.filter(r => r.calibreId != null).length;
+  const nbId = rails.reduce((n, r) => n + (r.calibreId != null ? 1 : 0) + r.idsSupplementaires.length, 0);
 
   // ── Gaines
   const gainesIds = new Set<string>();
@@ -289,13 +308,15 @@ export function calculerTableauReel(rows: BreakerRow[], opts: OptionsCalculTable
   }
 
   // ── Coffret
-  const coffretLargeur = Math.ceil(p.modulesParRail * NORME_GTL.moduleMm.valeur + 2 * NORME_COFFRET.margeLateraleMm.valeur);
+  // Largeur du coffret = rail le plus large (chaque rangée peut avoir sa propre largeur : 13, 18 ou 24 modules).
+  const modulesCoffret = rails.length > 0 ? Math.max(...rails.map(r => r.capaciteModules)) : p.modulesParRail;
+  const coffretLargeur = Math.ceil(modulesCoffret * NORME_GTL.moduleMm.valeur + 2 * NORME_COFFRET.margeLateraleMm.valeur);
   const coffretHauteur = nbRangees * p.pasRangeeMm + NORME_COFFRET.margeHauteBasseMm.valeur;
-  const coffret: CoffretReel = { largeurMm: coffretLargeur, hauteurMm: coffretHauteur, nbRangees, modulesParRail: p.modulesParRail };
+  const coffret: CoffretReel = { largeurMm: coffretLargeur, hauteurMm: coffretHauteur, nbRangees, modulesParRail: modulesCoffret };
 
   // ── GTL
   const composants = [
-    { nom: "Coffret de distribution", largeurMm: coffretLargeur, hauteurMm: coffretHauteur, detail: `${p.modulesParRail} modules × 17,5 mm, ${nbRangees} rangée(s)` },
+    { nom: "Coffret de distribution", largeurMm: coffretLargeur, hauteurMm: coffretHauteur, detail: `${modulesCoffret} modules × 17,5 mm, ${nbRangees} rangée(s)` },
     ...(p.gtl.largeurCoffretCommMm > 0 ? [{ nom: "Coffret de communication", largeurMm: p.gtl.largeurCoffretCommMm, hauteurMm: p.gtl.hauteurCoffretCommMm, detail: "Grade VDI" }] : []),
   ];
   const jeu = p.gtl.jeuMm;
@@ -330,6 +351,7 @@ export function calculerTableauReel(rows: BreakerRow[], opts: OptionsCalculTable
     if (r.calibreId == null) return;
     const sId = r.calibreId >= 63 ? 10 : r.calibreId >= 40 ? 10 : 6;
     liaisons.push({ id: `rail-${r.index}`, de: peigne ? "Répartiteur" : amont, vers: `Différentiel ${r.nom} (${r.calibreId} A type ${r.diffType})`, calibreA: r.calibreId, conducteurs: cond(sId, false), rangee: r.index });
+    r.idsSupplementaires.forEach((x, k) => liaisons.push({ id: `rail-${r.index}-id${k + 1}`, de: peigne ? "Répartiteur" : amont, vers: `Différentiel ${r.nom} · ID ${k + 2} (${x.calibreA} A type ${x.diffType})`, calibreA: x.calibreA, conducteurs: cond(x.calibreA >= 40 ? 10 : 6, false), rangee: r.index }));
     r.departs.forEach(d => {
       if (d.accessoire) return;
       const s = d.sectionMm2 || sectionMiniPourCalibre(d.amperes);
@@ -341,19 +363,23 @@ export function calculerTableauReel(rows: BreakerRow[], opts: OptionsCalculTable
   const srcTab = NORME_TABLEAU.idMiniParLogement.source;
   if (nbRangees === 0) add({ id: "vide", niveau: "info", titre: "Tableau vide", detail: "Aucune rangée : générez les circuits dans le plan ou ajoutez des rangées dans le module Tableau.", source: srcTab, statut: "verifie" });
   if (nbRangees > 0 && nbId < NORME_TABLEAU.idMiniParLogement.valeur) add({ id: "id-mini", niveau: "avertissement", titre: `Seulement ${nbId} différentiel(s) 30 mA`, detail: `Il en faut ${NORME_TABLEAU.idMiniParLogement.valeur} au minimum par logement.`, source: srcTab, statut: NORME_TABLEAU.idMiniParLogement.statut });
-  const nbTypeA = rails.filter(r => r.diffType === "A" || r.diffType === "F").length;
+  const nbTypeA = rails.reduce((n, r) => n + r.groupes.filter(g => g.diffType === "A" || g.diffType === "F").length, 0);
   if (nbRangees > 0 && nbTypeA < NORME_TABLEAU.idTypeAMini.valeur) add({ id: "id-type-a", niveau: "avertissement", titre: "Aucun différentiel de type A", detail: "Au moins un différentiel de type A est exigé (plaque de cuisson, lave-linge, recharge VE).", source: NORME_TABLEAU.idTypeAMini.source, statut: NORME_TABLEAU.idTypeAMini.statut });
   rails.forEach(r => {
     const nom = r.nom;
     if (r.calibreId == null && r.departs.length > 0) add({ id: `sans-id-${r.index}`, niveau: "erreur", titre: `${nom} : pas de différentiel`, detail: "Des disjoncteurs sont posés sans interrupteur différentiel en tête de rangée.", source: srcTab, statut: "verifie", rangee: r.index });
-    if (r.nbCircuits > NORME_TABLEAU.circuitsMaxParId.valeur) add({ id: `max-id-${r.index}`, niveau: "avertissement", titre: `${nom} : ${r.nbCircuits} circuits sur un différentiel`, detail: `Maximum ${NORME_TABLEAU.circuitsMaxParId.valeur} circuits par interrupteur différentiel.`, source: NORME_TABLEAU.circuitsMaxParId.source, statut: NORME_TABLEAU.circuitsMaxParId.statut, rangee: r.index });
+    r.groupes.forEach((g, gi) => {
+      if (g.nbCircuits <= NORME_TABLEAU.circuitsMaxParId.valeur) return;
+      add({ id: gi === 0 ? `max-id-${r.index}` : `max-id-${r.index}-g${gi}`, niveau: "avertissement", titre: `${nom}${r.groupes.length > 1 ? ` (ID ${gi + 1})` : ""} : ${g.nbCircuits} circuits sur un différentiel`, detail: `Maximum ${NORME_TABLEAU.circuitsMaxParId.valeur} circuits par interrupteur différentiel.`, source: NORME_TABLEAU.circuitsMaxParId.source, statut: NORME_TABLEAU.circuitsMaxParId.statut, rangee: r.index });
+    });
     if (r.depassement) add({ id: `depasse-${r.index}`, niveau: "avertissement", titre: `${nom} : ${r.modulesUtilises} modules pour un rail de ${r.capaciteModules}`, detail: "Rail trop court : passer à un coffret plus large ou répartir sur une rangée de plus.", source: NORME_TABLEAU.modulesParRailPossibles.source, statut: NORME_TABLEAU.modulesParRailPossibles.statut, rangee: r.index });
     // Type de différentiel suffisant pour chaque départ
     r.departs.forEach(d => {
       if (d.accessoire) return;
       const requis = CIRCUITS[d.circuit]?.diffType;
-      if (requis && DIFF_HIERARCHY[requis] != null && DIFF_HIERARCHY[r.diffType] != null && DIFF_HIERARCHY[r.diffType] < DIFF_HIERARCHY[requis]) {
-        add({ id: `type-${d.breakerId}`, niveau: "avertissement", titre: `${d.label} : différentiel type ${r.diffType} insuffisant`, detail: `Ce circuit demande un différentiel de type ${requis} (ou supérieur).`, source: "NF C 15-100 / infographie Legrand (types AC, A, F)", statut: "verifie", rangee: r.index, breakerId: d.breakerId });
+      const typeProtecteur = d.diffTypeProtecteur ?? r.diffType;
+      if (requis && DIFF_HIERARCHY[requis] != null && DIFF_HIERARCHY[typeProtecteur] != null && DIFF_HIERARCHY[typeProtecteur] < DIFF_HIERARCHY[requis]) {
+        add({ id: `type-${d.breakerId}`, niveau: "avertissement", titre: `${d.label} : différentiel type ${typeProtecteur} insuffisant`, detail: `Ce circuit demande un différentiel de type ${requis} (ou supérieur).`, source: "NF C 15-100 / infographie Legrand (types AC, A, F)", statut: "verifie", rangee: r.index, breakerId: d.breakerId });
       }
       const mini = sectionMiniPourCalibre(d.amperes);
       if (d.sectionMm2 > 0 && d.sectionMm2 + 1e-9 < mini) add({ id: `section-${d.breakerId}`, niveau: "erreur", titre: `${d.label} : ${d.sectionMm2} mm² pour ${d.amperes} A`, detail: `Section minimale ${mini} mm² pour un disjoncteur ${d.amperes} A (16 A→1,5 · 20 A→2,5 · 32 A→6 mm²).`, source: "Infographie Legrand « circuits spécialisés »", statut: "verifie", rangee: r.index, breakerId: d.breakerId });

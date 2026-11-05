@@ -16,7 +16,7 @@ import {
   BREAKER_TYPES, CIRCUITS, SECTIONS_CABLE, gaineRecommandee, cablesGroupe, cablesPrises, labelCommande,
   DIFF_HIERARCHY, AMPERES, AMPERES_DIFFERENTIEL, getCategory, effectiveSection, uid, estAccessoireTableau,
   EMPLACEMENTS_PAR_RANGEE, largeurAppareil, emplacementsCouverts, emplacementsOccupes, peutPlacerLargeur, premierEmplacementLibre,
-  poserAppareil, deplacerAppareil, agencerAppareils} from "@/lib/electrical-constants";
+  poserAppareil, deplacerAppareil, agencerAppareils, MODULES_PAR_RAIL_CHOIX, groupesDeRangee, modulesRangee, nbCasesRangee, redimensionnerRangee} from "@/lib/electrical-constants";
 
 
 import { fondModal } from "@/lib/fond-modal";
@@ -35,7 +35,8 @@ const BREAKER_H = 130;
 const defaultGroupe = (): GroupeLumineux => ({ nbPoints: 1, typeCommande: "simple", nbCommandes: 1 });
 const defaultPiece = (): PieceConfig => ({ nom: "", groupes: [defaultGroupe()], nbPrises: 1 });
 const emptyCoffret = (): BreakerRow => ({ id: uid(), name: "Coffret de communication", slots: Array(8).fill(null), kind: "multimedia" });
-const emptyRow = (rowNum: number): BreakerRow => ({ id: uid(), name: `Rangée ${rowNum}`, slots: Array(9).fill(null) });
+// Une nouvelle rangée reprend la largeur de rail (13/18/24 modules) de la dernière rangée de tableau, sinon la rangée historique (8 emplacements).
+const emptyRow = (rowNum: number, modules?: number): BreakerRow => ({ id: uid(), name: `Rangée ${rowNum}`, slots: Array(nbCasesRangee(modules)).fill(null), ...(modules ? { modules } : {}) });
 
 // ─── LEGRAND SVG ──────────────────────────────────────────────────────────────
 
@@ -264,7 +265,8 @@ function BreakerEditModal({ breaker, slotIndex, multimedia, placeLarge, complian
     : [{ cle: "disj", libelle: "Disjoncteur", icone: "⚡" }, { cle: "diff", libelle: "Différentiel", icone: "🔲" }, { cle: "prise-mod", libelle: "Prise 16 A modulaire", icone: "🔌" }, { cle: "sect", libelle: "Coupure générale", icone: "⏻" }];
   const nbEmplacements = !multimedia && slotIndex === 0 ? 1 : largeurAppareil(breaker);   // la case 0 d'une rangée est déjà une case double
   // Une nature qui prend 2 emplacements n'est proposée que s'il y en a 2 de libres côte à côte (sinon le clic serait refusé).
-  const naturePossible = (cle: string) => (cle !== "prise-mod" && cle !== "sect") || placeLarge || cle === natureActuelle;
+  // Un différentiel posé ailleurs qu'en case 1 (plusieurs ID sur une rangée) occupe lui aussi 2 emplacements.
+  const naturePossible = (cle: string) => (cle !== "prise-mod" && cle !== "sect" && !(cle === "diff" && !multimedia && slotIndex > 0)) || placeLarge || cle === natureActuelle;
   const changerNature = (cle: string) => {
     if (cle === natureActuelle || !naturePossible(cle)) return;
     const base = { ...breaker, pieces: [] as PieceConfig[] };
@@ -1152,7 +1154,7 @@ function CoffretCommunication({ row, selectedSlot, compliance, onClickSlot, onDe
 
 // ─── DIN RAIL ROW ─────────────────────────────────────────────────────────────
 
-function DinRailRow({ row, globalOffset, selectedSlot, compliance, onClickSlot, onDeleteRow, onUpdateName, onMoveSlot }: {
+function DinRailRow({ row, globalOffset, selectedSlot, compliance, onClickSlot, onDeleteRow, onUpdateName, onMoveSlot, onChangeModules }: {
   row: BreakerRow; globalOffset: number;
   selectedSlot: { rowId: number; slotIdx: number } | null;
   compliance: ReturnType<typeof checkNFC>;
@@ -1160,8 +1162,10 @@ function DinRailRow({ row, globalOffset, selectedSlot, compliance, onClickSlot, 
   onDeleteRow: (rowId: number) => void;
   onUpdateName: (rowId: number, name: string) => void;
   onMoveSlot: (de: { rowId: number; slotIdx: number }, vers: { rowId: number; slotIdx: number }) => void;
+  onChangeModules: (rowId: number, modules: number) => void;
 }) {
-  const totalW = DIFF_W + 8 * SLOT_W + 9 * 4 + 40;
+  const nbEmpl = Math.max(0, row.slots.length - 1);   // emplacements de la rangée (13 modules = 11, 18 = 16, 24 = 22 ; rangée historique = 8)
+  const totalW = DIFF_W + nbEmpl * SLOT_W + (nbEmpl + 1) * 4 + 40;
   const panelW = Math.max(totalW, 400);
   const couvert = emplacementsCouverts(row.slots, false);
   const getIssue = (b: Breaker | null) => {
@@ -1175,10 +1179,17 @@ function DinRailRow({ row, globalOffset, selectedSlot, compliance, onClickSlot, 
       <div className="flex items-center gap-3 mb-2">
         <input value={row.name} onChange={e => onUpdateName(row.id, e.target.value)}
           className="text-xs font-semibold text-ink-600 bg-transparent border-none outline-none font-mono" />
+        <select value={row.modules ?? ""} onChange={e => { const m = parseInt(e.target.value, 10); if (Number.isFinite(m)) onChangeModules(row.id, m); }}
+          title="Largeur du rail DIN de cette rangée (modules de 17,5 mm)" aria-label="Largeur du rail en modules"
+          className="text-[11px] border border-ink-200 rounded px-1 py-0.5 bg-white text-ink-600">
+          {!row.modules && <option value="">{modulesRangee(row.slots)} modules (historique)</option>}
+          {MODULES_PAR_RAIL_CHOIX.map(m => <option key={m} value={m}>{m} modules</option>)}
+        </select>
         <button onClick={() => onDeleteRow(row.id)} className="text-ink-300 hover:text-red-400 transition-colors ml-auto">
           <Trash2 size={14} />
         </button>
       </div>
+      <div style={{ maxWidth: "100%", overflowX: "auto", paddingBottom: 4 }}>
       <div style={{
         background: "linear-gradient(160deg,#d1d5db 0%,#9ca3af 60%,#6b7280 100%)",
         borderRadius: 8, padding: "16px 16px 50px", width: panelW,
@@ -1194,16 +1205,17 @@ function DinRailRow({ row, globalOffset, selectedSlot, compliance, onClickSlot, 
         <SlotCell breaker={row.slots[0]} slotIdx={0} isDiffSlot issue={getIssue(row.slots[0])}
           isSelected={selectedSlot?.rowId === row.id && selectedSlot?.slotIdx === 0}
           globalNum={globalOffset + 1} onClick={() => onClickSlot(row.id, 0)} rowId={row.id} onMoveSlot={onMoveSlot} />
-        {Array.from({ length: EMPLACEMENTS_PAR_RANGEE }, (_, i) => i + 1).map(slotIdx => {
+        {Array.from({ length: nbEmpl }, (_, i) => i + 1).map(slotIdx => {
           const b = row.slots[slotIdx] ?? null;
           if (!b && couvert[slotIdx]) return null;   // 2e emplacement d'un appareil large : il est dessiné par la case de gauche
           return (
-            <SlotCell key={slotIdx} breaker={b} slotIdx={slotIdx} largeur={b ? Math.min(largeurAppareil(b), EMPLACEMENTS_PAR_RANGEE + 1 - slotIdx) : 1}
+            <SlotCell key={slotIdx} breaker={b} slotIdx={slotIdx} largeur={b ? Math.min(largeurAppareil(b), nbEmpl + 1 - slotIdx) : 1}
               issue={getIssue(b)}
               isSelected={selectedSlot?.rowId === row.id && selectedSlot?.slotIdx === slotIdx}
               globalNum={globalOffset + slotIdx + 1} onClick={() => onClickSlot(row.id, slotIdx)} rowId={row.id} onMoveSlot={onMoveSlot} />
           );
         })}
+      </div>
       </div>
     </div>
   );
@@ -1316,7 +1328,8 @@ function normaliserRows(parsed: any[]): BreakerRow[] {
         const multimedia = row.kind === "multimedia";
         const rawSlots = Array.isArray(row.slots) ? row.slots : (Array.isArray(row.breakers) ? row.breakers : []);
         // Coffret de communication : longueur libre (lignes de 8) ; rangée de tableau : 1 différentiel + 8 emplacements.
-        const nbSlots = multimedia ? Math.min(64, Math.max(8, Math.ceil(rawSlots.length / 8) * 8)) : 9;
+        const modulesRail = !multimedia && MODULES_PAR_RAIL_CHOIX.includes(row.modules) ? (row.modules as number) : undefined;
+        const nbSlots = multimedia ? Math.min(64, Math.max(8, Math.ceil(rawSlots.length / 8) * 8)) : nbCasesRangee(modulesRail);
         const slots: (Breaker | null)[] = Array(nbSlots).fill(null);
         rawSlots.forEach((b: any, i: number) => {
           if (i >= nbSlots || b == null || typeof b !== "object" || typeof b.type !== "string") return;
@@ -1346,7 +1359,7 @@ function normaliserRows(parsed: any[]): BreakerRow[] {
         // à leur vraie largeur. Rien n'est supprimé ; ce qui ne tient vraiment pas est repris plus bas dans une rangée « (suite) ».
         const { slots: agences, debordement } = agencerAppareils(slots, multimedia);
         const nom = row.name ?? (multimedia ? "Coffret de communication" : "Rangée");
-        sortie.push({ id: row.id ?? uid(), name: nom, slots: agences, origine: row.origine === "plan" ? "plan" as const : undefined, ...(multimedia ? { kind: "multimedia" as const } : {}) });
+        sortie.push({ id: row.id ?? uid(), name: nom, slots: agences, ...(modulesRail ? { modules: modulesRail } : {}), origine: row.origine === "plan" ? "plan" as const : undefined, ...(multimedia ? { kind: "multimedia" as const } : {}) });
         if (debordement.length > 0) debordements.push({ nom, appareils: debordement });
   });
   // Débordements (rangée de tableau pleine) : une rangée « suite » SANS différentiel, que le contrôle NF C 15-100 signale pour que l'électricien la complète.
@@ -1357,7 +1370,7 @@ function normaliserRows(parsed: any[]): BreakerRow[] {
     for (const b of [...appareils].sort((x, y) => largeurAppareil(y) - largeurAppareil(x))) {
       let i = courante ? premierEmplacementLibre(courante.slots, largeurAppareil(b), false) : -1;
       if (!courante || i < 0) {
-        courante = { id: ++idMax, name: `${nom} (suite)`, slots: Array(1 + EMPLACEMENTS_PAR_RANGEE).fill(null) };
+        courante = { id: ++idMax, name: `${nom} (suite)`, slots: Array(1 + EMPLACEMENTS_PAR_RANGEE).fill(null) };   // « suite » : rangée historique, sans largeur choisie
         sortie.push(courante);
         i = premierEmplacementLibre(courante.slots, largeurAppareil(b), false);
       }
@@ -1469,7 +1482,18 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
     setSelectedSlot(null); setEditBreaker(null); setSchemaBreaker(null);
   };
 
-  const addRow = () => setRows(r => [...r, emptyRow(r.filter(x => x.kind !== "multimedia").length + 1)]);
+  const addRow = () => setRows(r => {
+    const rails = r.filter(x => x.kind !== "multimedia");
+    return [...r, emptyRow(rails.length + 1, rails[rails.length - 1]?.modules)];
+  });
+  // Largeur du rail d'une rangée (13, 18 ou 24 modules). Réduire n'est permis que si les emplacements retirés sont vides.
+  const changerModules = (rowId: number, modules: number) => {
+    const row = rows.find(x => x.id === rowId);
+    const nouvelle = row ? redimensionnerRangee(row, modules) : null;
+    if (!nouvelle) { setAvisPose("Impossible de réduire ce rail : des appareils occupent les emplacements à retirer. Libère-les (ou déplace-les) d'abord."); return; }
+    setRows(rs => rs.map(x => (x.id === rowId ? (redimensionnerRangee(x, modules) ?? x) : x)));
+    setSelectedSlot(null);
+  };
   const addCoffret = () => setRows(r => (r.some(x => x.kind === "multimedia") ? r : [...r, emptyCoffret()]));
   const addLigneCoffret = (rowId: number) => setRows(r => r.map(x => x.id === rowId && x.slots.length < 64 ? { ...x, slots: [...x.slots, ...Array(8).fill(null)] } : x));
   const deleteRow = (rowId: number) => { setRows(r => r.filter(x => x.id !== rowId)); if (selectedSlot?.rowId === rowId) setSelectedSlot(null); };
@@ -1617,7 +1641,7 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
           )}
         </div>
         <div className="px-6 py-2 bg-ink-50 border-b border-ink-100 text-xs text-ink-400 hidden md:block">
-          1er clic = sélectionner · 2e clic = configurer · Chaque rangée : 1 différentiel + 8 emplacements (coupure générale et prise modulaire : 2 emplacements)
+          1er clic = sélectionner · 2e clic = configurer · Chaque rangée : 1 différentiel + des emplacements selon le rail (13, 18 ou 24 modules) · un 2e différentiel se pose dans un emplacement libre et protège les départs à sa droite (coupure générale, prise modulaire et différentiel : 2 emplacements)
         </div>
 
         <div className="flex-1 overflow-auto p-4 md:p-8">
@@ -1648,7 +1672,7 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 {rows.map((row, ri) => row.kind === "multimedia" ? null : (
                   <DinRailRow key={row.id} row={row} globalOffset={getOffset(ri)}
                     selectedSlot={selectedSlot} compliance={compliance}
-                    onClickSlot={handleClickSlot} onDeleteRow={deleteRow} onUpdateName={updateRowName} onMoveSlot={deplacerSlot} />
+                    onClickSlot={handleClickSlot} onDeleteRow={deleteRow} onUpdateName={updateRowName} onMoveSlot={deplacerSlot} onChangeModules={changerModules} />
                 ))}
               </div>
               )}
@@ -1691,7 +1715,7 @@ function TableauEditor({ clientId, projet, projets, onSelect, onChanged }: {
           })()}
           onUpdate={updated => { if (updateSlot(editBreaker.rowId, editBreaker.slotIdx, updated)) setEditBreaker({ ...editBreaker, breaker: updated }); }}
           onClose={() => { setEditBreaker(null); setSelectedSlot(null); }}
-          onShowSchema={b => { const row = rows.find(r => r.id === editBreaker.rowId); setEditBreaker(null); setSchemaBreaker({ breaker: b, rowBreakers: row?.slots ?? [] }); }}
+          onShowSchema={b => { const row = rows.find(r => r.id === editBreaker.rowId); setEditBreaker(null); const groupe = groupesDeRangee(row?.slots ?? []).find(g => g.departs.some(d => d.b.id === b.id)); setSchemaBreaker({ breaker: b, rowBreakers: groupe?.diff ? [groupe.diff, ...(row?.slots ?? []).slice(1)] : (row?.slots ?? []) }); }}
           onRemove={() => removeSlot(editBreaker.rowId, editBreaker.slotIdx)}
         />
       )}

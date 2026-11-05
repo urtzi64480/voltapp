@@ -574,12 +574,24 @@ export interface GaineAttente {
   exterieur?: boolean;
 }
 
+// Pièce « virtuelle » : une pièce que l'électricien crée dans la liste des pièces d'un appareillage (ex. « Salle à manger » dans un grand
+// séjour dessiné d'un seul tenant). Elle est ENREGISTRÉE avec le niveau et proposée dans la liste, mais n'a ni contour ni murs : elle
+// n'apparaît jamais sur le plan. Id pris dans le compteur global (uidMaison), donc jamais en collision avec une pièce dessinée.
+// Voir lib/pieces-virtuelles.ts (création, renommage, suppression) et lib/piece-reelle.ts (résolution de l'attribution).
+export interface PieceVirtuelle {
+  id: number;
+  nom: string;
+  type: PieceType;
+}
+
 export interface Niveau {
   id: number;
   nom: string;
   type: NiveauType;
   ordre: number;
   pieces: Piece[];
+  // Pièces supplémentaires du niveau, non dessinées (voir PieceVirtuelle). Absent = aucune.
+  piecesVirtuelles?: PieceVirtuelle[];
   zones?: Zone[];
   // Niveaux de type "annexe" uniquement : id du tableau annexe (Projet.tableaux_annexes) qui
   // alimente cette annexe, créé avec elle. Ignoré pour les niveaux de la maison, qui
@@ -763,6 +775,7 @@ export function reamorcerCompteurId(niveaux: Niveau[]): void {
       (p.meubles ?? []).forEach(m => { max = Math.max(max, m.id); });
     });
     (n.zones ?? []).forEach(z => { max = Math.max(max, z.id); (z.ouvertures ?? []).forEach(o => { max = Math.max(max, o.id); }); });
+    (n.piecesVirtuelles ?? []).forEach(v => { max = Math.max(max, v.id); });
     (n.circuitsManuels ?? []).forEach(m => { max = Math.max(max, m.id); });
     Object.values(n.liaisonWaypoints ?? {}).forEach(liste => liste.forEach(w => { max = Math.max(max, w.id); }));
     Object.values(n.boitesDerivation ?? {}).forEach(liste => liste.forEach(b => { max = Math.max(max, b.id); }));
@@ -812,7 +825,9 @@ export function dedupliquerIds(niveaux: Niveau[]): { niveaux: Niveau[]; correcti
     });
     const zones = (n.zones ?? []).map(z => ({ ...z, id: prendre(z.id), ouvertures: z.ouvertures ? z.ouvertures.map(o => ({ ...o, id: prendre(o.id) })) : z.ouvertures }));
     const escaliers = (n.escaliers ?? []).map(e => ({ ...e, id: prendre(e.id) }));
-    return { ...n, id: nouvId, pieces, ...(n.zones ? { zones } : {}), ...(n.escaliers ? { escaliers } : {}), circuitsManuels: n.circuitsManuels ? circuitsManuels : n.circuitsManuels };
+    // Pièces virtuelles : même compteur que les pièces dessinées (jamais de collision en pratique, le compteur est ré-amorcé au chargement).
+    const piecesVirtuelles = (n.piecesVirtuelles ?? []).map(v => ({ ...v, id: prendre(v.id) }));
+    return { ...n, id: nouvId, pieces, ...(n.zones ? { zones } : {}), ...(n.escaliers ? { escaliers } : {}), ...(n.piecesVirtuelles ? { piecesVirtuelles } : {}), circuitsManuels: n.circuitsManuels ? circuitsManuels : n.circuitsManuels };
   });
 
   if (corrections === 0) return { niveaux, corrections: 0 };

@@ -168,6 +168,7 @@ export function GtlElevation({ res, params, couleurGaine }: GtlElevationProps) {
               <g key={r.rangeeId}>
                 <rect x={X(cof.x) + 50} y={yTop + 8} width={cof.w - 100} height={params.pasRangeeMm - 22} fill="#fafaf9" stroke="#a8a29e" strokeWidth={1} {...ns} />
                 {r.calibreId != null && <rect x={X(cof.x) + 50} y={yTop + 8} width={mod * r.modulesId} height={params.pasRangeeMm - 22} fill={COULEUR_ID[r.diffType] ?? "#64748b"} />}
+                {r.idsSupplementaires.map(x => <rect key={`id-${x.breakerId}`} x={X(cof.x) + 50 + x.positionModule * mod} y={yTop + 8} width={mod * x.modules} height={params.pasRangeeMm - 22} fill={COULEUR_ID[x.diffType] ?? "#64748b"} />)}
                 {r.departs.map(d => <rect key={`${d.breakerId}-${d.positionModule}`} x={X(cof.x) + 50 + d.positionModule * mod + 1} y={yTop + 14} width={Math.max(2, d.modules * mod - 2)} height={params.pasRangeeMm - 34} fill={d.accessoire ? "#a8a29e" : couleurGaine(d.gaineId)} stroke="#1c1917" strokeWidth={0.6} {...ns} />)}
               </g>
             );
@@ -290,6 +291,16 @@ export function TableauDetail({ res, params, couleurGaine, selectionne, onSelect
                 <text x={xr(0) + (r.modulesId * MOD) / 2} y={yDev + 118} textAnchor="middle" fontSize={11} fontWeight={700} fill="#fff">type {r.diffType}</text>
               </g>
             )}
+            {/* différentiels supplémentaires de la rangée (plusieurs ID sur un même rail) */}
+            {r.idsSupplementaires.map(x => (
+              <g key={`id-${x.breakerId}`} onClick={() => onSelect(null)}>
+                <title>{`Interrupteur différentiel ${x.calibreA} A 30 mA type ${x.diffType} — protège les départs à sa droite`}</title>
+                <rect x={xr(x.positionModule) + 1} y={yDev} width={x.modules * MOD - 2} height={DEV_H} rx={4} fill={COULEUR_ID[x.diffType] ?? "#64748b"} stroke="#1c1917" strokeWidth={1.2} {...ns} />
+                <text x={xr(x.positionModule) + (x.modules * MOD) / 2} y={yDev + 88} textAnchor="middle" fontSize={11} fontWeight={700} fill="#fff">{x.calibreA} A</text>
+                <text x={xr(x.positionModule) + (x.modules * MOD) / 2} y={yDev + 101} textAnchor="middle" fontSize={9} fill="#fff">30 mA</text>
+                <text x={xr(x.positionModule) + (x.modules * MOD) / 2} y={yDev + 118} textAnchor="middle" fontSize={11} fontWeight={700} fill="#fff">type {x.diffType}</text>
+              </g>
+            ))}
             {/* départs */}
             {r.departs.map(d => {
               const x = xr(d.positionModule), w = d.modules * MOD;

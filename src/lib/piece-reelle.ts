@@ -7,6 +7,7 @@
 import { AppareillagePlace, Niveau, Piece, pointDansPolygone, EXTERIEUR_PIECE_ID } from "@/lib/maison-types";
 import { estMural } from "@/lib/appareillage-mur";
 import { ancrageMural } from "@/lib/zones";
+import { pieceDepuisVirtuelle, piecesVirtuellesDe } from "@/lib/pieces-virtuelles";
 
 export const NOM_EXTERIEUR = "Extérieur";
 
@@ -26,12 +27,16 @@ export function pieceAutoDe(a: AppareillagePlace, proprietaire: Piece, niveau: N
   return contenue ? proprietaire : (exterieur ?? pieceExterieureVirtuelle(niveau));
 }
 
-// Pièce réelle : le choix manuel (pieceAttribueeId) l'emporte sur l'automatique.
+// Pièce réelle : le choix manuel (pieceAttribueeId) l'emporte sur l'automatique. Le choix peut être une pièce dessinée, une pièce
+// virtuelle du niveau (créée à la main, jamais dessinée : voir pieces-virtuelles.ts) ou « Extérieur ».
 export function pieceReelleDe(a: AppareillagePlace, proprietaire: Piece, niveau: Niveau, exterieur?: Piece): Piece {
   if (a.pieceAttribueeId != null) {
     if (a.pieceAttribueeId === EXTERIEUR_PIECE_ID) return exterieur ?? pieceExterieureVirtuelle(niveau);
     const choisie = niveau.pieces.find(p => p.id === a.pieceAttribueeId);
-    if (choisie) return choisie;      // pièce supprimée entre-temps : on retombe sur l'automatique
+    if (choisie) return choisie;
+    const virtuelle = piecesVirtuellesDe(niveau).find(v => v.id === a.pieceAttribueeId);
+    if (virtuelle) return pieceDepuisVirtuelle(virtuelle);
+    // pièce supprimée entre-temps : on retombe sur l'automatique
   }
   return pieceAutoDe(a, proprietaire, niveau, exterieur);
 }

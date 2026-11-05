@@ -16,6 +16,7 @@ Ta seule mission : RELEVER ce qui est visible. Ne conseille pas, ne corrige pas,
 Règles :
 - Ne devine jamais : une valeur illisible, masquée ou incertaine vaut null (ou "inconnu"), avec une confiance "basse".
 - Un rail DIN = une entrée de "rangees", de haut en bas. Les appareils sont listés de gauche à droite, différentiels inclus.
+- Si plusieurs interrupteurs différentiels sont posés sur le MÊME rail, fais une entrée de "rangees" par différentiel : chaque entrée = un différentiel + les disjoncteurs qu'il protège (ceux situés à sa droite, jusqu'au différentiel suivant).
 - "nature" parmi : ${NATURES.filter(n => n !== "vide").join(", ")}.
 - "usage" parmi : ${USAGES.join(", ")}, inconnu (seulement si l'étiquette ou l'évidence le montre, sinon "inconnu").
 - Recopie les étiquettes telles qu'écrites, sans nom de personne, adresse ni téléphone.

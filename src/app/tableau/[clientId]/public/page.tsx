@@ -118,7 +118,8 @@ function parseRows(config: string): BreakerRow[] {
       if (!row || typeof row !== "object") return null;
       const multimedia = row.kind === "multimedia";
       const rawSlots = Array.isArray(row.slots) ? row.slots : (Array.isArray(row.breakers) ? row.breakers : []);
-      const nbSlots = multimedia ? Math.min(64, Math.max(8, rawSlots.length)) : 9;
+      // Rangée de tableau : 1 différentiel de tête + emplacements du rail choisi (13, 18 ou 24 modules ; absent = 8 emplacements historiques).
+      const nbSlots = multimedia ? Math.min(64, Math.max(8, rawSlots.length)) : ([13, 18, 24].includes(row.modules) ? row.modules - 1 : 9);
       const slots: (Breaker | null)[] = Array(nbSlots).fill(null);
       rawSlots.forEach((b: any, i: number) => {
         if (i >= nbSlots || b == null || typeof b !== "object" || typeof b.type !== "string") return;
@@ -253,7 +254,9 @@ export default function TableauPublicPage() {
         {rows.map((row, ri) => {
           const coffret = row.kind === "multimedia";
           const diff = coffret ? null : row.slots[0];
-          const breakers = safeBreakers(coffret ? row.slots : row.slots.slice(1));
+          const breakers = safeBreakers(coffret ? row.slots : row.slots.slice(1)).filter(b => coffret || !BREAKER_TYPES[b.type]?.isDiff);
+          // Plusieurs différentiels peuvent partager la rangée : on les liste tous dans l'en-tête.
+          const idsSupp = coffret ? [] : safeBreakers(row.slots.slice(1)).filter(b => !!BREAKER_TYPES[b.type]?.isDiff);
           const isDiff = diff && !!BREAKER_TYPES[diff.type]?.isDiff;
 
           return (
@@ -263,7 +266,7 @@ export default function TableauPublicPage() {
                 <span className="text-amber-400 font-mono font-bold text-sm">{row.name}</span>
                 {isDiff && diff && (
                   <span className="text-xs font-mono text-gray-400">
-                    ID {BREAKER_TYPES[diff.type]?.diffType ?? ""} · 30mA
+                    ID {BREAKER_TYPES[diff.type]?.diffType ?? ""} · 30mA{idsSupp.map(d => ` + ID ${BREAKER_TYPES[d.type]?.diffType ?? ""}`).join("")}
                   </span>
                 )}
               </div>

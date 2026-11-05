@@ -53,6 +53,9 @@ export interface BreakerRow {
   // « multimedia » : coffret de communication (case annexe NF C 15-100, grade 1/2/3) — pas de différentiel ni de disjoncteurs : des ports RJ45 (un par prise
   // RJ45 du plan), des prises 16 A modulaires et, au besoin, une coupure générale. `slots` y est de longueur libre (8 par ligne). Absent = rangée de tableau.
   kind?: "multimedia";
+  // Largeur du rail en MODULES de 17,5 mm (13, 18 ou 24 : coffrets usuels). Absent = rangée historique (différentiel de tête + 8 emplacements).
+  // La capacité réelle est portée par la longueur de `slots` (1 + modules − 2) : voir emplacementsRangee / modulesRangee.
+  modules?: number;
   // Tag posé par le module Plan sur les rangées qu'il génère — permet à un nouveau
   // "pousser vers le tableau" de remplacer proprement ce lot au lieu de le dupliquer,
   // sans jamais toucher aux rangées créées à la main dans l'éditeur de tableau.
@@ -86,8 +89,10 @@ const appareilPresent = (b: Appareil): b is Breaker => !!b && typeof b === "obje
 
 /** Nombre d'emplacements occupés par un appareil : 2 pour la coupure générale et la prise modulaire, 1 pour le reste (disjoncteur, port RJ45…). */
 export function largeurAppareil(b: Appareil): number {
-  if (!appareilPresent(b) || !estAccessoireTableau(b)) return 1;
-  return Math.max(1, BREAKER_TYPES[b.type].width);
+  if (!appareilPresent(b)) return 1;
+  const t = BREAKER_TYPES[b.type];
+  // Un différentiel posé au-delà de la tête de rangée (plusieurs ID sur un même rail) occupe 2 modules ; en case 0 il reste compté pour 1 (largeurEn).
+  return t && (t.accessoire || t.isDiff) ? Math.max(1, t.width) : 1;
 }
 
 /** Largeur à l'indice `i` : la case 0 d'une rangée de tableau (celle du différentiel) est déjà une case double et reste comptée pour 1. */
@@ -97,12 +102,63 @@ function largeurEn(b: Appareil, i: number, coffret: boolean): number {
 
 /** Plage d'emplacements d'un rail : cases 1 à 8 d'une rangée de tableau, toutes les cases du coffret. */
 function bornesRail(slots: readonly unknown[], coffret: boolean): { debut: number; fin: number } {
-  return coffret ? { debut: 0, fin: slots.length } : { debut: 1, fin: Math.min(slots.length, 1 + EMPLACEMENTS_PAR_RANGEE) };
+  return coffret ? { debut: 0, fin: slots.length } : { debut: 1, fin: Math.max(1, slots.length) };
 }
 
 /** Fin (exclue) de la ligne qui contient l'indice `i` : un appareil large ne se pose jamais à cheval sur deux lignes du coffret. */
 function finLigne(slots: readonly unknown[], i: number, coffret: boolean): number {
   return coffret ? Math.min(slots.length, (Math.floor(i / EMPLACEMENTS_PAR_RANGEE) + 1) * EMPLACEMENTS_PAR_RANGEE) : bornesRail(slots, false).fin;
+}
+
+/** Largeurs de rail proposées (modules de 17,5 mm). */
+export const MODULES_PAR_RAIL_CHOIX = [13, 18, 24] as const;
+/** Emplacements d'une rangée de tableau pour un rail de `modules` modules : le différentiel de tête en prend 2. Absent / invalide = 8 (rangée historique). */
+export const emplacementsPourModules = (modules: number | undefined | null): number =>
+  typeof modules === "number" && Number.isFinite(modules) && modules >= 4 ? Math.min(62, Math.round(modules) - 2) : EMPLACEMENTS_PAR_RANGEE;
+/** Largeur du rail en modules (différentiel de tête compris), déduite du nombre de cases : 9 cases = rangée historique (10 modules). */
+export const modulesRangee = (slots: readonly unknown[]): number => Math.max(1, slots.length - 1) + 2;
+/** Emplacements d'une rangée de tableau (hors case 0 du différentiel de tête). */
+export const emplacementsRangee = (slots: readonly unknown[]): number => Math.max(0, slots.length - 1);
+
+/** Nombre de cases (`slots`) d'une rangée de tableau pour un rail de `modules` modules : 1 case de tête + les emplacements. */
+export const nbCasesRangee = (modules: number | undefined | null): number => 1 + emplacementsPourModules(modules);
+
+/**
+ * Change la largeur du rail d'une rangée de tableau (13, 18 ou 24 modules). Agrandir ajoute des emplacements libres à droite ; réduire n'est
+ * possible que si les emplacements retirés sont vides et qu'aucun appareil large ne déborde (rien n'est jamais perdu : sinon null).
+ */
+export function redimensionnerRangee(row: BreakerRow, modules: number): BreakerRow | null {
+  if (row.kind === "multimedia" || !MODULES_PAR_RAIL_CHOIX.includes(modules as 13 | 18 | 24)) return null;
+  const cible = nbCasesRangee(modules);
+  const slots: (Breaker | null)[] = row.slots.map(x => x ?? null);
+  if (slots.length > cible) {
+    if (slots.slice(cible).some(appareilPresent)) return null;
+    const garde = slots.slice(0, cible);
+    // un appareil large posé sur la dernière case conservée déborderait sur une case retirée
+    const derniere = garde[cible - 1];
+    if (appareilPresent(derniere) && largeurEn(derniere, cible - 1, false) > 1) return null;
+    return { ...row, modules, slots: garde };
+  }
+  while (slots.length < cible) slots.push(null);
+  return { ...row, modules, slots };
+}
+
+export interface GroupeDifferentiel { diff: Breaker | null; diffIdx: number; departs: { b: Breaker; idx: number }[] }
+/**
+ * Groupes d'une rangée de tableau : le différentiel de tête (case 0) protège les départs situés à sa droite jusqu'au prochain différentiel
+ * posé dans la rangée, qui protège à son tour les départs suivants. Un départ à gauche du 1er ID supplémentaire appartient donc à l'ID de tête.
+ * Les accessoires (coupure générale, prise modulaire) ne sont pas des départs. Sans ID de tête, le 1er groupe a `diff = null`.
+ */
+export function groupesDeRangee(slots: readonly Appareil[]): GroupeDifferentiel[] {
+  const groupes: GroupeDifferentiel[] = [{ diff: appareilPresent(slots[0]) && BREAKER_TYPES[slots[0].type]?.isDiff ? slots[0] : null, diffIdx: 0, departs: [] }];
+  for (let i = 1; i < slots.length; i++) {
+    const b = slots[i];
+    if (!appareilPresent(b)) continue;
+    if (BREAKER_TYPES[b.type]?.isDiff) { groupes.push({ diff: b, diffIdx: i, departs: [] }); continue; }
+    if (estAccessoireTableau(b)) continue;
+    groupes[groupes.length - 1].departs.push({ b, idx: i });
+  }
+  return groupes;
 }
 
 /** couvert[i] = true quand l'indice i est le 2e emplacement d'un appareil large posé juste avant (case vide mais occupée). */

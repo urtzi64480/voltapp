@@ -28,6 +28,8 @@ import { ArrowLeft, Save, Printer, Plus, Trash2, Pencil, ZoomIn, ZoomOut, MouseP
 import { Point, Piece, Niveau, AppareillagePlace, AppareillageType, MurSpec, MUR_DEFAUT, Ouverture, OuvertureType, UsagePorte, USAGES_PORTE, LABEL_USAGE_PORTE, nouvelleOuverture, hauteurOuvertureDefautCm, positionSurSegment, ouverturesEffectivesMur, NIVEAU_TYPES, estAnnexe, origineCircuits, PIECE_TYPES, aireDuPolygone, centroide, trouverPiece, distance, distanceAuSegment, positionnerADistanceDuSegment, pointDansPolygone, distanceAuMurLePlusProche, CircuitManuel, FamilleCircuitManuel, nouveauNiveau, nouvellePiece, nouvelAppareillage, uidMaison, reamorcerCompteurId, dedupliquerIds, LiaisonWaypoint, cleSegmentLiaison, pointBoiteImplicite, pointsOndulesEntre, BoiteDerivation, migrerBoitesDerivation, Zone, TypeCoteZone, MeubleSimple, nouveauMeuble, nouvellePersonne, HAUTEUR_PERSONNE_M, nouvelleVoiture, VOITURE_LONGUEUR_M, VOITURE_LARGEUR_M, COULEURS_VOLET, COULEURS_APPAREILLAGE, TYPES_APPAREILLAGE_COLORABLES, estCommande, estCommandeDouble, estCommandeService, cibleCommandeService, estLumiere, estCourantFaible, lumieresCommandees, nouvellePlaque, TYPES_POSTE_PLAQUE, TYPES_USAGE_DEDIE, LIBELLE_USAGE_DEDIE, MAX_POSTES_PLAQUE, MIN_POSTES_PLAQUE, USAGE_DEDIE_DEFAUT, PosteSpec, hauteurCommunePlaqueCm, ENTRAXE_POSTE_M, battantsFenetre, nbVantauxBaie, largeurVantailBaieCm, NB_VANTAUX_BAIE_MAX, RECOUVREMENT_VANTAUX_CM, Escalier, EscalierType, EscalierTournant, EXTERIEUR_PIECE_ID, PhotoChantier, TYPES_SAILLIE_POSSIBLE, estSaillie, SegmentCircuit } from "@/lib/maison-types";
 import { poserBoiteSurTroncon } from "@/lib/boites-derivation";
 import { pieceAutoDe } from "@/lib/piece-reelle";
+import { trouverOuCreerPieceVirtuelle, renommerPieceVirtuelle, supprimerPieceVirtuelle, piecesVirtuellesDe, nettoyerNomPiece, NOM_PIECE_VIRTUELLE_MAX } from "@/lib/pieces-virtuelles";
+import type { PieceType } from "@/lib/maison-types";
 import { calculerEscalier, hauteurTotaleEscalierCm, escaliersEntrants as lireEscaliersEntrants, nouvelEscalier, LABEL_ESCALIER_TYPE, LABEL_STRUCTURE, LABEL_RAMPE, LABEL_MATERIAU, COULEUR_MATERIAU, DIAMETRE_HELICE_DEFAUT_CM, DIAMETRE_POTEAU_DEFAUT_CM } from "@/lib/escaliers";
 import { AppareillageSymbol, AppareillageGlyphe, labelAppareillage, labelAppareillagePlace, initialesAppareillage } from "@/components/plan/AppareillageSymbols";
 import { cotesOuvertures, cotesExterieures, coteHorsTout } from "@/lib/cotes-archi";
@@ -158,6 +160,9 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   const [placingMeuble, setPlacingMeuble] = useState(false);
   const [pendingCommande, setPendingCommande] = useState<{ item: AppareillagePlace; estNouveau: boolean } | null>(null);
   const [selectedAppareillageId, setSelectedAppareillageId] = useState<number | null>(null);
+  // « Nouvelle pièce » (liste des pièces d'un appareillage) : nom saisi et type choisi. La pièce créée n'est jamais dessinée sur le plan.
+  const [nomNouvellePiece, setNomNouvellePiece] = useState("");
+  const [typeNouvellePiece, setTypeNouvellePiece] = useState<PieceType>("autre");
   // Sélection multiple d'appareillages (Maj / Ctrl + clic) pour les regrouper en plaque double / triple / quadruple.
   const [selectionMulti, setSelectionMulti] = useState<number[]>([]);
   const [selectedMeubleId, setSelectedMeubleId] = useState<number | null>(null);
@@ -2244,6 +2249,35 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       const ids = new Set(cible?.groupeId != null ? n.pieces.flatMap(p => p.appareillages).filter(a => a.groupeId === cible.groupeId).map(a => a.id) : [appareillageId]);
       return { ...n, pieces: n.pieces.map(p => ({ ...p, appareillages: p.appareillages.map(a => ids.has(a.id) ? { ...a, pieceAttribueeId: pieceId } : a) })) };
     });
+    invalidateResultat();
+  };
+  // Crée une pièce « virtuelle » (enregistrée avec le niveau, proposée dans la liste, jamais dessinée sur le plan) — ou retrouve celle qui porte
+  // déjà ce nom — puis y attribue l'appareillage (toute sa plaque suit). Une seule mise à jour : la pièce et l'attribution ne peuvent pas se séparer.
+  const creerPieceEtAttribuer = (appareillageId: number, nom: string, type: PieceType): boolean => {
+    if (!nettoyerNomPiece(nom)) return false;
+    updateNiveauActif(n => {
+      const r = trouverOuCreerPieceVirtuelle(n, nom, type, uidMaison);
+      if (!r) return n;
+      const cible = r.niveau.pieces.flatMap(p => p.appareillages).find(a => a.id === appareillageId);
+      const ids = new Set(cible?.groupeId != null ? r.niveau.pieces.flatMap(p => p.appareillages).filter(a => a.groupeId === cible.groupeId).map(a => a.id) : [appareillageId]);
+      return { ...r.niveau, pieces: r.niveau.pieces.map(p => ({ ...p, appareillages: p.appareillages.map(a => (ids.has(a.id) ? { ...a, pieceAttribueeId: r.id } : a)) })) };
+    });
+    invalidateResultat();
+    return true;
+  };
+  const renommerPiece = (id: number) => {
+    const v = piecesVirtuellesDe(niveauActif).find(x => x.id === id);
+    if (!niveauActif || !v) return;
+    const nom = window.prompt("Nouveau nom de la pièce", v.nom);
+    if (nom == null) return;
+    if (!renommerPieceVirtuelle(niveauActif, id, nom)) { window.alert("Nom vide, ou déjà utilisé par une autre pièce de ce niveau."); return; }
+    updateNiveauActif(n => renommerPieceVirtuelle(n, id, nom) ?? n);
+    invalidateResultat();
+  };
+  const supprimerPiece = (id: number) => {
+    const v = piecesVirtuellesDe(niveauActif).find(x => x.id === id);
+    if (!v || !window.confirm(`Supprimer la pièce « ${v.nom} » ? Ses appareillages repassent en attribution automatique (rien d'autre n'est supprimé).`)) return;
+    updateNiveauActif(n => supprimerPieceVirtuelle(n, id));
     invalidateResultat();
   };
   const assignerCircuitManuel = (appareillageId: number, manuelId: number | undefined) => {
@@ -6601,15 +6635,36 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
                 {niveauActif && pieceDeSelectedAppareillage && (() => {
                   const auto = pieceAutoDe(selectedAppareillage, pieceDeSelectedAppareillage, niveauActif);
                   const nomPiece = (pc: Piece) => pc.nom || PIECE_TYPES[pc.type].label;
+                  const virtuelles = piecesVirtuellesDe(niveauActif);
+                  const virtuelleChoisie = virtuelles.find(v => v.id === selectedAppareillage.pieceAttribueeId);
+                  const creer = () => { if (creerPieceEtAttribuer(selectedAppareillage.id, nomNouvellePiece, typeNouvellePiece)) setNomNouvellePiece(""); };
                   return (
-                    <div className="flex items-center gap-2 text-xs text-ink-500" title="Pièce dans laquelle cet appareillage est compté (pré-devis, minimum de prises, circuits). Par défaut : la pièce dont il longe le mur.">
-                      <span className="shrink-0 w-16">Pièce</span>
-                      <select className="input !py-1 !text-xs flex-1" value={selectedAppareillage.pieceAttribueeId ?? ""}
-                        onChange={e => attribuerPiece(selectedAppareillage.id, e.target.value === "" ? undefined : Number(e.target.value))}>
-                        <option value="">Auto — {auto.id === pieceDeSelectedAppareillage.id || niveauActif.pieces.some(p => p.id === auto.id) ? nomPiece(auto) : "Extérieur"}</option>
-                        {niveauActif.pieces.map(pc => <option key={pc.id} value={pc.id}>{nomPiece(pc)}</option>)}
-                        <option value={EXTERIEUR_PIECE_ID}>Extérieur</option>
-                      </select>
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2 text-xs text-ink-500" title="Pièce dans laquelle cet appareillage est compté (pré-devis, minimum de prises, circuits). Par défaut : la pièce dont il longe le mur.">
+                        <span className="shrink-0 w-16">Pièce</span>
+                        <select className="input !py-1 !text-xs flex-1 min-w-0" value={selectedAppareillage.pieceAttribueeId ?? ""}
+                          onChange={e => attribuerPiece(selectedAppareillage.id, e.target.value === "" ? undefined : Number(e.target.value))}>
+                          <option value="">Auto — {auto.id === pieceDeSelectedAppareillage.id || niveauActif.pieces.some(p => p.id === auto.id) ? nomPiece(auto) : "Extérieur"}</option>
+                          {niveauActif.pieces.map(pc => <option key={pc.id} value={pc.id}>{nomPiece(pc)}</option>)}
+                          {virtuelles.map(v => <option key={v.id} value={v.id}>{v.nom}</option>)}
+                          <option value={EXTERIEUR_PIECE_ID}>Extérieur</option>
+                        </select>
+                        {virtuelleChoisie && (
+                          <>
+                            <button type="button" className="btn-ghost !px-1.5 !py-1" title={`Renommer « ${virtuelleChoisie.nom} »`} aria-label="Renommer cette pièce" onClick={() => renommerPiece(virtuelleChoisie.id)}><Pencil size={13} /></button>
+                            <button type="button" className="btn-ghost !px-1.5 !py-1 text-red-500" title={`Supprimer « ${virtuelleChoisie.nom} »`} aria-label="Supprimer cette pièce" onClick={() => supprimerPiece(virtuelleChoisie.id)}><Trash2 size={13} /></button>
+                          </>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 text-xs text-ink-500 pl-[4.5rem]" title="Crée une pièce qui n'apparaît pas sur le plan (ex. une salle à manger dans un grand séjour) : elle est enregistrée, proposée dans la liste ci-dessus, et cet appareillage y est attribué.">
+                        <input className="input !py-1 !text-xs flex-1 min-w-0" placeholder="Nouvelle pièce (ex. Salle à manger)" maxLength={NOM_PIECE_VIRTUELLE_MAX}
+                          value={nomNouvellePiece} onChange={e => setNomNouvellePiece(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); creer(); } }} />
+                        <select className="input !py-1 !text-xs !w-24 shrink-0" value={typeNouvellePiece} onChange={e => setTypeNouvellePiece(e.target.value as PieceType)} title="Type de la nouvelle pièce (règles de prises et circuits)">
+                          {(Object.keys(PIECE_TYPES) as PieceType[]).map(t => <option key={t} value={t}>{PIECE_TYPES[t].label}</option>)}
+                        </select>
+                        <button type="button" className="btn-ghost !px-1.5 !py-1" title="Créer la pièce et y attribuer cet appareillage" aria-label="Créer la pièce" disabled={!nettoyerNomPiece(nomNouvellePiece)} onClick={creer}><Plus size={14} /></button>
+                      </div>
                     </div>
                   );
                 })()}

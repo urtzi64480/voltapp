@@ -4,7 +4,7 @@
 // des tableaux affichent tous le même score. Le contrôle alerte, il ne bloque jamais.
 
 import {
-  AMPERES_DIFFERENTIEL, BREAKER_TYPES, CIRCUITS, DIFF_HIERARCHY, EMPLACEMENTS_PAR_RANGEE, effectiveSection, emplacementsOccupes, estAccessoireTableau,
+  AMPERES_DIFFERENTIEL, BREAKER_TYPES, CIRCUITS, DIFF_HIERARCHY, effectiveSection, emplacementsOccupes, emplacementsRangee, estAccessoireTableau, groupesDeRangee,
   premierEmplacementLibre, uid, type Breaker, type BreakerRow,
 } from "./electrical-constants";
 
@@ -53,15 +53,18 @@ export function checkNFC(rows: BreakerRow[]) {
       action: { label: "Ajouter une rangée avec un différentiel type A 40 A", run: rs => [...rs, { id: uid(), name: `Rangée ${rs.filter(x => x.kind !== "multimedia").length + 1}`, slots: [{ id: uid(), label: "", circuit: "general", amperes: 40, type: "diff-A", customSection: "10.0", pieces: [] } as Breaker, ...Array(8).fill(null)] }] } });
   }
 
+  // Une rangée peut porter PLUSIEURS différentiels : chacun protège les départs à sa droite jusqu'au suivant (groupesDeRangee). Les contrôles
+  // « par différentiel » (8 circuits max, calibre, type) s'appliquent à chaque groupe ; sans second ID, le groupe unique est la rangée entière.
   rows.forEach(row => {
     if (row.kind === "multimedia") return;
-    const rawDiff = Array.isArray(row.slots) ? row.slots[0] : null;
-    const diff = (rawDiff != null && typeof rawDiff === "object" && typeof (rawDiff as any).type === "string")
-      ? rawDiff as Breaker : null;
-    const breakers = safeBreakers(Array.isArray(row.slots) ? row.slots.slice(1) : []).filter(b => !estAccessoireTableau(b));
+    groupesDeRangee(Array.isArray(row.slots) ? row.slots : []).forEach((groupe, gi, tous) => {
+    const diff = groupe.diff;
+    const breakers = groupe.departs.map(d => d.b);
+    const suffixe = gi === 0 ? "" : `-g${gi}`;
+    const nomRangee = tous.length > 1 ? `${row.name} (ID ${gi + 1})` : row.name;
 
     if (breakers.length > 8) {
-      errors.push({ id: `max8-${row.id}`, msg: `Rangée "${row.name}" : plus de 8 circuits sous le différentiel.`, rule: "Art. 531.2.4",
+      errors.push({ id: `max8-${row.id}${suffixe}`, msg: `Rangée "${nomRangee}" : plus de 8 circuits sous le différentiel.`, rule: "Art. 531.2.4",
         fix: "Glisse les circuits en trop dans une nouvelle rangée, sous son propre différentiel 30 mA." });
     }
 
@@ -77,8 +80,8 @@ export function checkNFC(rows: BreakerRow[]) {
       }, 0);
       if (diff.amperes < charge) {
         warnings.push({
-          id: `diffamp-${row.id}`,
-          msg: `Rangée "${row.name}" : différentiel ${diff.amperes}A potentiellement sous-dimensionné pour les circuits protégés (charge estimée ≈ ${Math.ceil(charge)}A — chauffage compté à 100%, reste à 50%).`,
+          id: `diffamp-${row.id}${suffixe}`,
+          msg: `Rangée "${nomRangee}" : différentiel ${diff.amperes}A potentiellement sous-dimensionné pour les circuits protégés (charge estimée ≈ ${Math.ceil(charge)}A — chauffage compté à 100%, reste à 50%).`,
           rule: "Dimensionnement amont/aval",
           fix: `Passe le différentiel à ${AMPERES_DIFFERENTIEL.find(a => a >= charge) ?? AMPERES_DIFFERENTIEL[AMPERES_DIFFERENTIEL.length - 1]} A, ou répartis les circuits de cette rangée sous deux différentiels.`,
           action: { label: `Passer le différentiel à ${AMPERES_DIFFERENTIEL.find(a => a >= charge) ?? AMPERES_DIFFERENTIEL[AMPERES_DIFFERENTIEL.length - 1]} A`, run: majAppareil(diff.id, b => ({ ...b, amperes: AMPERES_DIFFERENTIEL.find(a => a >= charge) ?? AMPERES_DIFFERENTIEL[AMPERES_DIFFERENTIEL.length - 1] })) },
@@ -199,20 +202,21 @@ export function checkNFC(rows: BreakerRow[]) {
         }
       }
     });
+    });
   });
 
   // ── Réserve et rangées vides (NF C 15-100 : 20 % d'emplacements libres, jamais de rangée vide) ──
   const rangees = rows.filter(r => r.kind !== "multimedia");
-  const nbRangeesVides = rangees.filter(r => safeBreakers(r.slots.slice(1)).length === 0).length;
+  const nbRangeesVides = rangees.filter(r => safeBreakers(r.slots.slice(1)).filter(b => !BREAKER_TYPES[b.type]?.isDiff).length === 0).length;
   if (nbRangeesVides > 0) {
     warnings.push({ id: "rangee-vide", msg: `${nbRangeesVides} rangée${nbRangeesVides > 1 ? "s" : ""} sans aucun circuit — ne pas laisser de rangée vide.`, rule: "Guide NF C 15-100",
       fix: "Équipe la rangée (disjoncteurs de réserve) ou supprime-la.",
-      action: { label: "Supprimer les rangées vides", run: rs => rs.filter(x => x.kind === "multimedia" || safeBreakers(x.slots.slice(1)).length > 0) } });
+      action: { label: "Supprimer les rangées vides", run: rs => rs.filter(x => x.kind === "multimedia" || safeBreakers(x.slots.slice(1)).filter(b => !BREAKER_TYPES[b.type]?.isDiff).length > 0) } });
   }
   if (rangees.length > 0) {
     // Réserve en EMPLACEMENTS (modules), pas en appareils : la coupure générale et la prise modulaire en occupent 2.
     // Comparaison en entiers (libres / capacité < 20 % ⇔ 5 × libres < capacité) : pas d'arrondi flottant à la limite exacte de 20 %.
-    const capacite = rangees.length * EMPLACEMENTS_PAR_RANGEE;
+    const capacite = rangees.reduce((n, r) => n + emplacementsRangee(r.slots), 0);
     const utilises = rangees.reduce((n, r) => n + emplacementsOccupes(r.slots, false), 0);
     const libres = Math.max(0, capacite - utilises);
     if (libres * 5 < capacite && nbRangeesVides === 0) {

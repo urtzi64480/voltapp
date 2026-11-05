@@ -8,7 +8,7 @@
 // Règle d'or du projet : la NF C 15-100 ALERTE, elle ne bloque jamais ; rien n'est appliqué au tableau sans clic de l'électricien.
 
 import type { Breaker, BreakerRow } from "./electrical-constants";
-import { CIRCUITS, largeurAppareil, premierEmplacementLibre, uid } from "./electrical-constants";
+import { CIRCUITS, emplacementsPourModules, largeurAppareil, premierEmplacementLibre, redimensionnerRangee, uid } from "./electrical-constants";
 import { assemblerTableau, maxIdRows, remapperIdsRows } from "./maison-engine";
 import { NORME_CIRCUITS, type StatutNorme } from "./normes-nfc";
 import { calculerTableauReel, fusionnerParamsTableau, sectionMiniPourCalibre, type ParamsTableauReel, type ResultatTableauReel } from "./tableau-reel";
@@ -270,8 +270,12 @@ export interface ContexteTableau {
   parafoudreRequis: boolean;
   /** Tableau derrière une porte (manettes à 0,50 m mini) plutôt qu'à découvert (0,90 m mini). */
   porte: boolean;
+  /** Largeur des rails du tableau refait : « auto » (défaut) = le plus petit coffret usuel qui garde la réserve de 20 % ; sinon 13, 18 ou 24 modules imposés. */
+  modulesParRail?: "auto" | 13 | 18 | 24;
+  /** Plusieurs différentiels sur un même rail (chacun protège ses départs, 8 maxi) au lieu d'un rail par différentiel. Défaut : non. */
+  plusieursDifferentielsParRangee?: boolean;
 }
-export const CONTEXTE_DEFAUT: ContexteTableau = { surfaceM2: null, collectif: false, parafoudreRequis: false, porte: true };
+export const CONTEXTE_DEFAUT: ContexteTableau = { surfaceM2: null, collectif: false, parafoudreRequis: false, porte: true, modulesParRail: "auto", plusieursDifferentielsParRangee: false };
 
 export interface CircuitReleve {
   id: number;
@@ -426,6 +430,40 @@ function paramsPour(ctx: ContexteTableau, modulesParRail: number): ParamsTableau
 export const MODULES_PAR_RAIL_CANDIDATS = [13, 18, 24] as const;
 
 /**
+ * Range des groupes « un différentiel + ses départs » (les rangées logiques de assemblerTableau) sur des rails de `modules` modules : un rail
+ * reçoit plusieurs groupes tant qu'il y a la place (2 modules par différentiel + les départs), dans l'ordre ; le suivant ouvre un nouveau rail.
+ * Le différentiel de tête est en case 0, les suivants dans les emplacements (2 modules) et protègent les départs à leur droite. Rien n'est jamais perdu.
+ */
+export function emballerEnRails(rows: BreakerRow[], modules: number): BreakerRow[] {
+  const nbEmpl = emplacementsPourModules(modules);
+  const rails: BreakerRow[] = [];
+  let courant: { row: BreakerRow; slots: (Breaker | null)[]; idx: number } | null = null;
+  const ouvrir = (base: BreakerRow) => {
+    courant = { row: base, slots: Array(nbEmpl + 1).fill(null), idx: 1 };
+    rails.push(base);   // remplacé à la fin par la version remplie
+  };
+  const fermer = () => {
+    if (!courant) return;
+    const i = rails.indexOf(courant.row);
+    rails[i] = { ...courant.row, modules, slots: courant.slots };
+  };
+  rows.forEach(r => {
+    const id = r.slots[0] ?? null;
+    const departs = r.slots.slice(1).filter((b): b is Breaker => !!b);
+    const w = departs.reduce((n, b) => n + largeurAppareil(b), 0);
+    const tient = courant != null && id != null && courant.idx + 1 + w <= nbEmpl;
+    if (!tient) { fermer(); ouvrir(r); courant!.slots[0] = id; }
+    else { courant!.slots[courant!.idx] = id; courant!.idx += 2; }
+    const c = courant!;
+    // garde-fou : un groupe plus large que le rail (inatteignable avec 8 départs) agrandit les cases plutôt que de perdre un appareil
+    while (c.slots.length < c.idx + w) c.slots.push(null);
+    departs.forEach(b => { c.slots[c.idx] = b; c.idx += largeurAppareil(b); });
+  });
+  fermer();
+  return rails;
+}
+
+/**
  * Refait le tableau à la norme à partir du relevé (corrigé par l'électricien), des circuits ajoutés et du contexte.
  * Déterministe : mêmes entrées, même tableau. Les contrôles sont ceux du « tableau réaliste » (calculerTableauReel).
  */
@@ -464,12 +502,20 @@ export function construireProposition(releve: ReleveTableau, ajouts: CircuitRele
   }
   rows = rows.map((r, i) => ({ ...r, name: `Rangée ${i + 1}` }));
 
-  // 4. Coffret : le plus petit nombre de modules par rail qui laisse la réserve exigée
-  let modules: number = MODULES_PAR_RAIL_CANDIDATS[MODULES_PAR_RAIL_CANDIDATS.length - 1];
-  for (const m of MODULES_PAR_RAIL_CANDIDATS) {
-    const r = calculerTableauReel(rows, { params: paramsPour(ctx, m) });
+  // 4. Coffret : la largeur de rail imposée (13, 18 ou 24 modules), sinon le plus petit nombre de modules par rail qui laisse la réserve exigée.
+  //    Par défaut un rail = un différentiel ; avec « plusieurs différentiels par rangée », les groupes sont rangés côte à côte sur les rails.
+  const imposee = ctx.modulesParRail != null && ctx.modulesParRail !== "auto" && MODULES_PAR_RAIL_CANDIDATS.includes(ctx.modulesParRail) ? ctx.modulesParRail : null;
+  const plusieursId = ctx.plusieursDifferentielsParRangee === true;
+  const disposer = (m: number): BreakerRow[] => (plusieursId ? emballerEnRails(rows, m)
+    : imposee != null ? rows.map(r => redimensionnerRangee(r, m) ?? r)
+    : rows);
+  const candidats: readonly number[] = imposee != null ? [imposee] : MODULES_PAR_RAIL_CANDIDATS;
+  let modules: number = candidats[candidats.length - 1];
+  for (const m of candidats) {
+    const r = calculerTableauReel(disposer(m), { params: paramsPour(ctx, m) });
     if (!r.controles.some(c => c.id === "reserve" || c.id.startsWith("depasse-"))) { modules = m; break; }
   }
+  rows = disposer(modules).map((r, i) => ({ ...r, name: `Rangée ${i + 1}` }));
   const params = paramsPour(ctx, modules);
   const resApres = calculerTableauReel(rows, { params });
 

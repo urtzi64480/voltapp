@@ -88,6 +88,15 @@ function EtapeConsigne({ contexte, setContexte, notes, setNotes, reponse, setRep
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={contexte.collectif} onChange={e => setContexte({ ...contexte, collectif: e.target.checked })} />Logement collectif</label>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={contexte.parafoudreRequis} onChange={e => setContexte({ ...contexte, parafoudreRequis: e.target.checked })} />Parafoudre requis (zone AQ2, paratonnerre, ligne aérienne…)</label>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={contexte.porte} onChange={e => setContexte({ ...contexte, porte: e.target.checked })} />Tableau derrière une porte</label>
+        <label className="block"><span className="label">Largeur des rails du tableau refait</span>
+          <select className="input" value={contexte.modulesParRail ?? "auto"} onChange={e => setContexte({ ...contexte, modulesParRail: e.target.value === "auto" ? "auto" : (parseInt(e.target.value, 10) as 13 | 18 | 24) })}>
+            <option value="auto">Automatique (le plus petit coffret qui garde 20 % de réserve)</option>
+            <option value={13}>13 modules par rail</option>
+            <option value={18}>18 modules par rail</option>
+            <option value={24}>24 modules par rail</option>
+          </select>
+        </label>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={contexte.plusieursDifferentielsParRangee === true} onChange={e => setContexte({ ...contexte, plusieursDifferentielsParRangee: e.target.checked })} />Plusieurs différentiels sur un même rail (chacun protège ses départs, 8 maxi)</label>
         <label className="block"><span className="label">Précisions pour Claude (facultatif)</span>
           <textarea className="input" rows={3} maxLength={300} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Ex. maison de 1975, tableau 2 rangées Legrand" />
         </label>
