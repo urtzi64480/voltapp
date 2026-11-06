@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { Star, X } from "lucide-react";
 
-export const LIEN_AVIS_GOOGLE = "https://share.google/FuJxuTpwZXDPQBU9g";
+export const LIEN_AVIS_GOOGLE = "https://g.page/r/CRpBa-eW-iwsECE/review?utm_source=gbp&utm_medium=reviews&utm_campaign=qr";
 
 /** QR code vers l'avis Google, à montrer au client (plein écran en un clic). */
 export default function QrAvis() {
