@@ -40,3 +40,11 @@ le temps du devis et celui des plans qui lui sont rattachés.
 `017_devis_achats_materiel.sql` ajoute `devis.achat_materiel_reel` (montant réellement dépensé, saisi à la main) et `devis.achat_materiel_date`
 (date d'achat : classe la dépense dans son mois, sinon mois de signature). Page `/depenses` (menu Pilotage → Achats matériel) et carte « Achats
 matériel » sur la fiche d'un devis signé. Sans la migration, la page s'affiche et donne le SQL à lancer.
+
+## Achats matériel : plusieurs par devis (migration 018)
+
+`018_devis_achats.sql` crée la table `devis_achats` (montant TTC, `date_achat` = jour payé, fournisseur facultatif, RLS propriétaire) : un devis peut avoir
+plusieurs achats, répartis sur plusieurs mois. Elle remplace la saisie unique de la 017 : les montants déjà saisis sont repris (une ligne par devis) puis
+les colonnes `achat_materiel_*` sont vidées (elles restent dans la table, sans usage). La page `/depenses` classe chaque achat dans le mois du jour payé
+(total du mois = à virer) ; la rentabilité d'un devis utilise la somme de ses achats à la place de l'estimation. Sans la migration, les pages s'affichent
+et donnent le SQL à lancer.

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { ArrowLeft, Euro, AlertTriangle } from "lucide-react";
 import { fmt, cn } from "@/lib/utils";
 import { comparerAchat } from "@/lib/rentabilite";
-import { htDepuisTtc, lireMontant } from "@/lib/depenses-materiel";
+import { htDepuisTtc, lireMontant, totalParDevis } from "@/lib/depenses-materiel";
 
 function margeColor(pct: number) {
   if (pct < 0) return "text-red-600";
@@ -80,9 +80,12 @@ export default function RentabiliteDevisPage({ params }: { params: { id: string 
         }
         setLoading(false);
       });
-    // Achat réellement dépensé (TTC, saisi sur le devis, migration 017) : requête à part, sans la migration la page reste celle d'avant.
-    supabase.from("devis").select("achat_materiel_reel").eq("id", id).single().then(({ data, error }) => {
-      if (!error && data) setAchatReel(lireMontant((data as { achat_materiel_reel?: number | string | null }).achat_materiel_reel ?? null));
+    // Achats réellement payés (TTC, plusieurs possibles, migration 018) : requête à part, sans la migration la page reste celle d'avant.
+    // Aucun achat saisi = pas de montant réel : on garde l'estimation.
+    supabase.from("devis_achats").select("devis_id,montant").eq("devis_id", id).then(({ data, error }) => {
+      if (error) return;
+      const total = totalParDevis(((data ?? []) as { devis_id: string; montant: unknown }[]).flatMap(r => { const m = lireMontant(r.montant); return m == null ? [] : [{ devisId: r.devis_id, montant: m }]; }));
+      setAchatReel(total.get(id) ?? null);
     });
 
     // Profil de l'utilisateur connecté (taux de cotisations) — plus d'UUID codé en dur.

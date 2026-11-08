@@ -7,8 +7,8 @@ import Shell from "@/components/layout/Shell";
 import PostesLignes from "@/components/devis/PostesLignes";
 import BoutonDeplacement from "@/components/devis/BoutonDeplacement";
 import LigneImage from "@/components/devis/LigneImage";
-import AchatMaterielReel from "@/components/devis/AchatMaterielReel";
-import { lireDate, lireMontant } from "@/lib/depenses-materiel";
+import AchatsDevis from "@/components/devis/AchatsMateriel";
+import { lireAchat, SQL_MIGRATION_ACHATS, type AchatLigne } from "@/lib/depenses-materiel";
 import { extrairePostes, grouperParPoste, ordonnerLignes, posteDe, totalItems, trierParOrdre } from "@/lib/postes";
 import { attacherFournisseurs } from "@/lib/fournisseurs";
 import { colonnesFournisseur, colonnesImage, estLigneACompleter, nbLignesACompleter, nomLigneSansACompleter, photosAffichees } from "@/lib/devis-lignes";
@@ -246,6 +246,9 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const { id } = params;
   const router = useRouter();
   const [devis, setDevis] = useState<Devis | null>(null);
+  // Achats réels de matériel de ce devis (table devis_achats, migration 018) ; `achatsAbsents` : table pas encore créée.
+  const [achats, setAchats] = useState<AchatLigne[]>([]);
+  const [achatsAbsents, setAchatsAbsents] = useState(false);
   const [profil, setProfil] = useState<Profil | null>(null);
   const [mode, setMode] = useState<Mode>("view");
   const [tab, setTab] = useState<Tab>("edition");
@@ -292,6 +295,14 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   // plus chargé ici : la rentabilité vit désormais sur sa propre page (/devis/[id]/
   // rentabilite), qui fait sa propre récupération.
   const SELECT_DEVIS = "*, client:clients(*), lignes:devis_lignes(*)";
+
+  useEffect(() => {
+    supabase.from("devis_achats").select("id,devis_id,montant,date_achat,fournisseur").eq("devis_id", id).then(({ data, error }) => {
+      if (error) { setAchatsAbsents(/devis_achats/i.test(error.message)); return; }
+      setAchatsAbsents(false);
+      setAchats(((data ?? []) as unknown[]).map(lireAchat).filter((a): a is AchatLigne => a != null));
+    });
+  }, [id]);
 
   useEffect(() => {
     supabase.from("devis").select(SELECT_DEVIS)
@@ -1009,12 +1020,14 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
               <input type="checkbox" className="h-4 w-4" checked={photosAffichees(devis)} onChange={ev => basculerPhotos(ev.target.checked)} />
               Afficher les photos des produits sur le devis (aperçu, PDF, lien de signature)
             </label>
-            {(devis.statut === "signe" || devis.achat_materiel_reel != null) && (
+            {(devis.statut === "signe" || achats.length > 0) && (
               <div className="rounded-xl border border-ink-100 bg-ink-50/60 px-4 py-3 mb-3">
                 <h3 className="text-sm font-semibold text-ink-800 mb-0.5">Achats matériel (privé)</h3>
-                <p className="text-xs text-ink-400 mb-2">Ce que tu as réellement dépensé pour ce devis. Il apparaît dans <Link href="/depenses" className="underline">Achats matériel</Link>, classé par mois d&apos;achat.</p>
-                <AchatMaterielReel devisId={id} reel={lireMontant(devis.achat_materiel_reel ?? null)} date={lireDate(devis.achat_materiel_date ?? null)}
-                  dateRef={lireDate(devis.signe_le) ?? lireDate(devis.date_emission) ?? ""} onSaved={v => setDevis(d => d ? { ...d, achat_materiel_reel: v.reel ?? undefined, achat_materiel_date: v.date ?? undefined } : d)} />
+                <p className="text-xs text-ink-400 mb-2">Ce que tu as réellement payé pour ce devis, achat par achat (plusieurs possibles). Le jour payé classe chaque achat dans son mois, dans <Link href="/depenses" className="underline">Achats matériel</Link>.</p>
+                {achatsAbsents
+                  ? <div className="text-xs text-amber-700">Lance d&apos;abord dans Supabase (SQL Editor) la migration 018 (<code>supabase/migrations/018_devis_achats.sql</code>), ou au minimum :<pre className="mt-1 whitespace-pre-wrap">{SQL_MIGRATION_ACHATS}</pre></div>
+                  : <AchatsDevis devisId={id} achats={achats}
+                      onAdded={a => setAchats(l => [...l, a])} onUpdated={a => setAchats(l => l.map(x => (x.id === a.id ? a : x)))} onDeleted={x => setAchats(l => l.filter(y => y.id !== x))} />}
               </div>
             )}
             <div className="flex flex-wrap gap-3">

@@ -191,8 +191,6 @@ export interface Devis {
   // Photos des produits sur le devis (PDF, aperçu, signature) — colonne migration 016. Absent = affichées.
   afficher_photos?: boolean;
   // Matériel réellement dépensé pour ce devis (saisi à la main) et date d'achat — colonnes migration 017. Absent = pas encore saisi.
-  achat_materiel_reel?: number;
-  achat_materiel_date?: string;
   notes_internes?: string;
   created_at: string;
   updated_at: string;

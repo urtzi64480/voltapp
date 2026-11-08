@@ -8,7 +8,7 @@ import Shell from "@/components/layout/Shell";
 import { supabase } from "@/lib/supabase";
 import { cn, fmt } from "@/lib/utils";
 import { formaterMinutes } from "@/lib/suivi-persistance";
-import { lireMontant } from "@/lib/depenses-materiel";
+import { lireMontant, totalParDevis } from "@/lib/depenses-materiel";
 import {
   analyserDevis, construirePrixAchatMap, grouperParType, minutesReelles, partCouverte, proratiser, tauxDepuisProfil,
   type FactureRentab, type InfoPrestation, type SourceRentab, type LigneRentab, type ResultatDevis,
@@ -41,8 +41,8 @@ export default function RentabilitePage() {
           supabase.from("devis").select("id,suivi_realisation"),
           supabase.from("factures").select("devis_id,statut,total_ttc"),
           user ? supabase.from("profil").select("*").eq("id", user.id).maybeSingle() : Promise.resolve({ data: null, error: null }),
-          // Achat réellement dépensé par devis (TTC, migration 017) : remplace l'estimation. Sans la migration : estimations seules.
-          supabase.from("devis").select("id,achat_materiel_reel"),
+          // Achats réellement payés (TTC, plusieurs par devis, migration 018) : leur somme remplace l'estimation. Sans la migration : estimations seules.
+          supabase.from("devis_achats").select("devis_id,montant"),
         ]);
         if (devisR.error) throw new Error(`Devis : ${devisR.error.message}`);
         if (prestR.error) throw new Error(`Catalogue : ${prestR.error.message}`);
@@ -64,11 +64,8 @@ export default function RentabilitePage() {
         if (!facturesR.error) ((facturesR.data ?? []) as FactureRentab[]).forEach(f => {
           if (f.devis_id) facturesParDevis.set(f.devis_id, [...(facturesParDevis.get(f.devis_id) ?? []), f]);
         });
-        const achatReelParDevis = new Map<string, number>();
-        if (!achatsR.error) ((achatsR.data ?? []) as { id: string; achat_materiel_reel?: number | string | null }[]).forEach(r => {
-          const v = lireMontant(r.achat_materiel_reel ?? null);
-          if (v != null) achatReelParDevis.set(r.id, v);
-        });
+        const achatReelParDevis = achatsR.error ? new Map<string, number>()
+          : totalParDevis(((achatsR.data ?? []) as { devis_id: string; montant: unknown }[]).flatMap(r => { const m = lireMontant(r.montant); return m == null ? [] : [{ devisId: r.devis_id, montant: m }]; }));
         const res = ((devisR.data ?? []) as unknown as DevisBrut[]).map(d => ({
           r: analyserDevis(d, d.devis_lignes ?? [], prixAchat, infos, taux, minutesReelles(d.id, projets, suiviParDevis.get(d.id)), achatReelParDevis.get(d.id) ?? null),
           statut: d.statut, ttc: Number(d.total_ttc) || 0, factures: facturesParDevis.get(d.id) ?? [],

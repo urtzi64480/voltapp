@@ -1,23 +1,42 @@
 // src/lib/depenses-materiel.ts
 //
-// DÉPENSES DE MATÉRIEL PAR MOIS : pour chaque devis signé, le matériel à acheter (coût d'achat estimé d'après le devis) et ce qui a
-// RÉELLEMENT été dépensé (saisi à la main sur le devis : devis.achat_materiel_reel, migration 017). Les dépenses sont classées par mois
-// d'achat ; un mois terminé se replie. Pur (sans réseau, sans horloge) : la page charge les données et appelle ces fonctions.
+// ACHATS DE MATÉRIEL PAR MOIS : un devis peut donner lieu à PLUSIEURS achats réels (table devis_achats, migration 018), chacun avec son
+// montant TTC, son jour de paiement et son fournisseur. Le mois d'un achat est celui du jour où il a été payé : le total d'un mois est ce
+// qu'il faut virer en fin de mois. Le « prévu » (coût d'achat estimé d'après le devis) sert à comparer au total réel du devis.
+// Pur (sans réseau, sans horloge) : la page charge les données et appelle ces fonctions.
 
-export interface EntreeAchat {
+/** Un achat réel (une ligne de devis_achats). `montant` est TTC. */
+export interface AchatLigne {
+  id: string;
   devisId: string;
+  montant: number;
+  /** Jour du paiement, AAAA-MM-JJ. */
+  date: string;
+  fournisseur: string;
+}
+
+/** Un achat avec le devis auquel il appartient (pour l'affichage mensuel). */
+export interface AchatDuMois extends AchatLigne {
   numero: string;
-  objet: string;
   client: string;
-  statut: string;
-  /** Coût d'achat estimé d'après les lignes du devis (0 = aucun prix d'achat connu). */
-  prevu: number;
-  /** Montant réellement dépensé, saisi à la main ; null = pas encore saisi. */
-  reel: number | null;
-  /** Date d'achat saisie (AAAA-MM-JJ) ; null = on utilise `dateRef`. */
-  date: string | null;
-  /** Date de repli : signature du devis, sinon émission. */
-  dateRef: string;
+  objet: string;
+}
+
+/** Ligne brute de devis_achats (Supabase) → achat ; null si la ligne est inutilisable. */
+export function lireAchat(row: unknown): AchatLigne | null {
+  if (!row || typeof row !== "object") return null;
+  const r = row as Record<string, unknown>;
+  const montant = lireMontant(r.montant ?? null);
+  const date = lireDate(r.date_achat ?? null);
+  if (typeof r.id !== "string" || typeof r.devis_id !== "string" || montant == null) return null;
+  return { id: r.id, devisId: r.devis_id, montant, date: date ?? "", fournisseur: typeof r.fournisseur === "string" ? r.fournisseur.trim() : "" };
+}
+
+/** Somme des achats par devis (au centime). */
+export function totalParDevis(achats: Pick<AchatLigne, "devisId" | "montant">[]): Map<string, number> {
+  const m = new Map<string, number>();
+  achats.forEach(a => m.set(a.devisId, arrondi((m.get(a.devisId) ?? 0) + a.montant)));
+  return m;
 }
 
 import { TVA_ACHAT_PCT } from "./courses-prix";
@@ -56,9 +75,9 @@ export function lireDate(v: unknown): string | null {
   return test.getUTCFullYear() === y && test.getUTCMonth() === mo - 1 && test.getUTCDate() === d ? `${m[1]}-${m[2]}-${m[3]}` : null;
 }
 
-/** Mois de la dépense (AAAA-MM) : date d'achat saisie, sinon date de repli du devis. « inconnu » si aucune date lisible. */
-export function moisDe(e: Pick<EntreeAchat, "date" | "dateRef">): string {
-  const d = lireDate(e.date) ?? lireDate(e.dateRef);
+/** Mois d'un achat (AAAA-MM) d'après son jour de paiement ; « inconnu » si la date n'est pas lisible. */
+export function moisDe(date: unknown): string {
+  const d = lireDate(date);
   return d ? d.slice(0, 7) : "inconnu";
 }
 
@@ -72,48 +91,48 @@ export function libelleMois(cle: string): string {
 export interface GroupeMois {
   cle: string;
   libelle: string;
-  entrees: EntreeAchat[];
-  /** Somme des montants réels saisis. */
-  totalReel: number;
-  /** Coût d'achat estimé des devis du mois dont le réel est saisi (comparable au réel). */
-  prevuSaisis: number;
-  /** Coût d'achat estimé de tous les devis du mois. */
-  totalPrevu: number;
+  /** Achats du mois, du plus ancien au plus récent (puis par numéro de devis). */
+  achats: AchatDuMois[];
+  /** Somme des achats du mois : ce qu'il faut virer. */
+  total: number;
+  nbAchats: number;
   nbDevis: number;
-  nbASaisir: number;
   /** Mois strictement avant le mois courant : replié par défaut. */
   termine: boolean;
 }
 
-/** Regroupe par mois, du plus récent au plus ancien (« date inconnue » en dernier) ; devis triés par date puis numéro. `moisCourant` = AAAA-MM d'aujourd'hui. */
-export function grouperParMois(entrees: EntreeAchat[], moisCourant: string): GroupeMois[] {
-  const map = new Map<string, EntreeAchat[]>();
-  entrees.forEach(e => { const k = moisDe(e); map.set(k, [...(map.get(k) ?? []), e]); });
+/** Regroupe par mois de paiement, du plus récent au plus ancien (« date inconnue » en dernier). `moisCourant` = AAAA-MM d'aujourd'hui. */
+export function grouperAchatsParMois(achats: AchatDuMois[], moisCourant: string): GroupeMois[] {
+  const map = new Map<string, AchatDuMois[]>();
+  achats.forEach(a => { const k = moisDe(a.date); map.set(k, [...(map.get(k) ?? []), a]); });
   const groupes: GroupeMois[] = [];
   map.forEach((liste, cle) => {
-    const tri = [...liste].sort((a, b) => (lireDate(a.date) ?? lireDate(a.dateRef) ?? "").localeCompare(lireDate(b.date) ?? lireDate(b.dateRef) ?? "") || a.numero.localeCompare(b.numero, "fr", { numeric: true }));
-    const saisis = tri.filter(e => e.reel != null);
+    const tri = [...liste].sort((x, y) => x.date.localeCompare(y.date) || x.numero.localeCompare(y.numero, "fr", { numeric: true }) || x.id.localeCompare(y.id));
     groupes.push({
-      cle, libelle: libelleMois(cle), entrees: tri,
-      totalReel: arrondi(saisis.reduce((a, e) => a + (e.reel ?? 0), 0)),
-      prevuSaisis: arrondi(saisis.reduce((a, e) => a + e.prevu, 0)),
-      totalPrevu: arrondi(tri.reduce((a, e) => a + e.prevu, 0)),
-      nbDevis: tri.length, nbASaisir: tri.length - saisis.length,
+      cle, libelle: libelleMois(cle), achats: tri,
+      total: arrondi(tri.reduce((t, a) => t + a.montant, 0)),
+      nbAchats: tri.length, nbDevis: new Set(tri.map(a => a.devisId)).size,
       termine: cle !== "inconnu" && cle < moisCourant,
     });
   });
   return groupes.sort((a, b) => (a.cle === "inconnu" ? 1 : b.cle === "inconnu" ? -1 : b.cle.localeCompare(a.cle)));
 }
 
-/** Écart réel − estimé en % (sur les devis saisis) ; null si non comparable. */
-export function ecartPct(reel: number, prevu: number): number | null {
-  return prevu > 0 ? Math.round(((reel - prevu) / prevu) * 1000) / 10 : null;
-}
-
-/** Un devis entre dans la liste s'il est signé et vend du matériel, ou si un montant réel y a déjà été saisi (rien ne disparaît). */
-export function estAAcheter(d: { statut: string; total_materiau?: number | null; reel?: number | null; aLigneMateriau?: boolean }): boolean {
-  if (d.reel != null) return true;
+/** Un devis entre dans la liste s'il est signé et vend du matériel, ou si un achat y est déjà saisi (rien ne disparaît). */
+export function estAAcheter(d: { statut: string; total_materiau?: number | null; nbAchats?: number; aLigneMateriau?: boolean }): boolean {
+  if ((d.nbAchats ?? 0) > 0) return true;
   return d.statut === "signe" && (Number(d.total_materiau) > 0 || d.aLigneMateriau === true);
 }
 
-export const SQL_MIGRATION_ACHATS = "alter table devis add column if not exists achat_materiel_reel numeric(12,2);\nalter table devis add column if not exists achat_materiel_date date;";
+export const SQL_MIGRATION_ACHATS = `create table if not exists devis_achats (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  devis_id uuid not null references devis(id) on delete cascade,
+  montant numeric(12,2) not null check (montant >= 0),
+  date_achat date not null default current_date,
+  fournisseur text,
+  created_at timestamptz default now()
+);
+alter table devis_achats enable row level security;
+drop policy if exists "own_devis_achats" on devis_achats;
+create policy "own_devis_achats" on devis_achats for all using (auth.uid() = user_id) with check (auth.uid() = user_id);`;

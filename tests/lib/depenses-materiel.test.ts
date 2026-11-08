@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { ecartPct, estAAcheter, grouperParMois, libelleMois, lireDate, lireMontant, moisDe, type EntreeAchat } from "@/lib/depenses-materiel";
+import { estAAcheter, grouperAchatsParMois, libelleMois, lireAchat, lireDate, lireMontant, moisDe, totalParDevis, type AchatDuMois } from "@/lib/depenses-materiel";
 import { coutAchatLignes } from "@/lib/rentabilite";
 
-const e = (o: Partial<EntreeAchat>): EntreeAchat => ({ devisId: "x", numero: "D-1", objet: "", client: "", statut: "signe", prevu: 0, reel: null, date: null, dateRef: "2026-11-03", ...o });
+let n = 0;
+const a = (o: Partial<AchatDuMois>): AchatDuMois => ({ id: `a${++n}`, devisId: "x", numero: "D-1", client: "", objet: "", montant: 10, date: "2026-11-03", fournisseur: "", ...o });
 
 describe("lireMontant", () => {
   it("accepte virgule, point, espaces et €", () => {
@@ -25,10 +26,11 @@ describe("lireDate / moisDe / libelleMois", () => {
     expect(lireDate("n'importe quoi")).toBeNull();
     expect(lireDate(null)).toBeNull();
   });
-  it("le mois vient de la date d'achat, sinon de la date de repli", () => {
-    expect(moisDe({ date: "2026-10-31", dateRef: "2026-11-03" })).toBe("2026-10");
-    expect(moisDe({ date: null, dateRef: "2026-11-03" })).toBe("2026-11");
-    expect(moisDe({ date: null, dateRef: "" })).toBe("inconnu");
+  it("le mois vient du jour payé ; date illisible → inconnu", () => {
+    expect(moisDe("2026-10-31")).toBe("2026-10");
+    expect(moisDe("2026-11-03")).toBe("2026-11");
+    expect(moisDe("")).toBe("inconnu");
+    expect(moisDe(null)).toBe("inconnu");
   });
   it("libellés en français", () => {
     expect(libelleMois("2026-02")).toBe("février 2026");
@@ -38,54 +40,57 @@ describe("lireDate / moisDe / libelleMois", () => {
   });
 });
 
-describe("grouperParMois", () => {
+describe("grouperAchatsParMois : le mois est celui du jour payé", () => {
   const liste = [
-    e({ devisId: "a", numero: "D-2026-010", reel: 120, prevu: 100, date: "2026-10-05" }),
-    e({ devisId: "b", numero: "D-2026-009", reel: null, prevu: 50, date: null, dateRef: "2026-10-20" }),
-    e({ devisId: "c", numero: "D-2026-011", reel: 80.5, prevu: 90, dateRef: "2026-11-02" }),
-    e({ devisId: "d", numero: "D-2025-001", reel: 10, prevu: 10, dateRef: "2025-12-31" }),
-    e({ devisId: "z", numero: "D-0", dateRef: "" }),
+    a({ devisId: "a", numero: "D-2026-010", montant: 120, date: "2026-10-05" }),
+    a({ devisId: "a", numero: "D-2026-010", montant: 30, date: "2026-11-02", fournisseur: "Rexel" }),   // même devis, autre mois
+    a({ devisId: "c", numero: "D-2026-011", montant: 80.5, date: "2026-11-02" }),
+    a({ devisId: "d", numero: "D-2025-001", montant: 10, date: "2025-12-31" }),
+    a({ devisId: "z", numero: "D-0", montant: 1, date: "" }),
   ];
-  const g = grouperParMois(liste, "2026-11");
+  const g = grouperAchatsParMois(liste, "2026-11");
   it("du plus récent au plus ancien, « date inconnue » en dernier", () => {
     expect(g.map(x => x.cle)).toEqual(["2026-11", "2026-10", "2025-12", "inconnu"]);
   });
-  it("totaux : réel saisi, prévu comparable (devis saisis) et prévu total, devis à saisir", () => {
+  it("un devis acheté en deux fois est réparti sur les deux mois, chaque mois totalise ses achats", () => {
     const oct = g.find(x => x.cle === "2026-10")!;
-    expect(oct.totalReel).toBe(120);
-    expect(oct.prevuSaisis).toBe(100);
-    expect(oct.totalPrevu).toBe(150);
-    expect(oct.nbDevis).toBe(2);
-    expect(oct.nbASaisir).toBe(1);
-    expect(oct.entrees.map(x => x.devisId)).toEqual(["a", "b"]);        // triés par date d'achat puis numéro
+    const nov = g.find(x => x.cle === "2026-11")!;
+    expect(oct.total).toBe(120);
+    expect(nov.total).toBe(110.5);
+    expect(nov.nbAchats).toBe(2);
+    expect(nov.nbDevis).toBe(2);
+    expect(nov.achats.map(x => x.devisId)).toEqual(["a", "c"]);          // même jour : triés par numéro de devis
   });
   it("un mois terminé (avant le mois courant) est replié ; le mois courant et la date inconnue ne le sont pas", () => {
     expect(g.map(x => [x.cle, x.termine])).toEqual([["2026-11", false], ["2026-10", true], ["2025-12", true], ["inconnu", false]]);
   });
-  it("un achat daté d'un autre mois que la signature va dans son mois d'achat", () => {
-    const r = grouperParMois([e({ reel: 5, date: "2026-12-01", dateRef: "2026-11-30" })], "2026-11");
-    expect(r[0].cle).toBe("2026-12");
-    expect(r[0].termine).toBe(false);                                    // mois futur : ouvert
+  it("mois futur : ouvert", () => expect(grouperAchatsParMois([a({ date: "2026-12-01" })], "2026-11")[0].termine).toBe(false));
+  it("liste vide : aucun groupe", () => expect(grouperAchatsParMois([], "2026-11")).toEqual([]));
+  it("somme au centime près", () => expect(grouperAchatsParMois([a({ montant: 0.1 }), a({ montant: 0.2 })], "2026-11")[0].total).toBe(0.3));
+});
+
+describe("totalParDevis / lireAchat", () => {
+  it("somme par devis au centime", () => {
+    const t = totalParDevis([{ devisId: "a", montant: 0.1 }, { devisId: "a", montant: 0.2 }, { devisId: "b", montant: 5 }]);
+    expect(t.get("a")).toBe(0.3);
+    expect(t.get("b")).toBe(5);
+    expect(t.get("c")).toBeUndefined();
   });
-  it("liste vide : aucun groupe", () => expect(grouperParMois([], "2026-11")).toEqual([]));
-  it("somme au centime près", () => {
-    const r = grouperParMois([e({ reel: 0.1 }), e({ reel: 0.2 })], "2026-11");
-    expect(r[0].totalReel).toBe(0.3);
+  it("ligne Supabase (montant numérique en texte, date, fournisseur) → achat ; ligne inutilisable → null", () => {
+    expect(lireAchat({ id: "1", devis_id: "d", montant: "12.50", date_achat: "2026-11-03", fournisseur: " Rexel " }))
+      .toEqual({ id: "1", devisId: "d", montant: 12.5, date: "2026-11-03", fournisseur: "Rexel" });
+    expect(lireAchat({ id: "1", devis_id: "d", montant: 0, date_achat: null, fournisseur: null })).toEqual({ id: "1", devisId: "d", montant: 0, date: "", fournisseur: "" });
+    for (const v of [null, undefined, "x", {}, { id: "1", devis_id: "d", montant: -2 }, { id: "1", devis_id: "d", montant: "abc" }, { devis_id: "d", montant: 1 }]) expect(lireAchat(v)).toBeNull();
   });
 });
 
-describe("ecartPct / estAAcheter", () => {
-  it("écart en %, null si rien de prévu", () => {
-    expect(ecartPct(120, 100)).toBe(20);
-    expect(ecartPct(90, 100)).toBe(-10);
-    expect(ecartPct(10, 0)).toBeNull();
-  });
-  it("devis signé avec matériel, ou déjà saisi ; jamais un brouillon sans saisie", () => {
+describe("estAAcheter", () => {
+  it("devis signé avec matériel, ou déjà saisi ; jamais un brouillon sans achat", () => {
     expect(estAAcheter({ statut: "signe", total_materiau: 100 })).toBe(true);
     expect(estAAcheter({ statut: "signe", total_materiau: 0, aLigneMateriau: true })).toBe(true);
     expect(estAAcheter({ statut: "signe", total_materiau: 0 })).toBe(false);
     expect(estAAcheter({ statut: "brouillon", total_materiau: 100 })).toBe(false);
-    expect(estAAcheter({ statut: "refuse", total_materiau: 100, reel: 0 })).toBe(true);   // un 0 saisi est une saisie : rien ne disparaît
+    expect(estAAcheter({ statut: "refuse", total_materiau: 100, nbAchats: 1 })).toBe(true);   // un achat saisi : rien ne disparaît
   });
 });
 
