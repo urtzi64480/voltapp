@@ -101,3 +101,77 @@ describe("coutAchatLignes (partagé avec la rentabilité)", () => {
     expect(r.lignesSansCout).toBe(1);
   });
 });
+
+import { htDepuisTtc, lireMontantTtc, ttcDepuisHt } from "@/lib/depenses-materiel";
+import { analyserDevis, comparerAchat, proratiser, TAUX_PAR_DEFAUT } from "@/lib/rentabilite";
+
+describe("conversion TTC / HT (TVA 20 % non récupérable en franchise : tout est stocké en TTC)", () => {
+  it("HT → TTC et TTC → HT, arrondis au centime", () => {
+    expect(ttcDepuisHt(100)).toBe(120);
+    expect(ttcDepuisHt(833.33)).toBe(1000);   // 999,996 arrondi au centime
+    expect(htDepuisTtc(120)).toBe(100);
+    expect(htDepuisTtc(1000)).toBe(833.33);
+    expect(ttcDepuisHt(0)).toBe(0);
+  });
+  it("lireMontantTtc : la saisie HT est convertie, la saisie TTC reste telle quelle, le reste est refusé", () => {
+    expect(lireMontantTtc("100", "ht")).toBe(120);
+    expect(lireMontantTtc("100,50", "ht")).toBe(120.6);
+    expect(lireMontantTtc("120", "ttc")).toBe(120);
+    expect(lireMontantTtc("", "ht")).toBeNull();
+    expect(lireMontantTtc("abc", "ttc")).toBeNull();
+    expect(lireMontantTtc("-3", "ht")).toBeNull();
+  });
+  it("aller-retour stable à un centime près", () => {
+    for (const ttc of [0.01, 9.99, 123.45, 1999.9]) expect(Math.abs(ttcDepuisHt(htDepuisTtc(ttc)) - ttc)).toBeLessThanOrEqual(0.01);
+  });
+});
+
+describe("rentabilité : achat réel vs estimé", () => {
+  const lignes = [{ prestation_id: "p1", quantite: 10, prix_unitaire: 50, type_branche: "materiau" }, { quantite: 2, prix_unitaire: 100, type_branche: "service", unite: "h" }];
+  const devis = { id: "d", numero: "D-1", total_service: 200, total_materiau: 500, total_ttc: 700 };
+  const prixAchat = { p1: 30 };                                   // estimé : 10 × 30 = 300 TTC
+  const sans = analyserDevis(devis, lignes, prixAchat, {}, TAUX_PAR_DEFAUT, 0);
+  const avec = analyserDevis(devis, lignes, prixAchat, {}, TAUX_PAR_DEFAUT, 0, 360);
+
+  it("sans montant saisi : comportement d'avant (estimation)", () => {
+    expect(sans.coutAchat).toBe(300);
+    expect(sans.coutAchatEstime).toBe(300);
+    expect(sans.coutAchatReel).toBeNull();
+  });
+  it("avec un montant réel : il remplace l'estimation dans le net et la marge, l'estimation reste disponible", () => {
+    expect(avec.coutAchat).toBe(360);
+    expect(avec.coutAchatEstime).toBe(300);
+    expect(avec.coutAchatReel).toBe(360);
+    expect(avec.net).toBeCloseTo(sans.net - 60, 2);
+    expect(avec.margePct!).toBeLessThan(sans.margePct!);
+  });
+  it("un réel à 0 est une saisie (achat gratuit / stock), pas une absence", () => {
+    const zero = analyserDevis(devis, lignes, prixAchat, {}, TAUX_PAR_DEFAUT, 0, 0);
+    expect(zero.coutAchat).toBe(0);
+    expect(zero.coutAchatReel).toBe(0);
+  });
+  it("le réel comble l'absence de prix d'achat : plus de marge « ≈ »", () => {
+    const sansPrix = analyserDevis(devis, lignes, {}, {}, TAUX_PAR_DEFAUT, 0);
+    expect(sansPrix.lignesSansCout).toBe(1);
+    expect(analyserDevis(devis, lignes, {}, {}, TAUX_PAR_DEFAUT, 0, 250).lignesSansCout).toBe(0);
+  });
+  it("valeur réelle invalide : ignorée", () => {
+    expect(analyserDevis(devis, lignes, prixAchat, {}, TAUX_PAR_DEFAUT, 0, NaN).coutAchat).toBe(300);
+    expect(analyserDevis(devis, lignes, prixAchat, {}, TAUX_PAR_DEFAUT, 0, -5).coutAchat).toBe(300);
+  });
+  it("facturation partielle : estimé et réel suivent la même part", () => {
+    const p = proratiser(avec, 0.5);
+    expect(p.coutAchat).toBe(180);
+    expect(p.coutAchatEstime).toBe(150);
+    expect(p.coutAchatReel).toBe(180);
+  });
+  it("comparerAchat : écart, % et effet sur la marge", () => {
+    const c = comparerAchat(300, 360, 700);
+    expect(c).toEqual({ estimeTtc: 300, reelTtc: 360, ecart: 60, ecartPct: 20, effetMarge: -60, effetMargePts: -8.6 });
+    const eco = comparerAchat(300, 240, 700);
+    expect(eco.ecart).toBe(-60);
+    expect(eco.effetMarge).toBe(60);
+    expect(comparerAchat(0, 100, 700).ecartPct).toBeNull();
+    expect(comparerAchat(100, 100, 0).effetMargePts).toBeNull();
+  });
+});

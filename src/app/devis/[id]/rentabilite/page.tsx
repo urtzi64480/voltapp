@@ -5,6 +5,8 @@ import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { ArrowLeft, Euro, AlertTriangle } from "lucide-react";
 import { fmt, cn } from "@/lib/utils";
+import { comparerAchat } from "@/lib/rentabilite";
+import { htDepuisTtc, lireMontant } from "@/lib/depenses-materiel";
 
 function margeColor(pct: number) {
   if (pct < 0) return "text-red-600";
@@ -27,6 +29,7 @@ export default function RentabiliteDevisPage({ params }: { params: { id: string 
   const [profil, setProfil] = useState<any>(null);
   const [prixAchatMap, setPrixAchatMap] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [achatReel, setAchatReel] = useState<number | null>(null);   // matériel réellement dépensé, TTC (saisi sur le devis)
 
   // Coût d'achat par prestation vendue dans le devis (clé = prestation_id de la ligne) —
   // reproduit exactement loadPrixAchatMap() de la page devis/[id] : cas simple (prix_achat
@@ -77,6 +80,10 @@ export default function RentabiliteDevisPage({ params }: { params: { id: string 
         }
         setLoading(false);
       });
+    // Achat réellement dépensé (TTC, saisi sur le devis, migration 017) : requête à part, sans la migration la page reste celle d'avant.
+    supabase.from("devis").select("achat_materiel_reel").eq("id", id).single().then(({ data, error }) => {
+      if (!error && data) setAchatReel(lireMontant((data as { achat_materiel_reel?: number | string | null }).achat_materiel_reel ?? null));
+    });
 
     // Profil de l'utilisateur connecté (taux de cotisations) — plus d'UUID codé en dur.
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -117,7 +124,10 @@ export default function RentabiliteDevisPage({ params }: { params: { id: string 
     const sansCoutAchat = l.type_branche === "materiau" && coutAchat === 0;
     return { ...l, coutAchat, venteLigne, margeLigne, sansCoutAchat };
   });
-  const coutAchatTotal = lignesRentab.reduce((a: number, l: any) => a + l.coutAchat, 0);
+  const coutAchatEstime = lignesRentab.reduce((a: number, l: any) => a + l.coutAchat, 0);
+  // Achat saisi (TTC) : il remplace l'estimation dans tous les calculs de cette page.
+  const coutAchatTotal = achatReel ?? coutAchatEstime;
+  const comparaison = achatReel != null ? comparerAchat(coutAchatEstime, achatReel, devis.total_ttc) : null;
   const cotisationService = devis.total_service * tauxCotisService / 100;
   const cotisationMateriau = devis.total_materiau * tauxCotisMateriau / 100;
   const irService = devis.total_service * tauxIrService / 100;
@@ -126,7 +136,7 @@ export default function RentabiliteDevisPage({ params }: { params: { id: string 
   const netMateriau = devis.total_materiau - cotisationMateriau - irMateriau - coutAchatTotal;
   const netGlobal = netService + netMateriau;
   const margeGlobalePct = devis.total_ttc > 0 ? Math.round(netGlobal / devis.total_ttc * 1000) / 10 : 0;
-  const hasLigneSansCoutAchat = lignesRentab.some((l: any) => l.sansCoutAchat);
+  const hasLigneSansCoutAchat = achatReel == null && lignesRentab.some((l: any) => l.sansCoutAchat);
 
   return (
     <Shell>
@@ -156,7 +166,7 @@ export default function RentabiliteDevisPage({ params }: { params: { id: string 
                 <p className="text-base font-bold text-ink-900">{fmt(devis.total_ttc)}</p>
               </div>
               <div className="bg-red-50 border border-red-100 rounded-xl p-3">
-                <p className="text-xs text-red-400 mb-0.5">Achat matériel</p>
+                <p className="text-xs text-red-400 mb-0.5">Achat matériel ({achatReel != null ? "réel" : "estimé"}, TTC)</p>
                 <p className="text-base font-bold text-red-700">− {fmt(coutAchatTotal)}</p>
               </div>
               <div className="bg-red-50 border border-red-100 rounded-xl p-3">
@@ -189,6 +199,24 @@ export default function RentabiliteDevisPage({ params }: { params: { id: string 
                   <div className="flex justify-between font-semibold pt-1 border-t border-emerald-200"><span>Net</span><span className={margeColor(devis.total_materiau > 0 ? Math.round(netMateriau / devis.total_materiau * 100) : 0)}>{fmt(netMateriau)}</span></div>
                 </div>
               </div>
+            </div>
+
+            <div className={cn("rounded-xl border p-3 text-sm", comparaison ? (comparaison.ecart > 0 ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50") : "border-ink-100 bg-ink-50")}>
+              <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2">Achat matériel : réel vs estimé (TTC)</p>
+              {comparaison ? (
+                <div className="space-y-1 text-xs text-ink-700">
+                  <div className="flex justify-between"><span>Estimé (prix d&apos;achat du devis)</span><span className="font-semibold">{fmt(comparaison.estimeTtc)} <span className="font-normal text-ink-400">({fmt(htDepuisTtc(comparaison.estimeTtc))} HT)</span></span></div>
+                  <div className="flex justify-between"><span>Réellement dépensé</span><span className="font-semibold">{fmt(comparaison.reelTtc)} <span className="font-normal text-ink-400">({fmt(htDepuisTtc(comparaison.reelTtc))} HT)</span></span></div>
+                  <div className={cn("flex justify-between font-semibold pt-1 border-t", comparaison.ecart > 0 ? "text-red-600 border-red-200" : "text-emerald-700 border-emerald-200")}>
+                    <span>Écart{comparaison.ecart > 0 ? " (dépensé en plus)" : comparaison.ecart < 0 ? " (économisé)" : ""}</span>
+                    <span>{comparaison.ecart > 0 ? "+" : ""}{fmt(comparaison.ecart)}{comparaison.ecartPct != null ? ` (${comparaison.ecart > 0 ? "+" : ""}${comparaison.ecartPct} %)` : ""}</span>
+                  </div>
+                  <p className="text-ink-500">Effet sur la marge nette : <strong className={comparaison.effetMarge < 0 ? "text-red-600" : "text-emerald-700"}>{comparaison.effetMarge > 0 ? "+" : ""}{fmt(comparaison.effetMarge)}</strong>{comparaison.effetMargePts != null ? ` (${comparaison.effetMargePts > 0 ? "+" : ""}${comparaison.effetMargePts} pt)` : ""}. La marge ci-dessus est calculée avec le montant réel.</p>
+                  {comparaison.estimeTtc === 0 && <p className="text-amber-600">Aucun prix d&apos;achat connu sur ce devis : pas d&apos;estimation à comparer.</p>}
+                </div>
+              ) : (
+                <p className="text-xs text-ink-500">Pas encore de montant réel. La marge ci-dessus utilise l&apos;estimation ({fmt(coutAchatEstime)} TTC). <Link href={`/devis/${id}`} className="underline text-volt-700">Saisir ce que tu as réellement dépensé</Link> (TTC ou HT, enregistré en TTC : la TVA payée aux fournisseurs n&apos;est pas récupérable en franchise).</p>
+              )}
             </div>
 
             <div>

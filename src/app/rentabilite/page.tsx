@@ -8,6 +8,7 @@ import Shell from "@/components/layout/Shell";
 import { supabase } from "@/lib/supabase";
 import { cn, fmt } from "@/lib/utils";
 import { formaterMinutes } from "@/lib/suivi-persistance";
+import { lireMontant } from "@/lib/depenses-materiel";
 import {
   analyserDevis, construirePrixAchatMap, grouperParType, minutesReelles, partCouverte, proratiser, tauxDepuisProfil,
   type FactureRentab, type InfoPrestation, type SourceRentab, type LigneRentab, type ResultatDevis,
@@ -32,7 +33,7 @@ export default function RentabilitePage() {
     (async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        const [devisR, prestR, compR, projR, suiviDevisR, facturesR, profilR] = await Promise.all([
+        const [devisR, prestR, compR, projR, suiviDevisR, facturesR, profilR, achatsR] = await Promise.all([
           supabase.from("devis").select("id,numero,objet,statut,created_at,total_service,total_materiau,total_ttc,devis_lignes(*)").order("created_at", { ascending: false }),
           supabase.from("prestations").select("id,categorie,prix_achat"),
           supabase.from("kit_composants").select("kit_id,composant_id,quantite"),
@@ -40,6 +41,8 @@ export default function RentabilitePage() {
           supabase.from("devis").select("id,suivi_realisation"),
           supabase.from("factures").select("devis_id,statut,total_ttc"),
           user ? supabase.from("profil").select("*").eq("id", user.id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+          // Achat réellement dépensé par devis (TTC, migration 017) : remplace l'estimation. Sans la migration : estimations seules.
+          supabase.from("devis").select("id,achat_materiel_reel"),
         ]);
         if (devisR.error) throw new Error(`Devis : ${devisR.error.message}`);
         if (prestR.error) throw new Error(`Catalogue : ${prestR.error.message}`);
@@ -61,8 +64,13 @@ export default function RentabilitePage() {
         if (!facturesR.error) ((facturesR.data ?? []) as FactureRentab[]).forEach(f => {
           if (f.devis_id) facturesParDevis.set(f.devis_id, [...(facturesParDevis.get(f.devis_id) ?? []), f]);
         });
+        const achatReelParDevis = new Map<string, number>();
+        if (!achatsR.error) ((achatsR.data ?? []) as { id: string; achat_materiel_reel?: number | string | null }[]).forEach(r => {
+          const v = lireMontant(r.achat_materiel_reel ?? null);
+          if (v != null) achatReelParDevis.set(r.id, v);
+        });
         const res = ((devisR.data ?? []) as unknown as DevisBrut[]).map(d => ({
-          r: analyserDevis(d, d.devis_lignes ?? [], prixAchat, infos, taux, minutesReelles(d.id, projets, suiviParDevis.get(d.id))),
+          r: analyserDevis(d, d.devis_lignes ?? [], prixAchat, infos, taux, minutesReelles(d.id, projets, suiviParDevis.get(d.id)), achatReelParDevis.get(d.id) ?? null),
           statut: d.statut, ttc: Number(d.total_ttc) || 0, factures: facturesParDevis.get(d.id) ?? [],
           annee: (d.created_at ?? "").slice(0, 4) || "—",
         }));
@@ -91,6 +99,9 @@ export default function RentabilitePage() {
   const margeGlobale = ca > 0 ? Math.round((net / ca) * 1000) / 10 : null;
   const sansCout = filtres.reduce((a, r) => a + r.lignesSansCout, 0);
   const nbChrono = filtres.filter(r => r.heuresReelles != null).length;
+  // Devis dont l'achat de matériel est celui réellement dépensé (saisi, TTC) plutôt que l'estimation du catalogue.
+  const nbAchatReel = filtres.filter(r => r.coutAchatReel != null).length;
+  const ecartAchat = filtres.reduce((a, r) => a + (r.coutAchatReel != null ? r.coutAchatReel - (r.coutAchatEstime ?? 0) : 0), 0);
 
   return (
     <Shell>
@@ -141,6 +152,12 @@ export default function RentabilitePage() {
               ))}
             </div>
 
+            {nbAchatReel > 0 && (
+              <p className="text-xs text-ink-500 mb-3">
+                Achats de matériel : {nbAchatReel} devis sur {filtres.length} avec le montant réellement dépensé (TTC), les autres avec l&apos;estimation du catalogue.
+                {" "}Écart réel − estimé sur ces devis : <strong className={ecartAchat > 0 ? "text-red-600" : "text-emerald-600"}>{ecartAchat > 0 ? "+" : ""}{fmt(ecartAchat)}</strong>.
+              </p>
+            )}
             {sansCout > 0 && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-xs p-3 mb-4 flex gap-2">
                 <AlertTriangle size={14} className="shrink-0 mt-0.5" />

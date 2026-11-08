@@ -20,6 +20,20 @@ export interface EntreeAchat {
   dateRef: string;
 }
 
+import { TVA_ACHAT_PCT } from "./courses-prix";
+
+/** Base d'un montant saisi : toutes les dépenses sont STOCKÉES en TTC (TVA fournisseur non récupérable en franchise en base de TVA). */
+export type BaseMontant = "ttc" | "ht";
+const COEF_TVA = 1 + TVA_ACHAT_PCT / 100;
+export const ttcDepuisHt = (ht: number): number => Math.round((ht * COEF_TVA + Number.EPSILON) * 100) / 100;
+export const htDepuisTtc = (ttc: number): number => Math.round((ttc / COEF_TVA + Number.EPSILON) * 100) / 100;
+/** Montant saisi dans la base choisie → TTC stocké ; null si la saisie est vide ou invalide. */
+export function lireMontantTtc(saisie: unknown, base: BaseMontant): number | null {
+  const m = lireMontant(saisie);
+  return m == null ? null : base === "ht" ? ttcDepuisHt(m) : m;
+}
+export { TVA_ACHAT_PCT };
+
 const arrondi = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 /** « 1 234,50 », « 12.5 », « 12,5 € » → nombre ≥ 0 arrondi au centime ; vide ou invalide → null. */

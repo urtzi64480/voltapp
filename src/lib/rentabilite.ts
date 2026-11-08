@@ -126,6 +126,8 @@ export function typeChantier(lignes: LigneRentab[], prestations: Record<string, 
 
 export interface ResultatDevis {
   id: string; numero: string; objet: string; type: string;
+  /** coutAchat = achat RÉEL (TTC) s'il est saisi sur le devis, sinon l'estimation d'après les prix d'achat (TTC). */
+  coutAchatEstime?: number; coutAchatReel?: number | null;
   ca: number; coutAchat: number; cotisations: number; impots: number; net: number; margePct: number | null;
   lignesSansCout: number; heuresEstimees: number; heuresReelles: number | null;
 }
@@ -146,8 +148,14 @@ export function coutAchatLignes(lignes: LigneRentab[], prixAchatMap: Record<stri
 export function analyserDevis(
   devis: DevisRentab, lignes: LigneRentab[], prixAchatMap: Record<string, number>,
   prestations: Record<string, InfoPrestation>, taux: TauxRentabilite, minutesReellesChantier: number,
+  /** Matériel réellement dépensé pour ce devis, TTC (TVA non récupérable en franchise : c'est la vraie dépense). Saisi sur le devis ; null = pas saisi. */
+  achatReelTtc: number | null = null,
 ): ResultatDevis {
-  const { coutAchat, lignesSansCout } = coutAchatLignes(lignes, prixAchatMap);
+  const estim = coutAchatLignes(lignes, prixAchatMap);
+  const reel = achatReelTtc != null && Number.isFinite(achatReelTtc) && achatReelTtc >= 0 ? achatReelTtc : null;
+  // Achat saisi : il remplace l'estimation (et plus aucune ligne n'a besoin d'un prix d'achat pour que la marge soit juste).
+  const coutAchat = reel ?? estim.coutAchat;
+  const lignesSansCout = reel != null ? 0 : estim.lignesSansCout;
   const ts = nombre(devis.total_service), tm = nombre(devis.total_materiau), ttc = nombre(devis.total_ttc);
   const cotisations = ts * taux.cotisService / 100 + tm * taux.cotisMateriau / 100;
   const impots = ts * taux.irService / 100 + tm * taux.irMateriau / 100;
@@ -155,6 +163,7 @@ export function analyserDevis(
   const net = ts + tm - cotisations - impots - coutAchat;
   return {
     id: devis.id, numero: devis.numero ?? "", objet: devis.objet ?? "", type: typeChantier(lignes, prestations),
+    coutAchatEstime: arrondi(estim.coutAchat), coutAchatReel: reel != null ? arrondi(reel) : null,
     ca: arrondi(ttc), coutAchat: arrondi(coutAchat), cotisations: arrondi(cotisations), impots: arrondi(impots),
     net: arrondi(net), margePct: ttc > 0 ? arrondi((net / ttc) * 100, 1) : null,
     lignesSansCout, heuresEstimees: heuresEstimees(lignes),
@@ -213,5 +222,30 @@ export function partCouverte(source: SourceRentab, statutDevis: string, ttcDevis
 /** Ramène un résultat à la part facturée (chiffre d'affaires, achats, charges, net) ; les heures ne sont pas proratisées. */
 export function proratiser(r: ResultatDevis, part: number): ResultatDevis {
   if (part >= 1) return r;
-  return { ...r, ca: arrondi(r.ca * part), coutAchat: arrondi(r.coutAchat * part), cotisations: arrondi(r.cotisations * part), impots: arrondi(r.impots * part), net: arrondi(r.net * part) };
+  return { ...r, ca: arrondi(r.ca * part), coutAchat: arrondi(r.coutAchat * part), coutAchatEstime: r.coutAchatEstime != null ? arrondi(r.coutAchatEstime * part) : undefined, coutAchatReel: r.coutAchatReel != null ? arrondi(r.coutAchatReel * part) : r.coutAchatReel, cotisations: arrondi(r.cotisations * part), impots: arrondi(r.impots * part), net: arrondi(r.net * part) };
+}
+
+// ─── Achat réel vs estimé ───────────────────────────────────────────────────────────────────────────────────
+// Les deux montants sont en TTC : les prix d'achat du catalogue sont stockés TTC et, en franchise en base de TVA, la TVA payée au fournisseur
+// n'est jamais récupérable (c'est la vraie dépense). Le chiffre d'affaires du devis n'a pas de TVA (art. 293 B), donc rien d'autre à convertir.
+export interface ComparaisonAchat {
+  estimeTtc: number; reelTtc: number;
+  /** réel − estimé : positif = dépensé de plus que prévu. */
+  ecart: number;
+  /** écart rapporté à l'estimé, en % ; null si aucune estimation. */
+  ecartPct: number | null;
+  /** Effet sur la marge nette (€) : estimé − réel (négatif = marge plus faible que prévu). */
+  effetMarge: number;
+  /** Effet sur la marge en points du TTC du devis ; null si TTC inconnu. */
+  effetMargePts: number | null;
+}
+export function comparerAchat(estimeTtc: number, reelTtc: number, ttcDevis: number): ComparaisonAchat {
+  const est = arrondi(nombre(estimeTtc)), reel = arrondi(nombre(reelTtc));
+  const ecart = arrondi(reel - est);
+  return {
+    estimeTtc: est, reelTtc: reel, ecart,
+    ecartPct: est > 0 ? arrondi((ecart / est) * 100, 1) : null,
+    effetMarge: arrondi(-ecart),
+    effetMargePts: nombre(ttcDevis) > 0 ? arrondi((-ecart / nombre(ttcDevis)) * 100, 1) : null,
+  };
 }
