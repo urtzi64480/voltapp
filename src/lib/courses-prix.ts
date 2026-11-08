@@ -175,3 +175,37 @@ export function associerPrixAuxCases(
   }
   return { parCase, orphelines: groupe.lignes.filter(l => !affichees.has(l.cle)) };
 }
+
+/**
+ * Prix d'achat PRÉVU (TTC, quantité comprise) de chaque case de la liste : somme des lignes de devis dont elle porte le prix. Sert au bilan
+ * en direct (dépensé vs prévu). `groupes` = groupes affichés (vue par fournisseur) ; null = vue à plat, où chaque ligne de prix est
+ * rattachée à la première case qui la contient, tous fournisseurs confondus.
+ * Absent de la table = prix d'achat inconnu. 0 = case qui accompagne un autre article (pièce d'un article en plusieurs pièces) : son prix est
+ * porté par la première case de l'article.
+ */
+export function prevuParCase(
+  vue: VuePrix | null,
+  groupes: { fournisseur: string | null; items: { key: string; sources?: any[] }[] }[] | null,
+  itemsPlats: { key: string; sources?: any[] }[],
+): Map<string, number> {
+  const resultat = new Map<string, number>();
+  if (!vue) return resultat;
+  const ajouter = (groupe: GroupePrix | undefined, cases: { key: string; sources?: any[] }[]) => {
+    if (!groupe) return;
+    const parCle = new Map(groupe.lignes.map(l => [l.cle, l] as const));
+    const attribuees = new Set<string>();
+    for (const c of cases) {
+      for (const src of c.sources ?? []) {
+        if (!src || src.type_branche !== "materiau" || src.kit_ratio_service != null) continue;
+        const ligne = parCle.get(clePrixLigne(src));
+        if (!ligne || ligne.achatTtcTotal == null) continue;       // prix d'achat inconnu : la case reste absente
+        const deja = attribuees.has(ligne.cle);
+        attribuees.add(ligne.cle);
+        resultat.set(c.key, arrondi2((resultat.get(c.key) ?? 0) + (deja ? 0 : ligne.achatTtcTotal)));
+      }
+    }
+  };
+  if (groupes) groupes.forEach(g => ajouter(vue.groupes.find(x => x.fournisseur === g.fournisseur), g.items));
+  else vue.groupes.forEach(g => ajouter(g, itemsPlats));
+  return resultat;
+}
