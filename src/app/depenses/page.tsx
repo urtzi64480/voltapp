@@ -12,12 +12,12 @@ import { coutAchatLignes, construirePrixAchatMap, type InfoPrestation, type Lign
 import { ecartPct, estAAcheter, grouperParMois, lireDate, lireMontant, SQL_MIGRATION_ACHATS, type EntreeAchat } from "@/lib/depenses-materiel";
 
 interface DevisBrut {
-  id: string; numero: string; objet: string | null; statut: string; date_emission: string | null; signe_le: string | null; created_at: string | null;
+  id: string; numero: string; objet: string | null; statut: string; signe_le: string | null; created_at: string | null;
   total_materiau: number | null; achat_materiel_reel?: number | string | null; achat_materiel_date?: string | null;
   client: { nom?: string | null; prenom?: string | null } | null; devis_lignes: LigneRentab[] | null;
 }
 
-const COLONNES_BASE = "id,numero,objet,statut,date_emission,signe_le,created_at,total_materiau,client:clients(nom,prenom),devis_lignes(*)";
+const COLONNES_BASE = "id,numero,objet,statut,signe_le,created_at,total_materiau,client:clients(nom,prenom),devis_lignes(*)";
 const COLONNES_ACHATS = "achat_materiel_reel,achat_materiel_date";
 
 export default function AchatsMaterielPage() {
@@ -63,7 +63,7 @@ export default function AchatsMaterielPage() {
             client: [c?.prenom, c?.nom].filter(Boolean).join(" "),
             prevu: Math.round(coutAchatLignes(lignes, prixAchat).coutAchat * 100) / 100,
             reel, date: lireDate(d.achat_materiel_date ?? null),
-            dateRef: lireDate(d.signe_le) ?? lireDate(d.date_emission) ?? lireDate(d.created_at) ?? "",
+            dateRef: lireDate(d.signe_le) ?? lireDate(d.created_at) ?? "",
           });
         });
         if (annule) return;
