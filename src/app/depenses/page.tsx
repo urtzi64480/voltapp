@@ -78,11 +78,13 @@ export default function AchatsMaterielPage() {
     return () => { annule = true; };
   }, []);
 
-  const annees = useMemo(() => Array.from(new Set(entrees.map(e => (lireDate(e.date) ?? e.dateRef).slice(0, 4)).filter(Boolean))).sort().reverse(), [entrees]);
+  const annees = useMemo(() => Array.from(new Set(entrees.filter(e => e.reel != null).map(e => (lireDate(e.date) ?? e.dateRef).slice(0, 4)).filter(Boolean))).sort().reverse(), [entrees]);
   const filtrees = useMemo(() => annee === "toutes" ? entrees : entrees.filter(e => (lireDate(e.date) ?? e.dateRef).startsWith(annee)), [entrees, annee]);
-  const groupes = useMemo(() => grouperParMois(filtrees, moisCourant), [filtrees, moisCourant]);
+  // Mois = jour où l'achat a été payé (date saisie). Les devis sans montant saisi ne sont PAS dans un mois : ils attendent dans « À saisir ».
+  const aSaisir = useMemo(() => entrees.filter(e => e.reel == null).sort((a, b) => a.numero.localeCompare(b.numero, "fr", { numeric: true })), [entrees]);
+  const groupes = useMemo(() => grouperParMois(filtrees.filter(e => e.reel != null), moisCourant), [filtrees, moisCourant]);
   const totalReel = groupes.reduce((a, g) => a + g.totalReel, 0);
-  const nbASaisir = groupes.reduce((a, g) => a + g.nbASaisir, 0);
+  const nbASaisir = aSaisir.length;
 
   const majEntree = (devisId: string, v: { reel: number | null; date: string | null }) =>
     setEntrees(es => es.map(e => (e.devisId === devisId ? { ...e, reel: v.reel, date: v.date } : e)));
@@ -98,7 +100,7 @@ export default function AchatsMaterielPage() {
             {annees.map(a => <option key={a} value={a}>{a}</option>)}
           </select>
         </header>
-        <p className="text-sm text-ink-400">Matériel à acheter pour tes devis signés, classé par mois d&apos;achat. Le « prévu » est le coût d&apos;achat estimé d&apos;après le devis ; le « réel », c&apos;est toi qui le saisis (en TTC ou HT, toujours enregistré en TTC : la TVA payée aux fournisseurs n&apos;est pas récupérable en franchise). Tous les montants affichés sont TTC. Un mois terminé se replie.</p>
+        <p className="text-sm text-ink-400">Matériel à acheter pour tes devis signés, classé par mois d&apos;achat, c&apos;est-à-dire le jour où tu as payé : le total d&apos;un mois est donc ce que tu as avancé ce mois-là (à virer sur le compte commun en fin de mois). Le « prévu » est le coût d&apos;achat estimé d&apos;après le devis ; le « réel », c&apos;est toi qui le saisis (en TTC ou HT, toujours enregistré en TTC : la TVA payée aux fournisseurs n&apos;est pas récupérable en franchise). Tous les montants affichés sont TTC. Un mois terminé se replie.</p>
 
         {colonnesAbsentes && (
           <div className="card p-3 border-amber-300 text-sm flex gap-2"><AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
@@ -114,7 +116,27 @@ export default function AchatsMaterielPage() {
               <div className="card p-3"><div className="text-xs text-ink-400">Dépensé TTC (saisi)</div><div className="text-xl font-bold">{fmt(totalReel)}</div></div>
               <div className="card p-3"><div className="text-xs text-ink-400">Devis à saisir</div><div className={cn("text-xl font-bold", nbASaisir > 0 && "text-amber-600")}>{nbASaisir}</div></div>
             </div>
-            {groupes.length === 0 && <p className="card p-4 text-sm text-ink-400">Aucun devis signé avec du matériel pour l&apos;instant.</p>}
+            {entrees.length === 0 && <p className="card p-4 text-sm text-ink-400">Aucun devis signé avec du matériel pour l&apos;instant.</p>}
+            {aSaisir.length > 0 && (
+              <section className="card overflow-hidden border-amber-300">
+                <div className="p-3">
+                  <div className="font-semibold">À saisir <span className="text-amber-600">({aSaisir.length})</span></div>
+                  <div className="text-xs text-ink-400">Dès que tu enregistres un montant, le devis passe dans le mois de la date d&apos;achat.</div>
+                </div>
+                <ul className="divide-y divide-ink-100 border-t border-ink-100">
+                  {aSaisir.map(e => (
+                    <li key={e.devisId} className="p-3 flex flex-col gap-2">
+                      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                        <Link href={`/devis/${e.devisId}`} className="font-semibold hover:text-volt-600">{e.numero}</Link>
+                        <span className="text-sm text-ink-500 truncate">{[e.client, e.objet].filter(Boolean).join(" — ")}</span>
+                        <span className="ml-auto text-xs text-ink-400">{e.prevu > 0 ? `prévu ≈ ${fmt(e.prevu)} TTC` : "prévu : prix d'achat inconnu"}</span>
+                      </div>
+                      <AchatMaterielReel compact devisId={e.devisId} reel={e.reel} date={e.date} dateRef={e.dateRef} onSaved={v => majEntree(e.devisId, v)} />
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
             {groupes.map(g => {
               const ouvert = choix[g.cle] ?? !g.termine;
               const ecart = ecartPct(g.totalReel, g.prevuSaisis);
@@ -129,6 +151,7 @@ export default function AchatsMaterielPage() {
                     </div>
                     <div className="ml-auto text-right">
                       <div className="font-bold">{fmt(g.totalReel)}</div>
+                      <div className="text-[11px] text-ink-400">à virer</div>
                       {g.prevuSaisis > 0 && <div className="text-[11px] text-ink-400">prévu {fmt(g.prevuSaisis)}{ecart != null && <span className={ecart > 0 ? " text-red-500" : " text-emerald-600"}> ({ecart > 0 ? "+" : ""}{ecart} %)</span>}</div>}
                     </div>
                   </button>

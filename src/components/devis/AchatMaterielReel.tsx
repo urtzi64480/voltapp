@@ -7,10 +7,12 @@ import { useEffect, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { htDepuisTtc, lireDate, lireMontant, lireMontantTtc, SQL_MIGRATION_ACHATS, ttcDepuisHt, TVA_ACHAT_PCT, type BaseMontant } from "@/lib/depenses-materiel";
-import { cn, echecSupabase, fmt } from "@/lib/utils";
+import { cn, dateLocale, echecSupabase, fmt } from "@/lib/utils";
 
 export interface ValeursAchat { reel: number | null; date: string | null }
 const texte = (n: number) => String(n).replace(".", ",");
+// Date d'achat proposée : celle enregistrée ; sinon aujourd'hui tant qu'aucun achat n'est saisi (on saisit en général le jour même).
+const dateInitiale = (date: string | null, reel: number | null) => lireDate(date) ?? (reel == null ? dateLocale() : "");
 
 export default function AchatMaterielReel({ devisId, reel, date, dateRef, onSaved, compact = false }: {
   /** `reel` : montant enregistré, en TTC. */
@@ -18,19 +20,19 @@ export default function AchatMaterielReel({ devisId, reel, date, dateRef, onSave
 }) {
   const [base, setBase] = useState<BaseMontant>("ttc");
   const [montant, setMontant] = useState(reel != null ? texte(reel) : "");
-  const [jour, setJour] = useState(lireDate(date) ?? "");
+  const [jour, setJour] = useState(dateInitiale(date, reel));
   const [etat, setEtat] = useState<"repos" | "envoi" | "ok">("repos");
   const [erreur, setErreur] = useState<string | null>(null);
 
   // La valeur enregistrée peut changer depuis l'extérieur (rechargement) : on resynchronise les champs (affichés dans la base choisie).
   useEffect(() => { setMontant(reel != null ? texte(base === "ht" ? htDepuisTtc(reel) : reel) : ""); }, [reel]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setJour(lireDate(date) ?? ""); }, [date]);
+  useEffect(() => { setJour(dateInitiale(date, reel)); }, [date, reel]);
 
   const montantLu = lireMontant(montant);
   const ttc = lireMontantTtc(montant, base);
   const vide = montant.trim() === "";
   const invalide = !vide && montantLu == null;
-  const inchange = (vide ? null : ttc) === reel && (jour || null) === (lireDate(date) ?? null);
+  const inchange = vide ? reel == null : ttc === reel && (jour || null) === (lireDate(date) ?? null);
 
   // Changer de base convertit le montant déjà tapé (1 000 € TTC ↔ 833,33 € HT) au lieu de le réinterpréter.
   function changerBase(b: BaseMontant) {
@@ -42,7 +44,7 @@ export default function AchatMaterielReel({ devisId, reel, date, dateRef, onSave
   async function enregistrer() {
     if (invalide || etat === "envoi") return;
     setEtat("envoi"); setErreur(null);
-    const v: ValeursAchat = { reel: vide ? null : ttc, date: vide ? null : (jour || null) };
+    const v: ValeursAchat = { reel: vide ? null : ttc, date: vide ? null : (jour || dateLocale()) };
     const { error } = await supabase.from("devis").update({ achat_materiel_reel: v.reel, achat_materiel_date: v.date }).eq("id", devisId);
     if (error) {
       setEtat("repos");
@@ -72,8 +74,8 @@ export default function AchatMaterielReel({ devisId, reel, date, dateRef, onSave
           aria-label={`Montant dépensé en ${base.toUpperCase()}`} />
       </div>
       <label className="block">
-        <span className={cn("block text-ink-400", petit)}>Date d&apos;achat</span>
-        <input type="date" className={cn("input", compact ? "!py-1 !px-2 text-sm" : "")} value={jour} title={`Vide : classé dans le mois de signature (${dateRef || "—"})`}
+        <span className={cn("block text-ink-400", petit)}>Date d&apos;achat (jour payé)</span>
+        <input type="date" className={cn("input", compact ? "!py-1 !px-2 text-sm" : "")} value={jour} title={dateRef ? `Jour où tu as payé : il décide du mois (et du virement). Vide : aujourd'hui. Devis signé le ${dateRef}.` : "Jour où tu as payé : il décide du mois (et du virement). Vide : aujourd'hui."}
           onChange={e => { setJour(e.target.value); setEtat("repos"); }} />
       </label>
       <button type="button" onClick={enregistrer} disabled={invalide || inchange || etat === "envoi"} className={cn("btn-volt", compact ? "!px-2.5 !py-1 text-sm" : "")}>
