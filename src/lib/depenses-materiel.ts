@@ -24,6 +24,14 @@ export interface AchatDuMois extends AchatLigne {
   objet: string;
 }
 
+/** Produit acheté qui n'est PAS sur le devis (oubli, imprévu) : saisi dans la liste de courses, il compte dans le dépensé mais n'a pas de prix prévu.
+ *  Il est repéré par ce préfixe dans `article` (pas de colonne en plus : aucune migration). */
+export const PREFIXE_HORS_DEVIS = "[hors devis] ";
+export const articleHorsDevis = (nom: string) => PREFIXE_HORS_DEVIS + nom.trim();
+export const estHorsDevis = (article: string) => article.startsWith(PREFIXE_HORS_DEVIS);
+/** Nom à afficher d'un article (sans le préfixe hors devis). */
+export const nomArticle = (article: string) => (estHorsDevis(article) ? article.slice(PREFIXE_HORS_DEVIS.length) : article);
+
 /** Ligne brute de devis_achats (Supabase) → achat ; null si la ligne est inutilisable. */
 export function lireAchat(row: unknown): AchatLigne | null {
   if (!row || typeof row !== "object") return null;

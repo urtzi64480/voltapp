@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { Check, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { htDepuisTtc, lireAchat, lireMontant, lireMontantTtc, SQL_MIGRATION_ACHATS, SQL_MIGRATION_ARTICLE, ttcDepuisHt, TVA_ACHAT_PCT, type AchatLigne, type BaseMontant } from "@/lib/depenses-materiel";
+import { htDepuisTtc, lireAchat, lireMontant, lireMontantTtc, SQL_MIGRATION_ACHATS, SQL_MIGRATION_ARTICLE, articleHorsDevis, estHorsDevis, nomArticle, ttcDepuisHt, TVA_ACHAT_PCT, type AchatLigne, type BaseMontant } from "@/lib/depenses-materiel";
 import { ecartArticle, tonEcart } from "@/lib/courses-achats";
 import { cn, dateLocale, fmt, fmtDate } from "@/lib/utils";
 
@@ -19,11 +19,12 @@ const jourAffiche = (d: string) => (d ? fmtDate(`${d}T12:00:00`) : "date ?");
 
 /** Ajout (sans `achat`) ou modification (avec `achat`) d'un achat.
  *  `article` : nom d'un article de la liste de courses (achat rattaché à cet article). `fournisseurFixe` : fournisseur imposé (champ masqué).
+ *  `nomLibre` : produit hors devis (champ « Produit » ; aussi affiché en modification d'un produit hors devis).
  *  `libelle` : texte du bouton d'ajout. `simple` : montant seulement (jour et fournisseur inchangés : aujourd'hui ou ceux de l'achat).
  *  Base de saisie : la dernière utilisée (HT au départ). En modification le montant s'affiche dans cette base ; tant qu'on n'y touche pas,
  *  la valeur TTC enregistrée est conservée au centime (aucune dérive due à l'aller-retour HT/TTC). */
-export function FormulaireAchat({ devisId, achat, article, fournisseurFixe, libelle, simple = false, onSaved, onCancel, compact = false }: {
-  devisId: string; achat?: AchatLigne; article?: string; fournisseurFixe?: string; libelle?: string; simple?: boolean;
+export function FormulaireAchat({ devisId, achat, article, fournisseurFixe, libelle, simple = false, nomLibre = false, onSaved, onCancel, compact = false }: {
+  devisId: string; achat?: AchatLigne; article?: string; fournisseurFixe?: string; libelle?: string; simple?: boolean; nomLibre?: boolean;
   onSaved: (a: AchatLigne) => void; onCancel?: () => void; compact?: boolean;
 }) {
   // Lecture du stockage à l'initialisation : ces formulaires ne sont affichés qu'après le chargement des données (jamais au rendu serveur).
@@ -36,6 +37,8 @@ export function FormulaireAchat({ devisId, achat, article, fournisseurFixe, libe
   const [texteInitial] = useState(montant);   // texte affiché à l'ouverture
   const [jour, setJour] = useState(achat?.date || dateLocale());
   const [fournisseur, setFournisseur] = useState(achat?.fournisseur ?? "");
+  const avecNom = nomLibre || (!!achat && estHorsDevis(achat.article));
+  const [nom, setNom] = useState(achat ? nomArticle(achat.article) : "");
   const [envoi, setEnvoi] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
 
@@ -45,7 +48,7 @@ export function FormulaireAchat({ devisId, achat, article, fournisseurFixe, libe
   const ttc = intact ? initial.ttc : lireMontantTtc(montant, base);
   const vide = montant.trim() === "";
   const invalide = !vide && montantLu == null;
-  const pret = ttc != null && !!jour && !envoi;   // `jour` est toujours renseigné (aujourd'hui par défaut)
+  const pret = ttc != null && !!jour && !envoi && (!avecNom || nom.trim() !== "");   // `jour` est toujours renseigné (aujourd'hui par défaut)
 
   // Changer de base convertit le montant déjà tapé (1 000 € TTC ↔ 833,33 € HT) au lieu de le réinterpréter.
   function changerBase(b: BaseMontant) {
@@ -58,25 +61,32 @@ export function FormulaireAchat({ devisId, achat, article, fournisseurFixe, libe
   async function enregistrer() {
     if (!pret || ttc == null) return;
     setEnvoi(true); setErreur(null);
-    const valeurs = { montant: ttc, date_achat: jour, fournisseur: (fournisseurFixe ?? fournisseur).trim() || null };
+    const valeurs = { montant: ttc, date_achat: jour, fournisseur: (fournisseurFixe ?? fournisseur).trim() || null, ...(avecNom ? { article: articleHorsDevis(nom) } : {}) };
     const r = achat
       ? await supabase.from("devis_achats").update(valeurs).eq("id", achat.id).select(COLONNES).single()
-      : await supabase.from("devis_achats").insert({ devis_id: devisId, ...valeurs, ...(article ? { article } : {}) }).select(COLONNES).single();
+      : await supabase.from("devis_achats").insert({ devis_id: devisId, ...valeurs, ...(article && !avecNom ? { article } : {}) }).select(COLONNES).single();
     setEnvoi(false);
     if (r.error) {
       setErreur(/article/i.test(r.error.message) ? "Colonne absente : lance d'abord dans Supabase (SQL Editor) la migration 019 :\n" + SQL_MIGRATION_ARTICLE
         : /devis_achats/i.test(r.error.message) ? "Table absente : lance d'abord dans Supabase (SQL Editor) la migration 018 :\n" + SQL_MIGRATION_ACHATS : r.error.message);
       return;
     }
-    const lu = lireAchat({ ...(r.data as object), article: achat?.article ?? article ?? "" });
+    const lu = lireAchat({ ...(r.data as object), article: avecNom ? articleHorsDevis(nom) : (achat?.article ?? article ?? "") });
     if (!lu) { setErreur("Réponse inattendue du serveur : recharge la page."); return; }
     onSaved(lu);
-    if (!achat) { setMontant(""); setFournisseur(""); setJour(dateLocale()); }
+    if (!achat) { setMontant(""); setNom(""); setFournisseur(""); setJour(dateLocale()); }
   }
 
   const petit = compact ? "text-[10px]" : "text-xs";
   return (
     <div className={cn("flex flex-wrap items-end gap-2", compact && "gap-1.5")}>
+      {avecNom && (
+        <label className="block">
+          <span className={cn("block text-ink-400", petit)}>Produit</span>
+          <input className={cn("input", compact ? "!py-1 !px-2 w-44 text-sm" : "w-52")} value={nom} onChange={e => setNom(e.target.value)} maxLength={80}
+            onKeyDown={e => { if (e.key === "Enter") enregistrer(); }} placeholder="Ex. Domino 10 mm²" aria-label="Nom du produit" />
+        </label>
+      )}
       <div className="block">
         <span className={cn("flex items-center gap-1 text-ink-400", petit)}>Montant payé
           <span className="inline-flex rounded-md border border-ink-200 overflow-hidden ml-1" role="group" aria-label="Base du montant">
@@ -148,7 +158,7 @@ export function LigneAchat({ achat, detail, compact = false, simple = false, pre
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
         <span className="text-ink-500 tabular-nums">{jourAffiche(achat.date)}</span>
         {detail}
-        {achat.article && <span className="text-ink-500 truncate max-w-[14rem]">{achat.article}</span>}
+        {achat.article && <span className="text-ink-500 truncate max-w-[14rem]">{nomArticle(achat.article)}{estHorsDevis(achat.article) && <span className="ml-1.5 rounded bg-amber-100 text-amber-800 px-1.5 py-px text-[10px] font-medium">hors devis</span>}</span>}
         {achat.fournisseur && <span className="text-ink-400">{achat.fournisseur}</span>}
         <span className="ml-auto font-semibold tabular-nums">{fmt(achat.montant)} <span className="text-[11px] font-normal text-ink-400">TTC · {fmt(htDepuisTtc(achat.montant))} HT</span></span>
         <span className="flex items-center gap-1">

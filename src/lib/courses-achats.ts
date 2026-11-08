@@ -5,7 +5,7 @@
 // l'état courant (articles, cases cochées, achats) et affiche le résultat, rien n'est stocké ici.
 //
 // Montants stockés en TTC (franchise en base de TVA : la TVA des fournisseurs n'est pas récupérable) ; le HT s'en déduit (÷ 1,2).
-import { htDepuisTtc } from "./depenses-materiel";
+import { estHorsDevis, htDepuisTtc } from "./depenses-materiel";
 
 const arrondi = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
@@ -29,12 +29,14 @@ export interface Bilan {
   nbArticles: number; nbAchetes: number;
   /** Articles achetés sans prix prévu : leur prix payé compte dans le dépensé mais pas dans l'écart. */
   nbSansPrevu: number;
+  /** Produits ajoutés hors devis : déjà compris dans le dépensé et dans l'écart (pas de prévu), détaillés ici. */
+  horsDevisTtc: number; horsDevisHt: number; nbHorsDevis: number;
 }
 
 export function bilanAchats(articles: ArticleListe[], achats: AchatBilan[]): Bilan {
   const globalExiste = achats.some(a => a.article === "");
   const parArticle = new Map<string, number>();
-  achats.forEach(a => { if (a.article !== "") parArticle.set(a.article.toLowerCase(), (parArticle.get(a.article.toLowerCase()) ?? 0) + a.montant); });
+  achats.forEach(a => { if (a.article !== "" && !estHorsDevis(a.article)) parArticle.set(a.article.toLowerCase(), (parArticle.get(a.article.toLowerCase()) ?? 0) + a.montant); });
   const reelTtc = arrondi(achats.reduce((t, a) => t + a.montant, 0));
 
   let prevu = 0, reste = 0, nbAchetes = 0, nbSansPrevu = 0, reelSansPrevu = 0;
@@ -48,6 +50,8 @@ export function bilanAchats(articles: ArticleListe[], achats: AchatBilan[]): Bil
     if (art.prevuTtc == null) { nbSansPrevu++; reelSansPrevu += parArticle.get(art.key) ?? 0; }
     else prevu += art.prevuTtc;
   }
+  const horsDevis = achats.filter(a => estHorsDevis(a.article));
+  const horsDevisTtc = arrondi(horsDevis.reduce((t, a) => t + a.montant, 0));
   const prevuTtc = arrondi(prevu);
   const reelComparable = arrondi(reelTtc - reelSansPrevu);
   const ecartTtc = arrondi(reelComparable - prevuTtc);
@@ -58,6 +62,7 @@ export function bilanAchats(articles: ArticleListe[], achats: AchatBilan[]): Bil
     ecartTtc, ecartHt, ecartPct: prevuTtc > 0 ? Math.round((ecartTtc / prevuTtc) * 1000) / 10 : null,
     resteTtc: arrondi(reste), resteHt: htDepuisTtc(arrondi(reste)),
     nbArticles: vus.size, nbAchetes, nbSansPrevu,
+    horsDevisTtc, horsDevisHt: htDepuisTtc(horsDevisTtc), nbHorsDevis: horsDevis.length,
   };
 }
 

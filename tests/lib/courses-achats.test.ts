@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { articleHorsDevis, nomArticle, estHorsDevis } from "@/lib/depenses-materiel";
 import { bilanAchats, ecartArticle, tonEcart, type ArticleListe } from "@/lib/courses-achats";
 import { buildVuePrix, prevuParCase } from "@/lib/courses-prix";
 import { buildCourseItems, buildCourseItemsParFournisseur } from "@/lib/courseItems";
@@ -53,6 +54,22 @@ describe("bilanAchats : dépensé vs prévu, en direct", () => {
     expect(b.reelTtc).toBe(0.3);
     expect(b.prevuTtc).toBe(0.3);
   });
+});
+
+describe("produits hors devis (oubli)", () => {
+  it("préfixe : reconnu, nom retrouvé, jamais confondu avec un article de la liste", () => {
+    const a = articleHorsDevis("  Domino 10 mm² ");
+    expect(estHorsDevis(a)).toBe(true);
+    expect(nomArticle(a)).toBe("Domino 10 mm²");
+    expect(estHorsDevis("Domino 10 mm²")).toBe(false);
+    expect(nomArticle("Disjoncteur")).toBe("Disjoncteur");
+  });
+  it("compte dans le dépensé et dans l'écart (aucun prévu), détaillé à part ; ne rend pas un article « acheté »", () => {
+    const liste = [art("domino 10 mm²", 20), art("b", 60, true)];
+    const b = bilanAchats(liste, [{ article: "b", montant: 60 }, { article: articleHorsDevis("Domino 10 mm²"), montant: 12 }]);
+    expect(b).toMatchObject({ reelTtc: 72, prevuTtc: 60, ecartTtc: 12, ecartHt: 10, horsDevisTtc: 12, horsDevisHt: 10, nbHorsDevis: 1, nbAchetes: 1, resteTtc: 20 });
+  });
+  it("aucun hors devis : zéros", () => expect(bilanAchats([art("a", 10)], [])).toMatchObject({ horsDevisTtc: 0, nbHorsDevis: 0 }));
 });
 
 describe("ecartArticle / tonEcart", () => {

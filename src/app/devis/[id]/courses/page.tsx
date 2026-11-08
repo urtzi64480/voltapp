@@ -13,7 +13,7 @@ import { bilanAchats, tonEcart } from "@/lib/courses-achats";
 import { buildCourseText, genPDFListeCourses, courseFileName } from "@/lib/courseExport";
 import { FormulaireAchat, LigneAchat } from "@/components/devis/AchatsMateriel";
 import { chargerAchats } from "@/lib/achats-db";
-import { htDepuisTtc, lireAchat, SQL_MIGRATION_ACHATS, SQL_MIGRATION_ARTICLE, type AchatLigne } from "@/lib/depenses-materiel";
+import { estHorsDevis, htDepuisTtc, lireAchat, SQL_MIGRATION_ACHATS, SQL_MIGRATION_ARTICLE, type AchatLigne } from "@/lib/depenses-materiel";
 
 const eur = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
 const qteLabel = (qty: number, unite?: string) => (unite && unite !== "u" && unite !== "forfait" ? `${qty} ${unite}` : `${qty}×`);
@@ -107,6 +107,7 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   const [confirmDecocher, setConfirmDecocher] = useState<string | null>(null);
   const [reinitConfirm, setReinitConfirm] = useState(false);
   const [globalOuvert, setGlobalOuvert] = useState(false);
+  const [horsOuvert, setHorsOuvert] = useState(false);
 
   useEffect(() => {
     setCanShare(typeof navigator !== "undefined" && typeof (navigator as any).share === "function");
@@ -284,7 +285,7 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
 
   // Réinitialiser décoche tout ET retire les prix saisis par article : demande confirmation s'il y en a (les achats globaux restent).
   async function reinitialiser() {
-    const rows = achats.filter(a => a.article !== "");
+    const rows = achats.filter(a => a.article !== "" && !estHorsDevis(a.article));   // les produits hors devis restent
     if (rows.length > 0 && !reinitConfirm) { setReinitConfirm(true); return; }
     setReinitConfirm(false);
     toggleAll(false);
@@ -553,7 +554,8 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
 
   // ── Achats réels (privé) : bilan en direct (dépensé vs prévu), achat global « j'ai tout acheté », prix payé article par article ──
   const globaux = achats.filter(a => a.article === "");
-  const nbArticlesSaisis = new Set(achats.filter(a => a.article !== "").map(a => a.article.toLowerCase())).size;
+  const horsDevis = achats.filter(a => estHorsDevis(a.article));
+  const nbArticlesSaisis = new Set(achats.filter(a => a.article !== "" && !estHorsDevis(a.article)).map(a => a.article.toLowerCase())).size;
   const bilan = bilanAchats(
     articlesAffiches.map(({ it }) => ({ key: it.key, prevuTtc: prevuMap.get(it.key) ?? null, coche: !!checked[it.key] })),
     achats.map(a => ({ article: a.article, montant: a.montant })),
@@ -561,6 +563,23 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   const ton = tonEcart(bilan.ecartTtc);
   const signe = (n: number) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${eur(Math.abs(n))}`;
   const couleurEcart = ton === "economie" ? "text-emerald-700" : ton === "surcout" ? "text-red-600" : "text-ink-900";
+  // Produit acheté qui n'est pas sur le devis (oubli) : compte dans le dépensé et l'écart, n'est jamais ajouté au devis.
+  const blocHorsDevis = tableAchatsAbsente ? null : (
+    <div className="card card-inner mt-4 border-amber-200">
+      <h2 className="text-sm font-semibold text-ink-900 mb-0.5">Produits supplémentaires (hors devis)</h2>
+      <p className="text-xs text-ink-400 mb-2">Un produit oublié ou imprévu : il compte dans le total dépensé et dans l&apos;écart, mais n&apos;est pas ajouté au devis ni à la liste du client.</p>
+      {horsDevis.length > 0 && (
+        <ul className="flex flex-col gap-2 divide-y divide-ink-100 mb-2">
+          {horsDevis.map(a => <li key={a.id} className="pt-2 first:pt-0"><LigneAchat simple compact achat={a} onUpdated={modifierAchat} onDeleted={supprimerAchat} /></li>)}
+        </ul>
+      )}
+      {!horsOuvert ? (
+        <button type="button" onClick={() => setHorsOuvert(true)} className="inline-flex items-center gap-1 text-xs font-medium text-sky-700 hover:underline py-1"><Plus size={13} /> Ajouter un produit supplémentaire</button>
+      ) : (
+        <FormulaireAchat simple compact nomLibre devisId={id} fournisseurFixe="" libelle="Ajouter" onSaved={a => { ajouterAchat(a); setHorsOuvert(false); }} onCancel={() => setHorsOuvert(false)} />
+      )}
+    </div>
+  );
   const resume = tableAchatsAbsente ? null : (
     <div className="sticky top-14 md:top-0 z-30 mb-3">
       <div className={cn("rounded-xl border bg-white shadow-sm px-3 py-2.5", ton === "economie" ? "border-emerald-300" : ton === "surcout" ? "border-red-300" : "border-ink-200")}>
@@ -585,6 +604,7 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
           {bilan.nbAchetes}/{bilan.nbArticles} article{bilan.nbArticles > 1 ? "s" : ""} acheté{bilan.nbAchetes > 1 ? "s" : ""}
           {bilan.resteTtc > 0 && ` · reste à acheter ≈ ${eur(bilan.resteTtc)} TTC · ${eur(bilan.resteHt)} HT (prévu)`}
           {bilan.nbSansPrevu > 0 && ` · ${bilan.nbSansPrevu} sans prix prévu (hors écart)`}
+          {bilan.nbHorsDevis > 0 && ` · dont hors devis ${eur(bilan.horsDevisTtc)} TTC · ${eur(bilan.horsDevisHt)} HT`}
         </p>
         {erreurAchat && <p className="mt-1 text-xs text-red-600 whitespace-pre-wrap">{erreurAchat}</p>}
       </div>
@@ -699,7 +719,7 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
               <div className="flex gap-2">
                 <button onClick={toutCocher} className="text-xs text-ink-500 hover:text-ink-700 underline">Tout cocher</button>
                 <button onClick={reinitialiser} onBlur={() => setReinitConfirm(false)} className={cn("text-xs underline flex items-center gap-1", reinitConfirm ? "text-red-600 font-semibold" : "text-ink-500 hover:text-ink-700")}>
-                  <RotateCcw size={11} /> {reinitConfirm ? `Confirmer (retire ${achats.filter(a => a.article !== "").length} prix saisis)` : "Réinitialiser"}
+                  <RotateCcw size={11} /> {reinitConfirm ? `Confirmer (retire ${achats.filter(a => a.article !== "" && !estHorsDevis(a.article)).length} prix saisis)` : "Réinitialiser"}
                 </button>
               </div>
             </div>
@@ -767,6 +787,7 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
                 </div>
               </div>
             )}
+            {blocHorsDevis}
           </>
         )}
       </div>
