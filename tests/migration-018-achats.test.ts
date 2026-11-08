@@ -36,4 +36,16 @@ describe("018 — devis_achats (plusieurs achats par devis)", () => {
     });
     await expect(db.exec(`insert into devis_achats (user_id, devis_id, montant) values ('${A}', 'aaaaaaaa-0000-0000-0000-000000000002', -1)`)).rejects.toThrow();   // montant ≥ 0
   });
+
+  it("019 : colonne article facultative (achats existants = globaux), rejouable", async () => {
+    const db = await nouvelleBase();
+    await appliquerMigrations(db);
+    await db.exec(`insert into auth.users (id, email) values ('${A}', 'a@t.fr')`);
+    await db.exec(`insert into devis (id, user_id, numero) values ('aaaaaaaa-0000-0000-0000-000000000009', '${A}', 'D-9')`);
+    await db.exec(`insert into devis_achats (user_id, devis_id, montant) values ('${A}', 'aaaaaaaa-0000-0000-0000-000000000009', 10)`);
+    await db.exec(`insert into devis_achats (user_id, devis_id, montant, article) values ('${A}', 'aaaaaaaa-0000-0000-0000-000000000009', 5, 'Disjoncteur 20A')`);
+    await db.exec(lireMigration("019_devis_achats_article.sql"));   // rejouable
+    const r = await db.query<{ article: string | null }>(`select article from devis_achats order by montant desc`);
+    expect(r.rows.map(x => x.article)).toEqual([null, "Disjoncteur 20A"]);
+  });
 });

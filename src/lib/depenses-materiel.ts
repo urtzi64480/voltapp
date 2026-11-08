@@ -13,6 +13,8 @@ export interface AchatLigne {
   /** Jour du paiement, AAAA-MM-JJ. */
   date: string;
   fournisseur: string;
+  /** Article de la liste de courses payé (migration 019) ; "" = achat global du devis. */
+  article: string;
 }
 
 /** Un achat avec le devis auquel il appartient (pour l'affichage mensuel). */
@@ -29,7 +31,7 @@ export function lireAchat(row: unknown): AchatLigne | null {
   const montant = lireMontant(r.montant ?? null);
   const date = lireDate(r.date_achat ?? null);
   if (typeof r.id !== "string" || typeof r.devis_id !== "string" || montant == null) return null;
-  return { id: r.id, devisId: r.devis_id, montant, date: date ?? "", fournisseur: typeof r.fournisseur === "string" ? r.fournisseur.trim() : "" };
+  return { id: r.id, devisId: r.devis_id, montant, date: date ?? "", fournisseur: typeof r.fournisseur === "string" ? r.fournisseur.trim() : "", article: typeof r.article === "string" ? r.article.trim() : "" };
 }
 
 /** Somme des achats par devis (au centime). */
@@ -123,6 +125,8 @@ export function estAAcheter(d: { statut: string; total_materiau?: number | null;
   if ((d.nbAchats ?? 0) > 0) return true;
   return d.statut === "signe" && (Number(d.total_materiau) > 0 || d.aLigneMateriau === true);
 }
+
+export const SQL_MIGRATION_ARTICLE = "alter table devis_achats add column if not exists article text;";
 
 export const SQL_MIGRATION_ACHATS = `create table if not exists devis_achats (
   id uuid primary key default uuid_generate_v4(),

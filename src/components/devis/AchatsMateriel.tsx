@@ -2,21 +2,29 @@
 // Achats RÉELS de matériel d'un devis : plusieurs achats possibles (table devis_achats, migration 018), chacun avec montant, jour payé et fournisseur.
 // Le montant se saisit en TTC (ticket de caisse) ou en HT ; il est TOUJOURS enregistré en TTC : en franchise en base de TVA, la TVA payée au
 // fournisseur n'est pas récupérable, c'est la vraie dépense (même base que les prix d'achat du catalogue). Le jour payé décide du mois.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { htDepuisTtc, lireAchat, lireMontant, lireMontantTtc, SQL_MIGRATION_ACHATS, ttcDepuisHt, TVA_ACHAT_PCT, type AchatLigne, type BaseMontant } from "@/lib/depenses-materiel";
+import { htDepuisTtc, lireAchat, lireMontant, lireMontantTtc, SQL_MIGRATION_ACHATS, SQL_MIGRATION_ARTICLE, ttcDepuisHt, TVA_ACHAT_PCT, type AchatLigne, type BaseMontant } from "@/lib/depenses-materiel";
 import { cn, dateLocale, fmt, fmtDate } from "@/lib/utils";
 
 const COLONNES = "id,devis_id,montant,date_achat,fournisseur";
+// Base de saisie mémorisée sur cet appareil (commodité) : par défaut HT, les fournisseurs pros vendent en HT.
+const CLE_BASE = "voltapp.achat.base";
+function baseMemorisee(): BaseMontant { try { return window.localStorage.getItem(CLE_BASE) === "ttc" ? "ttc" : "ht"; } catch { return "ht"; } }
+function memoriserBase(b: BaseMontant) { try { window.localStorage.setItem(CLE_BASE, b); } catch { /* stockage indisponible : sans importance */ } }
 const texte = (n: number) => String(n).replace(".", ",");
 const jourAffiche = (d: string) => (d ? fmtDate(`${d}T12:00:00`) : "date ?");
 
-/** Ajout (sans `achat`) ou modification (avec `achat`) d'un achat. */
-export function FormulaireAchat({ devisId, achat, onSaved, onCancel, compact = false }: {
-  devisId: string; achat?: AchatLigne; onSaved: (a: AchatLigne) => void; onCancel?: () => void; compact?: boolean;
+/** Ajout (sans `achat`) ou modification (avec `achat`) d'un achat.
+ *  `article` : nom d'un article de la liste de courses (achat rattaché à cet article). `fournisseurFixe` : fournisseur imposé (champ masqué).
+ *  `libelle` : texte du bouton d'ajout. Modification : le montant s'affiche d'abord en TTC (valeur enregistrée, aucune conversion). */
+export function FormulaireAchat({ devisId, achat, article, fournisseurFixe, libelle, onSaved, onCancel, compact = false }: {
+  devisId: string; achat?: AchatLigne; article?: string; fournisseurFixe?: string; libelle?: string;
+  onSaved: (a: AchatLigne) => void; onCancel?: () => void; compact?: boolean;
 }) {
-  const [base, setBase] = useState<BaseMontant>("ttc");
+  const [base, setBase] = useState<BaseMontant>(achat ? "ttc" : "ht");
+  useEffect(() => { if (!achat) setBase(baseMemorisee()); }, [achat]);
   const [montant, setMontant] = useState(achat ? texte(achat.montant) : "");
   const [jour, setJour] = useState(achat?.date || dateLocale());
   const [fournisseur, setFournisseur] = useState(achat?.fournisseur ?? "");
@@ -34,21 +42,23 @@ export function FormulaireAchat({ devisId, achat, onSaved, onCancel, compact = f
     if (b === base) return;
     if (montantLu != null) setMontant(texte(b === "ht" ? htDepuisTtc(montantLu) : ttcDepuisHt(montantLu)));
     setBase(b);
+    memoriserBase(b);
   }
 
   async function enregistrer() {
     if (!pret || ttc == null) return;
     setEnvoi(true); setErreur(null);
-    const valeurs = { montant: ttc, date_achat: jour, fournisseur: fournisseur.trim() || null };
+    const valeurs = { montant: ttc, date_achat: jour, fournisseur: (fournisseurFixe ?? fournisseur).trim() || null };
     const r = achat
       ? await supabase.from("devis_achats").update(valeurs).eq("id", achat.id).select(COLONNES).single()
-      : await supabase.from("devis_achats").insert({ devis_id: devisId, ...valeurs }).select(COLONNES).single();
+      : await supabase.from("devis_achats").insert({ devis_id: devisId, ...valeurs, ...(article ? { article } : {}) }).select(COLONNES).single();
     setEnvoi(false);
     if (r.error) {
-      setErreur(/devis_achats/i.test(r.error.message) ? "Table absente : lance d'abord dans Supabase (SQL Editor) la migration 018 :\n" + SQL_MIGRATION_ACHATS : r.error.message);
+      setErreur(/article/i.test(r.error.message) ? "Colonne absente : lance d'abord dans Supabase (SQL Editor) la migration 019 :\n" + SQL_MIGRATION_ARTICLE
+        : /devis_achats/i.test(r.error.message) ? "Table absente : lance d'abord dans Supabase (SQL Editor) la migration 018 :\n" + SQL_MIGRATION_ACHATS : r.error.message);
       return;
     }
-    const lu = lireAchat(r.data);
+    const lu = lireAchat({ ...(r.data as object), article: achat?.article ?? article ?? "" });
     if (!lu) { setErreur("Réponse inattendue du serveur : recharge la page."); return; }
     onSaved(lu);
     if (!achat) { setMontant(""); setFournisseur(""); setJour(dateLocale()); }
@@ -75,14 +85,16 @@ export function FormulaireAchat({ devisId, achat, onSaved, onCancel, compact = f
         <input type="date" className={cn("input", compact ? "!py-1 !px-2 text-sm" : "")} value={jour} onChange={e => setJour(e.target.value)}
           title="Le jour où tu as payé décide du mois (et du virement à faire)." />
       </label>
-      <label className="block">
-        <span className={cn("block text-ink-400", petit)}>Fournisseur (facultatif)</span>
-        <input className={cn("input", compact ? "!py-1 !px-2 w-32 text-sm" : "w-40")} value={fournisseur} onChange={e => setFournisseur(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") enregistrer(); }} maxLength={60} placeholder="Ex. Rexel" />
-      </label>
+      {fournisseurFixe === undefined && (
+        <label className="block">
+          <span className={cn("block text-ink-400", petit)}>Fournisseur (facultatif)</span>
+          <input className={cn("input", compact ? "!py-1 !px-2 w-32 text-sm" : "w-40")} value={fournisseur} onChange={e => setFournisseur(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") enregistrer(); }} maxLength={60} placeholder="Ex. Rexel" />
+        </label>
+      )}
       <button type="button" onClick={enregistrer} disabled={!pret} className={cn("btn-volt", compact ? "!px-2.5 !py-1 text-sm" : "")}>
         {envoi ? <Loader2 size={14} className="animate-spin" /> : achat ? <Check size={14} /> : <Plus size={14} />}
-        {achat ? "Enregistrer" : "Ajouter l'achat"}
+        {achat ? "Enregistrer" : (libelle ?? "Ajouter l'achat")}
       </button>
       {onCancel && <button type="button" onClick={onCancel} className={cn("btn-ghost", compact ? "!px-2.5 !py-1 text-sm" : "")}>Annuler</button>}
       {ttc != null && <p className="w-full text-[11px] text-ink-400">
@@ -118,8 +130,9 @@ export function LigneAchat({ achat, detail, compact = false, onUpdated, onDelete
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
         <span className="text-ink-500 tabular-nums">{jourAffiche(achat.date)}</span>
         {detail}
+        {achat.article && <span className="text-ink-500 truncate max-w-[14rem]">{achat.article}</span>}
         {achat.fournisseur && <span className="text-ink-400">{achat.fournisseur}</span>}
-        <span className="ml-auto font-semibold tabular-nums">{fmt(achat.montant)}</span>
+        <span className="ml-auto font-semibold tabular-nums">{fmt(achat.montant)} <span className="text-[11px] font-normal text-ink-400">TTC · {fmt(htDepuisTtc(achat.montant))} HT</span></span>
         <span className="flex items-center gap-1">
           {mode === "confirmer" ? (
             <>

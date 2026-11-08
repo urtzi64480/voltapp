@@ -3,7 +3,7 @@ import { estAAcheter, grouperAchatsParMois, libelleMois, lireAchat, lireDate, li
 import { coutAchatLignes } from "@/lib/rentabilite";
 
 let n = 0;
-const a = (o: Partial<AchatDuMois>): AchatDuMois => ({ id: `a${++n}`, devisId: "x", numero: "D-1", client: "", objet: "", montant: 10, date: "2026-11-03", fournisseur: "", ...o });
+const a = (o: Partial<AchatDuMois>): AchatDuMois => ({ id: `a${++n}`, devisId: "x", numero: "D-1", client: "", objet: "", montant: 10, date: "2026-11-03", fournisseur: "", article: "", ...o });
 
 describe("lireMontant", () => {
   it("accepte virgule, point, espaces et €", () => {
@@ -78,8 +78,9 @@ describe("totalParDevis / lireAchat", () => {
   });
   it("ligne Supabase (montant numérique en texte, date, fournisseur) → achat ; ligne inutilisable → null", () => {
     expect(lireAchat({ id: "1", devis_id: "d", montant: "12.50", date_achat: "2026-11-03", fournisseur: " Rexel " }))
-      .toEqual({ id: "1", devisId: "d", montant: 12.5, date: "2026-11-03", fournisseur: "Rexel" });
-    expect(lireAchat({ id: "1", devis_id: "d", montant: 0, date_achat: null, fournisseur: null })).toEqual({ id: "1", devisId: "d", montant: 0, date: "", fournisseur: "" });
+      .toEqual({ id: "1", devisId: "d", montant: 12.5, date: "2026-11-03", fournisseur: "Rexel", article: "" });
+    expect(lireAchat({ id: "2", devis_id: "d", montant: 3, date_achat: "2026-11-03", article: " Disjoncteur 20A " })!.article).toBe("Disjoncteur 20A");
+    expect(lireAchat({ id: "1", devis_id: "d", montant: 0, date_achat: null, fournisseur: null })).toEqual({ id: "1", devisId: "d", montant: 0, date: "", fournisseur: "", article: "" });
     for (const v of [null, undefined, "x", {}, { id: "1", devis_id: "d", montant: -2 }, { id: "1", devis_id: "d", montant: "abc" }, { devis_id: "d", montant: 1 }]) expect(lireAchat(v)).toBeNull();
   });
 });

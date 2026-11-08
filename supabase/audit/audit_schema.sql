@@ -145,6 +145,7 @@ with attendues(t, c) as (values
     ('devis', 'total_ttc'),
     ('devis', 'updated_at'),
     ('devis', 'user_id'),
+    ('devis_achats', 'article'),
     ('devis_achats', 'created_at'),
     ('devis_achats', 'date_achat'),
     ('devis_achats', 'devis_id'),

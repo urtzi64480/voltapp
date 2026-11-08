@@ -8,7 +8,8 @@ import PostesLignes from "@/components/devis/PostesLignes";
 import BoutonDeplacement from "@/components/devis/BoutonDeplacement";
 import LigneImage from "@/components/devis/LigneImage";
 import AchatsDevis from "@/components/devis/AchatsMateriel";
-import { lireAchat, SQL_MIGRATION_ACHATS, type AchatLigne } from "@/lib/depenses-materiel";
+import { SQL_MIGRATION_ACHATS, type AchatLigne } from "@/lib/depenses-materiel";
+import { chargerAchats } from "@/lib/achats-db";
 import { extrairePostes, grouperParPoste, ordonnerLignes, posteDe, totalItems, trierParOrdre } from "@/lib/postes";
 import { attacherFournisseurs } from "@/lib/fournisseurs";
 import { colonnesFournisseur, colonnesImage, estLigneACompleter, nbLignesACompleter, nomLigneSansACompleter, photosAffichees } from "@/lib/devis-lignes";
@@ -297,11 +298,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
   const SELECT_DEVIS = "*, client:clients(*), lignes:devis_lignes(*)";
 
   useEffect(() => {
-    supabase.from("devis_achats").select("id,devis_id,montant,date_achat,fournisseur").eq("devis_id", id).then(({ data, error }) => {
-      if (error) { setAchatsAbsents(/devis_achats/i.test(error.message)); return; }
-      setAchatsAbsents(false);
-      setAchats(((data ?? []) as unknown[]).map(lireAchat).filter((a): a is AchatLigne => a != null));
-    });
+    chargerAchats(id).then(r => { setAchatsAbsents(r.tableAbsente); setAchats(r.achats); });
   }, [id]);
 
   useEffect(() => {

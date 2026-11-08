@@ -48,3 +48,10 @@ plusieurs achats, répartis sur plusieurs mois. Elle remplace la saisie unique d
 les colonnes `achat_materiel_*` sont vidées (elles restent dans la table, sans usage). La page `/depenses` classe chaque achat dans le mois du jour payé
 (total du mois = à virer) ; la rentabilité d'un devis utilise la somme de ses achats à la place de l'estimation. Sans la migration, les pages s'affichent
 et donnent le SQL à lancer.
+
+## Achats rattachés à la liste de courses (migration 019)
+
+`019_devis_achats_article.sql` ajoute `devis_achats.article` (nom de l'article de la liste de courses ; vide = achat global du devis). Sur
+`/devis/<id>/courses`, la carte « Achats de ce devis » permet un montant global (« Tout acheté », qui coche toute la liste) ou, sous chaque
+case, « Prix payé » article par article (l'article se coche). Saisie en HT (par défaut, mémorisé sur l'appareil) ou TTC, toujours enregistrée en TTC.
+Sans la 019, la page fonctionne avec les achats globaux et donne le SQL à lancer.

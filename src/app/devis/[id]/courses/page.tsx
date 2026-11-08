@@ -4,12 +4,15 @@ import { supabase } from "@/lib/supabase";
 import Shell from "@/components/layout/Shell";
 import LigneImage from "@/components/devis/LigneImage";
 import Link from "next/link";
-import { ArrowLeft, Check, ShoppingCart, RotateCcw, Share2, Link2, MessageSquare, Mail, Copy, FileDown, Store, Euro, AlertTriangle, ExternalLink } from "lucide-react";
+import { ArrowLeft, Check, ShoppingCart, Plus, RotateCcw, Share2, Link2, MessageSquare, Mail, Copy, FileDown, Store, Euro, AlertTriangle, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buildCourseItems, buildCourseItemsParFournisseur, CourseItem } from "@/lib/courseItems";
 import { facteurRemiseMateriau, tauxDepuisProfil, type TauxRentabilite } from "@/lib/rentabilite";
 import { associerPrixAuxCases, buildVuePrix, siteDeUrl, TVA_ACHAT_PCT, urlProduitSure, type LignePrix } from "@/lib/courses-prix";
 import { buildCourseText, genPDFListeCourses, courseFileName } from "@/lib/courseExport";
+import { FormulaireAchat, LigneAchat } from "@/components/devis/AchatsMateriel";
+import { chargerAchats } from "@/lib/achats-db";
+import { htDepuisTtc, SQL_MIGRATION_ACHATS, SQL_MIGRATION_ARTICLE, type AchatLigne } from "@/lib/depenses-materiel";
 
 const eur = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
 const qteLabel = (qty: number, unite?: string) => (unite && unite !== "u" && unite !== "forfait" ? `${qty} ${unite}` : `${qty}×`);
@@ -94,6 +97,11 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   // Liens des produits (vue privée uniquement) : par offre fournisseur retenue, et — pour un produit sans offre — lien du catalogue.
   const [urlsOffres, setUrlsOffres] = useState<Record<string, string>>({});
   const [liensProduits, setLiensProduits] = useState<Record<string, string>>({});
+  // Achats réels de ce devis (privé, table devis_achats). Un achat « d'article » porte le nom de l'article de la liste ; sans nom = achat global.
+  const [achats, setAchats] = useState<AchatLigne[]>([]);
+  const [tableAchatsAbsente, setTableAchatsAbsente] = useState(false);
+  const [colonneArticleAbsente, setColonneArticleAbsente] = useState(false);
+  const [articleOuvert, setArticleOuvert] = useState<string | null>(null);
 
   useEffect(() => {
     setCanShare(typeof navigator !== "undefined" && typeof (navigator as any).share === "function");
@@ -161,6 +169,15 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
       });
   }, [id]);
 
+  useEffect(() => {
+    let annule = false;
+    chargerAchats(id).then(r => {
+      if (annule) return;
+      setAchats(r.achats); setTableAchatsAbsente(r.tableAbsente); setColonneArticleAbsente(r.colonneArticleAbsente);
+    });
+    return () => { annule = true; };
+  }, [id]);
+
   // Profil de l'utilisateur connecté (taux de cotisations / IR) — mêmes taux, mêmes défauts que la page de rentabilité.
   useEffect(() => {
     let annule = false;
@@ -191,6 +208,12 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
       setChecked(precedent);
     }
   }
+
+  const ajouterAchat = (a: AchatLigne) => setAchats(l => [...l, a]);
+  const modifierAchat = (a: AchatLigne) => setAchats(l => l.map(x => (x.id === a.id ? a : x)));
+  const supprimerAchat = (idAchat: string) => setAchats(l => l.filter(x => x.id !== idAchat));
+  // Un article saisi est coché d'office : on l'a acheté.
+  function cocherSiBesoin(key: string) { if (!checked[key]) persistChecked({ ...checked, [key]: true }); }
 
   function toggle(key: string) {
     persistChecked({ ...checked, [key]: !checked[key] });
@@ -338,8 +361,10 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   }
 
   // prix : blocs de prix rattachés à cette case (vue « Prix et marge ») — la case reste cochable d'un appui sur toute sa ligne.
-  function renderItem(it: CourseItem, cle: string, prix?: LignePrix[]) {
+  function renderItem(it: CourseItem, cle: string, prix?: LignePrix[], fournisseur?: string | null) {
     const isChecked = !!checked[it.key];
+    const achatsArticle = achats.filter(a => a.article !== "" && a.article.toLowerCase() === it.key);
+    const formOuvert = articleOuvert === cle;
     return (
       <div
         key={cle}
@@ -361,6 +386,20 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
             {it.qty}{it.unite && it.unite !== "u" && it.unite !== "forfait" ? ` ${it.unite}` : "×"}
           </span>
         </button>
+        {!tableAchatsAbsente && (
+          <div className="border-t border-ink-100 px-3 py-2 flex flex-col gap-1.5">
+            {achatsArticle.map(a => <LigneAchat key={a.id} compact achat={a} onUpdated={modifierAchat} onDeleted={supprimerAchat} />)}
+            {achatsArticle.length === 0 && !formOuvert && (
+              <button type="button" onClick={() => setArticleOuvert(cle)} className="self-start inline-flex items-center gap-1 text-xs font-medium text-sky-700 hover:underline py-1">
+                <Plus size={13} /> Prix payé
+              </button>
+            )}
+            {formOuvert && achatsArticle.length === 0 && (
+              <FormulaireAchat compact devisId={id} article={it.nom} fournisseurFixe={fournisseur ?? undefined} libelle="Enregistrer le prix"
+                onSaved={a => { ajouterAchat(a); cocherSiBesoin(it.key); setArticleOuvert(null); }} onCancel={() => setArticleOuvert(null)} />
+            )}
+          </div>
+        )}
         {prix?.map(l => (
           <div key={l.cle} className={cn(isChecked && "opacity-60")}>
             <BlocPrix l={l} titreArticle={it.nom.toLowerCase() !== l.nom.toLowerCase()} url={lienDe(l)} />
@@ -392,7 +431,7 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
           </div>
         )}
         <div className="space-y-1.5">
-          {g.items.map(it => renderItem(it, `${g.fournisseur ?? "_"}-${it.key}`, assoc?.parCase.get(it.key)))}
+          {g.items.map(it => renderItem(it, `${g.fournisseur ?? "_"}-${it.key}`, assoc?.parCase.get(it.key), g.fournisseur))}
         </div>
         {assoc && assoc.orphelines.length > 0 && (
           <div className="mt-3 space-y-1.5">
@@ -418,6 +457,40 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
   }
 
   const client = devisInfo.client as any;
+
+  // ── Achats réels (privé) : un montant global « j'ai tout acheté », ou le prix payé article par article dans la liste ──
+  const globaux = achats.filter(a => a.article === "");
+  const nbArticlesSaisis = new Set(achats.filter(a => a.article !== "").map(a => a.article.toLowerCase())).size;
+  const totalAchats = Math.round(achats.reduce((t, a) => t + a.montant, 0) * 100) / 100;
+  const blocAchats = (
+    <div className="card card-inner mb-4 border-emerald-200">
+      <h2 className="text-sm font-semibold text-ink-900 mb-0.5">Achats de ce devis (privé)</h2>
+      {tableAchatsAbsente ? (
+        <div className="text-xs text-amber-700">Lance d&apos;abord dans Supabase (SQL Editor) les migrations 018 et 019 (dossier <code>supabase/migrations</code>), ou au minimum :<pre className="mt-1 whitespace-pre-wrap">{SQL_MIGRATION_ACHATS}{"\n"}{SQL_MIGRATION_ARTICLE}</pre></div>
+      ) : (
+        <>
+          <p className="text-xs text-ink-400 mb-2">Soit un montant pour tout ce que tu as acheté sur la liste, soit le prix payé article par article (bouton « Prix payé » sous chaque case, l&apos;article se coche tout seul). Montant en HT ou TTC, converti si besoin ; tout est enregistré en TTC et alimente <Link href="/depenses" className="underline">Achats matériel</Link> et la rentabilité.</p>
+          {colonneArticleAbsente && <p className="text-xs text-amber-700 mb-2 whitespace-pre-wrap">Pour saisir article par article, lance dans Supabase (SQL Editor) la migration 019 :{"\n"}{SQL_MIGRATION_ARTICLE}</p>}
+          <div className="rounded-lg bg-ink-50/70 p-2.5 mb-2">
+            <p className="text-xs font-medium text-ink-700 mb-1.5">J&apos;ai tout acheté sur la liste{nbArticlesSaisis > 0 ? " (le reste, hors articles déjà saisis un par un)" : ""}</p>
+            <FormulaireAchat compact devisId={id} libelle="Tout acheté" onSaved={a => { ajouterAchat(a); toggleAll(true); }} />
+          </div>
+          {globaux.length > 0 && (
+            <ul className="flex flex-col gap-2 divide-y divide-ink-100 mb-2">
+              {globaux.map(a => <li key={a.id} className="pt-2 first:pt-0"><LigneAchat compact achat={a} onUpdated={modifierAchat} onDeleted={supprimerAchat} /></li>)}
+            </ul>
+          )}
+          {achats.length > 0 && (
+            <p className="text-sm flex justify-between pt-2 border-t border-ink-100">
+              <span className="text-ink-500">Total dépensé{nbArticlesSaisis > 0 ? ` (dont ${nbArticlesSaisis} article${nbArticlesSaisis > 1 ? "s" : ""} saisi${nbArticlesSaisis > 1 ? "s" : ""})` : ""}</span>
+              <span className="font-bold tabular-nums">{eur(totalAchats)} TTC <span className="text-[11px] font-normal text-ink-400">· {eur(htDepuisTtc(totalAchats))} HT</span></span>
+            </p>
+          )}
+          {globaux.length > 0 && nbArticlesSaisis > 0 && <p className="text-[11px] text-amber-700 mt-1">Les achats globaux et ceux par article s&apos;additionnent : mets dans l&apos;achat global uniquement ce qui n&apos;est pas déjà saisi article par article.</p>}
+        </>
+      )}
+    </div>
+  );
 
   return (
     <Shell>
@@ -475,6 +548,8 @@ export default function ListeCoursesPage({ params }: { params: { id: string } })
           </div>
         ) : (
           <>
+            {blocAchats}
+
             <div className="flex flex-wrap items-center gap-2 mb-4">
               <span className="text-xs text-ink-400 mr-1">Export perso :</span>
               <button onClick={handleCopyText} className="btn-ghost !px-3 !py-2 inline-flex items-center gap-1.5 text-xs">

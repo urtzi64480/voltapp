@@ -9,7 +9,8 @@ import { FormulaireAchat, LigneAchat } from "@/components/devis/AchatsMateriel";
 import { supabase } from "@/lib/supabase";
 import { cn, dateLocale, fmt } from "@/lib/utils";
 import { coutAchatLignes, construirePrixAchatMap, type InfoPrestation, type LigneRentab } from "@/lib/rentabilite";
-import { estAAcheter, grouperAchatsParMois, lireAchat, SQL_MIGRATION_ACHATS, type AchatDuMois, type AchatLigne } from "@/lib/depenses-materiel";
+import { chargerAchats } from "@/lib/achats-db";
+import { estAAcheter, grouperAchatsParMois, SQL_MIGRATION_ACHATS, type AchatDuMois, type AchatLigne } from "@/lib/depenses-materiel";
 
 interface DevisBrut {
   id: string; numero: string; objet: string | null; statut: string; total_materiau: number | null;
@@ -36,7 +37,7 @@ export default function AchatsMaterielPage() {
       try {
         const [devisR, achatsR, prestR, compR] = await Promise.all([
           supabase.from("devis").select(COLONNES_DEVIS).order("created_at", { ascending: false }),
-          supabase.from("devis_achats").select("id,devis_id,montant,date_achat,fournisseur"),
+          chargerAchats(),
           supabase.from("prestations").select("id,categorie,prix_achat"),
           supabase.from("kit_composants").select("kit_id,composant_id,quantite"),
         ]);
@@ -44,13 +45,13 @@ export default function AchatsMaterielPage() {
         if (prestR.error) throw new Error(`Catalogue : ${prestR.error.message}`);
         if (compR.error) throw new Error(`Kits : ${compR.error.message}`);
         // Sans la migration 018 : la page s'affiche quand même (rien de saisi), avec le SQL à lancer.
-        const absente = !!achatsR.error && /devis_achats/i.test(achatsR.error.message);
-        if (achatsR.error && !absente) throw new Error(`Achats : ${achatsR.error.message}`);
+        const absente = achatsR.tableAbsente;
+        if (achatsR.erreur) throw new Error(`Achats : ${achatsR.erreur}`);
         const composants = (compR.data ?? []) as { kit_id: string; composant_id: string; quantite?: number | null }[];
         const idsKits = new Set(composants.map(c => c.kit_id));
         const prestations = ((prestR.data ?? []) as ({ id: string } & InfoPrestation)[]).map(p => ({ ...p, est_kit: idsKits.has(p.id) }));
         const prixAchat = construirePrixAchatMap(prestations, composants);
-        const liste: AchatLigne[] = absente ? [] : ((achatsR.data ?? []) as unknown[]).map(lireAchat).filter((a): a is AchatLigne => a != null);
+        const liste: AchatLigne[] = achatsR.achats;
         const avecAchat = new Set(liste.map(a => a.devisId));
         const infos: InfoDevis[] = [];
         ((devisR.data ?? []) as unknown as DevisBrut[]).forEach(d => {
