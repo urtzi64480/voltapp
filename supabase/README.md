@@ -2,7 +2,7 @@
 
 ## Ordre d'exécution (base neuve)
 
-`001` → `002` → `003` → `004` → `006` → `007` → `008` → `009` → `010` → `011` → `012` → `013` → `014` → `015` (ordre alphabétique des fichiers de `migrations/`).
+`001` → `002` → `003` → `004` → `006` → `007` → `008` → `009` → `010` → `011` → `012` → `013` → `014` → `015` → `016` → `017` (ordre alphabétique des fichiers de `migrations/`).
 Les migrations d'origine `003` (colonnes fournisseur de `devis_lignes`) et `005` (`image_url` des lignes) n'ont jamais été versionnées ; elles sont absorbées par le nouveau `003_reconstruction_schema.sql`, qui reconstruit le schéma réellement utilisé par le code.
 
 > **Base de production existante** : ne rien relancer à l'aveugle. Lancer d'abord l'audit ci-dessous. `003` et `012` sont de toute façon sans effet sur ce qui existe déjà (voir `tests/migrations.test.ts`).
@@ -34,3 +34,9 @@ les modifications faites sans réseau (coches, temps, validation) sont gardées 
 `013_devis_suivi_realisation.sql` ajoute `devis.suivi_realisation` : le suivi (étapes cochées, temps par poste, validation) est rattaché
 directement au devis, avec ou sans plan (`/devis/<id>/suivi`). Même format que `projets.suivi_realisation`. La page Rentabilité additionne
 le temps du devis et celui des plans qui lui sont rattachés.
+
+## Achats matériel par mois (migration 017)
+
+`017_devis_achats_materiel.sql` ajoute `devis.achat_materiel_reel` (montant réellement dépensé, saisi à la main) et `devis.achat_materiel_date`
+(date d'achat : classe la dépense dans son mois, sinon mois de signature). Page `/depenses` (menu Pilotage → Achats matériel) et carte « Achats
+matériel » sur la fiche d'un devis signé. Sans la migration, la page s'affiche et donne le SQL à lancer.

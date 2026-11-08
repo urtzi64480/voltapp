@@ -12,7 +12,7 @@ export const RUBRIQUES: RubriqueMenu[] = [
     { href: "/realisations", label: "Réalisations" }, { href: "/entretiens", label: "Rappels d'entretien" },
   ] },
   { nom: "Pilotage", items: [
-    { href: "/crm", label: "CRM" }, { href: "/rentabilite", label: "Rentabilité" }, { href: "/export-comptable", label: "Livre des recettes" },
+    { href: "/crm", label: "CRM" }, { href: "/rentabilite", label: "Rentabilité" }, { href: "/depenses", label: "Achats matériel" }, { href: "/export-comptable", label: "Livre des recettes" },
   ] },
   { nom: "Outils", items: [
     { href: "/catalogue", label: "Catalogue" }, { href: "/sauvegarde", label: "Sauvegarde" }, { href: "/parametres", label: "Paramètres" },

@@ -7,6 +7,8 @@ import Shell from "@/components/layout/Shell";
 import PostesLignes from "@/components/devis/PostesLignes";
 import BoutonDeplacement from "@/components/devis/BoutonDeplacement";
 import LigneImage from "@/components/devis/LigneImage";
+import AchatMaterielReel from "@/components/devis/AchatMaterielReel";
+import { lireDate, lireMontant } from "@/lib/depenses-materiel";
 import { extrairePostes, grouperParPoste, ordonnerLignes, posteDe, totalItems, trierParOrdre } from "@/lib/postes";
 import { attacherFournisseurs } from "@/lib/fournisseurs";
 import { colonnesFournisseur, colonnesImage, estLigneACompleter, nbLignesACompleter, nomLigneSansACompleter, photosAffichees } from "@/lib/devis-lignes";
@@ -1007,6 +1009,14 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
               <input type="checkbox" className="h-4 w-4" checked={photosAffichees(devis)} onChange={ev => basculerPhotos(ev.target.checked)} />
               Afficher les photos des produits sur le devis (aperçu, PDF, lien de signature)
             </label>
+            {(devis.statut === "signe" || devis.achat_materiel_reel != null) && (
+              <div className="rounded-xl border border-ink-100 bg-ink-50/60 px-4 py-3 mb-3">
+                <h3 className="text-sm font-semibold text-ink-800 mb-0.5">Achats matériel (privé)</h3>
+                <p className="text-xs text-ink-400 mb-2">Ce que tu as réellement dépensé pour ce devis. Il apparaît dans <Link href="/depenses" className="underline">Achats matériel</Link>, classé par mois d&apos;achat.</p>
+                <AchatMaterielReel devisId={id} reel={lireMontant(devis.achat_materiel_reel ?? null)} date={lireDate(devis.achat_materiel_date ?? null)}
+                  dateRef={lireDate(devis.signe_le) ?? lireDate(devis.date_emission) ?? ""} onSaved={v => setDevis(d => d ? { ...d, achat_materiel_reel: v.reel ?? undefined, achat_materiel_date: v.date ?? undefined } : d)} />
+              </div>
+            )}
             <div className="flex flex-wrap gap-3">
               <button onClick={dl} className="btn-ghost flex-1 justify-center"><Download size={15} /> Télécharger PDF</button>
               <button onClick={planifierIntervention} className="btn-ghost flex-1 justify-center"><CalendarDays size={15} /> Planifier</button>

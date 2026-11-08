@@ -18,7 +18,7 @@ describe("navigation", () => {
   it("chaque page du menu n'apparaît qu'une fois", () => {
     const hrefs = RUBRIQUES.flatMap(r => r.items.map(i => i.href));
     expect(new Set(hrefs).size).toBe(hrefs.length);
-    expect(hrefs).toHaveLength(17);
+    expect(hrefs).toHaveLength(18);
   });
   it("mémoire tolérante", () => {
     expect(lireOuvertes(null)).toBeNull(); expect(lireOuvertes("pas du json")).toBeNull(); expect(lireOuvertes("{}")).toBeNull();

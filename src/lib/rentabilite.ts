@@ -130,10 +130,8 @@ export interface ResultatDevis {
   lignesSansCout: number; heuresEstimees: number; heuresReelles: number | null;
 }
 
-export function analyserDevis(
-  devis: DevisRentab, lignes: LigneRentab[], prixAchatMap: Record<string, number>,
-  prestations: Record<string, InfoPrestation>, taux: TauxRentabilite, minutesReellesChantier: number,
-): ResultatDevis {
+/** Coût d'achat ESTIMÉ des lignes d'un devis (prix d'achat de la ligne ou du catalogue, kits inclus) + nombre de lignes matériau sans prix d'achat. */
+export function coutAchatLignes(lignes: LigneRentab[], prixAchatMap: Record<string, number>): { coutAchat: number; lignesSansCout: number } {
   let coutAchat = 0, lignesSansCout = 0;
   for (const l of lignes) {
     const aFournisseur = !!l.fournisseur_id || l.prix_achat != null;
@@ -142,6 +140,14 @@ export function analyserDevis(
     coutAchat += cout;
     if (l.type_branche === "materiau" && cout === 0) lignesSansCout++;
   }
+  return { coutAchat, lignesSansCout };
+}
+
+export function analyserDevis(
+  devis: DevisRentab, lignes: LigneRentab[], prixAchatMap: Record<string, number>,
+  prestations: Record<string, InfoPrestation>, taux: TauxRentabilite, minutesReellesChantier: number,
+): ResultatDevis {
+  const { coutAchat, lignesSansCout } = coutAchatLignes(lignes, prixAchatMap);
   const ts = nombre(devis.total_service), tm = nombre(devis.total_materiau), ttc = nombre(devis.total_ttc);
   const cotisations = ts * taux.cotisService / 100 + tm * taux.cotisMateriau / 100;
   const impots = ts * taux.irService / 100 + tm * taux.irMateriau / 100;
