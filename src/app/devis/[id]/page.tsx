@@ -1121,7 +1121,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                     lignes={lignes} setLignes={setLignes}
                     postes={postes} setPostes={setPostes}
                     prestations={prestations}
-                    showUnite texteVide="Page vierge — ajoute un poste ou un produit"
+                    showUnite texteVide="Page vierge — ajoute un poste ou un produit" replierExistants
                   />
                   <BoutonDeplacement client={devis?.client ?? null} onAjouter={l => setLignes(prev => [...prev, l])} />
                 </div>

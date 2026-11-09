@@ -22,6 +22,9 @@ export function memeNomPoste(a: string, b: string): boolean {
   return nettoyerNomPoste(a).toLowerCase() === nettoyerNomPoste(b).toLowerCase();
 }
 
+/** Clé de comparaison d'un nom de poste (insensible à la casse et aux espaces multiples). */
+export const clePoste = (n: string): string => nettoyerNomPoste(n).toLowerCase();
+
 export function posteDe(l: { poste?: string | null }): string | null {
   const p = (l.poste ?? "").trim();
   return p === "" ? null : p;

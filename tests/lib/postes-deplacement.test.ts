@@ -56,3 +56,8 @@ describe("placerLigne", () => {
     expect(noms(ordonnerLignes(r, ["B", "A"]))).toEqual(["b2", "b1", "a1", "a2", "h1"]);
   });
 });
+
+import { clePoste } from "@/lib/postes";
+describe("clePoste", () => {
+  it("insensible à la casse et aux espaces", () => { expect(clePoste("  Pose  Prise ")).toBe(clePoste("pose prise")); expect(clePoste("A")).not.toBe(clePoste("B")); });
+});

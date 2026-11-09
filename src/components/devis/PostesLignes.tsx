@@ -9,7 +9,7 @@
 // Utilisé par « Nouveau devis » et par l'édition d'un devis existant (devis/[id]).
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, X, Trash2, Layers, RefreshCw, Package, GripVertical } from "lucide-react";
+import { Plus, X, Trash2, Layers, RefreshCw, Package, GripVertical, ChevronDown, ChevronRight } from "lucide-react";
 import {
   DndContext, KeyboardSensor, PointerSensor, closestCenter, pointerWithin, useDroppable, useSensor, useSensors,
   type CollisionDetection, type DragEndEvent,
@@ -17,7 +17,7 @@ import {
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { fmt, cn, UNITES } from "@/lib/utils";
-import { deplacerElement, grouperParPoste, memeNomPoste, nettoyerNomPoste, placerLigne, posteDe, totalItems } from "@/lib/postes";
+import { clePoste, deplacerElement, grouperParPoste, memeNomPoste, nettoyerNomPoste, placerLigne, posteDe, totalItems } from "@/lib/postes";
 import { libelleOffreMarque, margePct, offresTriees, prixVenteOffre } from "@/lib/fournisseurs";
 import {
   changerFournisseurLigne, fusionnerLigne, ligneDepuisArticle, ligneDepuisKit, remplacerProduitLigne,
@@ -39,6 +39,8 @@ interface Props {
   prestations: PrestationPicker[];
   showUnite?: boolean;
   texteVide?: string;
+  // Postes déjà enregistrés repliés à l'ouverture (un poste créé pendant l'édition reste déplié).
+  replierExistants?: boolean;
 }
 
 type EtatPicker = { type: "ajout"; poste: string | null } | { type: "remplacement"; index: number };
@@ -264,12 +266,28 @@ function BoutonsAjout({ onProduit, onLibre }: { onProduit: () => void; onLibre: 
 
 // ─── Composant principal ────────────────────────────────────────────────────
 
-export default function PostesLignes({ lignes, setLignes, postes, setPostes, prestations, showUnite, texteVide }: Props) {
+export default function PostesLignes({ lignes, setLignes, postes, setPostes, prestations, showUnite, texteVide, replierExistants }: Props) {
   const [nouveauPoste, setNouveauPoste] = useState<string | null>(null);
   const [erreur, setErreur] = useState("");
   const [picker, setPicker] = useState<EtatPicker | null>(null);
   const [glisse, setGlisse] = useState<string | null>(null);
   const [libreCible, setLibreCible] = useState<{ poste: string | null } | null>(null);
+  // Où s'affichent les formulaires « nouveau poste » / « ligne libre hors poste » : près de la barre du haut ou de celle du bas.
+  const [ancre, setAncre] = useState<"haut" | "bas">("haut");
+  // Repli : clés de postes (clePoste). `ouverts` = dépliés par l'utilisateur ; `replies` = repliés par l'utilisateur.
+  // Un poste est replié s'il est dans `replies`, ou (replierExistants) s'il n'a jamais été ouvert.
+  const [ouverts, setOuverts] = useState<string[]>([]);
+  const [replies, setReplies] = useState<string[]>([]);
+  const estReplie = (nom: string) => { const k = clePoste(nom); return replies.includes(k) || (!!replierExistants && !ouverts.includes(k)); };
+  function basculerPoste(nom: string) {
+    const k = clePoste(nom);
+    if (estReplie(nom)) { setReplies(r => r.filter(x => x !== k)); setOuverts(o => (o.includes(k) ? o : [...o, k])); }
+    else { setOuverts(o => o.filter(x => x !== k)); setReplies(r => (r.includes(k) ? r : [...r, k])); }
+  }
+  function toutReplier(replier: boolean) {
+    const cles = postes.map(clePoste);
+    if (replier) { setReplies(cles); setOuverts([]); } else { setOuverts(cles); setReplies([]); }
+  }
 
   const parId = useMemo(() => new Map(prestations.map(p => [p.id, p])), [prestations]);
 
@@ -278,6 +296,8 @@ export default function PostesLignes({ lignes, setLignes, postes, setPostes, pre
     if (!nom) return;
     if (postes.some(p => memeNomPoste(p, nom))) { setErreur("Ce poste existe déjà."); return; }
     setPostes(prev => [...prev, nom]);
+    setOuverts(o => [...o, clePoste(nom)]); // un poste qu'on vient de créer reste déplié
+    setReplies(r => r.filter(x => x !== clePoste(nom)));
     setNouveauPoste(null);
     setErreur("");
   }
@@ -293,6 +313,9 @@ export default function PostesLignes({ lignes, setLignes, postes, setPostes, pre
     const nom = nettoyerNomPoste(saisie);
     if (!nom || nom === ancien) return;
     if (postes.some(p => p !== ancien && memeNomPoste(p, nom))) return;
+    const ka = clePoste(ancien), kn = clePoste(nom);
+    setOuverts(o => (o.includes(ka) ? [...o.filter(x => x !== ka), kn] : o));
+    setReplies(r => (r.includes(ka) ? [...r.filter(x => x !== ka), kn] : r));
     setPostes(prev => prev.map(p => (p === ancien ? nom : p)));
     setLignes(prev => prev.map(l => (posteDe(l) === ancien ? { ...l, poste: nom } : l)));
   }
@@ -373,6 +396,18 @@ export default function PostesLignes({ lignes, setLignes, postes, setPostes, pre
     }
   }
 
+  const barreAjout = (a: "haut" | "bas") => (
+    <>
+      <button onClick={() => { setAncre(a); setNouveauPoste(""); }} className="btn-ghost"><Plus size={15} /> Ajouter un poste</button>
+      <button onClick={() => setPicker({ type: "ajout", poste: null })} className="btn-volt"><Package size={15} /> Ajouter un produit</button>
+      <button onClick={() => { setAncre(a); setLibreCible({ poste: null }); }} className="btn-ghost"><Plus size={15} /> Ligne libre</button>
+    </>
+  );
+  const formLibreHors = libreCible?.poste === null && (
+    <FormLibre onAnnuler={() => setLibreCible(null)}
+      onAjouter={l => { setLignes(prev => [...prev, { ...l, poste: null }]); setLibreCible(null); }} />
+  );
+
   const formNouveauPoste = nouveauPoste !== null && (
     <div className="p-3 rounded-xl bg-ink-50 border border-ink-100 space-y-1.5">
       <div className="flex gap-2">
@@ -393,25 +428,24 @@ export default function PostesLignes({ lignes, setLignes, postes, setPostes, pre
           <p className="text-ink-500 text-sm mb-1">{texteVide ?? "Page vierge"}</p>
           <p className="text-ink-400 text-xs mb-5">Crée un poste pour regrouper des lignes, ou ajoute directement un produit.</p>
           <div className="flex flex-wrap justify-center gap-3">
-            <button onClick={() => setNouveauPoste("")} className="btn-ghost"><Plus size={15} /> Ajouter un poste</button>
+            <button onClick={() => { setAncre("haut"); setNouveauPoste(""); }} className="btn-ghost"><Plus size={15} /> Ajouter un poste</button>
             <button onClick={() => setPicker({ type: "ajout", poste: null })} className="btn-volt"><Package size={15} /> Ajouter un produit</button>
-            <button onClick={() => setLibreCible({ poste: null })} className="btn-ghost"><Plus size={15} /> Ligne libre</button>
+            <button onClick={() => { setAncre("haut"); setLibreCible({ poste: null }); }} className="btn-ghost"><Plus size={15} /> Ligne libre</button>
           </div>
         </div>
       ) : (
-        <div className="flex flex-wrap gap-2">
-          <button onClick={() => setNouveauPoste("")} className="btn-ghost"><Plus size={15} /> Ajouter un poste</button>
-          <button onClick={() => setPicker({ type: "ajout", poste: null })} className="btn-volt"><Package size={15} /> Ajouter un produit</button>
-          <button onClick={() => setLibreCible({ poste: null })} className="btn-ghost"><Plus size={15} /> Ligne libre</button>
+        <div className="flex flex-wrap items-center gap-2">
+          {barreAjout("haut")}
+          {postes.length >= 2 && (
+            <button onClick={() => toutReplier(!postes.every(estReplie))} className="btn-ghost ml-auto !text-xs">
+              {postes.every(estReplie) ? "Tout déplier" : "Tout replier"}
+            </button>
+          )}
         </div>
       )}
 
-      {formNouveauPoste}
-
-      {libreCible?.poste === null && (
-        <FormLibre onAnnuler={() => setLibreCible(null)}
-          onAjouter={l => { setLignes(prev => [...prev, { ...l, poste: null }]); setLibreCible(null); }} />
-      )}
+      {ancre === "haut" && formNouveauPoste}
+      {ancre === "haut" && formLibreHors}
 
       <DndContext sensors={capteurs} collisionDetection={collision} onDragStart={e => setGlisse(String(e.active.id))} onDragCancel={() => setGlisse(null)} onDragEnd={finGlisser}>
       {!avecPostes && lignes.length > 0 && (
@@ -427,17 +461,31 @@ export default function PostesLignes({ lignes, setLignes, postes, setPostes, pre
           <SortableContext items={blocs.filter(b => b.poste !== null).map(b => ID_POSTE + b.poste)} strategy={verticalListSortingStrategy}>
           {blocs.filter(b => b.poste !== null).map(b => {
             const nom = b.poste as string;
+            const replie = estReplie(nom);
+            const aCompleter = b.items.filter(x => estLigneACompleter(x.l)).length;
             return (
               <PosteTriable key={nom} nom={nom}>
               {(poigneePoste, survol) => (
               <div className={cn("rounded-2xl border overflow-hidden bg-ink-50/40", survol ? "border-volt-400" : "border-ink-200")}>
                 <div className="flex items-center gap-3 px-4 py-2.5 bg-ink-900">
                   {poigneePoste}
+                  <button type="button" onClick={() => basculerPoste(nom)} aria-expanded={!replie}
+                    title={replie ? "Déplier le poste" : "Replier le poste"} aria-label={replie ? "Déplier le poste" : "Replier le poste"}
+                    className="p-1 -ml-1 rounded-lg text-ink-300 hover:text-white hover:bg-white/10 shrink-0">
+                    {replie ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                  </button>
                   <PosteTitre value={nom} onCommit={v => renommerPoste(nom, v)} />
+                  {replie && (
+                    <span className="text-xs text-ink-300 shrink-0 whitespace-nowrap">
+                      {b.items.length} ligne{b.items.length > 1 ? "s" : ""}
+                      {aCompleter > 0 && <span className="ml-1.5 text-red-300 font-semibold">· {aCompleter} à compléter</span>}
+                    </span>
+                  )}
                   <span className="text-sm font-semibold text-volt-400 shrink-0">{fmt(totalItems(b.items))}</span>
                   <button onClick={() => supprimerPoste(nom)} title="Supprimer le poste et toutes ses lignes"
                     className="text-ink-400 hover:text-red-400 transition-colors shrink-0"><Trash2 size={15} /></button>
                 </div>
+                {!replie && (
                 <SortableContext items={b.items.map(x => ID_LIGNE + x.i)} strategy={verticalListSortingStrategy}>
                 <div className="p-3 space-y-2">
                   {b.items.length === 0 && (
@@ -452,6 +500,7 @@ export default function PostesLignes({ lignes, setLignes, postes, setPostes, pre
                   )}
                 </div>
                 </SortableContext>
+                )}
               </div>
               )}
               </PosteTriable>
@@ -482,6 +531,14 @@ export default function PostesLignes({ lignes, setLignes, postes, setPostes, pre
         </div>
       )}
       </DndContext>
+
+      {!vide && (
+        <>
+          <div className="flex flex-wrap gap-2 pt-1">{barreAjout("bas")}</div>
+          {ancre === "bas" && formNouveauPoste}
+          {ancre === "bas" && formLibreHors}
+        </>
+      )}
 
       {picker?.type === "ajout" && (
         <ProduitPicker
