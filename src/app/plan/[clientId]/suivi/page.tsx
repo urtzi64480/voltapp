@@ -34,15 +34,16 @@ import { CarteChantier, CarteBilan, SaisieTemps, DevisResume } from "@/component
 import { modifierProjet } from "@/lib/projets";
 import ProjetSwitcher from "@/components/projets/ProjetSwitcher";
 import { cn } from "@/lib/utils";
+import { TITRE_GROUPE, grouperEtapes } from "@/lib/suivi-normes";
 
 const SQL_MIGRATION =
   "ALTER TABLE projets\n  ADD COLUMN IF NOT EXISTS suivi_realisation TEXT;";
 
 const TITRES_CATEGORIE: Record<CategorieElement, string> = {
   tableau: "Au tableau", boite: "Boîtes de dérivation", lampe: "Points lumineux", commande: "Commandes (interrupteurs, va-et-vient…)",
-  appareil: "Appareillage", liaison: "Câbles à tirer",
+  appareil: "Appareillage", liaison: "Câbles à tirer", controle: "Vérifications NF C 15-100 par circuit",
 };
-const ORDRE_CATEGORIES: CategorieElement[] = ["tableau", "boite", "lampe", "commande", "appareil", "liaison"];
+const ORDRE_CATEGORIES: CategorieElement[] = ["tableau", "boite", "lampe", "commande", "appareil", "liaison", "controle"];
 
 const dateCourte = (iso: string): string => {
   const d = new Date(iso);
@@ -90,8 +91,11 @@ function LigneElement({ e, coches, onToggle, onVoirGuide }: {
   e: ElementSuivi; coches: Coches; onToggle: (cle: string) => void; onVoirGuide: (guideId: string) => void;
 }) {
   const toutFait = e.etapes.length > 0 && e.etapes.every(et => coches[et.cle]);
+  const principales = e.etapes.filter(et => !et.groupe);
+  const detaillees = e.etapes.filter(et => et.groupe);
+  const faitsDetail = detaillees.filter(et => coches[et.cle]).length;
   return (
-    <div className={cn("py-3 border-t border-ink-100 flex flex-col sm:flex-row gap-3", toutFait && "bg-emerald-50/40")}>
+    <div className={cn("py-3 border-t border-ink-100 flex flex-col sm:flex-row sm:flex-wrap gap-3", toutFait && "bg-emerald-50/40")}>
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <p className={cn("text-sm font-semibold break-words", toutFait ? "text-ink-500" : "text-ink-900")}>{e.titre}</p>
@@ -118,13 +122,52 @@ function LigneElement({ e, coches, onToggle, onVoirGuide }: {
         )}
       </div>
       {e.etapes.length > 0 ? (
-        <div className="flex sm:flex-col gap-1.5 flex-wrap sm:w-52 shrink-0">
-          {e.etapes.map(et => (
-            <PuceEtape key={et.cle} libelle={et.libelle} fait={!!coches[et.cle]} date={coches[et.cle]} onToggle={() => onToggle(et.cle)} />
-          ))}
+        <div className="flex flex-col gap-1.5 sm:w-52 shrink-0">
+          <div className="flex sm:flex-col gap-1.5 flex-wrap">
+            {principales.map(et => (
+              <PuceEtape key={et.cle} libelle={et.libelle} fait={!!coches[et.cle]} date={coches[et.cle]} onToggle={() => onToggle(et.cle)} />
+            ))}
+          </div>
         </div>
       ) : (
         <span className="text-xs text-ink-400 italic sm:w-52 shrink-0">Rien à poser</span>
+      )}
+      {detaillees.length > 0 && (
+        <details className="sm:basis-full rounded-xl border border-ink-200 bg-white group">
+          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-volt-700 flex items-center justify-between gap-2 min-h-[40px]">
+            <span>Étapes détaillées NF C 15-100</span>
+            <span className={cn("tabular-nums", faitsDetail === detaillees.length ? "text-emerald-700" : "text-ink-600")}>{faitsDetail}/{detaillees.length}</span>
+          </summary>
+          <div className="px-3 pb-3 space-y-3">
+            {grouperEtapes(detaillees).map(g => (
+              <div key={g.groupe}>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-ink-500 mb-1">{TITRE_GROUPE[g.groupe]}</p>
+                <ul className="space-y-1">
+                  {g.etapes.map(et => {
+                    const fait = !!coches[et.cle];
+                    return (
+                      <li key={et.cle}>
+                        <button type="button" onClick={() => onToggle(et.cle)} aria-pressed={fait}
+                          className={cn("w-full flex items-start gap-2 px-2.5 py-2 rounded-lg border text-left text-xs transition-colors select-none active:scale-[0.99]",
+                            fait ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-white border-ink-200 text-ink-700 hover:border-volt-400")}>
+                          <span className={cn("w-5 h-5 mt-0.5 shrink-0 rounded-md border flex items-center justify-center", fait ? "bg-emerald-500 border-emerald-500 text-white" : "border-ink-300 bg-white")}>
+                            {fait && <Check size={14} strokeWidth={3} />}
+                          </span>
+                          <span className="leading-snug min-w-0 break-words">
+                            {et.libelle}
+                            {et.aVerifier && <span className="ml-1.5 badge bg-amber-100 text-amber-800 !text-[10px] !px-1.5">à vérifier</span>}
+                            {et.norme && <span className="block text-[11px] font-normal text-ink-500 mt-0.5">{et.norme}</span>}
+                            {fait && coches[et.cle] && <span className="block text-[10px] font-normal text-emerald-700/80">{dateCourte(coches[et.cle])}</span>}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </details>
       )}
     </div>
   );

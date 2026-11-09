@@ -34,13 +34,16 @@ import { conducteursSegment, nbConducteurs } from "@/lib/couleurs-fils";
 import { migrerModeleMurs } from "@/lib/murs";
 import { migrerBoitesDerivation, reamorcerCompteurId, dedupliquerIds } from "@/lib/maison-types";
 import { hauteurAppareilM } from "@/lib/murs";
+import { cleEtapeNorme, etapesNormatives, type DescripteurNorme, type GroupeEtape } from "@/lib/suivi-normes";
 import { creerContexteLongueurs, hauteurAncreFn, tracerLiaison, longueurJambe, longueurCircuit } from "@/lib/longueurs-circuits";
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────────────────────────────────────
 
-export interface Etape { cle: string; libelle: string }
+/** Case à cocher. Sans `groupe` : étape principale (posé, raccordé, câble tiré). Avec `groupe` : étape détaillée NF C 15-100 (voir suivi-normes.ts),
+ *  avec la règle qui la justifie (`norme`) ; `aVerifier` : valeur ou règle à confirmer dans le texte de la norme. */
+export interface Etape { cle: string; libelle: string; groupe?: GroupeEtape; norme?: string; aVerifier?: boolean }
 
-export type CategorieElement = "tableau" | "boite" | "lampe" | "commande" | "appareil" | "liaison";
+export type CategorieElement = "tableau" | "boite" | "lampe" | "commande" | "appareil" | "liaison" | "controle";
 
 export interface ElementSuivi {
   id: string;
@@ -143,6 +146,16 @@ const cleDisjoncteur = (niveauId: number, circuit: string, ids: number[]): strin
 const cleAppareil = (id: number, etape: "pose" | "raccord"): string => `a|${id}|${etape}`;
 const cleBoite = (niveauId: number, noeud: string, etape: "pose" | "raccord"): string => `b|${niveauId}|${noeud}|${etape}`;
 const cleLiaisonCoche = (niveauId: number, a: string, b: string): string => `l|${niveauId}|${a}>${b}`;
+const cleControle = (niveauId: number, circuit: string, ids: number[]): string => `c|${niveauId}|${circuit}|${[...ids].sort((a, b) => a - b).join(".")}`;
+
+/** Étapes détaillées NF C 15-100 d'une action : clés `<clé principale>|n:<slug>`, enregistrées comme clés connues (sinon elles seraient signalées orphelines). */
+function etapesDetaillees(cleBase: string, d: DescripteurNorme, clesConnues: Set<string>): Etape[] {
+  return etapesNormatives(d).map(x => {
+    const cle = cleEtapeNorme(cleBase, x.slug);
+    clesConnues.add(cle);
+    return { cle, libelle: x.libelle, groupe: x.groupe, norme: x.norme, ...(x.aVerifier ? { aVerifier: true } : {}) };
+  });
+}
 
 // ─── CONTEXTE ────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -611,7 +624,13 @@ export function construireSuivi(niveauxEntree: Niveau[], rowsTableau: BreakerRow
         elements.push({
           id: cle, categorie: "tableau", titre: `Disjoncteur ${b.amperes} A — ${nom}`, sousTitre: nomTableau,
           details, alertes: [], badges: [`${b.amperes} A`, `${fmtSection(section)} mm²`],
-          etapes: [{ cle, libelle: "Posé et raccordé au tableau" }], ordre: 0,
+          etapes: [
+            { cle, libelle: "Posé et raccordé au tableau" },
+            ...etapesDetaillees(cle, {
+              kind: "disjoncteur", amperes: b.amperes, sectionMm2: fmtSection(section), nom, diffType: spec.diffType ?? undefined,
+              maxPar: MAX_PAR_CIRCUIT[b.circuit], nbPoints: eclairage ? lampes.length : points.filter(a => !estCommande(a.type)).length, eclairage,
+            }, clesConnues),
+          ], ordre: 0,
         });
         clesConnues.add(cle);
       } else if (nonRelie) {
@@ -639,7 +658,10 @@ export function construireSuivi(niveauxEntree: Niveau[], rowsTableau: BreakerRow
             "Boîte étanche à l'air si posée en volume chauffé ; bornes de raccordement rapide, phase / neutre / terre repérés. Toujours accessible (jamais noyée dans le plâtre ni le béton).",
           ],
           alertes: [], badges: ["boîte de dérivation"],
-          etapes: [{ cle: kPose, libelle: "Boîte posée" }, { cle: kRac, libelle: "Câbles raccordés" }], ordre: ordreBoite++,
+          etapes: [
+            { cle: kPose, libelle: "Boîte posée" }, { cle: kRac, libelle: "Câbles raccordés" },
+            ...etapesDetaillees(`b|${niveau.id}|${noeudCle(id)}`, { kind: "boite", eclairage }, clesConnues),
+          ], ordre: ordreBoite++,
         });
         clesConnues.add(kPose); clesConnues.add(kRac);
       });
@@ -656,6 +678,8 @@ export function construireSuivi(niveauxEntree: Niveau[], rowsTableau: BreakerRow
         const badges: string[] = [];
         let categorie: CategorieElement = "appareil";
         let libPose = "Posé", libRac = "Raccordé";
+        let desc: DescripteurNorme | null = null;
+        const dansSdb = e?.piece.type === "sdb";
         const sousTitre = `${piece} · ${reperePlan({ x: a.x, y: a.y })}`;
 
         if (estLumiere(a.type)) {
@@ -679,6 +703,7 @@ export function construireSuivi(niveauxEntree: Niveau[], rowsTableau: BreakerRow
             const resume = cmds.map(c => `${libelleLong(ctx, c)}${c.domotique ? " (domotique)" : ""}`).join(" ; ");
             details.push(`Commandé par : ${resume}.`);
           }
+          desc = { kind: "lampe", type: a.type, sdb: dansSdb, plafond: estLumierePlafond(a.type), hauteurCm: cm(a), commandee: cmds.length > 0 };
         } else if (a.type === "inter_volet" || a.type === "inter_vmc") {
           categorie = "commande";
           libPose = "Boîte + mécanisme posés";
@@ -690,6 +715,7 @@ export function construireSuivi(niveauxEntree: Niveau[], rowsTableau: BreakerRow
           if (cibles.length > 0) details.push(`Pilote : ${cibles.map(t => libelleLong(ctx, t.a)).join(", ")}.`);
           if (plaque) details.push(plaque.detail);
           if (h < 90 || h > 130) alertesEl.push(`Hauteur ${h} cm : en dehors de la plage 0,90 m – 1,30 m préconisée (accessibilité).`);
+          desc = { kind: "commande_service", type: a.type, hauteurCm: h };
         } else if (estCommande(a.type)) {
           categorie = "commande";
           libPose = "Boîte + mécanisme posés";
@@ -712,6 +738,7 @@ export function construireSuivi(niveauxEntree: Niveau[], rowsTableau: BreakerRow
           if (cibles.length < ciblesTout.length) alertesEl.push("Commande de points lumineux situés sur un autre niveau : ces liaisons ne sont pas tracées dans ce circuit.");
           if (base === "va_et_vient") badges.push("va-et-vient");
           if (a.domotique) details.push("Commande domotique : module radio/Wi-Fi, aucun fil de retour ni de navette vers la lampe.");
+          desc = { kind: "commande", type: a.type, hauteurCm: h, domotique: !!a.domotique, double: estCommandeDouble(a.type), detecteur: estDetecteur(a.type), interieur };
         } else if (a.type === "prise" || a.type === "prise_commandee" || a.type === "prise_exterieure" || a.type === "prise_dediee" || a.type === "prise_irve") {
           const h = cm(a);
           badges.push(`${h} cm`);
@@ -722,6 +749,7 @@ export function construireSuivi(niveauxEntree: Niveau[], rowsTableau: BreakerRow
           if (plaque) details.push(plaque.detail);
           if (a.type === "prise_irve") alertesEl.push("Prise renforcée IRVE : circuit dédié 32 A / 6 mm², différentiel 30 mA type A (ou F) avec protection contre les courants de défaut continu (6 mA DC), socle renforcé spécifique recharge de véhicule — jamais une prise ordinaire.");
           if (a.type === "prise_exterieure") alertesEl.push("Prise extérieure : socle étanche IP44 minimum, alimentée sous différentiel 30 mA.");
+          desc = { kind: "prise", type: a.type, hauteurCm: h, amperes: b.amperes, sectionMm2: fmtSection(section), sdb: dansSdb };
         } else if (a.type === "rj45" || a.type === "prise_tv") {
           const h = cm(a);
           badges.push(`${h} cm`);
@@ -731,11 +759,13 @@ export function construireSuivi(niveauxEntree: Niveau[], rowsTableau: BreakerRow
             ? `Prise RJ45 catégorie 6 blindée (STP) à ${h} cm du sol, placée à proximité d'une prise de courant. Câblage OBLIGATOIREMENT en étoile vers le coffret de communication.`
             : `Prise TV / antenne coaxiale à ${h} cm du sol, câblage en étoile vers le coffret de communication.`);
           if (plaque) details.push(plaque.detail);
+          desc = { kind: "communication", type: a.type, hauteurCm: h };
         } else if (a.type === "volet_roulant") {
           libPose = "Moteur posé";
           libRac = "Raccordé";
           badges.push("16 A partagé");
           details.push("Moteur de volet roulant : circuit dédié 16 A / 1,5 mm² pour l'ensemble des volets (idéalement réparti sur 2 circuits). Commande par interrupteur de volet ou télécommande selon le modèle.");
+          desc = { kind: "volet_roulant" };
         } else if (a.type === "chauffage") {
           libPose = "Radiateur posé";
           libRac = "Raccordé";
@@ -743,11 +773,13 @@ export function construireSuivi(niveauxEntree: Niveau[], rowsTableau: BreakerRow
           badges.push(w != null ? `${w} W` : "puissance à renseigner");
           details.push(`Radiateur électrique${w != null ? ` de ${w} W` : ""} : raccordement par boîte de connexion ou prise dédiée, fil pilote si le modèle l'exige.`);
           if (w == null) alertesEl.push("Puissance non renseignée dans le plan : le regroupement des radiateurs sur le circuit repose sur une valeur par défaut.");
+          desc = { kind: "chauffage", puissanceW: w };
         } else {
           libPose = "Alimentation en attente posée";
           libRac = "Raccordé";
           badges.push(`${cm(a)} cm`);
           details.push(`${LABEL_APPAREIL[a.type]} : sortie de câble (ou prise spécialisée) à ${cm(a)} cm du sol, circuit dédié ${b.amperes} A / ${fmtSection(section)} mm².`);
+          desc = { kind: "autre", amperes: b.amperes, sectionMm2: fmtSection(section), hauteurCm: cm(a) };
         }
 
         if (a.dejaExistant) {
@@ -759,7 +791,7 @@ export function construireSuivi(niveauxEntree: Niveau[], rowsTableau: BreakerRow
         }
         elements.push({
           id: `a|${a.id}`, categorie, titre: libelle(ctx, a), sousTitre, details, alertes: alertesEl, badges,
-          etapes: [{ cle: kPose, libelle: libPose }, { cle: kRac, libelle: libRac }],
+          etapes: [{ cle: kPose, libelle: libPose }, { cle: kRac, libelle: libRac }, ...(desc ? etapesDetaillees(`a|${a.id}`, desc, clesConnues) : [])],
           guideIds: guidesParCommande.get(a.id), ordre: 100 + idx,
         });
         clesConnues.add(kPose); clesConnues.add(kRac);
@@ -817,7 +849,10 @@ export function construireSuivi(niveauxEntree: Niveau[], rowsTableau: BreakerRow
         }
         elements.push({
           id: cleK, categorie: "liaison", titre, sousTitre: fonction, details, alertes: [], badges: [cable, fmtM(longueur), pose.startsWith("mixte") ? "pose mixte" : pose],
-          etapes: [{ cle: cleK, libelle: "Câble tiré" }], ordre: (rolesOrdre[role] ?? 9) * 1000 + nSeg,
+          etapes: [
+            { cle: cleK, libelle: "Câble tiré" },
+            ...etapesDetaillees(cleK, { kind: "liaison", communication: b.circuit === "communication", cable, gaine, pose, sectionMm2: fmtSection(sectionSeg), amperes: b.amperes }, clesConnues),
+          ], ordre: (rolesOrdre[role] ?? 9) * 1000 + nSeg,
         });
         clesConnues.add(cleK);
         if (role === "depart") nbDepart++;
@@ -880,7 +915,23 @@ export function construireSuivi(niveauxEntree: Niveau[], rowsTableau: BreakerRow
       if (nbRetours) resume.push(pluriel(nbRetours, "retour vers une lampe", "retours vers une lampe"));
       if (nbAutres) resume.push(pluriel(nbAutres, "autre câble", "autres câbles"));
 
-      const catOrdre: Record<CategorieElement, number> = { tableau: 0, boite: 1, lampe: 2, commande: 3, appareil: 4, liaison: 5 };
+      // Vérifications du circuit avant la mise sous tension (continuité de terre, isolement, essais…) : un élément à part, étapes détaillées seulement.
+      if (!nonRelie) {
+        const cleC = cleControle(niveau.id, b.circuit, idsMembres);
+        elements.push({
+          id: cleC, categorie: "controle", titre: `Vérifications du circuit « ${nom} »`, sousTitre: "Avant la mise sous tension, puis à la mise en service",
+          details: ["Ces contrôles se cochent à la fin de la pose du circuit : ils s'ajoutent aux étapes détaillées de chaque élément."],
+          alertes: [], badges: ["NF C 15-100"],
+          etapes: etapesDetaillees(cleC, {
+            kind: "controle", communication: b.circuit === "communication", eclairage,
+            aPrises: points.some(a => a.type === "prise" || a.type === "prise_commandee" || a.type === "prise_exterieure" || a.type === "prise_dediee" || a.type === "prise_irve"),
+            sdb: points.some(a => ctx.parId.get(String(a.id))?.piece.type === "sdb"), irve: points.some(a => a.type === "prise_irve"),
+          }, clesConnues),
+          ordre: 0,
+        });
+      }
+
+      const catOrdre: Record<CategorieElement, number> = { tableau: 0, boite: 1, lampe: 2, commande: 3, appareil: 4, liaison: 5, controle: 6 };
       elements.sort((x, y) => catOrdre[x.categorie] - catOrdre[y.categorie] || x.ordre - y.ordre);
 
       circuits.push({
