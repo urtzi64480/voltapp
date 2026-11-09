@@ -13,10 +13,10 @@ import { SQL_MIGRATION_ACHATS, type AchatLigne } from "@/lib/depenses-materiel";
 import { chargerAchats } from "@/lib/achats-db";
 import { extrairePostes, grouperParPoste, ordonnerLignes, posteDe, totalItems, trierParOrdre } from "@/lib/postes";
 import { attacherFournisseurs } from "@/lib/fournisseurs";
-import { colonnesFournisseur, colonnesImage, estLigneACompleter, nbLignesACompleter, nomLigneSansACompleter, photosAffichees } from "@/lib/devis-lignes";
+import { colonnesFournisseur, colonnesImage, appliquerPrixCatalogue, estLigneACompleter, nbLignesACompleter, nomLigneSansACompleter, photosAffichees, prixApplicable, synchroniserAvecCatalogue, type ChampLigne, type ChangementLigne, type PrixCatalogueDiff } from "@/lib/devis-lignes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro, ListChecks, History } from "lucide-react";
+import { ArrowLeft, Download, CheckCircle, Receipt, Trash2, Pencil, Save, Plus, ChevronDown, Eye, PenLine, RotateCcw, Check, Tag, Upload, Gift, CalendarDays, MessageSquare, Copy, ShoppingCart, Euro, ListChecks, History, RefreshCw, X } from "lucide-react";
 
 type PrestationExt = Prestation & { est_kit?: boolean; kit_description?: string | null };
 type Mode = "view" | "edit";
@@ -686,6 +686,62 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, autoPossible, viderUnDevis]);
 
+  // ── Synchronisation avec le catalogue ──
+  // À l'ouverture (hors édition), les lignes d'un devis non signé reprennent les changements du catalogue (voir synchroniserAvecCatalogue).
+  // Le prix de vente n'est jamais modifié tout seul : il est signalé, et appliqué sur demande (brouillon uniquement).
+  const [majCatalogue, setMajCatalogue] = useState<{ changements: ChangementLigne[]; prix: PrixCatalogueDiff[]; erreur?: string } | null>(null);
+  const syncFaiteRef = useRef<string | null>(null);
+  const [prixAEcrire, setPrixAEcrire] = useState(false);
+  useEffect(() => {
+    if (!devis || mode !== "view" || prestations.length === 0 || syncFaiteRef.current === devis.id) return;
+    syncFaiteRef.current = devis.id;
+    const sources = (devis.lignes ?? []) as DevisLigne[];
+    const res = synchroniserAvecCatalogue(sources, new Map(prestations.map(p => [p.id, p])), devis.statut, devis.updated_at);
+    if (res.changements.length === 0 && res.prix.length === 0) return;
+    (async () => {
+      let erreur: string | undefined;
+      const appliques = new Set<number>();
+      await Promise.all(res.changements.map(async c => {
+        const avant = sources[c.index], apres = res.lignes[c.index];
+        if (!avant.id) return;
+        const patch: Record<string, unknown> = {};
+        c.champs.forEach((champ: ChampLigne) => { patch[champ] = (apres as any)[champ] ?? null; });
+        const { error } = await supabase.from("devis_lignes").update(patch).eq("id", avant.id);
+        if (error) { erreur = `Mise à jour de « ${avant.nom} » impossible : ${error.message}`; console.error("Synchronisation catalogue :", error); }
+        else appliques.add(c.index);
+      }));
+      // Seules les lignes réellement écrites en base sont reprises à l'écran.
+      const lignesFinales = sources.map((l, i) => (appliques.has(i) ? res.lignes[i] : l));
+      if (appliques.size > 0) {
+        const maintenant = new Date().toISOString();
+        await supabase.from("devis").update({ updated_at: maintenant }).eq("id", devis.id);
+        const nouveau = { ...devis, lignes: lignesFinales, updated_at: maintenant } as any;
+        dernierDevisRef.current = nouveau;
+        setDevis(nouveau);
+        setLignes(lignesFinales as any);
+      }
+      setMajCatalogue({ changements: res.changements.filter(c => appliques.has(c.index)), prix: res.prix, erreur });
+    })();
+  }, [devis, mode, prestations]);
+
+  function appliquerPrix() {
+    if (!majCatalogue || !devis) return;
+    setLignes(prev => appliquerPrixCatalogue(prev as DevisLigne[], majCatalogue.prix) as any);
+    setPrixAEcrire(true); // l'écriture part après le rendu, avec les lignes et les totaux à jour
+  }
+  useEffect(() => {
+    if (!prixAEcrire) return;
+    (async () => {
+      const err = await enfiler(() => ecrireRef.current(false));
+      setPrixAEcrire(false);
+      if (err) { alert(err); return; }
+      const dd = dernierDevisRef.current;
+      if (dd) setLignes(dd.lignes);
+      setMajCatalogue(m => (m ? { ...m, prix: [] } : m));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prixAEcrire]);
+
   // « Fermer » : enregistre ce qui attend encore, puis quitte l'édition (échec : on reste pour ne rien perdre).
   async function fermerEdition() {
     clearTimeout(timerAutoRef.current);
@@ -883,6 +939,34 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
             <button onClick={() => setMode("edit")} className="btn-ghost !px-2.5 !py-2"><Pencil size={16} /></button>
           )}
         </div>
+
+        {mode === "view" && majCatalogue && (majCatalogue.changements.length > 0 || majCatalogue.prix.length > 0 || majCatalogue.erreur) && (
+          <div className="card card-inner border-sky-300 bg-sky-50 mb-4 text-sm text-sky-900 space-y-2" role="status">
+            <div className="flex items-start gap-2">
+              <RefreshCw size={15} className="shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                {majCatalogue.changements.length > 0 && (
+                  <p>Catalogue mis à jour : {majCatalogue.changements.length} ligne{majCatalogue.changements.length > 1 ? "s" : ""} actualisée{majCatalogue.changements.length > 1 ? "s" : ""}
+                    {" "}({majCatalogue.changements.slice(0, 3).map(c => c.nom).join(", ")}{majCatalogue.changements.length > 3 ? "…" : ""}).</p>
+                )}
+                {majCatalogue.erreur && <p className="text-red-700">{majCatalogue.erreur}</p>}
+                {majCatalogue.prix.length > 0 && (
+                  <div className="mt-1">
+                    <p className="font-semibold">Prix différents dans le catalogue ({majCatalogue.prix.length}) :</p>
+                    <ul className="text-xs mt-0.5 space-y-0.5">
+                      {majCatalogue.prix.slice(0, 5).map(p => <li key={p.index} className="break-words">{p.nom} : {fmt(p.actuel)} → {fmt(p.catalogue)}</li>)}
+                      {majCatalogue.prix.length > 5 && <li>… et {majCatalogue.prix.length - 5} autre{majCatalogue.prix.length - 5 > 1 ? "s" : ""}</li>}
+                    </ul>
+                    {prixApplicable(devis.statut)
+                      ? <button type="button" disabled={prixAEcrire} onClick={appliquerPrix} className="btn-ghost !py-1.5 !text-xs mt-2">{prixAEcrire ? "Mise à jour…" : "Appliquer les prix du catalogue"}</button>
+                      : <p className="text-xs mt-1 text-sky-800">Devis déjà envoyé : les prix restent ceux que le client a vus.</p>}
+                  </div>
+                )}
+              </div>
+              <button type="button" onClick={() => setMajCatalogue(null)} aria-label="Fermer" className="shrink-0"><X size={15} /></button>
+            </div>
+          </div>
+        )}
 
         {mode === "view" && (
           <>
