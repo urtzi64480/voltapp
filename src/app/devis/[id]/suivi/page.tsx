@@ -16,6 +16,8 @@ import {
   nbEnAttente, synchroniser, type ResultatEcritureSuivi,
 } from "@/lib/suivi-hors-ligne";
 import { avancement, bilanDevis, groupesDevis, type LigneDevisSuivi } from "@/lib/suivi-devis";
+import { etapesDetailDevis, type EtapeDetailDevis } from "@/lib/suivi-devis-normes";
+import { TITRE_GROUPE, grouperEtapes } from "@/lib/suivi-normes";
 
 const SQL_MIGRATION = "ALTER TABLE devis\n  ADD COLUMN IF NOT EXISTS suivi_realisation TEXT;";
 
@@ -156,6 +158,13 @@ function Suivi({ devis, colonneAbsente: absenteInitial, copieLocale }: { devis: 
     return () => { window.removeEventListener("online", retour); window.removeEventListener("offline", coupe); document.removeEventListener("visibilitychange", visible); };
   }, [envoyerFile, actualiser]);
 
+  // Étapes détaillées NF C 15-100 de chaque ligne reconnue (prise, disjoncteur, câble…) : cochables, hors avancement des lignes.
+  const detailParLigne = useMemo(() => {
+    const m = new Map<string, EtapeDetailDevis[]>();
+    groupes.forEach(g => g.etapes.forEach(({ cle: k, ligne: l }) => { const d = etapesDetailDevis(l, k); if (d.length > 0) m.set(k, d); }));
+    return m;
+  }, [groupes]);
+
   const toutes = useMemo(() => groupes.flatMap(g => g.etapes), [groupes]);
   const global = avancement(toutes, coches);
   const bilan = useMemo(() => bilanDevis(lignes, tempsPostes), [lignes, tempsPostes]);
@@ -263,7 +272,10 @@ function Suivi({ devis, colonneAbsente: absenteInitial, copieLocale }: { devis: 
                 </button>
               </div>
               <ul className="divide-y divide-ink-100">
-                {g.etapes.map(({ cle: k, ligne: l }) => (
+                {g.etapes.map(({ cle: k, ligne: l }) => {
+                  const detail = detailParLigne.get(k) ?? [];
+                  const faitsDetail = detail.filter(x => coches[x.cle]).length;
+                  return (
                   <li key={k}>
                     <button type="button" onClick={() => basculer(k)} className="w-full flex items-center gap-3 py-2.5 text-left" aria-pressed={!!coches[k]}>
                       <span className={cn("h-6 w-6 rounded-md border-2 flex items-center justify-center shrink-0", coches[k] ? "bg-emerald-500 border-emerald-500 text-white" : "border-ink-300 bg-white")}>
@@ -274,8 +286,46 @@ function Suivi({ devis, colonneAbsente: absenteInitial, copieLocale }: { devis: 
                         <span className="block text-[11px] text-ink-400">{l.quantite ?? 1} {l.unite ?? ""}{coches[k] ? ` · fait le ${dateCourte(coches[k])}` : ""}</span>
                       </span>
                     </button>
+                    {detail.length > 0 && (
+                      <details className="mb-2.5 ml-9 rounded-xl border border-ink-200 bg-white">
+                        <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-volt-700 flex items-center justify-between gap-2 min-h-[40px]">
+                          <span>Étapes détaillées NF C 15-100</span>
+                          <span className={cn("tabular-nums", faitsDetail === detail.length ? "text-emerald-700" : "text-ink-600")}>{faitsDetail}/{detail.length}</span>
+                        </summary>
+                        <div className="px-3 pb-3 space-y-3">
+                          {grouperEtapes(detail).map(gr => (
+                            <div key={gr.groupe}>
+                              <p className="text-[11px] font-bold uppercase tracking-wide text-ink-500 mb-1">{TITRE_GROUPE[gr.groupe]}</p>
+                              <ul className="space-y-1">
+                                {gr.etapes.map(x => {
+                                  const fait = !!coches[x.cle];
+                                  return (
+                                    <li key={x.cle}>
+                                      <button type="button" onClick={() => basculer(x.cle)} aria-pressed={fait}
+                                        className={cn("w-full flex items-start gap-2 px-2.5 py-2 rounded-lg border text-left text-xs transition-colors select-none active:scale-[0.99]",
+                                          fait ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-white border-ink-200 text-ink-700 hover:border-volt-400")}>
+                                        <span className={cn("w-5 h-5 mt-0.5 shrink-0 rounded-md border flex items-center justify-center", fait ? "bg-emerald-500 border-emerald-500 text-white" : "border-ink-300 bg-white")}>
+                                          {fait && <Check size={14} strokeWidth={3} />}
+                                        </span>
+                                        <span className="leading-snug min-w-0 break-words">
+                                          {x.libelle}
+                                          {x.aVerifier && <span className="ml-1.5 badge bg-amber-100 text-amber-800 !text-[10px] !px-1.5">à vérifier</span>}
+                                          {x.norme && <span className="block text-[11px] font-normal text-ink-500 mt-0.5">{x.norme}</span>}
+                                          {fait && <span className="block text-[10px] font-normal text-emerald-700/80">{dateCourte(coches[x.cle])}</span>}
+                                        </span>
+                                      </button>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
                   </li>
-                ))}
+                  );
+                })}
               </ul>
               <div className="mt-3 pt-3 border-t border-ink-100">
                 <p className="text-[11px] text-ink-400 mb-1.5 flex items-center gap-1"><Clock size={11} /> Temps passé sur ce poste</p>

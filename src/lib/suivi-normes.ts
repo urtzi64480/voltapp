@@ -33,23 +33,28 @@ export interface EtapeNorme {
 }
 
 export type DescripteurNorme =
-  | { kind: "disjoncteur"; amperes: number; sectionMm2: string; nom: string; diffType?: string; maxPar?: number; nbPoints: number; eclairage: boolean }
+  | { kind: "disjoncteur"; amperes: number | null; sectionMm2: string | null; nom: string; diffType?: string; maxPar?: number; nbPoints: number; eclairage: boolean }
   | { kind: "boite"; eclairage: boolean }
-  | { kind: "lampe"; type: string; sdb: boolean; plafond: boolean; hauteurCm: number; commandee: boolean }
-  | { kind: "commande"; type: string; hauteurCm: number; domotique: boolean; double: boolean; detecteur: boolean; interieur: boolean }
-  | { kind: "commande_service"; type: "inter_volet" | "inter_vmc"; hauteurCm: number }
-  | { kind: "prise"; type: string; hauteurCm: number; amperes: number; sectionMm2: string; sdb: boolean }
-  | { kind: "communication"; type: "rj45" | "prise_tv"; hauteurCm: number }
+  | { kind: "lampe"; type: string; sdb: boolean; plafond: boolean; hauteurCm: number | null; commandee: boolean }
+  | { kind: "commande"; type: string; hauteurCm: number | null; domotique: boolean; double: boolean; detecteur: boolean; interieur: boolean }
+  | { kind: "commande_service"; type: "inter_volet" | "inter_vmc"; hauteurCm: number | null }
+  | { kind: "prise"; type: string; hauteurCm: number | null; amperes: number | null; sectionMm2: string | null; sdb: boolean }
+  | { kind: "communication"; type: "rj45" | "prise_tv"; hauteurCm: number | null }
   | { kind: "volet_roulant" }
   | { kind: "chauffage"; puissanceW: number | null }
-  | { kind: "autre"; amperes: number; sectionMm2: string; hauteurCm: number }
-  | { kind: "liaison"; communication: boolean; cable: string; gaine: string; pose: string; sectionMm2: string; amperes: number }
+  | { kind: "autre"; amperes: number | null; sectionMm2: string | null; hauteurCm: number | null }
+  | { kind: "liaison"; communication: boolean; cable: string; gaine: string; pose: string; sectionMm2: string | null; amperes: number | null }
   | { kind: "controle"; communication: boolean; eclairage: boolean; aPrises: boolean; sdb: boolean; irve: boolean };
 
 const e = (slug: string, groupe: GroupeEtape, libelle: string, norme?: string, aVerifier = false): EtapeNorme =>
   aVerifier ? { slug, groupe, libelle, norme, aVerifier } : { slug, groupe, libelle, norme };
 
 const DISCRET = "NF C 15-100";
+
+// Valeurs facultatives (devis sans plan : calibre, section, hauteur non connus) → libellés sans chiffre inventé.
+const cm = (h: number | null): string => (h == null ? "" : ` : ${h} cm`);
+const calibreSection = (a: number | null, s: string | null): string =>
+  a != null && s ? `disjoncteur ${a} A pour une section de ${s} mm²` : a != null ? `disjoncteur ${a} A (section du câble à confirmer)` : s ? `section ${s} mm² (calibre du disjoncteur à confirmer)` : "calibre du disjoncteur et section du câble cohérents entre eux";
 
 // Étapes communes de raccordement d'un appareillage (prise, commande, lampe…)
 const serrage = (): EtapeNorme => e("serrage", "raccordement", "Serrer chaque borne puis tirer légèrement sur chaque fil pour vérifier la connexion",
@@ -63,7 +68,7 @@ export function etapesNormatives(d: DescripteurNorme): EtapeNorme[] {
   switch (d.kind) {
     case "disjoncteur": {
       const liste: EtapeNorme[] = [
-        e("calibre", "preparation", `Vérifier le calibre : disjoncteur ${d.amperes} A pour une section de ${d.sectionMm2} mm²`,
+        e("calibre", "preparation", `Vérifier le calibre : ${calibreSection(d.amperes, d.sectionMm2)}`,
           "Le calibre protège le câble : 16 A ↔ 1,5 mm², 20 A ↔ 2,5 mm², 32 A ↔ 6 mm² (NF C 15-100). Un calibre trop fort laisse le câble chauffer."),
       ];
       if (d.maxPar != null) {
@@ -136,7 +141,7 @@ export function etapesNormatives(d: DescripteurNorme): EtapeNorme[] {
         e("emplacement", "preparation", "Contrôler l'emplacement : près de l'accès de la pièce, dans la zone libre du mur",
           "Dans chaque pièce, au moins un point d'allumage près de chaque accès (infographie Legrand)."),
       ];
-      if (d.interieur) liste.push(e("hauteur", "preparation", `Contrôler la hauteur de pose : ${d.hauteurCm} cm (entre 90 cm et 1,30 m)`,
+      if (d.interieur) liste.push(e("hauteur", "preparation", `Contrôler la hauteur de pose${cm(d.hauteurCm)} (entre 90 cm et 1,30 m)`,
         "Points d'allumage entre 0,90 m et 1,30 m du sol (hauteur préconisée par la réglementation sur l'accessibilité — infographie Legrand)."));
       liste.push(
         e("boite", "pose", "Boîte d'encastrement d'aplomb, profondeur adaptée au doublage, scellée sans abîmer les gaines"),
@@ -158,7 +163,7 @@ export function etapesNormatives(d: DescripteurNorme): EtapeNorme[] {
 
     case "commande_service":
       return [
-        e("hauteur", "preparation", `Contrôler la hauteur de pose : ${d.hauteurCm} cm (entre 90 cm et 1,30 m)`,
+        e("hauteur", "preparation", `Contrôler la hauteur de pose${cm(d.hauteurCm)} (entre 90 cm et 1,30 m)`,
           "Commandes entre 0,90 m et 1,30 m du sol (accessibilité — infographie Legrand)."),
         e("boite", "pose", "Boîte d'encastrement d'aplomb, mécanisme et plaque de finition alignés"),
         e("alimentation", "raccordement", d.type === "inter_volet"
@@ -170,12 +175,12 @@ export function etapesNormatives(d: DescripteurNorme): EtapeNorme[] {
 
     case "prise": {
       const liste: EtapeNorme[] = [
-        e("hauteur", "preparation", `Contrôler la hauteur de pose du socle : ${d.hauteurCm} cm`,
+        e("hauteur", "preparation", `Contrôler la hauteur de pose du socle${cm(d.hauteurCm)}`,
           "Hauteur saisie dans le plan : vérifier dans la norme la hauteur minimale du socle au sol fini et la hauteur à respecter dans un logement accessible.", true),
         e("boite", "pose", "Boîte d'encastrement d'aplomb, profondeur adaptée au doublage"),
         e("socle", "pose", "Socle 2P+T fixé, plaque de finition alignée sur le niveau",
           "Prises de courant avec terre obligatoire (infographie Legrand)."),
-        e("section-circuit", "raccordement", `Vérifier la section du câble : ${d.sectionMm2} mm² pour un disjoncteur de ${d.amperes} A`,
+        e("section-circuit", "raccordement", `Vérifier la section du câble : ${calibreSection(d.amperes, d.sectionMm2)}`,
           "Prises : 1,5 mm² / 16 A (8 prises maxi) ou 2,5 mm² / 20 A (12 prises maxi) ; cuisine : 2,5 mm² / 20 A (6 prises maxi) ; plaques de cuisson : 6 mm² / 32 A (infographie Legrand)."),
         terre("Raccorder la terre sur la borne du socle (obligatoire)"),
         e("derivation", "raccordement", "Raccorder en dérivation (jamais en série dans les bornes du socle)",
@@ -202,7 +207,7 @@ export function etapesNormatives(d: DescripteurNorme): EtapeNorme[] {
     case "communication": {
       const rj = d.type === "rj45";
       return [
-        e("hauteur", "preparation", `Contrôler la hauteur de pose : ${d.hauteurCm} cm`, "Hauteur saisie dans le plan, à confirmer dans la norme.", true),
+        e("hauteur", "preparation", `Contrôler la hauteur de pose${cm(d.hauteurCm)}`, "Hauteur saisie dans le plan, à confirmer dans la norme.", true),
         e("proximite", "preparation", rj ? "Placer la prise RJ45 à proximité d'une prise de courant" : "Prévoir une prise de courant à proximité de la prise TV",
           "Prises de communication placées à proximité d'une prise de courant (infographie Legrand)."),
         e("boite", "pose", rj ? "Boîte d'encastrement d'aplomb, prise RJ45 catégorie 6 blindée (STP) fixée" : "Boîte d'encastrement d'aplomb, prise TV fixée",
@@ -243,9 +248,9 @@ export function etapesNormatives(d: DescripteurNorme): EtapeNorme[] {
 
     case "autre":
       return [
-        e("circuit", "preparation", `Vérifier le circuit dédié : ${d.amperes} A / ${d.sectionMm2} mm², un seul appareil par circuit`,
+        e("circuit", "preparation", `Vérifier le circuit dédié : ${d.amperes != null && d.sectionMm2 ? `${d.amperes} A / ${d.sectionMm2} mm²` : "calibre et section adaptés à l'appareil"}, un seul appareil par circuit`,
           "Lave-vaisselle, lave-linge, sèche-linge, four, congélateur… : 2,5 mm² / 20 A, 1 circuit dédié par appareil (infographie Legrand)."),
-        e("sortie", "pose", `Sortie de câble (ou prise spécialisée) à ${d.hauteurCm} cm du sol, bien fixée`),
+        e("sortie", "pose", `Sortie de câble (ou prise spécialisée)${d.hauteurCm != null ? ` à ${d.hauteurCm} cm du sol` : ""}, bien fixée`),
         terre("Raccorder la terre à l'appareil (classe I : obligatoire)"),
         e("raccord", "raccordement", "Raccorder phase et neutre selon la notice de l'appareil"),
         couleurs(), serrage(),
@@ -263,7 +268,7 @@ export function etapesNormatives(d: DescripteurNorme): EtapeNorme[] {
         ];
       }
       return [
-        e("section", "preparation", `Vérifier la section : ${d.cable} pour un disjoncteur de ${d.amperes} A (${d.sectionMm2} mm²)`,
+        e("section", "preparation", `Vérifier la section : ${d.cable}${d.amperes != null ? ` pour un disjoncteur de ${d.amperes} A` : ""}${d.sectionMm2 ? ` (${d.sectionMm2} mm²)` : ""}`,
           "Le calibre du disjoncteur est limité par la section du câble : 16 A ↔ 1,5 mm², 20 A ↔ 2,5 mm², 32 A ↔ 6 mm² (NF C 15-100)."),
         e("gaine", "pose", d.pose.startsWith("apparent") ? `Câble sous gaine ${d.gaine} (IRL), fixé aux colliers` : `Câble sous gaine ${d.gaine} (pose encastrée), jamais directement dans le mur ni le plâtre`,
           "Les conducteurs ne sont pas posés nus dans la paroi : gaine ICTA (encastré) ou IRL (apparent)."),
