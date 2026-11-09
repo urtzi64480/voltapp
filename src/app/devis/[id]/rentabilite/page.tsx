@@ -3,9 +3,9 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { ArrowLeft, Euro, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Euro, AlertTriangle, Clock } from "lucide-react";
 import { fmt, cn } from "@/lib/utils";
-import { comparerAchat } from "@/lib/rentabilite";
+import { comparerAchat, heuresEstimees, minutesReelles, tarifHoraire } from "@/lib/rentabilite";
 import { htDepuisTtc, lireMontant, totalParDevis } from "@/lib/depenses-materiel";
 
 function margeColor(pct: number) {
@@ -29,6 +29,7 @@ export default function RentabiliteDevisPage({ params }: { params: { id: string 
   const [profil, setProfil] = useState<any>(null);
   const [prixAchatMap, setPrixAchatMap] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [minutesReel, setMinutesReel] = useState(0);              // temps réellement passé (suivi du devis + plans rattachés), en minutes
   const [achatReel, setAchatReel] = useState<number | null>(null);   // matériel réellement dépensé, TTC (saisi sur le devis)
 
   // Coût d'achat par prestation vendue dans le devis (clé = prestation_id de la ligne) —
@@ -88,6 +89,16 @@ export default function RentabiliteDevisPage({ params }: { params: { id: string 
       setAchatReel(total.get(id) ?? null);
     });
 
+    // Temps réellement passé : suivi du devis + plans rattachés (colonnes suivi_realisation, migrations 008/013 : absentes = pas d'heures réelles).
+    Promise.all([
+      supabase.from("devis").select("suivi_realisation").eq("id", id).maybeSingle(),
+      supabase.from("projets").select("suivi_realisation"),
+    ]).then(([d, p]) => {
+      const suiviDevis = d.error ? null : ((d.data as { suivi_realisation?: string | null } | null)?.suivi_realisation ?? null);
+      const projets = p.error ? [] : ((p.data ?? []) as { suivi_realisation?: string | null }[]);
+      setMinutesReel(minutesReelles(id, projets, suiviDevis));
+    });
+
     // Profil de l'utilisateur connecté (taux de cotisations) — plus d'UUID codé en dur.
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return;
@@ -139,6 +150,11 @@ export default function RentabiliteDevisPage({ params }: { params: { id: string 
   const netMateriau = devis.total_materiau - cotisationMateriau - irMateriau - coutAchatTotal;
   const netGlobal = netService + netMateriau;
   const margeGlobalePct = devis.total_ttc > 0 ? Math.round(netGlobal / devis.total_ttc * 1000) / 10 : 0;
+  // Tarif horaire : sur les heures vendues (lignes de service à l'heure du devis) et sur les heures réellement passées (suivi de chantier).
+  const caHt = devis.total_service + devis.total_materiau;
+  const cotisTotales = cotisationService + cotisationMateriau, irTotal = irService + irMateriau;
+  const tarifVendu = tarifHoraire({ ca: caHt, coutAchat: coutAchatTotal, cotisations: cotisTotales, impots: irTotal, heures: heuresEstimees(viewLignes) });
+  const tarifReel = tarifHoraire({ ca: caHt, coutAchat: coutAchatTotal, cotisations: cotisTotales, impots: irTotal, heures: minutesReel / 60 });
   const hasLigneSansCoutAchat = achatReel == null && lignesRentab.some((l: any) => l.sansCoutAchat);
 
   return (
@@ -202,6 +218,30 @@ export default function RentabiliteDevisPage({ params }: { params: { id: string 
                   <div className="flex justify-between font-semibold pt-1 border-t border-emerald-200"><span>Net</span><span className={margeColor(devis.total_materiau > 0 ? Math.round(netMateriau / devis.total_materiau * 100) : 0)}>{fmt(netMateriau)}</span></div>
                 </div>
               </div>
+            </div>
+
+            <div className="rounded-xl border border-ink-200 p-3">
+              <p className="text-xs font-semibold text-ink-500 uppercase tracking-wide mb-2 flex items-center gap-1.5"><Clock size={12} /> Tarif horaire</p>
+              {tarifVendu || tarifReel ? (
+                <div className="grid grid-cols-2 gap-2">
+                  {([["Heures vendues", tarifVendu], ["Heures réelles", tarifReel]] as const).map(([titre, t]) => (
+                    <div key={titre} className="bg-ink-50 rounded-xl p-3">
+                      <p className="text-xs text-ink-400 mb-1">{titre}{t ? ` · ${String(t.heures).replace(".", ",")} h` : ""}</p>
+                      {t ? (
+                        <div className="space-y-0.5 text-xs">
+                          <div className="flex justify-between"><span className="text-ink-600">Brut</span><span className="font-bold text-ink-900">{fmt(t.brut)} /h</span></div>
+                          <div className="flex justify-between"><span className="text-ink-600">Net</span><span className={cn("font-bold", t.net < 0 ? "text-red-600" : "text-emerald-700")}>{fmt(t.net)} /h</span></div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-ink-400">{titre === "Heures réelles" ? <>Aucun temps saisi. <Link href={`/devis/${id}/suivi`} className="underline text-volt-700">Noter le temps passé</Link></> : "Aucune ligne de service à l'heure dans le devis."}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-ink-500">Pas d&apos;heures à diviser : ce devis n&apos;a aucune ligne de service à l&apos;heure et aucun temps n&apos;est saisi. <Link href={`/devis/${id}/suivi`} className="underline text-volt-700">Noter le temps passé</Link>.</p>
+              )}
+              <p className="text-[11px] text-ink-400 mt-2">Brut = (vente − matériel) ÷ heures, avant cotisations{tauxIrService > 0 || tauxIrMateriau > 0 ? " et impôt" : ""}. Net = brut après cotisations{tauxIrService > 0 || tauxIrMateriau > 0 ? " et IR" : ""}, soit ce qui reste pour une heure travaillée.</p>
             </div>
 
             <div className={cn("rounded-xl border p-3 text-sm", comparaison ? (comparaison.ecart > 0 ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50") : "border-ink-100 bg-ink-50")}>

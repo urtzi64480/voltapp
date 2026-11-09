@@ -249,3 +249,18 @@ export function comparerAchat(estimeTtc: number, reelTtc: number, ttcDevis: numb
     effetMargePts: nombre(ttcDevis) > 0 ? arrondi((-ecart / nombre(ttcDevis)) * 100, 1) : null,
   };
 }
+
+export interface TarifHoraire { heures: number; brut: number; net: number }
+
+/**
+ * Ce que rapporte une heure de travail sur un devis.
+ *   brut = (CA − matériel acheté) / heures      → avant cotisations et impôt
+ *   net  = (CA − matériel − cotisations − IR) / heures → ce qui reste dans la poche
+ * Le matériel est déduit dans les deux cas : c'est une avance de trésorerie, pas un revenu. Heures absentes ou nulles : null (jamais de division par 0).
+ */
+export function tarifHoraire(p: { ca: number; coutAchat: number; cotisations: number; impots: number; heures: number | null | undefined }): TarifHoraire | null {
+  const h = Number(p.heures);
+  if (!Number.isFinite(h) || h <= 0) return null;
+  const apresMateriel = nombre(p.ca) - nombre(p.coutAchat);
+  return { heures: arrondi(h, 2), brut: arrondi(apresMateriel / h), net: arrondi((apresMateriel - nombre(p.cotisations) - nombre(p.impots)) / h) };
+}
