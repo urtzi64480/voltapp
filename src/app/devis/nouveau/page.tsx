@@ -13,6 +13,8 @@ import { colonnesFournisseur, colonnesImage } from "@/lib/devis-lignes";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Save, Eye, PenLine, Plus, RotateCcw, Check, Download, ChevronDown, Tag, Gift, Layers } from "lucide-react";
 import Link from "next/link";
+import { lireStockage, ecrireStockage, retirerStockage } from "@/lib/safe-storage";
+import { CLE_BROUILLON_DEVIS, brouillonVide, ecrireBrouillon, lireBrouillon, type BrouillonDevis } from "@/lib/brouillon-devis";
 
 type Tab = "edition" | "apercu" | "signature";
 type RemiseType = "pct" | "eur";
@@ -91,6 +93,10 @@ function NouveauDevisPage() {
   const [remiseFidelitePct, setRemiseFidelitePct] = useState<number>(0);
   const [caClientPayé, setCaClientPayé] = useState<number>(0);
   const [saving, setSaving] = useState(false);
+  // Brouillon local : proposé à la reprise, puis réécrit à chaque modification (rien n'est créé en base, aucun numéro consommé).
+  const [brouillonOffert, setBrouillonOffert] = useState<BrouillonDevis | null>(null);
+  const [brouillonPret, setBrouillonPret] = useState(false);
+  const [brouillonEnregistre, setBrouillonEnregistre] = useState<Date | null>(null);
   const [sigData, setSigData] = useState<string | null>(null);
   const [sigDate, setSigDate] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -112,6 +118,29 @@ function NouveauDevisPage() {
       setPrestations(await attacherFournisseurs((pre ?? []) as PrestationExt[]));
     });
   }, []);
+
+  useEffect(() => {
+    setBrouillonOffert(lireBrouillon(lireStockage("local", CLE_BROUILLON_DEVIS)));
+    setBrouillonPret(true);
+  }, []);
+  useEffect(() => {
+    if (!brouillonPret || brouillonOffert) return; // tant que la reprise n'est pas décidée, on n'écrase pas le brouillon existant
+    const t = setTimeout(() => {
+      const contenu = { clientId, apporteurId, objet, validite, lignes: lignes as unknown as Record<string, unknown>[], postes, remise, remiseFidelitePct };
+      if (brouillonVide(contenu)) { retirerStockage("local", CLE_BROUILLON_DEVIS); setBrouillonEnregistre(null); return; }
+      ecrireStockage("local", CLE_BROUILLON_DEVIS, ecrireBrouillon(contenu));
+      setBrouillonEnregistre(new Date());
+    }, 800);
+    return () => clearTimeout(t);
+  }, [brouillonPret, brouillonOffert, clientId, apporteurId, objet, validite, lignes, postes, remise, remiseFidelitePct]);
+  function reprendreBrouillon() {
+    const b = brouillonOffert;
+    if (!b) return;
+    setClientId(b.clientId); setApporteurId(b.apporteurId); setObjet(b.objet); setValidite(b.validite);
+    setLignes(b.lignes as unknown as DevisLigneExt[]); setPostes(b.postes); setRemise(b.remise); setRemiseFidelitePct(b.remiseFidelitePct);
+    setBrouillonOffert(null);
+  }
+  function ignorerBrouillon() { retirerStockage("local", CLE_BROUILLON_DEVIS); setBrouillonOffert(null); }
 
   useEffect(() => {
     if (tab !== "signature" || !canvasRef.current) return;
@@ -238,6 +267,7 @@ function NouveauDevisPage() {
     }
     const { error: errCompteur } = await supabase.from("profil").update({ compteur_devis: (profil?.compteur_devis ?? 0) + 1 }).eq("id", user.id);
     echecSupabase(errCompteur, "Mise à jour du compteur de devis");
+    retirerStockage("local", CLE_BROUILLON_DEVIS); // le devis existe maintenant : le brouillon local n'a plus lieu d'être
     router.push(`/devis/${dv.id}`);
   }
 
@@ -275,6 +305,21 @@ function NouveauDevisPage() {
             <Save size={15} /> {saving ? "…" : "Sauvegarder"}
           </button>
         </div>
+
+        {brouillonOffert && (
+          <div className="card card-inner border-amber-300 bg-amber-50 mb-4 flex flex-wrap items-center gap-2 text-sm text-amber-900" role="status">
+            <span className="flex-1 min-w-0">
+              Un devis non enregistré a été gardé sur cet appareil
+              {brouillonOffert.le ? ` (${new Date(brouillonOffert.le).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })})` : ""}
+              {brouillonOffert.objet ? ` : « ${brouillonOffert.objet} »` : ""} — {brouillonOffert.lignes.length} ligne{brouillonOffert.lignes.length > 1 ? "s" : ""}.
+            </span>
+            <button type="button" onClick={reprendreBrouillon} className="btn-volt !py-1.5 !text-xs">Reprendre</button>
+            <button type="button" onClick={ignorerBrouillon} className="btn-ghost !py-1.5 !text-xs">Supprimer</button>
+          </div>
+        )}
+        {!brouillonOffert && brouillonEnregistre && (
+          <p className="text-xs text-emerald-700 -mt-3 mb-4" role="status">Brouillon gardé sur cet appareil à {brouillonEnregistre.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })} — il sera proposé si tu quittes cette page sans enregistrer.</p>
+        )}
 
         <div className="flex gap-1 mb-6 bg-ink-100 p-1 rounded-xl">
           {TABS.map(({ id, label, icon: Icon }) => (

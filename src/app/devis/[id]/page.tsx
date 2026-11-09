@@ -5,6 +5,7 @@ import { Devis, DevisLigne, Prestation, Client, Profil } from "@/types";
 import { fmt, fmtDate, fmtDatetime, STATUT_LABELS, STATUT_COLORS, cn, dateLocale, arrondi2, echecSupabase } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import PostesLignes from "@/components/devis/PostesLignes";
+import IndicateurAuto from "@/components/devis/IndicateurAuto";
 import BoutonDeplacement from "@/components/devis/BoutonDeplacement";
 import LigneImage from "@/components/devis/LigneImage";
 import AchatsDevis from "@/components/devis/AchatsMateriel";
@@ -311,6 +312,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         // pour que le regroupement en postes (et le PDF) suive l'ordre enregistré.
         d.lignes = trierParOrdre((d.lignes ?? []) as any[]);
         setDevis(d);
+        dernierDevisRef.current = d;
         setClientId(d.client_id ?? "");
         setApporteurId(d.apporteur_id ?? "");
         setObjet(d.objet ?? "");
@@ -532,11 +534,21 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
 
   const palierActuelClient = [...paliers].reverse().find(p => caClientPayé >= p.seuil_min) ?? null;
 
-  async function saveEdit() {
-    if (!devis) return;
-    // Une signature saisie ici passerait le devis en « signé » : mêmes garde-fous que la signature en face à face.
-    if (sigData && bloqueSiACompleter()) return;
-    setSaving(true);
+  // ── Enregistrement (manuel et automatique) ──────────────────────────────────────────────────────────────
+  // Une seule écriture à la fois (file `verrouRef`) : deux enregistrements simultanés dupliqueraient les lignes.
+  // `ecrireRef` pointe toujours vers la version la plus récente de ecrireDevis (l'état à jour, même pour une écriture mise en file).
+  const verrouRef = useRef<Promise<unknown>>(Promise.resolve());
+  const dernierDevisRef = useRef<any>(null);
+  const enfiler = <T,>(fn: () => Promise<T>): Promise<T> => {
+    const p = verrouRef.current.then(fn, fn);
+    verrouRef.current = p.catch(() => undefined);
+    return p;
+  };
+
+  /** Écrit le devis en base. Renvoie null si tout est enregistré, sinon le message d'erreur (aucune fenêtre ici : l'appelant décide). */
+  async function ecrireDevis(avecSignature: boolean): Promise<string | null> {
+    if (!devis) return "Devis non chargé.";
+    const sig = avecSignature ? sigData : null;
     const dateV = new Date(); dateV.setDate(dateV.getDate() + validite);
 
     // 1) On insère les nouvelles lignes AVANT de supprimer les anciennes : si l'insertion
@@ -544,11 +556,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     //    Lignes remises à plat dans l'ordre d'affichage (postes, puis hors poste).
     //    La colonne `poste` n'est envoyée que si le devis utilise des postes.
     const { data: anciennes, error: errAnciennes } = await supabase.from("devis_lignes").select("id").eq("devis_id", id);
-    if (errAnciennes) {
-      alert("Impossible de lire les lignes actuelles du devis (devis inchangé) : " + errAnciennes.message);
-      setSaving(false);
-      return;
-    }
+    if (errAnciennes) return "Impossible de lire les lignes actuelles du devis (devis inchangé) : " + errAnciennes.message;
     let nouveauxIds: string[] = [];
     const anciensIds = (anciennes ?? []).map((r: any) => r.id as string);
     const utilisePostes = lignes.some(l => posteDe(l) !== null);
@@ -574,11 +582,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
           ...colImage(l),
         }))
       ).select("id");
-      if (errLignes) {
-        alert("Erreur lors de l'enregistrement des lignes (devis inchangé) : " + errLignes.message);
-        setSaving(false);
-        return;
-      }
+      if (errLignes) return "Erreur lors de l'enregistrement des lignes (devis inchangé) : " + errLignes.message;
       nouveauxIds = (inserees ?? []).map((r: any) => r.id as string);
     }
     if (anciensIds.length > 0) {
@@ -586,9 +590,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       if (errSuppr) {
         // Retour arrière : on retire les lignes qu'on vient d'ajouter pour ne pas laisser le devis avec ses lignes en double.
         if (nouveauxIds.length > 0) await supabase.from("devis_lignes").delete().in("id", nouveauxIds);
-        alert("Impossible de remplacer les anciennes lignes (devis inchangé) : " + errSuppr.message);
-        setSaving(false);
-        return;
+        return "Impossible de remplacer les anciennes lignes (devis inchangé) : " + errSuppr.message;
       }
     }
     const { error: errMaj } = await supabase.from("devis").update({
@@ -600,28 +602,101 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       remise_type: hasRemise ? JSON.stringify({ service: remise.service_type, materiau: remise.materiau_type }) : null,
       remise_valeur: remiseService + remiseMateriau,
       remise_fidelite_pct: remiseFidelitePct > 0 ? remiseFidelitePct : null,
-      signature_data: sigData ?? devis.signature_data,
-      signe_le: sigData ? new Date().toISOString() : devis.signe_le,
-      statut: sigData ? "signe" : devis.statut,
+      signature_data: sig ?? devis.signature_data,
+      signe_le: sig ? new Date().toISOString() : devis.signe_le,
+      statut: sig ? "signe" : devis.statut,
     }).eq("id", id);
     if (errMaj) {
-      // Les nouvelles lignes sont déjà enregistrées mais les totaux n'ont pas été mis à jour :
-      // on le dit clairement et on laisse l'édition ouverte pour réessayer.
-      echecSupabase(errMaj, "Mise à jour du devis (en-tête et totaux)");
-      setSaving(false);
-      return;
+      // Les nouvelles lignes sont déjà enregistrées mais les totaux n'ont pas été mis à jour : on le dit clairement.
+      console.error("Échec — mise à jour du devis (en-tête et totaux) :", errMaj);
+      return `Mise à jour du devis (en-tête et totaux) : l'opération a échoué (${errMaj.message}).`;
     }
     const { data, error: errRefetch } = await supabase.from("devis").select(SELECT_DEVIS).eq("id", id).single();
     if (errRefetch) console.error("Erreur récupération devis après sauvegarde :", errRefetch);
     if (data) {
       const dd = data as any;
       dd.lignes = trierParOrdre((dd.lignes ?? []) as any[]);
-      setLignes(dd.lignes);
-      setPostes(extrairePostes(dd.lignes));
+      dernierDevisRef.current = dd;
       setDevis(dd);
     }
+    return null;
+  }
+  const ecrireRef = useRef(ecrireDevis);
+  ecrireRef.current = ecrireDevis;
+
+  // Enregistrement manuel : écrit, puis ferme l'édition et recharge les lignes telles qu'enregistrées.
+  async function saveEdit() {
+    if (!devis) return;
+    // Une signature saisie ici passerait le devis en « signé » : mêmes garde-fous que la signature en face à face.
+    if (sigData && bloqueSiACompleter()) return;
+    clearTimeout(timerAutoRef.current);
+    setSaving(true);
+    const err = await enfiler(() => ecrireRef.current(true));
+    if (err) { alert(err); setSaving(false); return; }
+    const dd = dernierDevisRef.current;
+    if (dd) { setLignes(dd.lignes); setPostes(extrairePostes(dd.lignes)); }
+    setAuto({ etat: "repos" });
     setMode("view");
     setSaving(false);
+  }
+
+  // ── Sauvegarde automatique ──
+  // Tant que le devis est en édition (et pas signé), toute modification est enregistrée 1,5 s après la dernière frappe, et tout de suite
+  // quand l'écran passe en arrière-plan. Un devis signé reste en enregistrement manuel : on ne modifie pas un contrat sans le vouloir.
+  const [auto, setAuto] = useState<{ etat: "repos" | "attente" | "enCours" | "ok" | "echec"; le?: Date; message?: string }>({ etat: "repos" });
+  const timerAutoRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const instantane = JSON.stringify([lignes, postes, objet, clientId, apporteurId, validite, remise, remiseFidelitePct]);
+  const baseRef = useRef(instantane);
+  const instRef = useRef(instantane);
+  instRef.current = instantane;
+  const autoPossible = !!devis && devis.statut !== "signe";
+
+  async function lancerAuto(snap: string) {
+    setAuto(a => ({ ...a, etat: "enCours", message: undefined }));
+    const err = await enfiler(() => ecrireRef.current(false));
+    if (err) { setAuto({ etat: "echec", message: err }); return; }
+    baseRef.current = snap;
+    setAuto({ etat: "ok", le: new Date() });
+  }
+  // Garde-fou : vider entièrement un devis qui avait des lignes ne s'enregistre jamais tout seul.
+  const viderUnDevis = lignes.length === 0 && ((dernierDevisRef.current ?? devis)?.lignes ?? []).length > 0;
+
+  useEffect(() => {
+    if (mode !== "edit" || !devis) { baseRef.current = instantane; return; }
+    if (instantane === baseRef.current || !autoPossible) return;
+    if (viderUnDevis) { setAuto({ etat: "repos" }); return; }
+    setAuto(a => ({ ...a, etat: "attente" }));
+    timerAutoRef.current = setTimeout(() => { void lancerAuto(instantane); }, 1500);
+    return () => clearTimeout(timerAutoRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instantane, mode, devis?.id]);
+
+  useEffect(() => {
+    if (mode !== "edit" || !autoPossible) return;
+    const aEnregistrer = () => instRef.current !== baseRef.current;
+    const enArrierePlan = () => {
+      if (document.visibilityState !== "hidden" || !aEnregistrer() || viderUnDevis) return;
+      clearTimeout(timerAutoRef.current);
+      void lancerAuto(instRef.current);
+    };
+    const avantDepart = (e: BeforeUnloadEvent) => { if (aEnregistrer()) { e.preventDefault(); e.returnValue = ""; } };
+    document.addEventListener("visibilitychange", enArrierePlan);
+    window.addEventListener("beforeunload", avantDepart);
+    return () => { document.removeEventListener("visibilitychange", enArrierePlan); window.removeEventListener("beforeunload", avantDepart); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, autoPossible, viderUnDevis]);
+
+  // « Fermer » : enregistre ce qui attend encore, puis quitte l'édition (échec : on reste pour ne rien perdre).
+  async function fermerEdition() {
+    clearTimeout(timerAutoRef.current);
+    if (autoPossible && instRef.current !== baseRef.current && !viderUnDevis) {
+      const err = await enfiler(() => ecrireRef.current(false));
+      if (err) { setAuto({ etat: "echec", message: err }); return; }
+    } else await verrouRef.current;
+    const dd = dernierDevisRef.current ?? devis;
+    setLignes((dd?.lignes ?? []) as any); setPostes(extrairePostes(dd?.lignes ?? []));
+    setAuto({ etat: "repos" });
+    setMode("view");
   }
 
   async function deleteDevis() {
@@ -1116,7 +1191,10 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                 </div>
 
                 <div className="card card-inner">
-                  <h2 className="font-semibold text-ink-800 mb-3 text-sm uppercase tracking-wide">Prestations</h2>
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <h2 className="font-semibold text-ink-800 text-sm uppercase tracking-wide">Prestations</h2>
+                    <IndicateurAuto compact possible={autoPossible} etat={auto.etat} le={auto.le} message={auto.message} viderUnDevis={viderUnDevis} onReessayer={() => void lancerAuto(instRef.current)} />
+                  </div>
                   <PostesLignes
                     lignes={lignes} setLignes={setLignes}
                     postes={postes} setPostes={setPostes}
@@ -1221,8 +1299,9 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
               </div>
             )}
 
-            <div className="flex gap-3 mt-6">
-              <button onClick={() => { setMode("view"); setLignes((devis.lignes ?? []) as any); setPostes(extrairePostes(devis.lignes ?? [])); }} className="btn-ghost flex-1 justify-center">Annuler</button>
+            <IndicateurAuto possible={autoPossible} etat={auto.etat} le={auto.le} message={auto.message} viderUnDevis={viderUnDevis} onReessayer={() => void lancerAuto(instRef.current)} />
+            <div className="flex gap-3 mt-3">
+              <button onClick={() => void (autoPossible ? fermerEdition() : (() => { setMode("view"); setLignes((devis.lignes ?? []) as any); setPostes(extrairePostes(devis.lignes ?? [])); })())} className="btn-ghost flex-1 justify-center">{autoPossible ? "Fermer" : "Annuler"}</button>
               <button onClick={saveEdit} disabled={saving} className="btn-volt flex-1 justify-center">
                 <Save size={15} /> {saving ? "Enregistrement…" : "Sauvegarder"}
               </button>

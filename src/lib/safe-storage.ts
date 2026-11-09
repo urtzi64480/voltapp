@@ -22,3 +22,7 @@ export function lireStockage(z: Zone, cle: string): string | null {
 export function ecrireStockage(z: Zone, cle: string, valeur: string): void {
   try { zone(z)?.setItem(cle, valeur); } catch { /* stockage indisponible : on ignore */ }
 }
+
+export function retirerStockage(z: Zone, cle: string): void {
+  try { zone(z)?.removeItem(cle); } catch { /* stockage indisponible : on ignore */ }
+}
