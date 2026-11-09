@@ -9,9 +9,15 @@
 // Utilisé par « Nouveau devis » et par l'édition d'un devis existant (devis/[id]).
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, X, Trash2, Layers, RefreshCw, Package } from "lucide-react";
+import { Plus, X, Trash2, Layers, RefreshCw, Package, GripVertical } from "lucide-react";
+import {
+  DndContext, KeyboardSensor, PointerSensor, closestCenter, pointerWithin, useDroppable, useSensor, useSensors,
+  type CollisionDetection, type DragEndEvent,
+} from "@dnd-kit/core";
+import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { fmt, cn, UNITES } from "@/lib/utils";
-import { grouperParPoste, memeNomPoste, nettoyerNomPoste, posteDe, totalItems } from "@/lib/postes";
+import { deplacerElement, grouperParPoste, memeNomPoste, nettoyerNomPoste, placerLigne, posteDe, totalItems } from "@/lib/postes";
 import { libelleOffreMarque, margePct, offresTriees, prixVenteOffre } from "@/lib/fournisseurs";
 import {
   changerFournisseurLigne, fusionnerLigne, ligneDepuisArticle, ligneDepuisKit, remplacerProduitLigne,
@@ -85,9 +91,47 @@ function FormLibre({ onAjouter, onAnnuler }: { onAjouter: (l: DevisLigne) => voi
   );
 }
 
-function LigneRow({ l, i, setLignes, showUnite, postes, produit, onChanger }: {
+// ─── Glisser-déposer (dnd-kit) ───────────────────────────────────────────────
+// Identifiants : « ligne:<index> », « poste:<nom> », « hors » (zone de dépôt des lignes sans poste).
+// On ne saisit que la poignée (⠿) : le reste de la carte reste utilisable (champs, défilement tactile).
+const ID_LIGNE = "ligne:", ID_POSTE = "poste:", ID_HORS = "hors";
+
+function Poignee({ attrs, listeners, titre, clair }: { attrs: object; listeners?: object; titre: string; clair?: boolean }) {
+  return (
+    <button type="button" title={titre} aria-label={titre} {...attrs} {...listeners}
+      className={cn("p-1.5 -ml-1 rounded-lg shrink-0 cursor-grab active:cursor-grabbing touch-none select-none",
+        clair ? "text-ink-400 hover:text-white hover:bg-white/10" : "text-ink-300 hover:text-ink-600 hover:bg-ink-100")}>
+      <GripVertical size={16} />
+    </button>
+  );
+}
+
+function LigneTriable({ index, children }: { index: number; children: (poignee: React.ReactNode) => React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: ID_LIGNE + index });
+  return (
+    <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }} className={cn(isDragging && "relative z-20 opacity-80 shadow-lg rounded-xl")}>
+      {children(<Poignee attrs={attributes} listeners={listeners} titre="Glisser pour déplacer cet article" />)}
+    </div>
+  );
+}
+
+function PosteTriable({ nom, children }: { nom: string; children: (poignee: React.ReactNode, survol: boolean) => React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver } = useSortable({ id: ID_POSTE + nom });
+  return (
+    <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }} className={cn(isDragging && "relative z-30 opacity-90 shadow-xl")}>
+      {children(<Poignee attrs={attributes} listeners={listeners} titre="Glisser pour déplacer ce poste" clair />, isOver)}
+    </div>
+  );
+}
+
+function ZoneHors({ children }: { children: React.ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id: ID_HORS });
+  return <div ref={setNodeRef} className={cn("rounded-2xl", isOver && "ring-2 ring-volt-400")}>{children}</div>;
+}
+
+function LigneRow({ l, i, setLignes, showUnite, postes, produit, onChanger, poignee }: {
   l: DevisLigne; i: number; setLignes: SetLignes; showUnite?: boolean; postes: string[];
-  produit?: PrestationPicker; onChanger: (index: number) => void;
+  produit?: PrestationPicker; onChanger: (index: number) => void; poignee?: React.ReactNode;
 }) {
   const estKit = l.kit_ratio_service != null;
   const offres = offresTriees(produit?.fournisseurs);
@@ -103,6 +147,7 @@ function LigneRow({ l, i, setLignes, showUnite, postes, produit, onChanger }: {
   return (
     <div className="rounded-xl bg-white border border-ink-100 p-3 flex flex-col md:flex-row md:items-start gap-2 md:gap-4">
       <div className="flex items-start gap-2 flex-1 min-w-0">
+        {poignee}
         {estKit ? (
           <span className="inline-flex items-center gap-1 badge text-xs shrink-0 bg-purple-100 text-purple-700 mt-0.5"><Layers size={10} /> KIT</span>
         ) : (
@@ -223,6 +268,7 @@ export default function PostesLignes({ lignes, setLignes, postes, setPostes, pre
   const [nouveauPoste, setNouveauPoste] = useState<string | null>(null);
   const [erreur, setErreur] = useState("");
   const [picker, setPicker] = useState<EtatPicker | null>(null);
+  const [glisse, setGlisse] = useState<string | null>(null);
   const [libreCible, setLibreCible] = useState<{ poste: string | null } | null>(null);
 
   const parId = useMemo(() => new Map(prestations.map(p => [p.id, p])), [prestations]);
@@ -281,6 +327,52 @@ export default function PostesLignes({ lignes, setLignes, postes, setPostes, pre
     onChanger: (index: number) => setPicker({ type: "remplacement", index }),
   });
 
+  // ── Glisser-déposer ──
+  const capteurs = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  // Un poste ne se dépose que sur un poste ; une ligne vise d'abord une autre ligne, sinon le poste (ou « hors poste ») sous le pointeur.
+  const collision: CollisionDetection = args => {
+    const conteneurs = args.droppableContainers;
+    if (String(args.active.id).startsWith(ID_POSTE)) return closestCenter({ ...args, droppableContainers: conteneurs.filter(c => String(c.id).startsWith(ID_POSTE)) });
+    const lignesC = conteneurs.filter(c => String(c.id).startsWith(ID_LIGNE));
+    const surLigne = pointerWithin({ ...args, droppableContainers: lignesC });
+    if (surLigne.length > 0) return surLigne;
+    const surPoste = pointerWithin({ ...args, droppableContainers: conteneurs.filter(c => !String(c.id).startsWith(ID_LIGNE)) });
+    if (surPoste.length > 0) return surPoste;
+    return closestCenter({ ...args, droppableContainers: lignesC });
+  };
+  function finGlisser(e: DragEndEvent) {
+    setGlisse(null);
+    if (!e.over) return;
+    const a = String(e.active.id), o = String(e.over.id);
+    if (a === o) return;
+    if (a.startsWith(ID_POSTE)) {
+      if (!o.startsWith(ID_POSTE)) return;
+      const ordre = blocs.filter(b => b.poste !== null).map(b => b.poste as string);
+      const de = ordre.indexOf(a.slice(ID_POSTE.length)), vers = ordre.indexOf(o.slice(ID_POSTE.length));
+      if (de < 0 || vers < 0) return;
+      setPostes(() => deplacerElement(ordre, de, vers));
+      return;
+    }
+    const i = Number(a.slice(ID_LIGNE.length));
+    if (!Number.isInteger(i) || i < 0 || i >= lignes.length) return;
+    if (o.startsWith(ID_LIGNE)) {
+      const j = Number(o.slice(ID_LIGNE.length));
+      if (!Number.isInteger(j) || j < 0 || j >= lignes.length) return;
+      const pj = posteDe(lignes[j]);
+      const bloc = blocs.find(b => (b.poste === null ? pj === null : pj !== null && memeNomPoste(b.poste, pj)));
+      if (!bloc) return;
+      const position = bloc.items.findIndex(x => x.i === j);
+      setLignes(prev => placerLigne(prev, i, bloc.poste, position));
+    } else if (o.startsWith(ID_POSTE)) {
+      setLignes(prev => placerLigne(prev, i, o.slice(ID_POSTE.length), Number.MAX_SAFE_INTEGER));
+    } else if (o === ID_HORS) {
+      setLignes(prev => placerLigne(prev, i, null, Number.MAX_SAFE_INTEGER));
+    }
+  }
+
   const formNouveauPoste = nouveauPoste !== null && (
     <div className="p-3 rounded-xl bg-ink-50 border border-ink-100 space-y-1.5">
       <div className="flex gap-2">
@@ -321,29 +413,37 @@ export default function PostesLignes({ lignes, setLignes, postes, setPostes, pre
           onAjouter={l => { setLignes(prev => [...prev, { ...l, poste: null }]); setLibreCible(null); }} />
       )}
 
+      <DndContext sensors={capteurs} collisionDetection={collision} onDragStart={e => setGlisse(String(e.active.id))} onDragCancel={() => setGlisse(null)} onDragEnd={finGlisser}>
       {!avecPostes && lignes.length > 0 && (
-        <div className="space-y-2">
-          {lignes.map((l, i) => <LigneRow key={i} l={l} {...rowProps(i)} />)}
-        </div>
+        <SortableContext items={lignes.map((_, i) => ID_LIGNE + i)} strategy={verticalListSortingStrategy}>
+          <div className="space-y-2">
+            {lignes.map((l, i) => <LigneTriable key={i} index={i}>{poignee => <LigneRow l={l} {...rowProps(i)} poignee={poignee} />}</LigneTriable>)}
+          </div>
+        </SortableContext>
       )}
 
       {avecPostes && (
         <div className="space-y-4">
+          <SortableContext items={blocs.filter(b => b.poste !== null).map(b => ID_POSTE + b.poste)} strategy={verticalListSortingStrategy}>
           {blocs.filter(b => b.poste !== null).map(b => {
             const nom = b.poste as string;
             return (
-              <div key={nom} className="rounded-2xl border border-ink-200 overflow-hidden bg-ink-50/40">
+              <PosteTriable key={nom} nom={nom}>
+              {(poigneePoste, survol) => (
+              <div className={cn("rounded-2xl border overflow-hidden bg-ink-50/40", survol ? "border-volt-400" : "border-ink-200")}>
                 <div className="flex items-center gap-3 px-4 py-2.5 bg-ink-900">
+                  {poigneePoste}
                   <PosteTitre value={nom} onCommit={v => renommerPoste(nom, v)} />
                   <span className="text-sm font-semibold text-volt-400 shrink-0">{fmt(totalItems(b.items))}</span>
                   <button onClick={() => supprimerPoste(nom)} title="Supprimer le poste et toutes ses lignes"
                     className="text-ink-400 hover:text-red-400 transition-colors shrink-0"><Trash2 size={15} /></button>
                 </div>
+                <SortableContext items={b.items.map(x => ID_LIGNE + x.i)} strategy={verticalListSortingStrategy}>
                 <div className="p-3 space-y-2">
                   {b.items.length === 0 && (
-                    <p className="text-xs text-ink-400 italic text-center py-2">Poste vide — ajoute un produit ou une ligne libre</p>
+                    <p className="text-xs text-ink-400 italic text-center py-2">Poste vide — glisse un article ici, ou ajoute un produit / une ligne libre</p>
                   )}
-                  {b.items.map(({ l, i }) => <LigneRow key={i} l={l} {...rowProps(i)} />)}
+                  {b.items.map(({ l, i }) => <LigneTriable key={i} index={i}>{poignee => <LigneRow l={l} {...rowProps(i)} poignee={poignee} />}</LigneTriable>)}
                   {libreCible?.poste === nom ? (
                     <FormLibre onAnnuler={() => setLibreCible(null)}
                       onAjouter={l => { setLignes(prev => [...prev, { ...l, poste: nom }]); setLibreCible(null); }} />
@@ -351,23 +451,37 @@ export default function PostesLignes({ lignes, setLignes, postes, setPostes, pre
                     <BoutonsAjout onProduit={() => setPicker({ type: "ajout", poste: nom })} onLibre={() => setLibreCible({ poste: nom })} />
                   )}
                 </div>
+                </SortableContext>
               </div>
+              )}
+              </PosteTriable>
             );
           })}
+          </SortableContext>
 
+          {horsPoste.length === 0 && glisse?.startsWith(ID_LIGNE) && (
+            <ZoneHors>
+              <div className="rounded-2xl border-2 border-dashed border-ink-300 py-5 text-center text-xs text-ink-500">Déposer ici pour sortir l&apos;article de son poste</div>
+            </ZoneHors>
+          )}
           {horsPoste.length > 0 && (
+            <ZoneHors>
             <div className="rounded-2xl border border-ink-200 overflow-hidden bg-ink-50/40">
               <div className="flex items-center gap-3 px-4 py-2.5 bg-ink-200">
                 <span className="flex-1 font-semibold text-sm text-ink-700">Hors poste</span>
                 <span className="text-sm font-semibold text-ink-900 shrink-0">{fmt(totalItems(horsPoste))}</span>
               </div>
+              <SortableContext items={horsPoste.map(x => ID_LIGNE + x.i)} strategy={verticalListSortingStrategy}>
               <div className="p-3 space-y-2">
-                {horsPoste.map(({ l, i }) => <LigneRow key={i} l={l} {...rowProps(i)} />)}
+                {horsPoste.map(({ l, i }) => <LigneTriable key={i} index={i}>{poignee => <LigneRow l={l} {...rowProps(i)} poignee={poignee} />}</LigneTriable>)}
               </div>
+              </SortableContext>
             </div>
+            </ZoneHors>
           )}
         </div>
       )}
+      </DndContext>
 
       {picker?.type === "ajout" && (
         <ProduitPicker

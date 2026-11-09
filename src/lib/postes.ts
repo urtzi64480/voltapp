@@ -84,3 +84,35 @@ export function ordonnerLignes<T extends { poste?: string | null }>(lignes: T[],
 export function totalItems(items: { l: LigneAvecPoste }[]): number {
   return items.reduce((a, x) => a + x.l.prix_unitaire * x.l.quantite, 0);
 }
+
+/** Déplace l'élément `de` vers la position `vers` (indices du tableau d'origine). Indices invalides ou identiques : tableau inchangé (même référence). */
+export function deplacerElement<T>(tab: T[], de: number, vers: number): T[] {
+  if (de === vers || de < 0 || vers < 0 || de >= tab.length || vers >= tab.length) return tab;
+  const copie = tab.slice();
+  const [x] = copie.splice(de, 1);
+  copie.splice(vers, 0, x);
+  return copie;
+}
+
+/**
+ * Glisser-déposer d'une LIGNE : la ligne `index` va dans le poste `poste` (null = hors poste) à la position `position`
+ * parmi les lignes de ce poste (comptées SANS la ligne déplacée ; au-delà du nombre de lignes = à la fin du poste).
+ * Les autres lignes ne changent pas. Index invalide : tableau inchangé.
+ */
+export function placerLigne<T extends { poste?: string | null }>(lignes: T[], index: number, poste: string | null, position: number): T[] {
+  if (index < 0 || index >= lignes.length) return lignes;
+  const cible = poste === null ? null : nettoyerNomPoste(poste);
+  const reste = lignes.filter((_, i) => i !== index);
+  const deplacee = { ...lignes[index], poste: cible } as T;
+  const dansPoste = (l: T) => (cible === null ? posteDe(l) === null : (posteDe(l) !== null && memeNomPoste(posteDe(l) as string, cible)));
+  const indices: number[] = [];
+  reste.forEach((l, i) => { if (dansPoste(l)) indices.push(i); });
+  const p = Math.max(0, Math.min(position, indices.length));
+  let ou: number;
+  if (p < indices.length) ou = indices[p];
+  else if (indices.length > 0) ou = indices[indices.length - 1] + 1;
+  else ou = reste.length;
+  const sortie = reste.slice();
+  sortie.splice(ou, 0, deplacee);
+  return sortie;
+}
