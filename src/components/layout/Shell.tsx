@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, Users, FileText, BookOpen,
   TrendingUp, Settings, Zap, Menu, X, Receipt, CalendarDays, AlertTriangle, ClipboardList, Inbox, CalendarCheck, Camera,
-  LayoutTemplate, PiggyBank, FileSpreadsheet, BellRing, DatabaseBackup, ChevronDown, ShoppingCart,
+  LayoutTemplate, ClipboardCheck, PiggyBank, FileSpreadsheet, BellRing, DatabaseBackup, ChevronDown, ShoppingCart,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { cn, dateLocale } from "@/lib/utils";
@@ -14,7 +14,7 @@ import { supabase } from "@/lib/supabase";
 
 const ICONES: Record<string, any> = {
   "/clients": Users, "/leads": Inbox, "/demandes": ClipboardList, "/rdv": CalendarCheck, "/devis": FileText, "/factures": Receipt,
-  "/planning": CalendarDays, "/plan": LayoutTemplate, "/tableau": Zap, "/realisations": Camera, "/entretiens": BellRing,
+  "/planning": CalendarDays, "/suivi": ClipboardCheck, "/plan": LayoutTemplate, "/tableau": Zap, "/realisations": Camera, "/entretiens": BellRing,
   "/crm": TrendingUp, "/rentabilite": PiggyBank, "/depenses": ShoppingCart, "/export-comptable": FileSpreadsheet,
   "/catalogue": BookOpen, "/sauvegarde": DatabaseBackup, "/parametres": Settings,
 };

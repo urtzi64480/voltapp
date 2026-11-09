@@ -4,7 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { fmt, PLAFOND_SERVICE, PLAFOND_MATERIAU } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
-import { Zap, TrendingUp, FileText, Receipt, AlertTriangle, Users, Wallet } from "lucide-react";
+import { Zap, TrendingUp, FileText, Receipt, AlertTriangle, Users, Wallet, ClipboardCheck } from "lucide-react";
 import InstallEtNotifications from "@/components/InstallEtNotifications";
 import QrAvis from "@/components/QrAvis";
 import { provisionFactures, type ResultatProvision } from "@/lib/provision";
@@ -148,12 +148,13 @@ export default function DashboardPage() {
         <QrAvis />
 
         {/* Accès rapides */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {[
             { href: "/devis/nouveau", label: "Nouveau devis", icon: Zap, bg: "bg-volt-500 text-ink-900" },
             { href: "/clients/nouveau", label: "Nouveau client", icon: Users, bg: "bg-ink-900 text-white" },
             { href: "/catalogue", label: "Catalogue", icon: BookOpen, bg: "bg-white text-ink-700 border border-ink-200" },
             { href: "/crm", label: "CRM", icon: TrendingUp, bg: "bg-white text-ink-700 border border-ink-200" },
+            { href: "/suivi", label: "Suivi de chantier", icon: ClipboardCheck, bg: "bg-white text-ink-700 border border-ink-200 col-span-2 md:col-span-1" },
           ].map(({ href, label, icon: Icon, bg }) => (
             <Link key={href} href={href} className={`flex flex-col items-center gap-2 py-5 rounded-2xl font-medium text-sm transition-all hover:scale-105 active:scale-95 ${bg}`}>
               <Icon size={22} />

@@ -18,7 +18,11 @@ describe("navigation", () => {
   it("chaque page du menu n'apparaît qu'une fois", () => {
     const hrefs = RUBRIQUES.flatMap(r => r.items.map(i => i.href));
     expect(new Set(hrefs).size).toBe(hrefs.length);
-    expect(hrefs).toHaveLength(18);
+    expect(hrefs).toHaveLength(19);
+  });
+  it("le suivi de chantier est dans la rubrique Chantier et s'allume sur ses sous-pages", () => {
+    expect(rubriqueDe("/suivi")).toBe("Chantier");
+    expect(RUBRIQUES.find(r => r.nom === "Chantier")?.items.some(i => i.href === "/suivi")).toBe(true);
   });
   it("mémoire tolérante", () => {
     expect(lireOuvertes(null)).toBeNull(); expect(lireOuvertes("pas du json")).toBeNull(); expect(lireOuvertes("{}")).toBeNull();
