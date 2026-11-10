@@ -1,4 +1,5 @@
 "use client";
+import { mentionDecennale } from "./assurance";
 import { Devis, Profil, Facture } from "@/types";
 import { fmt, fmtDate, fmtDatetime } from "./utils";
 import { chargerImagesPdf, ImagesPdf } from "./pdfImages";
@@ -279,8 +280,14 @@ async function buildDevisDoc(devis: Devis, profil: Profil, sigData?: string, ima
   }
 
   const pH = doc.internal.pageSize.getHeight();
-  doc.setFillColor(28, 25, 23); doc.rect(0, pH - 10, W, 10, "F");
-  doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(120, 113, 108);
+  // Bandeau bas : assurance décennale (mention légale) sur une ou deux lignes, puis les conditions de paiement.
+  const decennale = mentionDecennale(profil);
+  const lignesDecennale = decennale ? (doc.setFont("helvetica", "normal"), doc.setFontSize(6), doc.splitTextToSize(decennale, W - 2 * M) as string[]).slice(0, 2) : [];
+  const hBande = 10 + lignesDecennale.length * 3;
+  doc.setFillColor(28, 25, 23); doc.rect(0, pH - hBande, W, hBande, "F");
+  doc.setFont("helvetica", "normal"); doc.setFontSize(6); doc.setTextColor(150, 143, 138);
+  lignesDecennale.forEach((l, i) => doc.text(l, W / 2, pH - hBande + 4 + i * 3, { align: "center" }));
+  doc.setFontSize(7); doc.setTextColor(120, 113, 108);
   doc.text(profil.conditions_paiement ?? "", W / 2, pH - 4, { align: "center" });
 
   return doc;
@@ -489,6 +496,12 @@ async function buildFactureDoc(facture: Facture, profil: Profil, acomptes: Acomp
   }
   doc.setFont(FONT, "normal"); doc.setFontSize(7); doc.setTextColor(120, 113, 108);
   doc.text(profil.conditions_paiement ?? "", W - M, pH - 4, { align: "right" });
+  // Assurance décennale (mention légale) : à droite, au-dessus des conditions de paiement, sur la place laissée libre par les coordonnées bancaires.
+  const decennale = mentionDecennale(profil);
+  if (decennale) {
+    doc.setFont(FONT, "normal"); doc.setFontSize(6); doc.setTextColor(150, 143, 138);
+    (doc.splitTextToSize(decennale, 95) as string[]).slice(0, 4).forEach((l, i) => doc.text(l, W - M, pH - 17 + i * 2.8, { align: "right" }));
+  }
 
   return doc;
 }

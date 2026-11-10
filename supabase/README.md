@@ -55,3 +55,10 @@ et donnent le SQL à lancer.
 `/devis/<id>/courses`, la carte « Achats de ce devis » permet un montant global (« Tout acheté », qui coche toute la liste) ou, sous chaque
 case, « Prix payé » article par article (l'article se coche). Saisie en HT (par défaut, mémorisé sur l'appareil) ou TTC, toujours enregistrée en TTC.
 Sans la 019, la page fonctionne avec les achats globaux et donne le SQL à lancer.
+
+## Assurance décennale (migration 020)
+
+`020_assurance_decennale.sql` ajoute à `profil` les colonnes `assurance_assureur`, `assurance_adresse`, `assurance_contrat`, `assurance_zone`,
+`assurance_debut`, `assurance_fin`, `assurance_fichier`, `assurance_fichier_nom`, et crée le bucket **privé** `documents-pro` (un dossier par
+utilisateur, policies sur `storage.objects`). À lancer dans l'éditeur SQL de Supabase. Se renseigne dans Paramètres → Assurance décennale.
+La mention est imprimée sur les devis et factures, l'attestation est jointe aux dossiers de fin de chantier, uniquement tant que la date de fin n'est pas dépassée.

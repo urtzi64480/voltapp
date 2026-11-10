@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { fmt, PLAFOND_SERVICE, PLAFOND_MATERIAU } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import Link from "next/link";
+import { alerteAssurance, type InfosAssurance } from "@/lib/assurance";
 import { Zap, TrendingUp, FileText, Receipt, AlertTriangle, Users, Wallet, ClipboardCheck } from "lucide-react";
 import InstallEtNotifications from "@/components/InstallEtNotifications";
 import QrAvis from "@/components/QrAvis";
@@ -17,6 +18,7 @@ export default function DashboardPage() {
     devis_attente: 0, factures_impayees: 0, nb_clients: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [alerteAss, setAlerteAss] = useState<string | null>(null);
   const [provMois, setProvMois] = useState<ResultatProvision | null>(null);
   const [provAnnee, setProvAnnee] = useState<ResultatProvision | null>(null);
 
@@ -55,6 +57,7 @@ export default function DashboardPage() {
       // « À mettre de côté » : cotisations + impôt d'après les taux du profil (valeurs par défaut sinon).
       const { data: { user } } = await supabase.auth.getUser();
       const { data: prof } = user ? await supabase.from("profil").select("*").eq("id", user.id).maybeSingle() : { data: null };
+      setAlerteAss(alerteAssurance(prof as InfosAssurance | null));
       const taux = tauxDepuisProfil(prof as Record<string, number | null> | null);
       setProvMois(provisionFactures(fM ?? [], taux));
       setProvAnnee(provisionFactures(fA ?? [], taux));
@@ -95,6 +98,12 @@ export default function DashboardPage() {
             </div>
           ))}
         </div>
+
+        {alerteAss && (
+          <Link href="/parametres" className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 mb-4 text-sm text-amber-900 hover:bg-amber-100" role="status">
+            <AlertTriangle size={15} className="shrink-0 mt-0.5" /> <span>{alerteAss} <span className="underline">Ouvrir les paramètres</span></span>
+          </Link>
+        )}
 
         {/* À mettre de côté */}
         {provMois && provAnnee && (

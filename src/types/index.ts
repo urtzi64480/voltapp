@@ -1,3 +1,4 @@
+import type { InfosAssurance } from "@/lib/assurance";
 export type TypeBranche = "service" | "materiau";
 export type StatutDevis = "brouillon" | "envoye" | "signe" | "refuse" | "expire";
 export type StatutFacture = "a_envoyer" | "envoyee" | "payee" | "relance" | "impayee";
@@ -11,7 +12,7 @@ export type TypeClient = "particulier" | "professionnel";
 // unique si aucun article "gammé" n'existe pour sa sous_categorie.
 export type Gamme = "entree" | "moyenne" | "haut";
 
-export interface Profil {
+export interface Profil extends InfosAssurance {
   id: string;
   nom_entreprise?: string;
   prenom?: string;

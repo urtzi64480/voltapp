@@ -13,6 +13,9 @@ import type { Profil } from "@/types";
 import { contexteDevis } from "@/lib/checklist-fin-chantier";
 import { compresserPhoto } from "@/lib/image-compress";
 import { useControles } from "@/lib/use-controles";
+import { attestationUtilisable, type InfosAssurance } from "@/lib/assurance";
+import { joindreAttestation } from "@/lib/attestation-pdf";
+import { BUCKET_DOCUMENTS_PRO } from "@/components/parametres/AssuranceDecennale";
 import { genPDFDossierBlob, nomFichierDossier, type InfosDossier } from "@/lib/pdf-dossier";
 
 interface DevisRec {
@@ -85,7 +88,22 @@ function Reception({ devis }: { devis: DevisRec }) {
     if (!user) { setMsg("Session expirée : reconnecte-toi."); return null; }
     const { data: p } = await supabase.from("profil").select("*").eq("id", user.id).single();
     if (!p) { setMsg("Profil introuvable."); return null; }
-    return { blob: await genPDFDossierBlob(type, controles, p as Profil, infos()), nom: nomFichierDossier(devis.numero, type) };
+    const blob = await genPDFDossierBlob(type, controles, p as Profil, infos());
+    if (type !== "dossier") return { blob, nom: nomFichierDossier(devis.numero, type) };
+    // Dossier de fin de chantier : l'attestation d'assurance décennale est jointe à la fin, tant qu'elle est en cours de validité.
+    const ass = p as InfosAssurance;
+    if (!ass.assurance_fichier) { setMsg("Aucune attestation décennale déposée : le dossier est généré sans elle (Paramètres → Assurance décennale)."); return { blob, nom: nomFichierDossier(devis.numero, type) }; }
+    if (!attestationUtilisable(ass)) { setMsg("Attestation décennale expirée (ou sans date de fin) : le dossier est généré sans elle. Mets-la à jour dans Paramètres."); return { blob, nom: nomFichierDossier(devis.numero, type) }; }
+    const { data: fichier, error: errFichier } = await supabase.storage.from(BUCKET_DOCUMENTS_PRO).download(ass.assurance_fichier);
+    if (errFichier || !fichier) { setMsg(`Attestation décennale introuvable (${errFichier?.message ?? "fichier absent"}) : dossier non généré, pour ne pas l'envoyer sans elle.`); return null; }
+    try {
+      const complet = await joindreAttestation(new Uint8Array(await blob.arrayBuffer()), new Uint8Array(await fichier.arrayBuffer()));
+      setMsg(null);
+      return { blob: new Blob([complet as BlobPart], { type: "application/pdf" }), nom: nomFichierDossier(devis.numero, type) };
+    } catch (e) {
+      setMsg(`Attestation décennale illisible (${e instanceof Error ? e.message : "erreur"}) : dossier non généré. Dépose-la à nouveau dans Paramètres.`);
+      return null;
+    }
   };
   const bonjour = nomClient ? `Bonjour ${devis.client?.prenom || devis.client?.nom}` : "Bonjour";
 
