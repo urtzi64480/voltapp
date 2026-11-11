@@ -42,6 +42,7 @@ export async function genPDFDossierBlob(type: "pv" | "dossier", controles: Contr
   doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(200, 200, 190);
   doc.text(`Devis N° ${infos.numeroDevis}`, tx, 23);
   if (reception) doc.text(`Réception du ${fmtDate(reception.le)}`, tx, 28);
+  else if (type === "dossier") doc.text(`Rapport établi le ${fmtDate(new Date().toISOString())}`, tx, 28);
   [profil.nom_entreprise || `${profil.prenom ?? ""} ${profil.nom ?? ""}`.trim(), profil.siret ? `SIRET ${profil.siret}` : "", profil.telephone ?? "", profil.email ?? ""]
     .filter(Boolean).forEach((l, i) => {
       doc.setFont("helvetica", i === 0 ? "bold" : "normal"); doc.setFontSize(8);
@@ -64,7 +65,7 @@ export async function genPDFDossierBlob(type: "pv" | "dossier", controles: Contr
   if (infos.objet) { doc.text(`Objet : ${infos.objet}`, M, y, { maxWidth: W - 2 * M }); y += 5; }
 
   // Réception
-  y += 3; titre("Réception des travaux", y); y += 6;
+  y += 3; titre(reception || type === "pv" ? "Réception des travaux" : "Fin des travaux", y); y += 6;
   doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(44, 38, 34);
   if (reception) {
     doc.text(`Les travaux ont été réceptionnés le ${fmtDate(reception.le)} par ${reception.nom}.`, M, y, { maxWidth: W - 2 * M }); y += 6;
@@ -75,6 +76,11 @@ export async function genPDFDossierBlob(type: "pv" | "dossier", controles: Contr
     doc.setFontSize(7.5); doc.setTextColor(120, 113, 108);
     doc.text(`Signature de ${reception.nom}`, M, y + 26);
     y += 32;
+  } else if (type === "dossier") {
+    // Rapport établi par l'entreprise : aucune signature du client n'est requise pour l'envoyer.
+    doc.text("Les travaux sont terminés. Ce rapport est établi par l'entreprise : il récapitule les travaux réalisés, les contrôles effectués et les photos du chantier.", M, y, { maxWidth: W - 2 * M }); y += 10;
+    doc.setFont("helvetica", "italic"); doc.setFontSize(7.5); doc.setTextColor(120, 113, 108);
+    doc.text("Les garanties légales (parfait achèvement, biennale, décennale) courent à compter de la réception des travaux par le client.", M, y, { maxWidth: W - 2 * M }); y += 10;
   } else { doc.text("Réception non encore signée.", M, y); y += 8; }
 
   // Garanties

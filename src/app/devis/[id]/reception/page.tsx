@@ -1,5 +1,5 @@
 "use client";
-// RÉCEPTION DES TRAVAUX : photos du chantier, procès-verbal signé sur place par le client, puis remise du PV ou du dossier complet (PDF).
+// RÉCEPTION DES TRAVAUX : photos du chantier, rapport de fin de chantier établi et envoyé par l'entreprise (sans signature du client), et procès-verbal signé sur place par le client (facultatif).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
@@ -83,7 +83,8 @@ function Reception({ devis }: { devis: DevisRec }) {
     lignes: (devis.lignes ?? []).map(l => ({ nom: l.nom, quantite: l.quantite, unite: l.unite, type_branche: l.type_branche })),
   });
   const construire = (type: "pv" | "dossier") => async (): Promise<PdfPret | null> => {
-    if (!reception) { setMsg("Fais d'abord signer le procès-verbal de réception."); return null; }
+    // Le procès-verbal exige la signature du client ; le rapport de fin de chantier, non : il est établi et envoyé par l'entreprise.
+    if (type === "pv" && !reception) { setMsg("Fais d'abord signer le procès-verbal de réception."); return null; }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setMsg("Session expirée : reconnecte-toi."); return null; }
     const { data: p } = await supabase.from("profil").select("*").eq("id", user.id).single();
@@ -168,21 +169,21 @@ function Reception({ devis }: { devis: DevisRec }) {
           {msg && <p className="text-xs text-amber-700 mt-2" role="status">{msg}</p>}
         </section>
 
-        {reception && (
-          <section className="card card-inner space-y-4">
-            <div>
-              <h2 className="font-semibold text-ink-800 mb-2">Remettre le procès-verbal (1 page)</h2>
+        <section className="card card-inner space-y-4">
+          <div>
+            <h2 className="font-semibold text-ink-800 mb-2">Envoyer le rapport de fin de chantier</h2>
+            <p className="text-xs text-ink-500 mb-2">Établi par toi, sans signature du client : travaux posés, contrôles réalisés, photos{reception ? ", réception signée et garanties" : ""} et attestation décennale. Envoi par SMS ou par e-mail.</p>
+            <ActionsPdf construire={construire("dossier")} sujet={`Rapport de fin de chantier — ${devis.numero}`} telephone={devis.client?.telephone} email={devis.client?.email} dossierStockage="dossiers"
+              corpsLien={l => `${bonjour}, voici le rapport de fin de chantier (travaux réalisés, contrôles, photos) : ${l}`} />
+          </div>
+          {reception && (
+            <div className="border-t border-ink-100 pt-4">
+              <h2 className="font-semibold text-ink-800 mb-2">Remettre le procès-verbal de réception (1 page)</h2>
               <ActionsPdf construire={construire("pv")} sujet={`Procès-verbal de réception — ${devis.numero}`} telephone={devis.client?.telephone} email={devis.client?.email} dossierStockage="receptions"
                 corpsLien={l => `${bonjour}, voici le procès-verbal de réception de vos travaux : ${l}`} />
             </div>
-            <div>
-              <h2 className="font-semibold text-ink-800 mb-2">Remettre le dossier complet de fin de chantier</h2>
-              <p className="text-xs text-ink-500 mb-2">Réception signée, garanties, travaux posés, contrôles réalisés et photos.</p>
-              <ActionsPdf construire={construire("dossier")} sujet={`Dossier de fin de chantier — ${devis.numero}`} telephone={devis.client?.telephone} email={devis.client?.email} dossierStockage="dossiers"
-                corpsLien={l => `${bonjour}, voici le dossier de fin de chantier (réception, garanties, contrôles, photos) : ${l}`} />
-            </div>
-          </section>
-        )}
+          )}
+        </section>
       </div>
     </Shell>
   );
