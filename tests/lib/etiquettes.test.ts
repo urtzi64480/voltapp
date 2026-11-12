@@ -207,21 +207,21 @@ describe("composerEtiquette (pictogramme + texte)", () => {
     expect(r.picto!.x).toBeCloseTo((30 - r.picto!.taille) / 2);
     for (const l of r.lignes) expect(l.y).toBeGreaterThan(r.picto!.y + r.picto!.taille);
   });
-  it("1 module (17,5 × 12 mm) : trop petit, texte seul pleine taille", () => {
+  it("1 module (17,5 × 12 mm) : pictogramme au-dessus, texte en dessous, le tout dans l'étiquette", () => {
     const r = composerEtiquette("Four", "20 A", 17.5, 12, "four", mesure);
-    expect(r.picto).toBeNull();
-    expect(r.lignes.map(l => l.pt)).toEqual(mettreEnPage("Four", "20 A", 17.5, 12, mesure).map(l => l.pt));
-    expect(r.lignes.every(l => l.x === 17.5 / 2)).toBe(true);
+    expect(r.picto).not.toBeNull(); dansLEtiquette(r, 17.5, 12);
+    expect(r.picto!.taille).toBeGreaterThanOrEqual(5); expect(r.lignes.length).toBeGreaterThan(0);
+    for (const l of r.lignes) { expect(l.y).toBeGreaterThan(r.picto!.y + r.picto!.taille); expect(l.x).toBe(17.5 / 2); expect(mesure(l.texte, l.pt, l.gras)).toBeLessThanOrEqual(17.5 - 2.4 + 1e-6); }
   });
   it("sans pictogramme demandé ou identifiant inconnu : texte seul", () => {
     expect(composerEtiquette("Four", "", 35, 12, null, mesure).picto).toBeNull();
     expect(composerEtiquette("Four", "", 35, 12, "constructor", mesure).picto).toBeNull();
     expect(composerEtiquette("Four", "", 35, 12, "inconnu", mesure).picto).toBeNull();
   });
-  it("taille du pictogramme plafonnée et jamais sous 5 mm", () => {
+  it("taille du pictogramme plafonnée et jamais sous 4 mm", () => {
     expect(composerEtiquette("Grande", "", 90, 40, "four", mesure).picto!.taille).toBe(18);
-    expect(composerEtiquette("Bandeau", "", 105, 8, "four", mesure).picto!.taille).toBeCloseTo(5.6);   // 8 − 2,4 ≥ 5 → présent
-    expect(composerEtiquette("Bandeau bas", "", 105, 6, "four", mesure).picto).toBeNull();            // 6 − 2,4 < 5 → omis
+    expect(composerEtiquette("Bandeau", "", 105, 8, "four", mesure).picto!.taille).toBeCloseTo(5.6);   // 8 − 2,4 ≥ 4 → présent
+    expect(composerEtiquette("Bandeau bas", "", 105, 6, "four", mesure).picto).toBeNull();            // 6 − 2,4 < 4 → omis
   });
   it("tous les formats prédéfinis donnent une mise en page cohérente avec un pictogramme", () => {
     for (const f of FORMATS) { const r = composerEtiquette("Lave-vaisselle", "20 A", f.largeur, f.hauteur, "lave_vaisselle", mesure); dansLEtiquette(r, f.largeur, f.hauteur); expect(r.lignes.length, f.id).toBeGreaterThan(0); }

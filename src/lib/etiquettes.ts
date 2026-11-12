@@ -234,12 +234,12 @@ export type LigneComposee = LigneMiseEnPage & { /** Centre horizontal du texte d
 export interface PictoPlace { id: string; /** Coin haut-gauche depuis le coin haut-gauche de l'étiquette, en mm. */ x: number; y: number; /** Côté du carré, en mm. */ taille: number }
 export interface EtiquetteComposee { picto: PictoPlace | null; lignes: LigneComposee[] }
 
-/** Seuils : en dessous, le pictogramme ne serait pas lisible (étiquette 1 module de 17,5 × 12 mm, par exemple) et il est omis. */
-export const PICTO = { largeurMiniCote: 30, hauteurMiniDessus: 20, largeurMiniDessus: 15, tailleMini: 5, tailleMaxi: 18, marge: 1.2 } as const;
+/** Seuils : le pictogramme est toujours affiché, même sur 1 module (17,5 × 12 mm → icône de 5,4 mm) ; omis seulement s'il tomberait sous 4 mm. */
+export const PICTO = { largeurMiniCote: 30, tailleMini: 4, tailleMaxi: 18, marge: 1.2 } as const;
 
 /**
  * Place le pictogramme et le texte d'une étiquette. Étiquette large (≥ 30 mm et nettement plus large que haute) : pictogramme à GAUCHE, texte
- * centré dans le reste. Étiquette haute (≥ 20 mm de haut) : pictogramme AU-DESSUS du texte. Trop petite : texte seul, pleine taille.
+ * centré dans le reste. Sinon (étiquette haute ou petite, 1 module compris) : pictogramme AU-DESSUS du texte, qui occupe le reste de la hauteur.
  * Le texte garde sa mise en page automatique (police réduite avant de couper un mot) dans la zone qui lui reste.
  */
 export function composerEtiquette(texte: string, ligne2: string, largeur: number, hauteur: number, pictoId: string | null, mesure: Mesure): EtiquetteComposee {
@@ -250,7 +250,7 @@ export function composerEtiquette(texte: string, ligne2: string, largeur: number
     if (largeur >= PICTO.largeurMiniCote && largeur >= hauteur * 1.4) {
       const taille = Math.min(hauteur - 2 * m, PICTO.tailleMaxi);
       if (taille >= PICTO.tailleMini) { picto = { id: pictoId, x: m, y: (hauteur - taille) / 2, taille }; zone = { x: m + taille, y: 0, w: largeur - m - taille, h: hauteur }; }
-    } else if (hauteur >= PICTO.hauteurMiniDessus && largeur >= PICTO.largeurMiniDessus) {
+    } else {
       const taille = Math.min(largeur - 2 * m, hauteur * 0.45, PICTO.tailleMaxi);
       if (taille >= PICTO.tailleMini) { picto = { id: pictoId, x: (largeur - taille) / 2, y: m, taille }; zone = { x: 0, y: m + taille, w: largeur, h: hauteur - m - taille }; }
     }
