@@ -5,8 +5,10 @@
 // la mesure du texte est injectée, ce qui permet d'utiliser exactement la même mise en page pour l'aperçu et le PDF.
 
 import { BREAKER_TYPES, CIRCUITS, type BreakerRow } from "./electrical-constants";
+import { PICTO_AUCUN, pictoPour, pictoValide } from "./pictogrammes";
 
-export interface Etiquette { id: string; texte: string; ligne2: string; quantite: number }
+/** icone : absent = pictogramme reconnu automatiquement ; « aucune » = sans pictogramme ; sinon l'identifiant d'un pictogramme choisi (voir pictogrammes.ts). */
+export interface Etiquette { id: string; texte: string; ligne2: string; quantite: number; icone?: string }
 
 export interface FormatPlanche {
   id: string;
@@ -226,6 +228,40 @@ export function mettreEnPage(texte: string, ligne2: string, largeur: number, hau
   });
 }
 
+// ─── Étiquette complète : pictogramme + texte ───────────────────────────────────────────────────
+
+export type LigneComposee = LigneMiseEnPage & { /** Centre horizontal du texte depuis le bord gauche de l'étiquette, en mm. */ x: number };
+export interface PictoPlace { id: string; /** Coin haut-gauche depuis le coin haut-gauche de l'étiquette, en mm. */ x: number; y: number; /** Côté du carré, en mm. */ taille: number }
+export interface EtiquetteComposee { picto: PictoPlace | null; lignes: LigneComposee[] }
+
+/** Seuils : en dessous, le pictogramme ne serait pas lisible (étiquette 1 module de 17,5 × 12 mm, par exemple) et il est omis. */
+export const PICTO = { largeurMiniCote: 30, hauteurMiniDessus: 20, largeurMiniDessus: 15, tailleMini: 5, tailleMaxi: 18, marge: 1.2 } as const;
+
+/**
+ * Place le pictogramme et le texte d'une étiquette. Étiquette large (≥ 30 mm et nettement plus large que haute) : pictogramme à GAUCHE, texte
+ * centré dans le reste. Étiquette haute (≥ 20 mm de haut) : pictogramme AU-DESSUS du texte. Trop petite : texte seul, pleine taille.
+ * Le texte garde sa mise en page automatique (police réduite avant de couper un mot) dans la zone qui lui reste.
+ */
+export function composerEtiquette(texte: string, ligne2: string, largeur: number, hauteur: number, pictoId: string | null, mesure: Mesure): EtiquetteComposee {
+  const m = PICTO.marge;
+  let picto: PictoPlace | null = null;
+  let zone = { x: 0, y: 0, w: largeur, h: hauteur };
+  if (pictoId && pictoValide(pictoId)) {
+    if (largeur >= PICTO.largeurMiniCote && largeur >= hauteur * 1.4) {
+      const taille = Math.min(hauteur - 2 * m, PICTO.tailleMaxi);
+      if (taille >= PICTO.tailleMini) { picto = { id: pictoId, x: m, y: (hauteur - taille) / 2, taille }; zone = { x: m + taille, y: 0, w: largeur - m - taille, h: hauteur }; }
+    } else if (hauteur >= PICTO.hauteurMiniDessus && largeur >= PICTO.largeurMiniDessus) {
+      const taille = Math.min(largeur - 2 * m, hauteur * 0.45, PICTO.tailleMaxi);
+      if (taille >= PICTO.tailleMini) { picto = { id: pictoId, x: (largeur - taille) / 2, y: m, taille }; zone = { x: 0, y: m + taille, w: largeur, h: hauteur - m - taille }; }
+    }
+  }
+  const lignes = mettreEnPage(texte, ligne2, zone.w, zone.h, mesure).map(l => ({ ...l, x: zone.x + zone.w / 2, y: zone.y + l.y }));
+  return { picto, lignes };
+}
+
+/** Pictogramme effectivement imprimé pour une étiquette (réglage de l'étiquette, sinon reconnaissance automatique), ou null. */
+export const pictoDeEtiquette = (e: Pick<Etiquette, "texte" | "icone">, actifs: boolean): string | null => pictoPour(e, actifs);
+
 // ─── Import depuis un tableau enregistré ────────────────────────────────────────────────────────
 
 /** Une étiquette par appareil posé (différentiels compris), dans l'ordre des rangées, avec le calibre en 2e ligne. */
@@ -259,10 +295,12 @@ export interface BrouillonEtiquettes {
   perso: FormatPlanche;
   debut: number;
   guides: boolean;
+  /** Pictogrammes (reconnus automatiquement ou choisis) : désactivables pour toute la planche. */
+  pictos: boolean;
 }
 
 export const brouillonVide = (): BrouillonEtiquettes => ({
-  etiquettes: [nouvelleEtiquette()], formatId: FORMAT_DEFAUT, perso: { ...FORMAT_PERSO_DEFAUT }, debut: 0, guides: true,
+  etiquettes: [nouvelleEtiquette()], formatId: FORMAT_DEFAUT, perso: { ...FORMAT_PERSO_DEFAUT }, debut: 0, guides: true, pictos: true,
 });
 
 export const serialiserBrouillon = (b: BrouillonEtiquettes): string => JSON.stringify({ v: 1, ...b });
@@ -280,6 +318,7 @@ export function lireBrouillon(brut: string | null): BrouillonEtiquettes {
       ? o.etiquettes.filter((e: unknown) => e && typeof e === "object").slice(0, 500).map((e: Record<string, unknown>) => ({
           id: typeof e.id === "string" && e.id ? e.id : nouvelleEtiquette().id,
           texte: nettoyerTexte(e.texte), ligne2: nettoyerTexte(e.ligne2, LIMITES.ligne2), quantite: quantiteValide(e.quantite),
+          ...(e.icone === PICTO_AUCUN || pictoValide(e.icone) ? { icone: e.icone as string } : {}),
         }))
       : [];
     const p = o.perso && typeof o.perso === "object" ? o.perso as Record<string, unknown> : {};
@@ -291,7 +330,7 @@ export function lireBrouillon(brut: string | null): BrouillonEtiquettes {
     const formatId = typeof o.formatId === "string" && (o.formatId === ID_PERSONNALISE || FORMATS.some(f => f.id === o.formatId)) ? o.formatId : FORMAT_DEFAUT;
     return {
       etiquettes: etiquettes.length > 0 ? etiquettes : defaut.etiquettes,
-      formatId, perso, debut: Math.max(0, Math.floor(nombre(o.debut, 0))), guides: o.guides !== false,
+      formatId, perso, debut: Math.max(0, Math.floor(nombre(o.debut, 0))), guides: o.guides !== false, pictos: o.pictos !== false,
     };
   } catch { return defaut; }
 }

@@ -10,9 +10,10 @@ import { rowsTableauProjet } from "@/lib/projets";
 import { genererPdfEtiquettes } from "@/lib/pdf-etiquettes";
 import {
   CLE_BROUILLON_ETIQUETTES, FORMATS, ID_PERSONNALISE, LIMITES, PAGE_A4, PT_EN_MM,
-  brouillonVide, composerPlanches, estImprimable, etiquettesDepuisRangees, formatChoisi, grille, lireBrouillon, mettreEnPage, nouvelleEtiquette,
-  quantiteValide, serialiserBrouillon, type BrouillonEtiquettes, type Etiquette, type FormatPlanche, type Mesure,
+  brouillonVide, composerEtiquette, composerPlanches, estImprimable, etiquettesDepuisRangees, formatChoisi, grille, lireBrouillon, nouvelleEtiquette,
+  pictoDeEtiquette, quantiteValide, serialiserBrouillon, type BrouillonEtiquettes, type Etiquette, type FormatPlanche, type Mesure,
 } from "@/lib/etiquettes";
+import { BOITE_PICTO, LISTE_PICTOS, PICTOS, PICTO_AUCUN, TRAIT_PICTO, detecterPicto, type Primitive } from "@/lib/pictogrammes";
 
 interface ClientLigne { id: string; nom: string; prenom?: string | null }
 interface ProjetLigne { id: string; nom: string; tableau_config?: string | null; tableaux_annexes?: string | null }
@@ -25,6 +26,35 @@ function creerMesureApercu(): Mesure {
     ctx.font = `${gras ? "bold " : ""}100px Helvetica, Arial, sans-serif`;
     return (ctx.measureText(t).width / 100) * pt * PT_EN_MM;
   };
+}
+
+/** Primitives d'un pictogramme en SVG (même dessin que dans le PDF). À placer dans un groupe fill="none" stroke="#000". */
+function Prims({ prims }: { prims: Primitive[] }) {
+  return (
+    <>
+      {prims.map((pr, i) => {
+        const v = pr.v;
+        switch (pr.t) {
+          case "l": return <line key={i} x1={v[0]} y1={v[1]} x2={v[2]} y2={v[3]} />;
+          case "r": return <rect key={i} x={v[0]} y={v[1]} width={v[2]} height={v[3]} rx={v[4]} />;
+          case "c": return <circle key={i} cx={v[0]} cy={v[1]} r={v[2]} />;
+          case "d": return <circle key={i} cx={v[0]} cy={v[1]} r={v[2]} fill="#000" stroke="none" />;
+          default: {
+            const pts = v.reduce((a, n, k) => a + (k % 2 ? "," : k ? " " : "") + n, "");
+            return pr.t === "p" ? <polyline key={i} points={pts} /> : <polygon key={i} points={pts} />;
+          }
+        }
+      })}
+    </>
+  );
+}
+
+function PictoMini({ id }: { id: string | null }) {
+  return (
+    <svg viewBox={`0 0 ${BOITE_PICTO} ${BOITE_PICTO}`} width={28} height={28} aria-hidden="true" className="shrink-0 rounded bg-ink-50">
+      {id && PICTOS[id] && <g fill="none" stroke="#111" strokeWidth={TRAIT_PICTO} strokeLinecap="round" strokeLinejoin="round"><Prims prims={PICTOS[id].prims} /></g>}
+    </svg>
+  );
 }
 
 const num = (v: string): number => (v.trim() === "" ? NaN : Number(v.replace(",", ".")));
@@ -69,10 +99,12 @@ export default function EtiquettesPage() {
   const nbAImprimer = b.etiquettes.filter(estImprimable).length;
 
   const miseEnPage = useMemo(() => {
-    const m = new Map<string, ReturnType<typeof mettreEnPage>>();
-    for (const e of b.etiquettes) m.set(e.id, mettreEnPage(e.texte, e.ligne2, format.largeur, format.hauteur, mesure));
+    const m = new Map<string, ReturnType<typeof composerEtiquette>>();
+    for (const e of b.etiquettes) m.set(e.id, composerEtiquette(e.texte, e.ligne2, format.largeur, format.hauteur, pictoDeEtiquette(e, b.pictos), mesure));
     return m;
-  }, [b.etiquettes, format.largeur, format.hauteur, mesure]);
+  }, [b.etiquettes, b.pictos, format.largeur, format.hauteur, mesure]);
+  // Le pictogramme est omis quand l'étiquette est trop petite pour qu'il reste lisible (ex. 1 module de 17,5 mm).
+  const pictoPossible = useMemo(() => !!g && composerEtiquette("x", "", format.largeur, format.hauteur, "four", mesure).picto !== null, [g, format.largeur, format.hauteur, mesure]);
 
   const maj = (patch: Partial<BrouillonEtiquettes>) => { setMessage(null); setB(x => ({ ...x, ...patch })); };
   const majEtiquette = (id: string, patch: Partial<Etiquette>) => maj({ etiquettes: b.etiquettes.map(e => (e.id === id ? { ...e, ...patch } : e)) });
@@ -120,7 +152,7 @@ export default function EtiquettesPage() {
     if ("erreur" in resultat) { setMessage({ type: "erreur", texte: resultat.erreur }); return; }
     setOccupe(true);
     try {
-      const pdf = await genererPdfEtiquettes(resultat.planches, format, { guides: b.guides });
+      const pdf = await genererPdfEtiquettes(resultat.planches, format, { guides: b.guides, pictos: b.pictos });
       const url = URL.createObjectURL(pdf.blob);
       const a = document.createElement("a"); a.href = url; a.download = pdf.nom; document.body.appendChild(a); a.click(); a.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 4000);
@@ -163,6 +195,18 @@ export default function EtiquettesPage() {
                 <div className="flex gap-1 justify-end">
                   <button type="button" className="btn-ghost !px-2 !py-1 text-ink-500" title="Dupliquer" aria-label={`Dupliquer l'étiquette ${i + 1}`} onClick={() => dupliquer(e)}><Copy size={15} /></button>
                   <button type="button" className="btn-ghost !px-2 !py-1 text-red-600" title="Supprimer" aria-label={`Supprimer l'étiquette ${i + 1}`} onClick={() => supprimer(e.id)}><Trash2 size={15} /></button>
+                </div>
+                <div className="md:col-span-4 flex items-center gap-2 text-xs text-ink-500">
+                  <PictoMini id={pictoDeEtiquette(e, b.pictos)} />
+                  <label className="flex items-center gap-2 min-w-0">
+                    <span className="shrink-0">Pictogramme</span>
+                    <select className="input !py-1 text-xs !w-auto min-w-0 max-w-full" aria-label={`Pictogramme de l'étiquette ${i + 1}`} disabled={!b.pictos}
+                      value={e.icone ?? "auto"} onChange={ev => majEtiquette(e.id, { icone: ev.target.value === "auto" ? undefined : ev.target.value })}>
+                      <option value="auto">{(() => { const d = detecterPicto(e.texte); return d ? `Auto : ${PICTOS[d].nom}` : "Auto (aucun reconnu)"; })()}</option>
+                      <option value={PICTO_AUCUN}>Aucun</option>
+                      {LISTE_PICTOS.map(pi => <option key={pi.id} value={pi.id}>{pi.nom}</option>)}
+                    </select>
+                  </label>
                 </div>
               </li>
             ))}
@@ -235,6 +279,12 @@ export default function EtiquettesPage() {
             <span className="text-[11px] text-ink-400">(à décocher sur une planche adhésive prédécoupée)</span>
           </label>
 
+          <label className="flex items-center gap-2 text-sm text-ink-700">
+            <input type="checkbox" checked={b.pictos} onChange={ev => maj({ pictos: ev.target.checked })} /> Pictogrammes reconnus automatiquement
+            <span className="text-[11px] text-ink-400">(lave-linge, four, prise, VMC…)</span>
+          </label>
+          {b.pictos && g && !pictoPossible && <p className="text-xs text-amber-700">Ce format est trop petit pour afficher un pictogramme lisible : les étiquettes sont imprimées avec le texte seul. Choisis une étiquette de 30 mm de large ou plus (ou de 20 mm de haut) pour avoir les pictogrammes.</p>}
+
           {formatInvalide
             ? <p className="text-sm text-red-700" role="alert">{"erreur" in resultat ? resultat.erreur : "Format invalide."}</p>
             : <p className="text-xs text-ink-500">{g.colonnes} × {g.lignes} = {g.parPage} étiquettes par page{b.debut >= g.parPage ? ` — la case ${b.debut + 1} n'existe pas, elle sera ramenée à ${g.parPage}` : ""}.</p>}
@@ -262,8 +312,16 @@ export default function EtiquettesPage() {
                 <g key={c.index}>
                   <rect x={c.x} y={c.y} width={format.largeur} height={format.hauteur}
                     fill={c.etiquette ? "none" : "#f3f4f6"} stroke={c.etiquette ? (b.guides ? "#aaa" : "#e5e7eb") : "#e5e7eb"} strokeWidth={c.etiquette && b.guides ? 0.15 : 0.1} strokeDasharray={c.etiquette ? undefined : "1 1"} />
-                  {c.etiquette && (miseEnPage.get(c.etiquette.id) ?? []).map((l, i) => (
-                    <text key={i} x={c.x + format.largeur / 2} y={c.y + l.y} textAnchor="middle" fontSize={l.pt * PT_EN_MM} fontWeight={l.gras ? 700 : 400}
+                  {c.etiquette && miseEnPage.get(c.etiquette.id)?.picto && (() => {
+                    const pi = miseEnPage.get(c.etiquette!.id)!.picto!;
+                    return (
+                      <g transform={`translate(${c.x + pi.x} ${c.y + pi.y}) scale(${pi.taille / BOITE_PICTO})`} fill="none" stroke="#000" strokeWidth={Math.max(TRAIT_PICTO, 0.2 / (pi.taille / BOITE_PICTO))} strokeLinecap="round" strokeLinejoin="round">
+                        <Prims prims={PICTOS[pi.id].prims} />
+                      </g>
+                    );
+                  })()}
+                  {c.etiquette && (miseEnPage.get(c.etiquette.id)?.lignes ?? []).map((l, i) => (
+                    <text key={i} x={c.x + l.x} y={c.y + l.y} textAnchor="middle" fontSize={l.pt * PT_EN_MM} fontWeight={l.gras ? 700 : 400}
                       fontFamily="Helvetica, Arial, sans-serif" fill="#000">{l.texte}</text>
                   ))}
                 </g>
