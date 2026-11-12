@@ -191,37 +191,46 @@ describe("composerEtiquette (pictogramme + texte)", () => {
     if (r.picto) { expect(r.picto.x).toBeGreaterThanOrEqual(0); expect(r.picto.y).toBeGreaterThanOrEqual(0); expect(r.picto.x + r.picto.taille).toBeLessThanOrEqual(w + 1e-9); expect(r.picto.y + r.picto.taille).toBeLessThanOrEqual(h + 1e-9); }
     for (const l of r.lignes) { expect(l.y).toBeGreaterThan(0); expect(l.y).toBeLessThanOrEqual(h + 1e-9); }
   };
-  it("étiquette large : pictogramme à gauche, texte centré dans le reste sans le chevaucher", () => {
-    const r = composerEtiquette("Lave-linge", "20 A", 35, 12, "lave_linge", mesure);
-    expect(r.picto).not.toBeNull(); dansLEtiquette(r, 35, 12);
-    expect(r.picto!.x).toBeLessThan(3); expect(r.picto!.taille).toBeCloseTo(12 - 2.4);
-    for (const l of r.lignes) {
-      const demi = mesure(l.texte, l.pt, l.gras) / 2;
-      expect(l.x - demi).toBeGreaterThanOrEqual(r.picto!.x + r.picto!.taille - 1e-6);   // le texte commence après le pictogramme
-      expect(l.x + demi).toBeLessThanOrEqual(35 + 1e-6);
+  it("le pictogramme est TOUJOURS au-dessus et centré, jamais à côté, quelle que soit la forme de l'étiquette", () => {
+    for (const [w, h] of [[12.7, 9.5], [25, 9], [47, 9], [35, 12], [60, 25], [90, 40], [105, 8]]) {
+      const r = composerEtiquette("Lave-linge", "20 A", w, h, "lave_linge", mesure);
+      expect(r.picto, `${w}×${h}`).not.toBeNull(); dansLEtiquette(r, w, h);
+      expect(r.picto!.x + r.picto!.taille / 2, `${w}×${h} centré`).toBeCloseTo(w / 2);
+      expect(r.lignes.length).toBeGreaterThan(0);
+      for (const l of r.lignes) { expect(l.x).toBe(w / 2); expect(l.y, `${w}×${h} texte sous l'icône`).toBeGreaterThan(r.picto!.y + r.picto!.taille); }
     }
   });
-  it("étiquette haute : pictogramme au-dessus, texte en dessous", () => {
-    const r = composerEtiquette("Four", "", 30, 25, "four", mesure);
-    expect(r.picto).not.toBeNull(); dansLEtiquette(r, 30, 25);
-    expect(r.picto!.x).toBeCloseTo((30 - r.picto!.taille) / 2);
-    for (const l of r.lignes) expect(l.y).toBeGreaterThan(r.picto!.y + r.picto!.taille);
-  });
-  it("1 module (17,5 × 12 mm) : pictogramme au-dessus, texte en dessous, le tout dans l'étiquette", () => {
-    const r = composerEtiquette("Four", "20 A", 17.5, 12, "four", mesure);
-    expect(r.picto).not.toBeNull(); dansLEtiquette(r, 17.5, 12);
-    expect(r.picto!.taille).toBeGreaterThanOrEqual(5); expect(r.lignes.length).toBeGreaterThan(0);
-    for (const l of r.lignes) { expect(l.y).toBeGreaterThan(r.picto!.y + r.picto!.taille); expect(l.x).toBe(17.5 / 2); expect(mesure(l.texte, l.pt, l.gras)).toBeLessThanOrEqual(17.5 - 2.4 + 1e-6); }
+  it("1 module Legrand (12,7 × 9,5 mm) : icône au-dessus, texte en dessous, tout dans l'étiquette", () => {
+    const r = composerEtiquette("Four", "20 A", 12.7, 9.5, "four", mesure);
+    expect(r.picto).not.toBeNull(); dansLEtiquette(r, 12.7, 9.5);
+    expect(r.picto!.taille).toBeGreaterThanOrEqual(3.5);
+    for (const l of r.lignes) { expect(mesure(l.texte, l.pt, l.gras)).toBeLessThanOrEqual(12.7 - 2.4 + 1e-6); expect(l.pt).toBeGreaterThanOrEqual(4); }
   });
   it("sans pictogramme demandé ou identifiant inconnu : texte seul", () => {
     expect(composerEtiquette("Four", "", 35, 12, null, mesure).picto).toBeNull();
     expect(composerEtiquette("Four", "", 35, 12, "constructor", mesure).picto).toBeNull();
     expect(composerEtiquette("Four", "", 35, 12, "inconnu", mesure).picto).toBeNull();
   });
-  it("taille du pictogramme plafonnée et jamais sous 4 mm", () => {
+  it("taille du pictogramme plafonnée à 18 mm, omis seulement si l'étiquette est trop basse (< 3,5 mm)", () => {
     expect(composerEtiquette("Grande", "", 90, 40, "four", mesure).picto!.taille).toBe(18);
-    expect(composerEtiquette("Bandeau", "", 105, 8, "four", mesure).picto!.taille).toBeCloseTo(5.6);   // 8 − 2,4 ≥ 4 → présent
-    expect(composerEtiquette("Bandeau bas", "", 105, 6, "four", mesure).picto).toBeNull();            // 6 − 2,4 < 4 → omis
+    expect(composerEtiquette("Bandeau", "", 105, 8, "four", mesure).picto!.taille).toBeGreaterThanOrEqual(3.5);
+    expect(composerEtiquette("Trop bas", "", 105, 5, "four", mesure).picto).toBeNull();   // 5 × 0,45 = 2,25 < 3,5
+    expect(composerEtiquette("Trop bas", "", 105, 5, "four", mesure).lignes.length).toBeGreaterThan(0);
+  });
+  it("2 modules (25 × 9 mm) : nom ET calibre tiennent sous l'icône, le nom n'est jamais tronqué à la place du calibre", () => {
+    for (const nom of ["Lave-linge", "Lave-vaisselle", "Chauffe-eau", "Plaque", "Four", "Éclairage", "Volets"]) {
+      const r = composerEtiquette(nom, "20 A", 25, 9, "four", mesure);
+      expect(r.picto, nom).not.toBeNull();
+      expect(r.lignes.map(l => l.texte).join(" "), nom).toBe(`${nom} 20 A`);
+    }
+  });
+  it("quand nom + calibre ne peuvent vraiment pas tenir, le nom reste entier et le calibre saute", () => {
+    const r = mettreEnPage("Lave-vaisselle", "20 A", 12.7, 4.2, mesure);
+    expect(r.map(l => l.texte).join("")).toBe("Lave-vaisselle");   // coupé après le tiret, nom complet, pas de « 20 A »
+  });
+  it("texte long sur 1 module : jamais de débordement, tronqué si besoin", () => {
+    const r = composerEtiquette("Lave-vaisselle cuisine", "20 A", 12.7, 9.5, "lave_vaisselle", mesure);
+    for (const l of r.lignes) expect(mesure(l.texte, l.pt, l.gras)).toBeLessThanOrEqual(12.7 - 2.4 + 1e-6);
   });
   it("tous les formats prédéfinis donnent une mise en page cohérente avec un pictogramme", () => {
     for (const f of FORMATS) { const r = composerEtiquette("Lave-vaisselle", "20 A", f.largeur, f.hauteur, "lave_vaisselle", mesure); dansLEtiquette(r, f.largeur, f.hauteur); expect(r.lignes.length, f.id).toBeGreaterThan(0); }
@@ -237,5 +246,28 @@ describe("brouillon : pictogrammes", () => {
   it("identifiant inconnu ou piégé ignoré, pictogrammes actifs par défaut", () => {
     const y = lireBrouillon(JSON.stringify({ v: 1, etiquettes: [{ texte: "A", icone: "constructor" }, { texte: "B", icone: 12 }, { texte: "C", icone: "__proto__" }] }));
     expect(y.etiquettes.map(e => e.icone)).toEqual([undefined, undefined, undefined]); expect(y.pictos).toBe(true);
+  });
+});
+
+describe("formats prédéfinis : dimensions réelles", () => {
+  it("1, 2 et 3 modules = zone de repérage Legrand (12,7 × 9,5 / 25 × 9 / 47 × 9 mm) ; 1 module par défaut", () => {
+    const f = (id: string) => FORMATS.find(x => x.id === id)!;
+    expect([f("modules-1").largeur, f("modules-1").hauteur]).toEqual([12.7, 9.5]);
+    expect([f("modules-2").largeur, f("modules-2").hauteur]).toEqual([25, 9]);
+    expect([f("modules-3").largeur, f("modules-3").hauteur]).toEqual([47, 9]);
+    expect(brouillonVide().formatId).toBe("modules-1");
+    expect(formatChoisi(brouillonVide())).toMatchObject({ largeur: 12.7, hauteur: 9.5 });
+  });
+  it("une planche A4 de 1 module en contient au moins autant que le tableau le plus chargé (> 300)", () => { expect(grille(FORMATS[0])!.parPage).toBeGreaterThan(300); });
+  it("un ancien brouillon (formats supprimés 4 et 6 modules) retombe sur le format par défaut", () => {
+    for (const id of ["modules-4", "modules-6"]) expect(lireBrouillon(JSON.stringify({ v: 1, etiquettes: [{ texte: "A" }], formatId: id })).formatId).toBe("modules-1");
+  });
+  it("chaque pictogramme tient dans chaque format prédéfini (icône au-dessus, texte sous l'icône)", async () => {
+    const { LISTE_PICTOS } = await import("@/lib/pictogrammes");
+    for (const fo of FORMATS) for (const p of LISTE_PICTOS) {
+      const r = composerEtiquette(p.nom, "20 A", fo.largeur, fo.hauteur, p.id, mesure);
+      expect(r.picto, `${fo.id}/${p.id}`).not.toBeNull();
+      for (const l of r.lignes) { expect(l.y).toBeGreaterThan(r.picto!.y + r.picto!.taille); expect(l.y).toBeLessThanOrEqual(fo.hauteur + 1e-9); expect(mesure(l.texte, l.pt, l.gras)).toBeLessThanOrEqual(fo.largeur - 2.4 + 1e-6); }
+    }
   });
 });

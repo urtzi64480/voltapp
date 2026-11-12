@@ -103,7 +103,7 @@ export default function EtiquettesPage() {
     for (const e of b.etiquettes) m.set(e.id, composerEtiquette(e.texte, e.ligne2, format.largeur, format.hauteur, pictoDeEtiquette(e, b.pictos), mesure));
     return m;
   }, [b.etiquettes, b.pictos, format.largeur, format.hauteur, mesure]);
-  // Le pictogramme n'est omis que si l'étiquette est vraiment trop basse (moins de ~6,5 mm de haut).
+  // Le pictogramme n'est omis que si l'étiquette est vraiment trop basse (moins de ~8 mm de haut).
   const pictoPossible = useMemo(() => !!g && composerEtiquette("x", "", format.largeur, format.hauteur, "four", mesure).picto !== null, [g, format.largeur, format.hauteur, mesure]);
 
   const maj = (patch: Partial<BrouillonEtiquettes>) => { setMessage(null); setB(x => ({ ...x, ...patch })); };
@@ -283,7 +283,7 @@ export default function EtiquettesPage() {
             <input type="checkbox" checked={b.pictos} onChange={ev => maj({ pictos: ev.target.checked })} /> Pictogrammes reconnus automatiquement
             <span className="text-[11px] text-ink-400">(lave-linge, four, prise, VMC…)</span>
           </label>
-          {b.pictos && g && !pictoPossible && <p className="text-xs text-amber-700">Cette étiquette est trop basse pour afficher un pictogramme : elles sont imprimées avec le texte seul. Choisis un format d'au moins 7 mm de haut pour avoir les pictogrammes.</p>}
+          {b.pictos && g && !pictoPossible && <p className="text-xs text-amber-700">Cette étiquette est trop basse pour afficher un pictogramme : elles sont imprimées avec le texte seul. Choisis un format d'au moins 8 mm de haut pour avoir les pictogrammes.</p>}
 
           {formatInvalide
             ? <p className="text-sm text-red-700" role="alert">{"erreur" in resultat ? resultat.erreur : "Format invalide."}</p>

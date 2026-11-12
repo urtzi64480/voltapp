@@ -23,23 +23,21 @@ export interface FormatPlanche {
 }
 
 export const PAGE_A4 = { largeur: 210, hauteur: 297 } as const;
-/** Largeur d'un module de tableau modulaire (norme DIN) : 17,5 mm. */
-export const MODULE_MM = 17.5;
-
 export const LIMITES = {
   texte: 80, ligne2: 40,
   quantiteMax: 100, totalMax: 1000,
   dimMin: 5, dimMax: 190, margeMax: 40, ecartMax: 20,
 } as const;
 
-const formatModules = (n: number): FormatPlanche => ({
-  id: `modules-${n}`,
-  nom: `${n} module${n > 1 ? "s" : ""} — ${String(MODULE_MM * n).replace(".", ",")} × 12 mm`,
-  largeur: MODULE_MM * n, hauteur: 12, marge: 10, ecart: 1,
-});
-
+/**
+ * Zone de repérage réelle des appareils modulaires, d'après les étiquettes adhésives du catalogue Legrand (planches A4 pour imprimante laser) :
+ * 1 module = 12,7 × 9,5 mm, 2 modules = 25 × 9 mm, 3 modules = 47 × 9 mm (legrand.fr, « étiquette de repérage adhésive pour appareillage modulaire »).
+ * Un module de rail DIN fait 17,5 mm de large, mais la fenêtre de repérage d'un disjoncteur est plus petite que le module.
+ */
 export const FORMATS: FormatPlanche[] = [
-  formatModules(1), formatModules(2), formatModules(3), formatModules(4), formatModules(6),
+  { id: "modules-1", nom: "Disjoncteur 1 module — 12,7 × 9,5 mm", largeur: 12.7, hauteur: 9.5, marge: 8, ecart: 0.5 },
+  { id: "modules-2", nom: "Différentiel / 2 modules — 25 × 9 mm", largeur: 25, hauteur: 9, marge: 8, ecart: 0.5 },
+  { id: "modules-3", nom: "3 modules — 47 × 9 mm", largeur: 47, hauteur: 9, marge: 8, ecart: 0.5 },
   { id: "bandeau", nom: "Bandeau de rangée — 105 × 8 mm", largeur: 105, hauteur: 8, marge: 10, ecart: 1 },
   { id: "plastron", nom: "Plastron / repère — 60 × 25 mm", largeur: 60, hauteur: 25, marge: 10, ecart: 1 },
   { id: "grande", nom: "Grande (coffret, porte) — 90 × 40 mm", largeur: 90, hauteur: 40, marge: 10, ecart: 1 },
@@ -187,7 +185,9 @@ export function couperLignes(texte: string, largeur: number, pt: number, gras: b
 export function mettreEnPage(texte: string, ligne2: string, largeur: number, hauteur: number, mesure: Mesure): LigneMiseEnPage[] {
   const t = nettoyerTexte(texte), l2 = nettoyerTexte(ligne2, LIMITES.ligne2).replace(/\n+/g, " ");
   if (t === "" && l2 === "") return [];
-  const wU = Math.max(1, largeur - 2 * PADDING_X), hU = Math.max(1, hauteur - 2 * PADDING_Y);
+  // marge verticale proportionnelle : sur une zone de ~4 mm de haut, 2 × 0,5 mm mangeraient le quart de la place
+  const padY = Math.min(PADDING_Y, hauteur * 0.05);
+  const wU = Math.max(1, largeur - 2 * PADDING_X), hU = Math.max(1, hauteur - 2 * padY);
   const hauteurLigne = (pt: number) => pt * PT_EN_MM * INTERLIGNE;
 
   const construire = (pt: number, couper = true): { lignes: { texte: string; pt: number; gras: boolean }[]; ok: boolean } => {
@@ -206,6 +206,8 @@ export function mettreEnPage(texte: string, ligne2: string, largeur: number, hau
   let retenu: { texte: string; pt: number; gras: boolean }[] | null = null;
   for (let pt = PT_MAX; pt >= PT_MIN - 1e-9 && !retenu; pt -= 0.5) { const r = construire(pt, false); if (r.ok) retenu = r.lignes; }
   for (let pt = PT_COUPE_MAX; pt >= PT_MIN - 1e-9 && !retenu; pt -= 0.5) { const r = construire(pt, true); if (r.ok) retenu = r.lignes; }
+  // Nom + 2e ligne ne tiennent pas ensemble à 4 pt : on garde le NOM en entier et on abandonne la 2e ligne plutôt que de tronquer le nom.
+  if (!retenu && t && l2) return mettreEnPage(t, "", largeur, hauteur, mesure);
   if (!retenu) {
     // Rien ne tient à la taille minimale : on garde ce qui rentre en hauteur, dernière ligne tronquée avec « ... ».
     const r = construire(PT_MIN);
@@ -234,29 +236,28 @@ export type LigneComposee = LigneMiseEnPage & { /** Centre horizontal du texte d
 export interface PictoPlace { id: string; /** Coin haut-gauche depuis le coin haut-gauche de l'étiquette, en mm. */ x: number; y: number; /** Côté du carré, en mm. */ taille: number }
 export interface EtiquetteComposee { picto: PictoPlace | null; lignes: LigneComposee[] }
 
-/** Seuils : le pictogramme est toujours affiché, même sur 1 module (17,5 × 12 mm → icône de 5,4 mm) ; omis seulement s'il tomberait sous 4 mm. */
-export const PICTO = { largeurMiniCote: 30, tailleMini: 4, tailleMaxi: 18, marge: 1.2 } as const;
+/** Le pictogramme est toujours AU-DESSUS du texte ; omis seulement si l'étiquette est si basse qu'il tomberait sous 3,5 mm. */
+export const PICTO = { tailleMini: 3.5, tailleMaxi: 18, marge: 1.2, fractions: [0.45, 0.4] } as const;
 
 /**
- * Place le pictogramme et le texte d'une étiquette. Étiquette large (≥ 30 mm et nettement plus large que haute) : pictogramme à GAUCHE, texte
- * centré dans le reste. Sinon (étiquette haute ou petite, 1 module compris) : pictogramme AU-DESSUS du texte, qui occupe le reste de la hauteur.
+ * Place le pictogramme (au-dessus, centré) et le texte (dessous, centré) d'une étiquette. La marge s'adapte aux très petites étiquettes. Deux tailles
+ * de pictogramme sont essayées (45 % puis 40 % de la hauteur) : la plus petite n'est retenue que si elle laisse au texte une police nettement plus lisible.
  * Le texte garde sa mise en page automatique (police réduite avant de couper un mot) dans la zone qui lui reste.
  */
 export function composerEtiquette(texte: string, ligne2: string, largeur: number, hauteur: number, pictoId: string | null, mesure: Mesure): EtiquetteComposee {
-  const m = PICTO.marge;
-  let picto: PictoPlace | null = null;
-  let zone = { x: 0, y: 0, w: largeur, h: hauteur };
-  if (pictoId && pictoValide(pictoId)) {
-    if (largeur >= PICTO.largeurMiniCote && largeur >= hauteur * 1.4) {
-      const taille = Math.min(hauteur - 2 * m, PICTO.tailleMaxi);
-      if (taille >= PICTO.tailleMini) { picto = { id: pictoId, x: m, y: (hauteur - taille) / 2, taille }; zone = { x: m + taille, y: 0, w: largeur - m - taille, h: hauteur }; }
-    } else {
-      const taille = Math.min(largeur - 2 * m, hauteur * 0.45, PICTO.tailleMaxi);
-      if (taille >= PICTO.tailleMini) { picto = { id: pictoId, x: (largeur - taille) / 2, y: m, taille }; zone = { x: 0, y: m + taille, w: largeur, h: hauteur - m - taille }; }
-    }
+  const seul = (): EtiquetteComposee => ({ picto: null, lignes: mettreEnPage(texte, ligne2, largeur, hauteur, mesure).map(l => ({ ...l, x: largeur / 2 })) });
+  if (!pictoId || !pictoValide(pictoId)) return seul();
+  const m = Math.min(PICTO.marge, hauteur * 0.08);
+  let meilleur: (EtiquetteComposee & { ptMin: number }) | null = null;
+  for (const fraction of PICTO.fractions) {
+    const taille = Math.min(largeur - 2 * m, hauteur * fraction, PICTO.tailleMaxi);
+    if (taille < PICTO.tailleMini) continue;
+    const dessous = m + taille;
+    const lignes = mettreEnPage(texte, ligne2, largeur, hauteur - dessous, mesure).map(l => ({ ...l, x: largeur / 2, y: dessous + l.y }));
+    const ptMin = lignes.length > 0 ? Math.min(...lignes.map(l => l.pt)) : Infinity;
+    if (!meilleur || ptMin > meilleur.ptMin + 0.25) meilleur = { picto: { id: pictoId, x: (largeur - taille) / 2, y: m, taille }, lignes, ptMin };
   }
-  const lignes = mettreEnPage(texte, ligne2, zone.w, zone.h, mesure).map(l => ({ ...l, x: zone.x + zone.w / 2, y: zone.y + l.y }));
-  return { picto, lignes };
+  return meilleur ? { picto: meilleur.picto, lignes: meilleur.lignes } : seul();
 }
 
 /** Pictogramme effectivement imprimé pour une étiquette (réglage de l'étiquette, sinon reconnaissance automatique), ou null. */
