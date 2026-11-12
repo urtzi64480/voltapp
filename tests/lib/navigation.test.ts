@@ -15,10 +15,14 @@ describe("navigation", () => {
     expect(rubriqueDe("/parametres")).toBe("Outils");
     expect(rubriqueDe("/dashboard")).toBeNull();
   });
+  it("les étiquettes sont dans la rubrique Chantier", () => {
+    expect(rubriqueDe("/etiquettes")).toBe("Chantier");
+    expect(estActif("/etiquettes", "/etiquettes")).toBe(true);
+  });
   it("chaque page du menu n'apparaît qu'une fois", () => {
     const hrefs = RUBRIQUES.flatMap(r => r.items.map(i => i.href));
     expect(new Set(hrefs).size).toBe(hrefs.length);
-    expect(hrefs).toHaveLength(19);
+    expect(hrefs).toHaveLength(20);
   });
   it("le suivi de chantier est dans la rubrique Chantier et s'allume sur ses sous-pages", () => {
     expect(rubriqueDe("/suivi")).toBe("Chantier");

@@ -8,7 +8,7 @@ export const RUBRIQUES: RubriqueMenu[] = [
     { href: "/rdv", label: "RDV" }, { href: "/devis", label: "Devis" }, { href: "/factures", label: "Factures" },
   ] },
   { nom: "Chantier", items: [
-    { href: "/planning", label: "Planning" }, { href: "/suivi", label: "Suivi de chantier" }, { href: "/plan", label: "Plans interventions" }, { href: "/tableau", label: "Tableaux" },
+    { href: "/planning", label: "Planning" }, { href: "/suivi", label: "Suivi de chantier" }, { href: "/plan", label: "Plans interventions" }, { href: "/tableau", label: "Tableaux" }, { href: "/etiquettes", label: "Étiquettes" },
     { href: "/realisations", label: "Réalisations" }, { href: "/entretiens", label: "Rappels d'entretien" },
   ] },
   { nom: "Pilotage", items: [
