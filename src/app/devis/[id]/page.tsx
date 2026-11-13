@@ -775,6 +775,17 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     setDevis({ ...devis, afficher_photos: v });
   }
 
+  /** Coche / décoche « envoyé par mail » à la main (devis non signé) : brouillon ⇄ envoyé. Un devis signé ou refusé n'est jamais modifié ici. */
+  async function basculerEnvoye(v: boolean) {
+    if (!devis || (devis.statut !== "brouillon" && devis.statut !== "envoye")) return;
+    const statut = v ? "envoye" : "brouillon";
+    if (statut === devis.statut) return;
+    if (v && bloqueSiACompleter()) return;
+    const { error } = await supabase.from("devis").update({ statut }).eq("id", id).in("statut", ["brouillon", "envoye"]);
+    if (echecSupabase(error, "Enregistrement du statut « envoyé »")) return;
+    setDevis(d => (d && (d.statut === "brouillon" || d.statut === "envoye") ? { ...d, statut } : d));
+  }
+
   async function dl() {
     if (!devis) return;
     const nbManques = nbLignesACompleter(lignes);
@@ -1171,6 +1182,12 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
               <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 mb-3">
                 {nbLignesACompleter(lignes)} ligne{nbLignesACompleter(lignes) > 1 ? "s" : ""} « À compléter » (besoin du pré-devis sans produit ni prix) : remplace-les par un produit ou supprime-les. Envoi et signature sont bloqués tant qu'il en reste.
               </div>
+            )}
+            {(devis.statut === "brouillon" || devis.statut === "envoye") && (
+              <label className="flex items-center gap-2 text-sm text-ink-700 mb-3 cursor-pointer select-none">
+                <input type="checkbox" className="h-4 w-4" checked={devis.statut === "envoye"} onChange={ev => basculerEnvoye(ev.target.checked)} />
+                Envoyé par mail au client <span className="text-xs text-ink-400">(à cocher même s&apos;il n&apos;est pas encore signé)</span>
+              </label>
             )}
             <label className="flex items-center gap-2 text-sm text-ink-700 mb-3 cursor-pointer select-none">
               <input type="checkbox" className="h-4 w-4" checked={photosAffichees(devis)} onChange={ev => basculerPhotos(ev.target.checked)} />
