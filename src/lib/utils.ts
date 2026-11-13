@@ -67,7 +67,7 @@ export const STATUTS_FACTURE = ["a_envoyer", "envoyee", "payee", "relance", "imp
 export const PLAFOND_SERVICE = 83600;
 export const PLAFOND_MATERIAU = 203100;
 export const STATUT_LABELS: Record<string, string> = {
-  brouillon: "Brouillon", envoye: "Envoyé", signe: "Signé",
+  brouillon: "Brouillon", envoye: "Envoyé par mail", signe: "Signé",
   refuse: "Refusé", expire: "Expiré",
   a_envoyer: "À envoyer",
   envoyee: "Envoyée", payee: "Payée", relance: "Relancée", impayee: "Impayée",

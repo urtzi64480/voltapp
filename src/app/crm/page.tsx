@@ -852,7 +852,7 @@ export default function CRMPage() {
                 {[
                   { label: "Total", val: devisStats.total, color: "text-ink-900" },
                   { label: "Brouillons", val: devisStats.brouillon, color: "text-ink-500" },
-                  { label: "Envoyés", val: devisStats.envoye, color: "text-volt-600" },
+                  { label: "Envoyés par mail", val: devisStats.envoye, color: "text-volt-600" },
                   { label: "Signés", val: devisStats.signe, color: "text-emerald-600" },
                   { label: "Refusés", val: devisStats.refuse, color: "text-red-600" },
                 ].map(s => (

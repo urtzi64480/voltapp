@@ -970,7 +970,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                     </ul>
                     {prixApplicable(devis.statut)
                       ? <button type="button" disabled={prixAEcrire} onClick={appliquerPrix} className="btn-ghost !py-1.5 !text-xs mt-2">{prixAEcrire ? "Mise à jour…" : "Appliquer les prix du catalogue"}</button>
-                      : <p className="text-xs mt-1 text-sky-800">Devis déjà envoyé : les prix restent ceux que le client a vus.</p>}
+                      : <p className="text-xs mt-1 text-sky-800">Devis déjà envoyé par mail : les prix restent ceux que le client a vus.</p>}
                   </div>
                 )}
               </div>
@@ -1186,7 +1186,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
             {(devis.statut === "brouillon" || devis.statut === "envoye") && (
               <label className="flex items-center gap-2 text-sm text-ink-700 mb-3 cursor-pointer select-none">
                 <input type="checkbox" className="h-4 w-4" checked={devis.statut === "envoye"} onChange={ev => basculerEnvoye(ev.target.checked)} />
-                Envoyé par mail au client <span className="text-xs text-ink-400">(à cocher même s&apos;il n&apos;est pas encore signé)</span>
+                Devis envoyé par mail au client <span className="text-xs text-ink-400">(simple envoi du devis, à cocher même s&apos;il n&apos;est pas signé ; l&apos;envoi pour signature se fait plus tard, quand le client a dit OK)</span>
               </label>
             )}
             <label className="flex items-center gap-2 text-sm text-ink-700 mb-3 cursor-pointer select-none">
