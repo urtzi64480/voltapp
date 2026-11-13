@@ -92,7 +92,7 @@ export default function EtiquettesPage() {
     [b.etiquettes, b.mode, b.dims, b.paysage, b.debut, b.ligneParRangee]);
   const dimPage = pageDe({ paysage: b.paysage });
   const mesure = useMemo(() => creerMesureApercu(), []);
-  // Toutes les pages à l'écran, planche des pictogrammes puis planche des textes.
+  // Toutes les pages à l'écran, planche des pictogrammes puis planche tableau.
   const pages = useMemo(() => ("erreur" in resultat ? [] : resultat.groupes.flatMap(gr => gr.planches.map(planche => ({ genre: gr.genre, planche })))), [resultat]);
   const page = Math.min(pageApercu, Math.max(0, pages.length - 1));
   const pageCourante = pages[page] ?? null;
@@ -103,7 +103,7 @@ export default function EtiquettesPage() {
   const mises = useMemo(() => (pageCourante?.planche ?? []).map(c => {
     if (!c.etiquette) return null;
     if (pageCourante?.genre === "picto") return { picto: composerPicto(c.largeur, c.hauteur, pictoDeEtiquette(c.etiquette, true)), lignes: [] };
-    return composerEtiquette(c.etiquette.texte, c.etiquette.ligne2, c.largeur, c.hauteur, null, mesure);
+    return composerEtiquette(c.etiquette.texte, c.etiquette.ligne2, c.largeur, c.hauteur, pictoDeEtiquette(c.etiquette, true), mesure);
   }), [pageCourante, mesure]);
 
   const maj = (patch: Partial<BrouillonEtiquettes>) => { setMessage(null); setB(x => ({ ...x, ...patch })); };
@@ -260,8 +260,8 @@ export default function EtiquettesPage() {
           <div className="grid gap-2 md:grid-cols-3" role="radiogroup" aria-label="Type d'étiquettes">
             {([
               ["picto", "Pictogrammes seuls", "Les petits autocollants à coller SUR chaque disjoncteur ou différentiel."],
-              ["texte", "Textes seuls", "Les repères (nom + calibre) à glisser AU-DESSUS des disjoncteurs, sur le tableau."],
-              ["les-deux", "Pictogrammes ET textes", "Deux planches dans le même PDF : celle des pictogrammes, puis celle des textes."],
+              ["tableau", "Étiquettes tableau", "Pictogramme ET texte (nom + calibre), pour le repérage du tableau, au-dessus des disjoncteurs."],
+              ["les-deux", "Pictos + étiquettes tableau", "Deux planches dans le même PDF : pictos seuls pour les disjoncteurs, puis étiquettes tableau (picto + texte)."],
             ] as [ModeEtiquettes, string, string][]).map(([m, titre, aide]) => (
               <label key={m} className={`rounded-lg border p-3 cursor-pointer text-sm space-y-1 ${b.mode === m ? "border-volt-500 bg-volt-50" : "border-ink-200"}`}>
                 <span className="flex items-center gap-2 font-medium text-ink-800">
@@ -339,7 +339,7 @@ export default function EtiquettesPage() {
             {pages.length > 1 && (
               <div className="flex items-center gap-2 text-xs text-ink-500">
                 <button type="button" className="btn-ghost !px-2 !py-1" disabled={page === 0} onClick={() => setPageApercu(page - 1)}>‹</button>
-                <span>Page {page + 1} / {pages.length}{pageCourante ? ` — ${pageCourante.genre === "picto" ? "pictogrammes" : "textes"}` : ""}</span>
+                <span>Page {page + 1} / {pages.length}{pageCourante ? ` — ${pageCourante.genre === "picto" ? "pictogrammes" : "étiquettes tableau"}` : ""}</span>
                 <button type="button" className="btn-ghost !px-2 !py-1" disabled={page >= pages.length - 1} onClick={() => setPageApercu(page + 1)}>›</button>
               </div>
             )}

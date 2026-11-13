@@ -41,23 +41,22 @@ export const LIMITES = {
 /**
  * DEUX sortes d'étiquettes, car elles ne vont pas au même endroit du tableau :
  *  - « picto » : le petit autocollant SUR le disjoncteur / différentiel (fenêtre de repérage de l'appareil, ~12,7 × 9,5 mm chez Legrand), pictogramme seul ;
- *  - « texte » : le repère AU-DESSUS des appareils (porte-repère du rail, 17,5 mm = un module de large × 8 mm, comme les repères Legrand Logicab2 17,5 × 8),
- *    nom + calibre, sans pictogramme.
+ *  - « tableau » : l'étiquette du tableau, AU-DESSUS des appareils (17,5 mm = un module de large) : pictogramme ET texte (nom + calibre).
  * Chaque sorte a sa propre zone d'impression, réglable (vieux tableaux, autres marques) ; un même nombre d'appareils donne le même nombre d'étiquettes dans chaque sorte.
  */
-export type GenreEtiquette = "picto" | "texte";
-/** Ce que l'on imprime : les pictogrammes seuls, les textes seuls, ou les deux (deux planches dans le même PDF). */
+export type GenreEtiquette = "picto" | "tableau";
+/** Ce que l'on imprime : les pictogrammes seuls, les étiquettes tableau (pictogramme + texte), ou les deux (deux planches dans le même PDF). */
 export type ModeEtiquettes = GenreEtiquette | "les-deux";
-export const MODES: ModeEtiquettes[] = ["picto", "texte", "les-deux"];
+export const MODES: ModeEtiquettes[] = ["picto", "tableau", "les-deux"];
 
 /** Zone d'impression d'une sorte d'étiquette : dimensions d'une étiquette, marge de page et écart entre étiquettes, en mm. */
 export interface DimsPlanche { largeur: number; hauteur: number; marge: number; ecart: number }
 export const DIMS_STANDARD: Record<GenreEtiquette, DimsPlanche> = {
   picto: { largeur: 12.7, hauteur: 9.5, marge: 8, ecart: 0 },
-  texte: { largeur: 17.5, hauteur: 8, marge: 8, ecart: 0 },
+  tableau: { largeur: 17.5, hauteur: 17.5, marge: 8, ecart: 0 },
 };
-export const NOM_GENRE: Record<GenreEtiquette, string> = { picto: "Pictogrammes (sur le disjoncteur)", texte: "Textes (au-dessus des disjoncteurs)" };
-export const genresDuMode = (m: ModeEtiquettes): GenreEtiquette[] => (m === "les-deux" ? ["picto", "texte"] : [m]);
+export const NOM_GENRE: Record<GenreEtiquette, string> = { picto: "Pictogrammes (sur le disjoncteur)", tableau: "Étiquettes tableau (pictogramme + texte)" };
+export const genresDuMode = (m: ModeEtiquettes): GenreEtiquette[] => (m === "les-deux" ? ["picto", "tableau"] : [m]);
 export const modeValide = (m: unknown): m is ModeEtiquettes => typeof m === "string" && (MODES as string[]).includes(m);
 
 export const formatDe = (genre: GenreEtiquette, d: DimsPlanche, paysage: boolean): FormatPlanche => ({ id: genre, nom: NOM_GENRE[genre], ...d, paysage });
@@ -357,7 +356,7 @@ export interface ResultatGroupes { groupes: GroupePlanches[]; /** Étiquettes sa
 
 /** Étiquettes d'une sorte : les textes concernent toutes les étiquettes ; les pictogrammes seulement celles qui en ont un (reconnu ou choisi). */
 export function etiquettesDuGenre(liste: Etiquette[], genre: GenreEtiquette): Etiquette[] {
-  return genre === "texte" ? liste : liste.filter(e => pictoPour(e, true) !== null);
+  return genre === "tableau" ? liste : liste.filter(e => pictoPour(e, true) !== null);
 }
 
 export interface OptionsGroupes { mode: ModeEtiquettes; dims: Record<GenreEtiquette, DimsPlanche>; paysage: boolean; debut: number; ligneParRangee: boolean }
@@ -370,13 +369,13 @@ export function composerGroupes(liste: Etiquette[], o: OptionsGroupes): Resultat
     const format = formatDe(genre, o.dims[genre], o.paysage);
     const choisies = etiquettesDuGenre(imprimables, genre);
     if (genre === "picto" && imprimables.length > 0 && choisies.length === 0) {
-      return { erreur: "Aucune étiquette n'a de pictogramme : choisis-en un (ou écris « lave-linge », « four »… pour qu'il soit reconnu), ou imprime les textes." };
+      return { erreur: "Aucune étiquette n'a de pictogramme : choisis-en un (ou écris « lave-linge », « four »… pour qu'il soit reconnu), ou imprime les étiquettes tableau." };
     }
     const r = composerPlanches(choisies, format, o.debut, { ligneParRangee: o.ligneParRangee });
     if ("erreur" in r) return { erreur: o.mode === "les-deux" ? `${NOM_GENRE[genre]} : ${r.erreur}` : r.erreur };
     groupes.push({ genre, format, planches: r.planches, total: r.total, grille: r.grille });
   }
-  return { groupes, sansPicto: o.mode === "texte" ? 0 : imprimables.length - etiquettesDuGenre(imprimables, "picto").length };
+  return { groupes, sansPicto: o.mode === "tableau" ? 0 : imprimables.length - etiquettesDuGenre(imprimables, "picto").length };
 }
 
 /** Plus petit nombre d'étiquettes par ligne parmi les planches du mode (pour décider si une rangée entière tient sur une ligne). */
@@ -393,7 +392,7 @@ export interface BrouillonEtiquettes {
   etiquettes: Etiquette[];
   debut: number;
   guides: boolean;
-  /** Ce que l'on imprime : pictogrammes seuls, textes seuls, ou les deux. */
+  /** Ce que l'on imprime : pictogrammes seuls, étiquettes tableau (picto + texte), ou les deux. */
   mode: ModeEtiquettes;
   /** Zone d'impression de chaque sorte (réglable pour les vieux tableaux). */
   dims: Record<GenreEtiquette, DimsPlanche>;
@@ -404,7 +403,7 @@ export interface BrouillonEtiquettes {
 }
 
 export const brouillonVide = (): BrouillonEtiquettes => ({
-  etiquettes: [nouvelleEtiquette()], debut: 0, guides: true, mode: "les-deux", dims: { picto: { ...DIMS_STANDARD.picto }, texte: { ...DIMS_STANDARD.texte } }, paysage: false, ligneParRangee: true,
+  etiquettes: [nouvelleEtiquette()], debut: 0, guides: true, mode: "les-deux", dims: { picto: { ...DIMS_STANDARD.picto }, tableau: { ...DIMS_STANDARD.tableau } }, paysage: false, ligneParRangee: true,
 });
 
 export const serialiserBrouillon = (b: BrouillonEtiquettes): string => JSON.stringify({ v: 1, ...b });
@@ -440,7 +439,7 @@ export function lireBrouillon(brut: string | null): BrouillonEtiquettes {
     return {
       etiquettes: etiquettes.length > 0 ? etiquettes : defaut.etiquettes,
       debut: Math.max(0, Math.floor(nombre(o.debut, 0))), guides: o.guides !== false, mode: modeValide(o.mode) ? o.mode : defaut.mode,
-      dims: { picto: lireDims(dims.picto, "picto"), texte: lireDims(dims.texte, "texte") },
+      dims: { picto: lireDims(dims.picto, "picto"), tableau: lireDims(dims.tableau, "tableau") },
       paysage: o.paysage === true, ligneParRangee: o.ligneParRangee !== false,
     };
   } catch { return defaut; }

@@ -178,14 +178,14 @@ describe("brouillon", () => {
     expect(y).toMatchObject({ mode: "les-deux", dims: DIMS_STANDARD });
   });
   it("mode et zones personnalisées conservés ; valeurs hors bornes → standard de la sorte", () => {
-    const y0 = { ...brouillonVide(), mode: "picto" as const, dims: { picto: { largeur: 14, hauteur: 11, marge: 5, ecart: 1 }, texte: { largeur: 30, hauteur: 9.5, marge: 6, ecart: 0.5 } } };
+    const y0 = { ...brouillonVide(), mode: "picto" as const, dims: { picto: { largeur: 14, hauteur: 11, marge: 5, ecart: 1 }, tableau: { largeur: 30, hauteur: 9.5, marge: 6, ecart: 0.5 } } };
     expect(lireBrouillon(serialiserBrouillon(y0))).toMatchObject({ mode: "picto", dims: y0.dims });
-    const z = lireBrouillon(JSON.stringify({ v: 1, mode: "nimporte", dims: { picto: { largeur: -3, hauteur: "x", marge: 999, ecart: null }, texte: 5 } }));
+    const z = lireBrouillon(JSON.stringify({ v: 1, mode: "nimporte", dims: { picto: { largeur: -3, hauteur: "x", marge: 999, ecart: null }, tableau: 5 } }));
     expect(z.mode).toBe("les-deux"); expect(z.dims).toEqual(DIMS_STANDARD);
   });
   it("illisible, version inconnue ou champs invalides → valeurs par défaut", () => {
     for (const brut of [null, "", "{", "[]", '{"v":2}', "null"]) expect(lireBrouillon(brut).etiquettes).toHaveLength(1);
-    const y = lireBrouillon(JSON.stringify({ v: 1, etiquettes: [null, { texte: 5, quantite: "zz" }, { texte: "OK", quantite: 9999 }], debut: -3 }));
+    const y = lireBrouillon(JSON.stringify({ v: 1, etiquettes: [null, { tableau: 5, quantite: "zz" }, { texte: "OK", quantite: 9999 }], debut: -3 }));
     expect(y.debut).toBe(0); expect(y.etiquettes.map(e => e.quantite)).toEqual([1, LIMITES.quantiteMax]);
   });
   it("un ancien brouillon (formatId, perso, modules, pictos) est repris avec les zones standard", () => {
@@ -264,20 +264,20 @@ describe("brouillon : pictogrammes", () => {
 
 describe("deux sortes d'étiquettes, deux zones d'impression", () => {
   const dims = DIMS_STANDARD;
-  it("zones standard : pictogramme 12,7 × 9,5 mm (fenêtre Legrand), texte 17,5 × 8 mm (un module, repère Logicab2)", () => {
+  it("zones standard : pictogramme 12,7 × 9,5 mm (fenêtre Legrand), tableau 17,5 × 17,5 mm (un module de large, pictogramme + texte)", () => {
     expect(dims.picto).toMatchObject({ largeur: 12.7, hauteur: 9.5, ecart: 0 });
-    expect(dims.texte).toMatchObject({ largeur: 17.5, hauteur: 8, ecart: 0 });
-    expect(formatDe("texte", dims.texte, true)).toMatchObject({ id: "texte", largeur: 17.5, hauteur: 8, paysage: true });
+    expect(dims.tableau).toMatchObject({ largeur: 17.5, hauteur: 17.5, ecart: 0 });
+    expect(formatDe("tableau", dims.tableau, true)).toMatchObject({ id: "tableau", largeur: 17.5, hauteur: 17.5, paysage: true });
   });
   it("modes : pictos seuls, textes seuls ou les deux ; valeur inconnue refusée", () => {
-    expect(genresDuMode("picto")).toEqual(["picto"]); expect(genresDuMode("texte")).toEqual(["texte"]); expect(genresDuMode("les-deux")).toEqual(["picto", "texte"]);
-    expect(["picto", "texte", "les-deux"].every(modeValide)).toBe(true); expect(modeValide("tout")).toBe(false); expect(modeValide(undefined)).toBe(false);
+    expect(genresDuMode("picto")).toEqual(["picto"]); expect(genresDuMode("tableau")).toEqual(["tableau"]); expect(genresDuMode("les-deux")).toEqual(["picto", "tableau"]);
+    expect(["picto", "tableau", "les-deux"].every(modeValide)).toBe(true); expect(modeValide("tout")).toBe(false); expect(modeValide(undefined)).toBe(false);
   });
   it("colonnes par ligne : A4 portrait 15 (12,7 mm) et 11 (17,5 mm) ; paysage 20 et 16 ; en mode « les deux » on prend le plus petit", () => {
     expect(grille(formatDe("picto", dims.picto, false))?.colonnes).toBe(15);
-    expect(grille(formatDe("texte", dims.texte, false))?.colonnes).toBe(11);
+    expect(grille(formatDe("tableau", dims.tableau, false))?.colonnes).toBe(11);
     expect(colonnesMini("les-deux", dims, false)).toBe(11); expect(colonnesMini("picto", dims, false)).toBe(15); expect(colonnesMini("les-deux", dims, true)).toBe(16);
-    expect(colonnesMini("texte", { ...dims, texte: { ...dims.texte, largeur: 500 } }, false)).toBe(0);
+    expect(colonnesMini("tableau", { ...dims, tableau: { ...dims.tableau, largeur: 500 } }, false)).toBe(0);
   });
   it("plafonds de caractères : 16 pour le nom, 14 pour la 2e ligne", () => {
     expect([LIMITES.texte, LIMITES.ligne2]).toEqual([16, 14]);
@@ -288,27 +288,27 @@ describe("deux sortes d'étiquettes, deux zones d'impression", () => {
   const o = { mode: "les-deux" as const, dims, paysage: false, debut: 0, ligneParRangee: true };
   it("pictos : seules les étiquettes avec un pictogramme (reconnu ou choisi) ; textes : toutes", () => {
     expect(etiquettesDuGenre(liste, "picto").map(e => e.texte)).toEqual(["Lave-linge", "Four"]);
-    expect(etiquettesDuGenre(liste, "texte")).toHaveLength(4);
+    expect(etiquettesDuGenre(liste, "tableau")).toHaveLength(4);
   });
-  it("« les deux » : une planche de pictogrammes puis une planche de textes, aux dimensions de chaque sorte", () => {
+  it("« les deux » : une planche de pictogrammes puis une planche tableau, aux dimensions de chaque sorte", () => {
     const r = composerGroupes(liste, o); if ("erreur" in r) throw new Error(r.erreur);
-    expect(r.groupes.map(g => g.genre)).toEqual(["picto", "texte"]);
+    expect(r.groupes.map(g => g.genre)).toEqual(["picto", "tableau"]);
     expect(r.groupes[0].total).toBe(2); expect(r.groupes[1].total).toBe(4); expect(r.sansPicto).toBe(2);
     expect(r.groupes[0].planches[0].every(c => c.largeur === 12.7 && c.hauteur === 9.5)).toBe(true);
-    expect(r.groupes[1].planches[0].every(c => c.largeur === 17.5 && c.hauteur === 8)).toBe(true);
+    expect(r.groupes[1].planches[0].every(c => c.largeur === 17.5 && c.hauteur === 17.5)).toBe(true);
   });
   it("un seul mode : un seul groupe ; « textes seuls » ne compte aucune étiquette sans picto", () => {
-    for (const mode of ["picto", "texte"] as const) { const r = composerGroupes(liste, { ...o, mode }); if ("erreur" in r) throw new Error(r.erreur); expect(r.groupes).toHaveLength(1); expect(r.groupes[0].genre).toBe(mode); }
-    const t = composerGroupes(liste, { ...o, mode: "texte" }); if ("erreur" in t) throw new Error(t.erreur); expect(t.sansPicto).toBe(0);
+    for (const mode of ["picto", "tableau"] as const) { const r = composerGroupes(liste, { ...o, mode }); if ("erreur" in r) throw new Error(r.erreur); expect(r.groupes).toHaveLength(1); expect(r.groupes[0].genre).toBe(mode); }
+    const t = composerGroupes(liste, { ...o, mode: "tableau" }); if ("erreur" in t) throw new Error(t.erreur); expect(t.sansPicto).toBe(0);
   });
   it("zone personnalisée (vieux tableau) utilisée telle quelle", () => {
-    const perso = { ...dims, texte: { largeur: 24, hauteur: 12, marge: 5, ecart: 1 } };
-    const r = composerGroupes(liste, { ...o, mode: "texte", dims: perso }); if ("erreur" in r) throw new Error(r.erreur);
+    const perso = { ...dims, tableau: { largeur: 24, hauteur: 12, marge: 5, ecart: 1 } };
+    const r = composerGroupes(liste, { ...o, mode: "tableau", dims: perso }); if ("erreur" in r) throw new Error(r.erreur);
     expect(r.groupes[0].planches[0][1]).toMatchObject({ x: 5 + 25, y: 5, largeur: 24, hauteur: 12 });
   });
   it("erreurs lisibles : aucun pictogramme, dimensions invalides (nommant la planche), rien à imprimer", () => {
     expect((composerGroupes([et("Salon")], { ...o, mode: "picto" }) as { erreur: string }).erreur).toMatch(/pictogramme/);
-    expect((composerGroupes(liste, { ...o, dims: { ...dims, texte: { ...dims.texte, largeur: NaN } } }) as { erreur: string }).erreur).toMatch(/Textes/);
+    expect((composerGroupes(liste, { ...o, dims: { ...dims, tableau: { ...dims.tableau, largeur: NaN } } }) as { erreur: string }).erreur).toMatch(/tableau/);
     expect((composerGroupes([et("")], o) as { erreur: string }).erreur).toMatch(/Aucune étiquette/);
   });
   it("la case de début s'applique à chaque planche", () => {
@@ -399,17 +399,21 @@ describe("import d'un tableau : un appareil = une étiquette de même taille", (
 });
 
 describe("vraie police (jsPDF) : le pire cas tient dans chaque zone standard", () => {
-  it("texte : 16 + 14 caractères larges dans 17,5 × 8 mm, sans « ... », le nom jamais perdu", async () => {
+  it("tableau : picto + 16 / 14 caractères larges dans 17,5 × 17,5 mm, sans « ... », nom jamais perdu", async () => {
     const { default: JsPdf } = await import("jspdf");
     const doc = new JsPdf({ unit: "mm" });
     const m: Mesure = (t, pt, g) => { doc.setFont("helvetica", g ? "bold" : "normal"); doc.setFontSize(pt); return doc.getTextWidth(t); };
-    const { largeur: L, hauteur: H } = DIMS_STANDARD.texte;
-    const cas: [string, string][] = [["MMMMMMMMMMMMMMMM", "MMMMMMMMMMMMMM"], ["WWWWWWWW WWWWWWWW", "125\u00A0A - 30\u00A0mA"], ["Lave-vaisselle", "20\u00A0A"], ["Prises cuisine p", "40\u00A0A - 30\u00A0mA"], ["Chauffe-eau cumu", "32\u00A0A"], ["ID A", "40\u00A0A - 30\u00A0mA"]];
-    for (const [t, l2] of cas) {
-      const r = composerEtiquette(t, l2, L, H, null, m);
-      expect(r.picto, t).toBeNull(); expect(r.lignes.length, t).toBeGreaterThan(0);
-      for (const l of r.lignes) { expect(l.texte.includes("..."), `${t}/${l.texte}`).toBe(false); expect(m(l.texte, l.pt, l.gras)).toBeLessThanOrEqual(L - 2.4 + 1e-6); expect(l.y).toBeLessThanOrEqual(H); }
+    const { largeur: L, hauteur: H } = DIMS_STANDARD.tableau;
+    const cas: [string, string, string | null][] = [["MMMMMMMMMMMMMMMM", "MMMMMMMMMMMMMM", "lave_linge"], ["WWWWWWWW WWWWWWWW", "125\u00A0A - 30\u00A0mA", null], ["Lave-vaisselle", "20\u00A0A", "lave_vaisselle"], ["Prises cuisine p", "40\u00A0A - 30\u00A0mA", "prise"], ["Chauffe-eau cumu", "32\u00A0A", "chauffe_eau"], ["ID A", "40\u00A0A - 30\u00A0mA", "disjoncteur"]];
+    for (const [t, l2, p] of cas) {
+      const r = composerEtiquette(t, l2, L, H, p, m);
+      expect(!!r.picto, t).toBe(p !== null); expect(r.lignes.length, t).toBeGreaterThan(0);
+      for (const l of r.lignes) { expect(l.texte.includes("..."), `${t}/${l.texte}`).toBe(false); expect(m(l.texte, l.pt, l.gras)).toBeLessThanOrEqual(L - 2.4 + 1e-6); expect(l.y).toBeLessThanOrEqual(H); if (r.picto) expect(l.y - l.pt * 25.4 / 72 * 0.7).toBeGreaterThanOrEqual(r.picto.y + r.picto.taille - 0.5); }
       expect(r.lignes.map(l => l.texte).join("").replace(/\s|-/g, "").includes(t.replace(/\s|-/g, "").slice(0, 6)), t).toBe(true);
     }
+  });
+  it("pictogramme seul : tient dans 12,7 × 9,5 mm", async () => {
+    const { largeur: L, hauteur: H } = DIMS_STANDARD.picto; const p = composerPicto(L, H, "lave_linge")!;
+    expect(p.x).toBeGreaterThanOrEqual(0); expect(p.y).toBeGreaterThanOrEqual(0); expect(p.x + p.taille).toBeLessThanOrEqual(L); expect(p.y + p.taille).toBeLessThanOrEqual(H);
   });
 });

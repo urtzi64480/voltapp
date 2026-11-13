@@ -38,7 +38,7 @@ export function dessinerPicto(doc: jsPDF, id: string, x: number, y: number, tail
   }
 }
 
-/** Construit le PDF : une ou plusieurs planches par sorte d'étiquette (pictogrammes seuls, textes seuls). Les cases vides (planche entamée) ne sont ni imprimées ni encadrées. */
+/** Construit le PDF : une ou plusieurs planches par sorte d'étiquette (pictogrammes seuls, étiquettes tableau picto + texte). Les cases vides (planche entamée) ne sont ni imprimées ni encadrées. */
 export async function genererPdfEtiquettes(groupes: GroupePlanches[], opt: OptionsPdfEtiquettes): Promise<{ blob: Blob; nom: string }> {
   if (groupes.length === 0 || groupes.every(g => g.planches.length === 0)) throw new Error("Aucune planche à imprimer.");
   const { default: JsPdf } = await import("jspdf");
@@ -73,7 +73,8 @@ export async function genererPdfEtiquettes(groupes: GroupePlanches[], opt: Optio
           if (p) dessinerPicto(doc, p.id, c.x + p.x, c.y + p.y, p.taille);
           continue;
         }
-        const mise = composerEtiquette(e.texte, e.ligne2, c.largeur, c.hauteur, null, mesure);
+        const mise = composerEtiquette(e.texte, e.ligne2, c.largeur, c.hauteur, pictoDeEtiquette(e, true), mesure);
+        if (mise.picto) dessinerPicto(doc, mise.picto.id, c.x + mise.picto.x, c.y + mise.picto.y, mise.picto.taille);
         doc.setTextColor(0, 0, 0);
         for (const l of mise.lignes) {
           doc.setFont("helvetica", l.gras ? "bold" : "normal");
@@ -83,6 +84,6 @@ export async function genererPdfEtiquettes(groupes: GroupePlanches[], opt: Optio
       }
     }
   }
-  const nom = groupes.length > 1 ? "etiquettes-pictos-et-textes.pdf" : groupes[0].genre === "picto" ? "etiquettes-pictogrammes.pdf" : "etiquettes-textes.pdf";
+  const nom = groupes.length > 1 ? "etiquettes-pictos-et-tableau.pdf" : groupes[0].genre === "picto" ? "etiquettes-pictogrammes.pdf" : "etiquettes-tableau.pdf";
   return { blob: doc.output("blob"), nom };
 }
