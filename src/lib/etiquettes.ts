@@ -9,19 +9,19 @@ import { PICTO_AUCUN, pictoPour, pictoValide } from "./pictogrammes";
 
 /** icone : absent = pictogramme reconnu automatiquement ; « aucune » = sans pictogramme ; sinon l'identifiant d'un pictogramme choisi (voir pictogrammes.ts). */
 /**
- * modules : largeur de l'étiquette en modules de rail (1 par défaut ; un différentiel ou un 2P = 2) — chaque module est un carré, donc une
- * étiquette de 2 modules fait 2 carrés côte à côte, pile sous l'appareil. rangee : numéro de la rangée du tableau d'où vient l'étiquette
- * (import) ; sert à passer à la ligne à chaque nouvelle rangée.
+ * UNE étiquette = UN appareil (disjoncteur ou interrupteur différentiel), toujours à la même dimension standard. rangee : numéro de la rangée du
+ * tableau d'où vient l'étiquette (import) ; sert à passer à la ligne à chaque nouvelle rangée.
+ * icone : absent = pictogramme reconnu automatiquement ; « aucune » = sans pictogramme ; sinon l'identifiant d'un pictogramme (voir pictogrammes.ts).
  */
-export interface Etiquette { id: string; texte: string; ligne2: string; quantite: number; icone?: string; modules?: number; rangee?: number }
+export interface Etiquette { id: string; texte: string; ligne2: string; quantite: number; icone?: string; rangee?: number }
 
 export interface FormatPlanche {
   id: string;
   nom: string;
-  /** Dimensions d'UN module (une case), en mm : une étiquette de n modules fait n × largeur de large. Carré par défaut. */
+  /** Dimensions d'une étiquette, en mm. */
   largeur: number;
   hauteur: number;
-  /** Page A4 en paysage (297 × 210) : permet de garder une rangée de 13 modules sur une seule ligne. */
+  /** Page A4 en paysage (297 × 210) : permet de garder une rangée entière sur une seule ligne. */
   paysage?: boolean;
   /** Marge de la page, en mm (jamais imprimée par l'imprimante en dessous de ~5 mm). */
   marge: number;
@@ -31,25 +31,19 @@ export interface FormatPlanche {
 
 export const PAGE_A4 = { largeur: 210, hauteur: 297 } as const;
 export const LIMITES = {
-  texte: 80, ligne2: 40,
-  quantiteMax: 100, totalMax: 1000, modulesMax: 6,
+  // Plafonds choisis pour que le texte tienne TOUJOURS lisiblement dans le carré de 17,5 mm (vérifié avec la vraie police, voir tests) :
+  // 16 caractères pour le nom (2 lignes), 14 pour la 2e ligne (« 125 A - 30 mA »).
+  texte: 16, ligne2: 14,
+  quantiteMax: 100, totalMax: 1000,
   dimMin: 5, dimMax: 190, margeMax: 40, ecartMax: 20,
 } as const;
 
 /**
- * Étiquettes CARRÉES, alignées sur le pas d'un module. Seule cote commune à tous les constructeurs : un module de rail DIN (EN 60715 / appareillage
- * EN 43880) fait 17,5 mm de large — un disjoncteur 1P, un repère Legrand « 17,5 mm », « leur largeur correspond à celle d'un disjoncteur ».
- * Les hauteurs de fenêtre varient (8 à 9,5 mm chez Legrand) et il n'existe pas d'étiquette carrée normalisée : on prend donc le carré de 17,5 mm
- * (largeur réelle d'un disjoncteur, assez haut pour l'icône + le nom + le calibre) et deux carrés plus grands pour les plastrons et les portes.
+ * LA dimension standard, jamais modifiable : un carré de 17,5 × 17,5 mm par appareil. 17,5 mm est la largeur d'un module de rail DIN, la seule cote
+ * commune à tous les constructeurs (un disjoncteur 1P, un repère Legrand « 17,5 mm », « leur largeur correspond à celle d'un disjoncteur ») : l'étiquette
+ * est donc pile à la largeur de l'appareil, et assez haute pour l'icône + le nom + le calibre. Un différentiel a la même étiquette qu'un disjoncteur.
  */
-export const FORMATS: FormatPlanche[] = [
-  { id: "carre-17-5", nom: "Carré 17,5 × 17,5 mm — 1 module (standard)", largeur: 17.5, hauteur: 17.5, marge: 8, ecart: 0 },
-  { id: "carre-22", nom: "Carré moyen 22 × 22 mm", largeur: 22, hauteur: 22, marge: 8, ecart: 0 },
-  { id: "carre-28", nom: "Grand carré 28 × 28 mm (plastron, porte)", largeur: 28, hauteur: 28, marge: 8, ecart: 0 },
-];
-export const FORMAT_DEFAUT = "carre-17-5";
-export const ID_PERSONNALISE = "perso";
-export const FORMAT_PERSO_DEFAUT: FormatPlanche = { id: ID_PERSONNALISE, nom: "Personnalisé", largeur: 17.5, hauteur: 17.5, marge: 8, ecart: 0 };
+export const FORMAT_STANDARD: FormatPlanche = { id: "carre-17-5", nom: "Carré 17,5 × 17,5 mm", largeur: 17.5, hauteur: 17.5, marge: 8, ecart: 0 };
 
 // ─── Texte ──────────────────────────────────────────────────────────────────────────────────────
 // Les polices PDF standard ne couvrent que le Latin-1 : on remplace les caractères courants hors Latin-1 et on retire le reste,
@@ -72,11 +66,6 @@ export const quantiteValide = (n: unknown): number => {
   return Number.isFinite(v) ? Math.min(LIMITES.quantiteMax, Math.max(1, Math.round(v))) : 1;
 };
 
-export const modulesValide = (n: unknown): number => {
-  const v = typeof n === "number" ? n : parseInt(String(n), 10);
-  return Number.isFinite(v) ? Math.min(LIMITES.modulesMax, Math.max(1, Math.round(v))) : 1;
-};
-
 /** Une étiquette est imprimable si elle porte au moins un texte (après nettoyage). */
 export const estImprimable = (e: Pick<Etiquette, "texte" | "ligne2">): boolean => nettoyerTexte(e.texte) !== "" || nettoyerTexte(e.ligne2, LIMITES.ligne2) !== "";
 
@@ -87,7 +76,7 @@ export const nouvelleEtiquette = (texte = "", ligne2 = "", quantite = 1): Etique
 
 // ─── Grille et pagination ───────────────────────────────────────────────────────────────────────
 
-/** Cases (1 module chacune) par ligne et par page. */
+/** Étiquettes par ligne et par page. */
 export interface Grille { colonnes: number; lignes: number; parPage: number }
 
 /** Dimensions valides (nombres finis, dans les bornes) — sinon le format est refusé plutôt que de produire un PDF faux. */
@@ -111,7 +100,7 @@ export function grille(f: FormatPlanche): Grille | null {
   return { colonnes, lignes, parPage: colonnes * lignes };
 }
 
-/** Une case posée sur la page : (x, y) = coin haut-gauche en mm, largeur = modules × largeur d'un module. */
+/** Une case posée sur la page : (x, y) = coin haut-gauche en mm. */
 export interface Case { x: number; y: number; largeur: number; hauteur: number; etiquette: Etiquette | null; index: number }
 export type Planche = Case[];
 
@@ -120,11 +109,11 @@ export function exemplaires(liste: Etiquette[]): Etiquette[] {
   return liste.filter(estImprimable).flatMap(e => Array.from({ length: quantiteValide(e.quantite) }, () => e));
 }
 
-/** Nombre de modules de la rangée la plus large de la liste (étiquettes importées d'un tableau) ; 0 si aucune étiquette ne vient d'une rangée. */
-export function modulesMaxParRangee(liste: Etiquette[]): number {
-  const somme = new Map<number, number>();
-  for (const e of liste) if (estImprimable(e) && typeof e.rangee === "number") somme.set(e.rangee, (somme.get(e.rangee) ?? 0) + modulesValide(e.modules) * quantiteValide(e.quantite));
-  return Math.max(0, ...somme.values());
+/** Nombre d'étiquettes de la rangée la plus longue de la liste (étiquettes importées d'un tableau) ; 0 si aucune étiquette ne vient d'une rangée. */
+export function maxParRangee(liste: Etiquette[]): number {
+  const compte = new Map<number, number>();
+  for (const e of liste) if (estImprimable(e) && typeof e.rangee === "number") compte.set(e.rangee, (compte.get(e.rangee) ?? 0) + quantiteValide(e.quantite));
+  return Math.max(0, ...compte.values());
 }
 
 export interface ResultatPlanches { planches: Planche[]; total: number; grille: Grille }
@@ -134,9 +123,9 @@ export interface OptionsPlanches {
 }
 
 /**
- * Pose les étiquettes CÔTE À CÔTE, de gauche à droite puis ligne par ligne, chacune sur n modules de large (un carré par module). Une étiquette qui
- * ne tient plus en fin de ligne passe à la ligne suivante ; avec `ligneParRangee`, on passe aussi à la ligne à chaque nouvelle rangée du tableau.
- * `debut` = nombre de cases (1 module) déjà utilisées au début de la PREMIÈRE page (planche adhésive entamée) : elles restent vides.
+ * Pose les étiquettes CÔTE À CÔTE, de gauche à droite puis ligne par ligne, toutes de la même dimension. En fin de ligne on passe à la suivante ;
+ * avec `ligneParRangee`, on passe aussi à la ligne à chaque nouvelle rangée du tableau.
+ * `debut` = nombre de cases déjà utilisées au début de la PREMIÈRE page (planche adhésive entamée) : elles restent vides.
  * Renvoie une erreur lisible plutôt que de produire un document énorme ou faux.
  */
 export function composerPlanches(liste: Etiquette[], f: FormatPlanche, debut = 0, opt: OptionsPlanches = {}): ResultatPlanches | { erreur: string } {
@@ -146,23 +135,20 @@ export function composerPlanches(liste: Etiquette[], f: FormatPlanche, debut = 0
   if (items.length === 0) return { erreur: "Aucune étiquette à imprimer : renseigne au moins un texte." };
   if (items.length > LIMITES.totalMax) return { erreur: `Trop d'étiquettes (${items.length}) : ${LIMITES.totalMax} maximum par document.` };
   const saut = Number.isFinite(debut) ? Math.min(g.parPage - 1, Math.max(0, Math.floor(debut))) : 0;
-  const elements: { etiquette: Etiquette | null; modules: number }[] = [
-    ...Array.from({ length: saut }, () => ({ etiquette: null, modules: 1 })),
-    ...items.map(e => ({ etiquette: e, modules: Math.min(g.colonnes, modulesValide(e.modules)) })),
-  ];
+  const elements: (Etiquette | null)[] = [...Array<null>(saut).fill(null), ...items];
   const planches: Planche[] = [[]];
   let col = 0, lig = 0, index = 0, rangeePrecedente: number | undefined;
-  for (const el of elements) {
-    const rangee = el.etiquette?.rangee;
-    const changeDeRangee = !!opt.ligneParRangee && el.etiquette !== null && rangee !== undefined && rangeePrecedente !== undefined && rangee !== rangeePrecedente;
-    if (col > 0 && (col + el.modules > g.colonnes || changeDeRangee)) { col = 0; lig++; }
+  for (const etiquette of elements) {
+    const rangee = etiquette?.rangee;
+    const changeDeRangee = !!opt.ligneParRangee && etiquette !== null && rangee !== undefined && rangeePrecedente !== undefined && rangee !== rangeePrecedente;
+    if (col > 0 && (col + 1 > g.colonnes || changeDeRangee)) { col = 0; lig++; }
     if (lig >= g.lignes) { planches.push([]); lig = 0; col = 0; }
     planches[planches.length - 1].push({
       x: f.marge + col * (f.largeur + f.ecart), y: f.marge + lig * (f.hauteur + f.ecart),
-      largeur: el.modules * f.largeur + (el.modules - 1) * f.ecart, hauteur: f.hauteur, etiquette: el.etiquette, index: index++,
+      largeur: f.largeur, hauteur: f.hauteur, etiquette, index: index++,
     });
-    col += el.modules;
-    if (el.etiquette) rangeePrecedente = rangee;
+    col += 1;
+    if (etiquette) rangeePrecedente = rangee;
   }
   return { planches, total: items.length, grille: g };
 }
@@ -299,9 +285,22 @@ export const pictoDeEtiquette = (e: Pick<Etiquette, "texte" | "icone">, actifs: 
 
 // ─── Import depuis un tableau enregistré ────────────────────────────────────────────────────────
 
+/** Nom complet d'un appareil (libellé saisi, sinon nom du circuit, sinon type d'appareil), avant raccourcissement à LIMITES.texte caractères. */
+function nomAppareil(b: NonNullable<BreakerRow["slots"][number]>): string {
+  return nettoyerTexte(b.label, 500) || CIRCUITS[b.circuit]?.label || BREAKER_TYPES[b.type]?.label || "";
+}
+
+/** Nombre d'appareils dont le nom dépasse la limite et sera donc raccourci à l'import (pour le dire à l'utilisateur). */
+export function nomsRaccourcis(rows: BreakerRow[]): number {
+  let n = 0;
+  for (const r of Array.isArray(rows) ? rows : []) if (r && Array.isArray(r.slots)) for (const b of r.slots) if (b && nettoyerTexte(nomAppareil(b), 500).length > LIMITES.texte) n++;
+  return n;
+}
+
 /**
- * Une étiquette par appareil posé (différentiels compris), dans l'ordre des rangées, avec le calibre en 2e ligne. La largeur en modules suit
- * l'appareil (1P = 1, 2P / différentiel / coupure générale / prise modulaire = 2) et la rangée d'origine est mémorisée (une rangée = une ligne).
+ * Une étiquette par appareil posé (différentiels compris — même dimension que les disjoncteurs), dans l'ordre des rangées, avec le calibre en
+ * 2e ligne (« 40 A - 30 mA » pour un différentiel). Les noms trop longs sont raccourcis à LIMITES.texte caractères ; la rangée d'origine est
+ * mémorisée (une rangée = une ligne).
  */
 export function etiquettesDepuisRangees(rows: BreakerRow[]): Etiquette[] {
   const sortie: Etiquette[] = [];
@@ -310,14 +309,13 @@ export function etiquettesDepuisRangees(rows: BreakerRow[]): Etiquette[] {
     for (const b of r.slots) {
       if (!b) continue;
       const type = BREAKER_TYPES[b.type];
-      const circuit = CIRCUITS[b.circuit];
-      const nom = nettoyerTexte(b.label) || circuit?.label || type?.label || "";
+      const nom = nettoyerTexte(nomAppareil(b));
       if (!nom) continue;
       const amperes = Number(b.amperes);
-      // Espaces insécables : « 30 mA », « 20 A », « type A » ne sont jamais coupés en fin de ligne.
+      // Espaces insécables : « 30 mA » et « 20 A » ne sont jamais coupés en fin de ligne.
       const calibre = Number.isFinite(amperes) && amperes > 0 ? `${amperes}\u00A0A` : "";
-      const ligne2 = type?.isDiff ? [calibre, "30\u00A0mA", type.diffType ? `type\u00A0${type.diffType}` : ""].filter(Boolean).join(" - ") : calibre;
-      sortie.push({ ...nouvelleEtiquette(nom, ligne2, 1), modules: modulesValide(type?.width ?? 1), rangee: indexRangee });
+      const ligne2 = nettoyerTexte(type?.isDiff ? [calibre, "30\u00A0mA"].filter(Boolean).join(" - ") : calibre, LIMITES.ligne2);
+      sortie.push({ ...nouvelleEtiquette(nom, ligne2, 1), rangee: indexRangee });
     }
   });
   return sortie;
@@ -329,8 +327,6 @@ export const CLE_BROUILLON_ETIQUETTES = "voltapp:etiquettes";
 
 export interface BrouillonEtiquettes {
   etiquettes: Etiquette[];
-  formatId: string;
-  perso: FormatPlanche;
   debut: number;
   guides: boolean;
   /** Pictogrammes (reconnus automatiquement ou choisis) : désactivables pour toute la planche. */
@@ -342,7 +338,7 @@ export interface BrouillonEtiquettes {
 }
 
 export const brouillonVide = (): BrouillonEtiquettes => ({
-  etiquettes: [nouvelleEtiquette()], formatId: FORMAT_DEFAUT, perso: { ...FORMAT_PERSO_DEFAUT }, debut: 0, guides: true, pictos: true, paysage: false, ligneParRangee: true,
+  etiquettes: [nouvelleEtiquette()], debut: 0, guides: true, pictos: true, paysage: false, ligneParRangee: true,
 });
 
 export const serialiserBrouillon = (b: BrouillonEtiquettes): string => JSON.stringify({ v: 1, ...b });
@@ -361,26 +357,15 @@ export function lireBrouillon(brut: string | null): BrouillonEtiquettes {
           id: typeof e.id === "string" && e.id ? e.id : nouvelleEtiquette().id,
           texte: nettoyerTexte(e.texte), ligne2: nettoyerTexte(e.ligne2, LIMITES.ligne2), quantite: quantiteValide(e.quantite),
           ...(e.icone === PICTO_AUCUN || pictoValide(e.icone) ? { icone: e.icone as string } : {}),
-          ...(typeof e.modules === "number" && modulesValide(e.modules) > 1 ? { modules: modulesValide(e.modules) } : {}),
           ...(typeof e.rangee === "number" && Number.isInteger(e.rangee) && e.rangee >= 0 && e.rangee < 1000 ? { rangee: e.rangee } : {}),
         }))
       : [];
-    const p = o.perso && typeof o.perso === "object" ? o.perso as Record<string, unknown> : {};
-    const perso: FormatPlanche = {
-      ...FORMAT_PERSO_DEFAUT,
-      largeur: nombre(p.largeur, FORMAT_PERSO_DEFAUT.largeur), hauteur: nombre(p.hauteur, FORMAT_PERSO_DEFAUT.hauteur),
-      marge: nombre(p.marge, FORMAT_PERSO_DEFAUT.marge), ecart: nombre(p.ecart, FORMAT_PERSO_DEFAUT.ecart),
-    };
-    const formatId = typeof o.formatId === "string" && (o.formatId === ID_PERSONNALISE || FORMATS.some(f => f.id === o.formatId)) ? o.formatId : FORMAT_DEFAUT;
     return {
       etiquettes: etiquettes.length > 0 ? etiquettes : defaut.etiquettes,
-      formatId, perso, debut: Math.max(0, Math.floor(nombre(o.debut, 0))), guides: o.guides !== false, pictos: o.pictos !== false, paysage: o.paysage === true, ligneParRangee: o.ligneParRangee !== false,
+      debut: Math.max(0, Math.floor(nombre(o.debut, 0))), guides: o.guides !== false, pictos: o.pictos !== false, paysage: o.paysage === true, ligneParRangee: o.ligneParRangee !== false,
     };
   } catch { return defaut; }
 }
 
-/** Format retenu (prédéfini ou personnalisé), avec l'orientation de la page. */
-export const formatChoisi = (b: Pick<BrouillonEtiquettes, "formatId" | "perso"> & { paysage?: boolean }): FormatPlanche => {
-  const base = b.formatId === ID_PERSONNALISE ? { ...b.perso, id: ID_PERSONNALISE, nom: "Personnalisé" } : (FORMATS.find(f => f.id === b.formatId) ?? FORMATS[0]);
-  return { ...base, paysage: b.paysage === true };
-};
+/** Format de la planche : toujours la dimension standard, avec l'orientation de la page choisie. */
+export const formatChoisi = (b: { paysage?: boolean }): FormatPlanche => ({ ...FORMAT_STANDARD, paysage: b.paysage === true });

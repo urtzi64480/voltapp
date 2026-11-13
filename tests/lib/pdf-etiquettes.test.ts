@@ -48,9 +48,9 @@ describe("genererPdfEtiquettes", () => {
     const { blob } = await genererPdfEtiquettes(r.planches, grand, { guides: false, pictos: true });
     expect((await PDFDocument.load(await blob.arrayBuffer())).getPageCount()).toBe(1);
   });
-  it("page paysage : PDF A4 297 × 210 mm, étiquettes de 1 et 2 modules côte à côte", async () => {
+  it("page paysage : PDF A4 297 × 210 mm, étiquettes carrées côte à côte", async () => {
     const carre: FormatPlanche = { id: "c", nom: "c", largeur: 17.5, hauteur: 17.5, marge: 8, ecart: 0, paysage: true };
-    const liste = [{ ...nouvelleEtiquette("ID A", "40 A", 1), modules: 2, rangee: 0 }, { ...nouvelleEtiquette("Lave-linge", "20 A", 1), rangee: 0 }, { ...nouvelleEtiquette("Four", "20 A", 1), rangee: 1 }];
+    const liste = [{ ...nouvelleEtiquette("ID A", "40 A", 1), rangee: 0 }, { ...nouvelleEtiquette("Lave-linge", "20 A", 1), rangee: 0 }, { ...nouvelleEtiquette("Four", "20 A", 1), rangee: 1 }];
     const r = composerPlanches(liste, carre, 0, { ligneParRangee: true });
     if ("erreur" in r) throw new Error(r.erreur);
     const { blob } = await genererPdfEtiquettes(r.planches, carre, { guides: true, pictos: true });
