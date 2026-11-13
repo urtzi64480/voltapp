@@ -38,7 +38,7 @@ export default function DashboardPage() {
         // CA année : factures payées cette année, filtré sur paye_le
         supabase.from("factures").select("total_service,total_materiau,total_ttc")
           .eq("statut", "payee").gte("paye_le", debutAnnee),
-        supabase.from("devis").select("id").in("statut", ["brouillon", "envoye"]),
+        supabase.from("devis").select("id").in("statut", ["brouillon", "envoye", "envoye_signature"]),
         supabase.from("factures").select("id").in("statut", ["impayee", "relance", "envoyee"]),
         supabase.from("clients").select("id"),
       ]);

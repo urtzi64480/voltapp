@@ -9,8 +9,8 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import Link from "next/link";
 import { Mic, Plus, Search, FileText, ChevronRight, ChevronDown, ChevronUp, Receipt, CalendarDays, CalendarX, Trash2 } from "lucide-react";
 
-const FILTRES = ["tous", "brouillon", "envoye", "signe", "refuse", "a_refaire", "non_planifie"] as const;
-const STATUTS_VISIBLES = ["envoye", "signe", "brouillon", "refuse", "a_refaire"];
+const FILTRES = ["tous", "brouillon", "envoye", "envoye_signature", "signe", "refuse", "a_refaire", "non_planifie"] as const;
+const STATUTS_VISIBLES = ["envoye", "envoye_signature", "signe", "brouillon", "refuse", "a_refaire"];
 
 function moisKey(dateStr: string | null | undefined) {
   if (!dateStr) return "__sans_date__";

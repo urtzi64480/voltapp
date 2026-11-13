@@ -494,6 +494,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
       const token = payload.token as string;
       const link = `${window.location.origin}/devis/signer/${token}`;
       setSigLink(link);
+      setDevis(d => (d && d.statut !== "signe" ? { ...d, statut: "envoye_signature" as StatutDevis } : d));
       const client = devis.client as any;
       const tel = client?.telephone?.replace(/\s/g, "") ?? "";
       const msg = `Bonjour ${client?.prenom ?? ""}, veuillez signer votre devis ${devis.numero} ici : ${link}`;
@@ -981,7 +982,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                     </ul>
                     {prixApplicable(devis.statut)
                       ? <button type="button" disabled={prixAEcrire} onClick={appliquerPrix} className="btn-ghost !py-1.5 !text-xs mt-2">{prixAEcrire ? "Mise à jour…" : "Appliquer les prix du catalogue"}</button>
-                      : <p className="text-xs mt-1 text-sky-800">Devis déjà envoyé par mail : les prix restent ceux que le client a vus.</p>}
+                      : <p className="text-xs mt-1 text-sky-800">Devis déjà envoyé au client : les prix restent ceux que le client a vus.</p>}
                   </div>
                 )}
               </div>

@@ -41,8 +41,8 @@ export async function POST(req: NextRequest) {
     signature_token: token,
     signature_token_expires_at: expires.toISOString(),
   };
-  // Marque comme envoyé, mais ne repasse jamais un devis déjà signé en "envoyé"
-  if (devis.statut !== "signe") update.statut = "envoye";
+  // Marque « envoyé pour signature électronique » (≠ simple envoi du devis par mail), sans jamais repasser un devis déjà signé en arrière
+  if (devis.statut !== "signe") update.statut = "envoye_signature";
 
   const { data: updated, error } = await supabase
     .from("devis")

@@ -23,15 +23,26 @@ describe("réponse du client", () => {
   });
 });
 
+describe("envoyé pour signature électronique", () => {
+  it("statut distinct de l'envoi par mail : libellé, couleur, modifiable, prix suivent comme un devis envoyé", () => {
+    expect(STATUTS_DEVIS).toContain("envoye_signature"); expect(STATUT_LABELS.envoye_signature).toBe("Envoyé pour signature électronique"); expect(STATUT_LABELS.envoye).toBe("Envoyé par mail");
+    expect(STATUT_COLORS.envoye_signature).toBeTruthy(); expect(statutModifiable("envoye_signature")).toBe(true);
+    expect(prixProposable("envoye_signature")).toBe(true); expect(champsSynchronisables("envoye_signature").length).toBeGreaterThan(0);
+    expect(reponseDuStatut("envoye_signature")).toBe("attente"); expect(statutApresReponse("envoye_signature", "attente")).toBe("envoye_signature");
+    expect(statutApresReponse("envoye_signature", "refuse")).toBe("refuse");
+  });
+  it("compte dans les devis sortis du taux de conversion", () => { expect(tauxConversion({ envoye: 0, envoye_signature: 3, signe: 1, refuse: 0, a_refaire: 0 })).toEqual({ pourcent: 25, acceptes: 1, sortis: 4 }); });
+});
+
 describe("tauxConversion", () => {
   it("signés / devis parvenus au client (envoyés + signés + refusés + à refaire)", () => {
-    expect(tauxConversion({ envoye: 2, signe: 3, refuse: 4, a_refaire: 1 })).toEqual({ pourcent: 30, acceptes: 3, sortis: 10 });
-    expect(tauxConversion({ envoye: 0, signe: 1, refuse: 2, a_refaire: 0 }).pourcent).toBe(33);
-    expect(tauxConversion({ envoye: 0, signe: 2, refuse: 1, a_refaire: 0 }).pourcent).toBe(67);
+    expect(tauxConversion({ envoye: 1, envoye_signature: 1, signe: 3, refuse: 4, a_refaire: 1 })).toEqual({ pourcent: 30, acceptes: 3, sortis: 10 });
+    expect(tauxConversion({ envoye: 0, envoye_signature: 0, signe: 1, refuse: 2, a_refaire: 0 }).pourcent).toBe(33);
+    expect(tauxConversion({ envoye: 0, envoye_signature: 0, signe: 2, refuse: 1, a_refaire: 0 }).pourcent).toBe(67);
   });
   it("aucun devis sorti → null (pas de 0 % trompeur) ; tout signé → 100", () => {
-    expect(tauxConversion({ envoye: 0, signe: 0, refuse: 0, a_refaire: 0 }).pourcent).toBeNull();
-    expect(tauxConversion({ envoye: 0, signe: 5, refuse: 0, a_refaire: 0 }).pourcent).toBe(100);
-    expect(tauxConversion({ envoye: 4, signe: 0, refuse: 0, a_refaire: 0 }).pourcent).toBe(0);
+    expect(tauxConversion({ envoye: 0, envoye_signature: 0, signe: 0, refuse: 0, a_refaire: 0 }).pourcent).toBeNull();
+    expect(tauxConversion({ envoye: 0, envoye_signature: 0, signe: 5, refuse: 0, a_refaire: 0 }).pourcent).toBe(100);
+    expect(tauxConversion({ envoye: 4, envoye_signature: 0, signe: 0, refuse: 0, a_refaire: 0 }).pourcent).toBe(0);
   });
 });

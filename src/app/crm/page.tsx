@@ -104,7 +104,7 @@ export default function CRMPage() {
   const [caMensuelN1, setCaMensuelN1] = useState<{ mois: number; service: number; materiau: number }[]>([]);
   const [caAnnuelN1, setCaAnnuelN1] = useState({ service: 0, materiau: 0 });
   const [catStats, setCatStats] = useState<CATStat[]>([]);
-  const [devisStats, setDevisStats] = useState({ total: 0, brouillon: 0, envoye: 0, signe: 0, refuse: 0, a_refaire: 0, caDevis: 0, caSignes: 0 });
+  const [devisStats, setDevisStats] = useState({ total: 0, brouillon: 0, envoye: 0, envoye_signature: 0, signe: 0, refuse: 0, a_refaire: 0, caDevis: 0, caSignes: 0 });
   const [paiementStats, setPaiementStats] = useState({ nbPayees: 0, nbImpayees: 0, nbRelance: 0, montantPayee: 0, montantImpayee: 0, montantRelance: 0 });
   const [topClients, setTopClients] = useState<{ nom: string; prenom?: string; ca: number; nb: number }[]>([]);
   const [devisEnAttente, setDevisEnAttente] = useState<any[]>([]);
@@ -154,7 +154,7 @@ export default function CRMPage() {
         supabase.from("devis").select("statut,total_ttc,total_service,total_materiau").gte("created_at", debut).lt("created_at", `${Number(annee) + 1}-01-01`),
         supabase.from("facture_lignes").select("nom,type_branche,quantite,prix_unitaire,facture:factures!inner(statut,date_emission)").gte("facture.date_emission", debut).lte("facture.date_emission", fin).eq("facture.statut", "payee"),
         supabase.from("factures").select("client_id,total_ttc,client:clients(nom,prenom)").eq("statut","payee").gte("date_emission",debut).lte("date_emission",fin),
-        supabase.from("devis").select("*,client:clients(nom,prenom)").in("statut",["brouillon","envoye"]).order("created_at",{ascending:false}).limit(5),
+        supabase.from("devis").select("*,client:clients(nom,prenom)").in("statut",["brouillon","envoye","envoye_signature"]).order("created_at",{ascending:false}).limit(5),
         supabase.from("factures").select("*,client:clients(nom,prenom)").in("statut",["impayee","relance"]).order("date_echeance",{ascending:true}).limit(5),
         user ? supabase.from("profil").select("taux_cotisations_service,taux_cotisations_materiau,taux_ir_service,taux_ir_materiau").eq("id", user.id).single() : Promise.resolve({ data: null }),
         supabase.from("apporteurs").select("*").eq("actif", true).order("nom"),
@@ -204,6 +204,7 @@ export default function CRMPage() {
         total: dv.length,
         brouillon: dv.filter(d => d.statut === "brouillon").length,
         envoye: dv.filter(d => d.statut === "envoye").length,
+        envoye_signature: dv.filter(d => d.statut === "envoye_signature").length,
         signe: dv.filter(d => d.statut === "signe").length,
         refuse: dv.filter(d => d.statut === "refuse").length,
         a_refaire: dv.filter(d => d.statut === "a_refaire").length,
@@ -849,11 +850,12 @@ export default function CRMPage() {
               icon={<FileText size={17} className="text-volt-600" />}
               defaultOpen={false}
             >
-              <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-5">
                 {[
                   { label: "Total", val: devisStats.total, color: "text-ink-900" },
                   { label: "Brouillons", val: devisStats.brouillon, color: "text-ink-500" },
                   { label: "Envoyés par mail", val: devisStats.envoye, color: "text-volt-600" },
+                  { label: "Envoyés pour signature", val: devisStats.envoye_signature, color: "text-sky-600" },
                   { label: "Signés", val: devisStats.signe, color: "text-emerald-600" },
                   { label: "Refusés", val: devisStats.refuse, color: "text-red-600" },
                   { label: "À refaire", val: devisStats.a_refaire, color: "text-amber-600" },

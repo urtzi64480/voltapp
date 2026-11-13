@@ -1,6 +1,6 @@
 import type { InfosAssurance } from "@/lib/assurance";
 export type TypeBranche = "service" | "materiau";
-export type StatutDevis = "brouillon" | "envoye" | "signe" | "refuse" | "a_refaire" | "expire";
+export type StatutDevis = "brouillon" | "envoye" | "envoye_signature" | "signe" | "refuse" | "a_refaire" | "expire";
 export type StatutFacture = "a_envoyer" | "envoyee" | "payee" | "relance" | "impayee";
 export type StatutTransmission = "en_attente" | "transmise" | "acceptee" | "rejetee";
 export type StatutIntervention = "planifie" | "en_cours" | "termine" | "annule";
