@@ -4,7 +4,8 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, FileText, Loader2, Mic, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, FileText, Loader2, Search, Trash2, X } from "lucide-react";
+import BoutonMicro from "@/components/BoutonMicro";
 import Shell from "@/components/layout/Shell";
 import { supabase } from "@/lib/supabase";
 import { attacherFournisseurs } from "@/lib/fournisseurs";
@@ -115,14 +116,6 @@ export default function DevisRapidePage() {
     });
   }
   const zoneTexte = useRef<HTMLTextAreaElement>(null);
-  // Le micro du clavier (Android, iPhone) ou la dictée du système (Windows + H, macOS) écrit directement dans cette zone : on ne fait que l'ouvrir.
-  function dicter() {
-    const z = zoneTexte.current;
-    if (!z) return;
-    z.focus();
-    z.setSelectionRange(z.value.length, z.value.length);
-    z.scrollIntoView({ block: "center", behavior: "smooth" });
-  }
 
   useEffect(() => {
     let annule = false;
@@ -193,12 +186,13 @@ export default function DevisRapidePage() {
 
         <div className="card card-inner space-y-3 mb-4">
           <div className="flex items-center gap-3">
-            <button onClick={dicter} className="shrink-0 w-16 h-16 rounded-full grid place-items-center shadow-md bg-volt-500 text-ink-900 active:scale-95 transition-transform" aria-label="Dicter">
-              <Mic size={26} />
-            </button>
+            <div className="relative shrink-0">
+              <BoutonMicro valeur={texte} onTexte={setTexte} zone={zoneTexte} taille={26}
+                className="w-16 h-16 rounded-full grid place-items-center shadow-md bg-volt-500 text-ink-900 active:scale-95 transition-transform" />
+            </div>
             <p className="text-xs text-ink-500">
-              Appuie sur le micro : le clavier s&apos;ouvre, touche alors <strong>le micro du clavier</strong> (à côté de la barre d&apos;espace) et dicte d&apos;une traite : annonce simplement la quantité avant chaque article.
-              Sur PC : <strong>Windows + H</strong> (Windows) ou le raccourci de dictée du Mac.
+              Appuie sur le micro (PC comme téléphone), autorise-le la première fois, et dicte d&apos;une traite : annonce simplement la quantité avant chaque article. Rappuie pour arrêter.
+              Chrome, Edge et Safari le gèrent ; sur Firefox, utilise le micro du clavier (téléphone) ou <strong>Windows + H</strong> (PC).
               Exemple : « pour Monsieur Dupont, 5 prises 16 ampères, 3 spots, 20 mètres de câble 2,5 et 2 heures de main d&apos;œuvre ».
             </p>
           </div>
