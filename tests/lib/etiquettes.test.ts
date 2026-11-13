@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  CLE_BROUILLON_ETIQUETTES, FORMATS, LIMITES, composerPlanches, couperLignes, estImprimable, etiquettesDepuisRangees, exemplaires, formatChoisi,
-  composerEtiquette, grille, lireBrouillon, mettreEnPage, nettoyerTexte, nouvelleEtiquette, quantiteValide, serialiserBrouillon, brouillonVide, type FormatPlanche, type Mesure,
+  CLE_BROUILLON_ETIQUETTES, FORMATS, FORMAT_PERSO_DEFAUT, LIMITES, composerPlanches, couperLignes, estImprimable, etiquettesDepuisRangees, exemplaires, formatChoisi,
+  composerEtiquette, grille, lireBrouillon, mettreEnPage, modulesMaxParRangee, modulesValide, pageDe, nettoyerTexte, nouvelleEtiquette, quantiteValide, serialiserBrouillon, brouillonVide, type FormatPlanche, type Mesure,
 } from "@/lib/etiquettes";
 import type { BreakerRow } from "@/lib/electrical-constants";
 
@@ -169,15 +169,15 @@ describe("etiquettesDepuisRangees", () => {
 
 describe("brouillon", () => {
   it("aller-retour complet", () => {
-    const x = { ...brouillonVide(), etiquettes: [et("Four", 2, "20 A")], formatId: "modules-2", debut: 4, guides: false };
+    const x = { ...brouillonVide(), etiquettes: [et("Four", 2, "20 A")], formatId: "carre-22", debut: 4, guides: false, paysage: true, ligneParRangee: false };
     const y = lireBrouillon(serialiserBrouillon(x));
-    expect(y.etiquettes[0]).toMatchObject({ texte: "Four", ligne2: "20 A", quantite: 2 }); expect(y).toMatchObject({ formatId: "modules-2", debut: 4, guides: false });
-    expect(formatChoisi(y).id).toBe("modules-2");
+    expect(y.etiquettes[0]).toMatchObject({ texte: "Four", ligne2: "20 A", quantite: 2 }); expect(y).toMatchObject({ formatId: "carre-22", debut: 4, guides: false, paysage: true, ligneParRangee: false });
+    expect(formatChoisi(y)).toMatchObject({ id: "carre-22", largeur: 22, hauteur: 22, paysage: true });
   });
   it("illisible, version inconnue ou champs invalides → valeurs par défaut", () => {
     for (const brut of [null, "", "{", "[]", '{"v":2}', "null"]) expect(lireBrouillon(brut).etiquettes).toHaveLength(1);
     const y = lireBrouillon(JSON.stringify({ v: 1, etiquettes: [null, { texte: 5, quantite: "zz" }, { texte: "OK", quantite: 9999 }], formatId: "inconnu", perso: { largeur: "x" }, debut: -3 }));
-    expect(y.formatId).toBe("modules-1"); expect(y.debut).toBe(0); expect(y.etiquettes.map(e => e.quantite)).toEqual([1, LIMITES.quantiteMax]); expect(y.perso.largeur).toBe(38);
+    expect(y.formatId).toBe("carre-17-5"); expect(y.debut).toBe(0); expect(y.etiquettes.map(e => e.quantite)).toEqual([1, LIMITES.quantiteMax]); expect(y.perso.largeur).toBe(17.5);
   });
   it("format personnalisé repris tel quel", () => {
     const f = formatChoisi({ formatId: "perso", perso: { id: "perso", nom: "x", largeur: 50, hauteur: 30, marge: 7, ecart: 2 } });
@@ -249,18 +249,22 @@ describe("brouillon : pictogrammes", () => {
   });
 });
 
-describe("formats prédéfinis : dimensions réelles", () => {
-  it("1, 2 et 3 modules = zone de repérage Legrand (12,7 × 9,5 / 25 × 9 / 47 × 9 mm) ; 1 module par défaut", () => {
-    const f = (id: string) => FORMATS.find(x => x.id === id)!;
-    expect([f("modules-1").largeur, f("modules-1").hauteur]).toEqual([12.7, 9.5]);
-    expect([f("modules-2").largeur, f("modules-2").hauteur]).toEqual([25, 9]);
-    expect([f("modules-3").largeur, f("modules-3").hauteur]).toEqual([47, 9]);
-    expect(brouillonVide().formatId).toBe("modules-1");
-    expect(formatChoisi(brouillonVide())).toMatchObject({ largeur: 12.7, hauteur: 9.5 });
+describe("formats prédéfinis : carrés alignés sur le module", () => {
+  it("tous les formats sont des carrés ; le standard fait 17,5 mm (largeur d'un module) et est le format par défaut", () => {
+    for (const f of FORMATS) expect(f.largeur, f.id).toBe(f.hauteur);
+    expect(FORMATS[0]).toMatchObject({ id: "carre-17-5", largeur: 17.5, hauteur: 17.5 });
+    expect(brouillonVide().formatId).toBe("carre-17-5");
+    expect(formatChoisi(brouillonVide())).toMatchObject({ largeur: 17.5, hauteur: 17.5, paysage: false });
+    expect(FORMAT_PERSO_DEFAUT.largeur).toBe(FORMAT_PERSO_DEFAUT.hauteur);
   });
-  it("une planche A4 de 1 module en contient au moins autant que le tableau le plus chargé (> 300)", () => { expect(grille(FORMATS[0])!.parPage).toBeGreaterThan(300); });
-  it("un ancien brouillon (formats supprimés 4 et 6 modules) retombe sur le format par défaut", () => {
-    for (const id of ["modules-4", "modules-6"]) expect(lireBrouillon(JSON.stringify({ v: 1, etiquettes: [{ texte: "A" }], formatId: id })).formatId).toBe("modules-1");
+  it("A4 portrait : 11 modules par ligne ; paysage : 16 — une rangée de 13 modules ne tient qu'en paysage", () => {
+    expect(grille(FORMATS[0])).toMatchObject({ colonnes: 11, lignes: 16, parPage: 176 });
+    expect(grille({ ...FORMATS[0], paysage: true })).toMatchObject({ colonnes: 16, lignes: 11, parPage: 176 });
+    expect(pageDe({ paysage: true })).toEqual({ largeur: 297, hauteur: 210 });
+    expect(pageDe({})).toEqual({ largeur: 210, hauteur: 297 });
+  });
+  it("un ancien brouillon (anciens formats en bandelettes) retombe sur le carré par défaut", () => {
+    for (const id of ["modules-1", "modules-2", "modules-3", "modules-4", "bandeau", "plastron", "grande"]) expect(lireBrouillon(JSON.stringify({ v: 1, etiquettes: [{ texte: "A" }], formatId: id })).formatId, id).toBe("carre-17-5");
   });
   it("chaque pictogramme tient dans chaque format prédéfini (icône au-dessus, texte sous l'icône)", async () => {
     const { LISTE_PICTOS } = await import("@/lib/pictogrammes");
@@ -269,5 +273,93 @@ describe("formats prédéfinis : dimensions réelles", () => {
       expect(r.picto, `${fo.id}/${p.id}`).not.toBeNull();
       for (const l of r.lignes) { expect(l.y).toBeGreaterThan(r.picto!.y + r.picto!.taille); expect(l.y).toBeLessThanOrEqual(fo.hauteur + 1e-9); expect(mesure(l.texte, l.pt, l.gras)).toBeLessThanOrEqual(fo.largeur - 2.4 + 1e-6); }
     }
+  });
+});
+
+describe("étiquettes côte à côte, un carré par module", () => {
+  const carre = fmt({ largeur: 17.5, hauteur: 17.5, marge: 8, ecart: 0 });   // 11 modules par ligne en portrait
+  const m = (texte: string, modules = 1, rangee?: number) => ({ ...nouvelleEtiquette(texte), modules, ...(rangee === undefined ? {} : { rangee }) });
+  const poser = (liste: ReturnType<typeof m>[], f = carre, debut = 0, opt = {}) => { const r = composerPlanches(liste, f, debut, opt); if ("erreur" in r) throw new Error(r.erreur); return r; };
+
+  it("une étiquette de 2 modules fait 2 carrés de large et se place juste à côté de la précédente", () => {
+    const [a, b, c] = poser([m("A"), m("ID", 2), m("C")]).planches[0];
+    expect([a.x, a.largeur, a.hauteur]).toEqual([8, 17.5, 17.5]);
+    expect([b.x, b.largeur, b.hauteur]).toEqual([25.5, 35, 17.5]);
+    expect([c.x, c.y]).toEqual([60.5, 8]);
+  });
+  it("les étiquettes sont posées l'une à côté de l'autre sur la même ligne, jamais en bandeau (8 étiquettes = 8 carrés d'une ligne)", () => {
+    const cases = poser(Array.from({ length: 8 }, (_, i) => m(`D${i}`))).planches[0];
+    expect(new Set(cases.map(c => c.y)).size).toBe(1);
+    expect(cases.every(c => c.largeur === 17.5 && c.hauteur === 17.5)).toBe(true);
+    expect(cases.map(c => c.x)).toEqual(Array.from({ length: 8 }, (_, i) => 8 + i * 17.5));
+  });
+  it("passe à la ligne quand une étiquette ne tient plus (10 carrés + une étiquette de 2 modules sur 11 colonnes)", () => {
+    const cases = poser([...Array.from({ length: 10 }, (_, i) => m(`D${i}`)), m("ID", 2)]).planches[0];
+    expect(cases[10]).toMatchObject({ x: 8, y: 25.5 });
+  });
+  it("une étiquette plus large que la ligne est ramenée à la largeur de la ligne", () => {
+    const [c] = poser([m("Large", 6)], fmt({ largeur: 60, hauteur: 17.5, marge: 8, ecart: 0 })).planches[0];   // 3 colonnes seulement
+    expect(c.largeur).toBe(180);
+  });
+  it("une rangée du tableau par ligne : nouvelle ligne à chaque rangée, sinon tout s'enchaîne", () => {
+    const liste = [m("A", 1, 0), m("B", 1, 0), m("C", 1, 0), m("D", 1, 1), m("E", 2, 1)];
+    const avec = poser(liste, carre, 0, { ligneParRangee: true }).planches[0];
+    expect(avec.map(c => c.y)).toEqual([8, 8, 8, 25.5, 25.5]); expect(avec[3].x).toBe(8);
+    const sans = poser(liste, carre, 0, { ligneParRangee: false }).planches[0];
+    expect(new Set(sans.map(c => c.y)).size).toBe(1);
+  });
+  it("étiquettes sans rangée (saisies à la main) : jamais de saut de ligne forcé", () => {
+    const cases = poser([m("A"), m("B"), m("C")], carre, 0, { ligneParRangee: true }).planches[0];
+    expect(new Set(cases.map(c => c.y)).size).toBe(1);
+  });
+  it("rangée de 13 modules : 2 lignes en portrait (11 colonnes), 1 seule ligne en paysage (16 colonnes)", () => {
+    const rangee = [m("ID", 2, 0), ...Array.from({ length: 11 }, (_, i) => m(`D${i}`, 1, 0))];
+    expect(new Set(poser(rangee, carre, 0, { ligneParRangee: true }).planches[0].map(c => c.y)).size).toBe(2);
+    expect(new Set(poser(rangee, { ...carre, paysage: true }, 0, { ligneParRangee: true }).planches[0].map(c => c.y)).size).toBe(1);
+    expect(modulesMaxParRangee(rangee)).toBe(13);
+  });
+  it("modulesMaxParRangee : quantités comptées, étiquettes sans rangée ignorées, 0 si aucune", () => {
+    expect(modulesMaxParRangee([m("A", 2, 0), { ...m("B", 1, 0), quantite: 3 }, m("C", 4, 1)])).toBe(5);
+    expect(modulesMaxParRangee([m("A", 3)])).toBe(0); expect(modulesMaxParRangee([])).toBe(0);
+  });
+  it("planche entamée : chaque case sautée est 1 module, les suivantes se placent après", () => {
+    const cases = poser([m("A", 2)], carre, 3).planches[0];
+    expect(cases.map(c => c.etiquette?.texte ?? null)).toEqual([null, null, null, "A"]);
+    expect(cases[3]).toMatchObject({ x: 8 + 3 * 17.5, largeur: 35 });
+  });
+  it("changement de page quand les lignes sont pleines, en conservant l'ordre", () => {
+    const r = poser(Array.from({ length: 200 }, (_, i) => m(`E${i}`)));   // 176 par page
+    expect(r.planches).toHaveLength(2); expect(r.planches[0]).toHaveLength(176); expect(r.planches[1]).toHaveLength(24);
+    expect(r.planches[1][0]).toMatchObject({ x: 8, y: 8 });
+  });
+  it("modulesValide borne de 1 à 6", () => { expect([0, -2, NaN, "x", 1.4, 2, 9].map(modulesValide)).toEqual([1, 1, 1, 1, 1, 2, 6]); });
+});
+
+describe("import d'un tableau : largeur en modules et rangées", () => {
+  const b = (o: Record<string, unknown>) => ({ id: 1, label: "", circuit: "lumiere", amperes: 10, type: "1P", pieces: [], ...o });
+  it("1P = 1 module, 2P / différentiel = 2 modules, rangée d'origine mémorisée", () => {
+    const rows = [
+      { id: 1, name: "R1", slots: [b({ type: "diff-A", amperes: 40, label: "ID A" }), b({ label: "Salon" }), b({ type: "2P", label: "Four", amperes: 20 })] },
+      { id: 2, name: "R2", slots: [b({ label: "Cave" })] },
+    ] as unknown as BreakerRow[];
+    const e = etiquettesDepuisRangees(rows);
+    expect(e.map(x => [x.texte, x.modules, x.rangee])).toEqual([["ID A", 2, 0], ["Salon", 1, 0], ["Four", 2, 0], ["Cave", 1, 1]]);
+  });
+  it("posé sur la planche : 8 rangées de disjoncteurs = 8 lignes de carrés côte à côte", () => {
+    const rows = Array.from({ length: 8 }, (_, r) => ({ id: r, name: `R${r}`, slots: [b({ type: "diff-A", amperes: 40 }), ...Array.from({ length: 8 }, (_, k) => b({ label: `C${r}-${k}` }))] })) as unknown as BreakerRow[];
+    const cases = composerPlanches(etiquettesDepuisRangees(rows), { ...FORMATS[0], paysage: true }, 0, { ligneParRangee: true });
+    if ("erreur" in cases) throw new Error(cases.erreur);
+    expect(cases.planches).toHaveLength(1);
+    expect(new Set(cases.planches[0].map(c => c.y)).size).toBe(8);                 // une ligne par rangée
+    expect(cases.planches[0].every(c => c.hauteur === 17.5 && (c.largeur === 17.5 || c.largeur === 35))).toBe(true);   // jamais de bandeau
+  });
+});
+
+describe("brouillon : modules et rangée", () => {
+  it("conservés ; valeurs piégées ignorées ; 1 module n'est pas stocké", () => {
+    const y = lireBrouillon(JSON.stringify({ v: 1, etiquettes: [{ texte: "A", modules: 2, rangee: 3 }, { texte: "B", modules: 1 }, { texte: "C", modules: "x", rangee: -1 }, { texte: "D", modules: 99, rangee: 1.5 }] }));
+    expect(y.etiquettes.map(e => e.modules)).toEqual([2, undefined, undefined, 6]);
+    expect(y.etiquettes.map(e => e.rangee)).toEqual([3, undefined, undefined, undefined]);
+    expect(y.paysage).toBe(false); expect(y.ligneParRangee).toBe(true);
   });
 });

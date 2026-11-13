@@ -9,8 +9,8 @@ import { lireStockage, ecrireStockage } from "@/lib/safe-storage";
 import { rowsTableauProjet } from "@/lib/projets";
 import { genererPdfEtiquettes } from "@/lib/pdf-etiquettes";
 import {
-  CLE_BROUILLON_ETIQUETTES, FORMATS, ID_PERSONNALISE, LIMITES, PAGE_A4, PT_EN_MM,
-  brouillonVide, composerEtiquette, composerPlanches, estImprimable, etiquettesDepuisRangees, formatChoisi, grille, lireBrouillon, nouvelleEtiquette,
+  CLE_BROUILLON_ETIQUETTES, FORMATS, ID_PERSONNALISE, LIMITES, PT_EN_MM,
+  brouillonVide, composerEtiquette, composerPlanches, estImprimable, etiquettesDepuisRangees, formatChoisi, grille, lireBrouillon, modulesMaxParRangee, modulesValide, nouvelleEtiquette, pageDe,
   pictoDeEtiquette, quantiteValide, serialiserBrouillon, type BrouillonEtiquettes, type Etiquette, type FormatPlanche, type Mesure,
 } from "@/lib/etiquettes";
 import { BOITE_PICTO, LISTE_PICTOS, PICTOS, PICTO_AUCUN, TRAIT_PICTO, detecterPicto, type Primitive } from "@/lib/pictogrammes";
@@ -92,17 +92,16 @@ export default function EtiquettesPage() {
 
   const format = useMemo(() => formatChoisi(b), [b]);
   const g = useMemo(() => grille(format), [format]);
-  const resultat = useMemo(() => composerPlanches(b.etiquettes, format, b.debut), [b.etiquettes, format, b.debut]);
+  const resultat = useMemo(() => composerPlanches(b.etiquettes, format, b.debut, { ligneParRangee: b.ligneParRangee }), [b.etiquettes, format, b.debut, b.ligneParRangee]);
+  const dimPage = pageDe(format);
   const mesure = useMemo(() => creerMesureApercu(), []);
   const planches = "erreur" in resultat ? [] : resultat.planches;
   const page = Math.min(pageApercu, Math.max(0, planches.length - 1));
   const nbAImprimer = b.etiquettes.filter(estImprimable).length;
 
-  const miseEnPage = useMemo(() => {
-    const m = new Map<string, ReturnType<typeof composerEtiquette>>();
-    for (const e of b.etiquettes) m.set(e.id, composerEtiquette(e.texte, e.ligne2, format.largeur, format.hauteur, pictoDeEtiquette(e, b.pictos), mesure));
-    return m;
-  }, [b.etiquettes, b.pictos, format.largeur, format.hauteur, mesure]);
+  // Mise en page de chaque case de la page affichée (la largeur varie avec le nombre de modules de l'étiquette).
+  const mises = useMemo(() => (planches[page] ?? []).map(c => (c.etiquette ? composerEtiquette(c.etiquette.texte, c.etiquette.ligne2, c.largeur, c.hauteur, pictoDeEtiquette(c.etiquette, b.pictos), mesure) : null)),
+    [planches, page, b.pictos, mesure]);
   // Le pictogramme n'est omis que si l'étiquette est vraiment trop basse (moins de ~8 mm de haut).
   const pictoPossible = useMemo(() => !!g && composerEtiquette("x", "", format.largeur, format.hauteur, "four", mesure).picto !== null, [g, format.largeur, format.hauteur, mesure]);
 
@@ -142,8 +141,12 @@ export default function EtiquettesPage() {
 
   function importer() {
     if (aImporter.length === 0) return;
-    ajouterPlusieurs(aImporter);
-    setMessage({ type: "info", texte: `${aImporter.length} étiquette${aImporter.length > 1 ? "s" : ""} ajoutée${aImporter.length > 1 ? "s" : ""} depuis le tableau : corrige les textes si besoin.` });
+    const fusion = [...b.etiquettes.filter(e => e.texte.trim() !== "" || e.ligne2.trim() !== ""), ...aImporter];
+    const colsPortrait = grille({ ...format, paysage: false })?.colonnes ?? 0, colsPaysage = grille({ ...format, paysage: true })?.colonnes ?? 0;
+    const largeurRangee = modulesMaxParRangee(fusion);
+    const passerPaysage = !b.paysage && largeurRangee > colsPortrait && largeurRangee <= colsPaysage;
+    maj({ etiquettes: fusion, debut: 0, ...(passerPaysage ? { paysage: true } : {}) });
+    setMessage({ type: "info", texte: `${aImporter.length} étiquette${aImporter.length > 1 ? "s" : ""} ajoutée${aImporter.length > 1 ? "s" : ""} depuis le tableau, une rangée par ligne${passerPaysage ? ` — page passée en paysage pour que ta plus grande rangée (${largeurRangee} modules) tienne sur une ligne` : ""}. Corrige les textes si besoin.` });
     setImportOuvert(false);
   }
 
@@ -180,7 +183,7 @@ export default function EtiquettesPage() {
 
           <ul className="space-y-2">
             {b.etiquettes.map((e, i) => (
-              <li key={e.id} className="rounded-lg border border-ink-200 p-2 grid gap-2 md:grid-cols-[1fr_9rem_5rem_auto] md:items-center">
+              <li key={e.id} className="rounded-lg border border-ink-200 p-2 grid gap-2 md:grid-cols-[1fr_9rem_5rem_6rem_auto] md:items-center">
                 <input className="input !py-2 text-sm" aria-label={`Texte de l'étiquette ${i + 1}`} placeholder="Texte (ex. Lave-linge)" maxLength={LIMITES.texte}
                   value={e.texte} onChange={ev => majEtiquette(e.id, { texte: ev.target.value })} />
                 <input className="input !py-2 text-sm" aria-label={`Deuxième ligne de l'étiquette ${i + 1}`} placeholder="2ᵉ ligne (ex. 20 A)" maxLength={LIMITES.ligne2}
@@ -192,11 +195,18 @@ export default function EtiquettesPage() {
                     onChange={ev => majEtiquette(e.id, { quantite: ev.target.value === "" ? 0 : Math.min(LIMITES.quantiteMax, Math.max(0, Math.round(Number(ev.target.value)) || 0)) })}
                     onBlur={() => majEtiquette(e.id, { quantite: quantiteValide(e.quantite) })} />
                 </label>
+                <label className="flex items-center gap-1 text-xs text-ink-500" title="Largeur de l'étiquette en modules : 1 = disjoncteur, 2 = différentiel ou bipolaire (2 carrés côte à côte)">
+                  <span>Mod.</span>
+                  <select className="input !py-2 text-sm w-full" aria-label={`Largeur en modules de l'étiquette ${i + 1}`} value={modulesValide(e.modules)}
+                    onChange={ev => majEtiquette(e.id, { modules: modulesValide(ev.target.value) })}>
+                    {Array.from({ length: LIMITES.modulesMax }, (_, k) => k + 1).map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </label>
                 <div className="flex gap-1 justify-end">
                   <button type="button" className="btn-ghost !px-2 !py-1 text-ink-500" title="Dupliquer" aria-label={`Dupliquer l'étiquette ${i + 1}`} onClick={() => dupliquer(e)}><Copy size={15} /></button>
                   <button type="button" className="btn-ghost !px-2 !py-1 text-red-600" title="Supprimer" aria-label={`Supprimer l'étiquette ${i + 1}`} onClick={() => supprimer(e.id)}><Trash2 size={15} /></button>
                 </div>
-                <div className="md:col-span-4 flex items-center gap-2 text-xs text-ink-500">
+                <div className="md:col-span-5 flex items-center gap-2 text-xs text-ink-500">
                   <PictoMini id={pictoDeEtiquette(e, b.pictos)} />
                   <label className="flex items-center gap-2 min-w-0">
                     <span className="shrink-0">Pictogramme</span>
@@ -250,11 +260,18 @@ export default function EtiquettesPage() {
         {/* ── Planche ── */}
         <div className="card card-inner space-y-3">
           <h2 className="font-semibold text-ink-800">Format de la planche (A4)</h2>
+          <p className="text-xs text-ink-500">Chaque module de rail fait 17,5 mm de large, chez tous les constructeurs : une étiquette est un carré par module, posée côte à côte, un différentiel ou un bipolaire fait 2 carrés.</p>
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="block"><span className="label">Taille des étiquettes</span>
+            <label className="block"><span className="label">Taille d&apos;un carré (1 module)</span>
               <select className="input" value={b.formatId} onChange={ev => maj({ formatId: ev.target.value, debut: 0 })}>
                 {FORMATS.map(f => <option key={f.id} value={f.id}>{f.nom}</option>)}
                 <option value={ID_PERSONNALISE}>Personnalisé…</option>
+              </select>
+            </label>
+            <label className="block"><span className="label">Orientation de la page</span>
+              <select className="input" value={b.paysage ? "paysage" : "portrait"} onChange={ev => maj({ paysage: ev.target.value === "paysage", debut: 0 })}>
+                <option value="portrait">Portrait</option>
+                <option value="paysage">Paysage (rangées plus longues)</option>
               </select>
             </label>
             <label className="block"><span className="label">Commencer à la case n°</span>
@@ -266,13 +283,18 @@ export default function EtiquettesPage() {
 
           {b.formatId === ID_PERSONNALISE && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {([["largeur", "Largeur (mm)"], ["hauteur", "Hauteur (mm)"], ["marge", "Marge page (mm)"], ["ecart", "Écart (mm)"]] as const).map(([k, nom]) => (
+              {([["largeur", "Largeur d'un module (mm)"], ["hauteur", "Hauteur (mm)"], ["marge", "Marge page (mm)"], ["ecart", "Écart (mm)"]] as const).map(([k, nom]) => (
                 <label key={k} className="block"><span className="label">{nom}</span>
                   <input className="input" type="number" inputMode="decimal" step="0.5" min={0} value={affiche(b.perso[k])} onChange={ev => majPerso({ [k]: num(ev.target.value) })} />
                 </label>
               ))}
             </div>
           )}
+
+          <label className="flex items-center gap-2 text-sm text-ink-700">
+            <input type="checkbox" checked={b.ligneParRangee} onChange={ev => maj({ ligneParRangee: ev.target.checked })} /> Une rangée du tableau par ligne
+            <span className="text-[11px] text-ink-400">(étiquettes importées d&apos;un tableau)</span>
+          </label>
 
           <label className="flex items-center gap-2 text-sm text-ink-700">
             <input type="checkbox" checked={b.guides} onChange={ev => maj({ guides: ev.target.checked })} /> Traits de découpe autour des étiquettes
@@ -287,7 +309,7 @@ export default function EtiquettesPage() {
 
           {formatInvalide
             ? <p className="text-sm text-red-700" role="alert">{"erreur" in resultat ? resultat.erreur : "Format invalide."}</p>
-            : <p className="text-xs text-ink-500">{g.colonnes} × {g.lignes} = {g.parPage} étiquettes par page{b.debut >= g.parPage ? ` — la case ${b.debut + 1} n'existe pas, elle sera ramenée à ${g.parPage}` : ""}.</p>}
+            : <p className="text-xs text-ink-500">{g.colonnes} modules par ligne × {g.lignes} lignes = {g.parPage} carrés par page{b.debut >= g.parPage ? ` — la case ${b.debut + 1} n'existe pas, elle sera ramenée à ${g.parPage}` : ""}.</p>}
         </div>
 
         {/* ── Aperçu + PDF ── */}
@@ -306,26 +328,26 @@ export default function EtiquettesPage() {
           {"erreur" in resultat ? (
             <p className="text-sm text-ink-500" role="status">{resultat.erreur}</p>
           ) : (
-            <svg viewBox={`0 0 ${PAGE_A4.largeur} ${PAGE_A4.hauteur}`} className="w-full max-w-sm mx-auto border border-ink-200 bg-white rounded shadow-sm" role="img"
+            <svg viewBox={`0 0 ${dimPage.largeur} ${dimPage.hauteur}`} className={`w-full ${b.paysage ? "max-w-xl" : "max-w-sm"} mx-auto border border-ink-200 bg-white rounded shadow-sm`} role="img"
               aria-label={`Aperçu de la page ${page + 1} : ${planches[page]?.filter(c => c.etiquette).length ?? 0} étiquettes`}>
-              {(planches[page] ?? []).map(c => (
-                <g key={c.index}>
-                  <rect x={c.x} y={c.y} width={format.largeur} height={format.hauteur}
-                    fill={c.etiquette ? "none" : "#f3f4f6"} stroke={c.etiquette ? (b.guides ? "#aaa" : "#e5e7eb") : "#e5e7eb"} strokeWidth={c.etiquette && b.guides ? 0.15 : 0.1} strokeDasharray={c.etiquette ? undefined : "1 1"} />
-                  {c.etiquette && miseEnPage.get(c.etiquette.id)?.picto && (() => {
-                    const pi = miseEnPage.get(c.etiquette!.id)!.picto!;
-                    return (
-                      <g transform={`translate(${c.x + pi.x} ${c.y + pi.y}) scale(${pi.taille / BOITE_PICTO})`} fill="none" stroke="#000" strokeWidth={Math.max(TRAIT_PICTO, 0.2 / (pi.taille / BOITE_PICTO))} strokeLinecap="round" strokeLinejoin="round">
-                        <Prims prims={PICTOS[pi.id].prims} />
+              {(planches[page] ?? []).map((c, k) => {
+                const mise = mises[k];
+                return (
+                  <g key={c.index}>
+                    <rect x={c.x} y={c.y} width={c.largeur} height={c.hauteur}
+                      fill={c.etiquette ? "none" : "#f3f4f6"} stroke={c.etiquette ? (b.guides ? "#aaa" : "#e5e7eb") : "#e5e7eb"} strokeWidth={c.etiquette && b.guides ? 0.15 : 0.1} strokeDasharray={c.etiquette ? undefined : "1 1"} />
+                    {mise?.picto && (
+                      <g transform={`translate(${c.x + mise.picto.x} ${c.y + mise.picto.y}) scale(${mise.picto.taille / BOITE_PICTO})`} fill="none" stroke="#000" strokeWidth={Math.max(TRAIT_PICTO, 0.2 / (mise.picto.taille / BOITE_PICTO))} strokeLinecap="round" strokeLinejoin="round">
+                        <Prims prims={PICTOS[mise.picto.id].prims} />
                       </g>
-                    );
-                  })()}
-                  {c.etiquette && (miseEnPage.get(c.etiquette.id)?.lignes ?? []).map((l, i) => (
-                    <text key={i} x={c.x + l.x} y={c.y + l.y} textAnchor="middle" fontSize={l.pt * PT_EN_MM} fontWeight={l.gras ? 700 : 400}
-                      fontFamily="Helvetica, Arial, sans-serif" fill="#000">{l.texte}</text>
-                  ))}
-                </g>
-              ))}
+                    )}
+                    {(mise?.lignes ?? []).map((l, i) => (
+                      <text key={i} x={c.x + l.x} y={c.y + l.y} textAnchor="middle" fontSize={l.pt * PT_EN_MM} fontWeight={l.gras ? 700 : 400}
+                        fontFamily="Helvetica, Arial, sans-serif" fill="#000">{l.texte}</text>
+                    ))}
+                  </g>
+                );
+              })}
             </svg>
           )}
 

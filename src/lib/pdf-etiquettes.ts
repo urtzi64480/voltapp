@@ -1,7 +1,7 @@
 // src/lib/pdf-etiquettes.ts — PDF A4 des planches d'étiquettes (jsPDF, millimètres, échelle 100 % : imprimer « taille réelle »).
 
 import type { jsPDF } from "jspdf";
-import { PAGE_A4, composerEtiquette, pictoDeEtiquette, type FormatPlanche, type Mesure, type Planche } from "./etiquettes";
+import { composerEtiquette, pageDe, pictoDeEtiquette, type FormatPlanche, type Mesure, type Planche } from "./etiquettes";
 import { BOITE_PICTO, PICTOS, TRAIT_PICTO } from "./pictogrammes";
 
 export interface OptionsPdfEtiquettes { guides: boolean; pictos: boolean }
@@ -41,7 +41,9 @@ export function dessinerPicto(doc: jsPDF, id: string, x: number, y: number, tail
 /** Construit le PDF d'une ou plusieurs planches. Les cases vides (planche entamée) ne sont ni imprimées ni encadrées. */
 export async function genererPdfEtiquettes(planches: Planche[], f: FormatPlanche, opt: OptionsPdfEtiquettes): Promise<{ blob: Blob; nom: string }> {
   const { default: JsPdf } = await import("jspdf");
-  const doc = new JsPdf({ unit: "mm", format: [PAGE_A4.largeur, PAGE_A4.hauteur], orientation: "portrait", compress: true });
+  const page = pageDe(f);
+  const orientation = f.paysage ? "landscape" : "portrait";
+  const doc = new JsPdf({ unit: "mm", format: [Math.min(page.largeur, page.hauteur), Math.max(page.largeur, page.hauteur)], orientation, compress: true });
   doc.setProperties({ title: "Étiquettes tableau électrique", creator: "VoltApp" });
 
   const mesure: Mesure = (texte, pt, gras) => {
@@ -51,17 +53,17 @@ export async function genererPdfEtiquettes(planches: Planche[], f: FormatPlanche
   };
 
   planches.forEach((planche, p) => {
-    if (p > 0) doc.addPage([PAGE_A4.largeur, PAGE_A4.hauteur], "portrait");
+    if (p > 0) doc.addPage([Math.min(page.largeur, page.hauteur), Math.max(page.largeur, page.hauteur)], orientation);
     for (const c of planche) {
       if (!c.etiquette) continue;
       if (opt.guides) {
         doc.setDrawColor(170, 170, 170);
         doc.setLineWidth(0.15);
         doc.setLineCap("butt");
-        doc.rect(c.x, c.y, f.largeur, f.hauteur);
+        doc.rect(c.x, c.y, c.largeur, c.hauteur);
       }
       const e = c.etiquette;
-      const mise = composerEtiquette(e.texte, e.ligne2, f.largeur, f.hauteur, pictoDeEtiquette(e, opt.pictos), mesure);
+      const mise = composerEtiquette(e.texte, e.ligne2, c.largeur, c.hauteur, pictoDeEtiquette(e, opt.pictos), mesure);
       if (mise.picto) dessinerPicto(doc, mise.picto.id, c.x + mise.picto.x, c.y + mise.picto.y, mise.picto.taille);
       doc.setTextColor(0, 0, 0);
       for (const l of mise.lignes) {
