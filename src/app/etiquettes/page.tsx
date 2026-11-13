@@ -9,9 +9,10 @@ import { lireStockage, ecrireStockage } from "@/lib/safe-storage";
 import { rowsTableauProjet } from "@/lib/projets";
 import { genererPdfEtiquettes } from "@/lib/pdf-etiquettes";
 import {
-  CLE_BROUILLON_ETIQUETTES, FORMAT_STANDARD, LIMITES, PT_EN_MM,
-  brouillonVide, composerEtiquette, composerPlanches, estImprimable, etiquettesDepuisRangees, formatChoisi, grille, lireBrouillon, maxParRangee, nomsRaccourcis,
-  nouvelleEtiquette, nettoyerTexte, pageDe, pictoDeEtiquette, quantiteValide, serialiserBrouillon, type BrouillonEtiquettes, type Etiquette, type Mesure,
+  CLE_BROUILLON_ETIQUETTES, DIMS_STANDARD, LIMITES, NOM_GENRE, PT_EN_MM,
+  brouillonVide, colonnesMini, composerEtiquette, composerGroupes, composerPicto, estImprimable, etiquettesDepuisRangees, genresDuMode, lireBrouillon, maxParRangee, nomsRaccourcis,
+  nouvelleEtiquette, pageDe, pictoDeEtiquette, quantiteValide, serialiserBrouillon,
+  type BrouillonEtiquettes, type DimsPlanche, type Etiquette, type GenreEtiquette, type Mesure, type ModeEtiquettes,
 } from "@/lib/etiquettes";
 import { BOITE_PICTO, LISTE_PICTOS, PICTOS, PICTO_AUCUN, TRAIT_PICTO, detecterPicto, type Primitive } from "@/lib/pictogrammes";
 
@@ -87,18 +88,23 @@ export default function EtiquettesPage() {
   useEffect(() => { setB(lireBrouillon(lireStockage("local", CLE_BROUILLON_ETIQUETTES))); setCharge(true); }, []);
   useEffect(() => { if (charge) ecrireStockage("local", CLE_BROUILLON_ETIQUETTES, serialiserBrouillon(b)); }, [b, charge]);
 
-  const format = useMemo(() => formatChoisi(b), [b]);
-  const g = useMemo(() => grille(format), [format]);
-  const resultat = useMemo(() => composerPlanches(b.etiquettes, format, b.debut, { ligneParRangee: b.ligneParRangee }), [b.etiquettes, format, b.debut, b.ligneParRangee]);
-  const dimPage = pageDe(format);
+  const resultat = useMemo(() => composerGroupes(b.etiquettes, { mode: b.mode, dims: b.dims, paysage: b.paysage, debut: b.debut, ligneParRangee: b.ligneParRangee }),
+    [b.etiquettes, b.mode, b.dims, b.paysage, b.debut, b.ligneParRangee]);
+  const dimPage = pageDe({ paysage: b.paysage });
   const mesure = useMemo(() => creerMesureApercu(), []);
-  const planches = "erreur" in resultat ? [] : resultat.planches;
-  const page = Math.min(pageApercu, Math.max(0, planches.length - 1));
+  // Toutes les pages à l'écran, planche des pictogrammes puis planche des textes.
+  const pages = useMemo(() => ("erreur" in resultat ? [] : resultat.groupes.flatMap(gr => gr.planches.map(planche => ({ genre: gr.genre, planche })))), [resultat]);
+  const page = Math.min(pageApercu, Math.max(0, pages.length - 1));
+  const pageCourante = pages[page] ?? null;
   const nbAImprimer = b.etiquettes.filter(estImprimable).length;
+  const total = "erreur" in resultat ? 0 : resultat.groupes.reduce((s, gr) => s + gr.total, 0);
 
-  // Mise en page de chaque case de la page affichée.
-  const mises = useMemo(() => (planches[page] ?? []).map(c => (c.etiquette ? composerEtiquette(c.etiquette.texte, c.etiquette.ligne2, c.largeur, c.hauteur, pictoDeEtiquette(c.etiquette, b.pictos), mesure) : null)),
-    [planches, page, b.pictos, mesure]);
+  // Mise en page de chaque case de la page affichée : pictogramme seul, ou texte seul.
+  const mises = useMemo(() => (pageCourante?.planche ?? []).map(c => {
+    if (!c.etiquette) return null;
+    if (pageCourante?.genre === "picto") return { picto: composerPicto(c.largeur, c.hauteur, pictoDeEtiquette(c.etiquette, true)), lignes: [] };
+    return composerEtiquette(c.etiquette.texte, c.etiquette.ligne2, c.largeur, c.hauteur, null, mesure);
+  }), [pageCourante, mesure]);
 
   const maj = (patch: Partial<BrouillonEtiquettes>) => { setMessage(null); setB(x => ({ ...x, ...patch })); };
   const majEtiquette = (id: string, patch: Partial<Etiquette>) => maj({ etiquettes: b.etiquettes.map(e => (e.id === id ? { ...e, ...patch } : e)) });
@@ -136,7 +142,7 @@ export default function EtiquettesPage() {
   function importer() {
     if (aImporter.length === 0) return;
     const fusion = [...b.etiquettes.filter(e => e.texte.trim() !== "" || e.ligne2.trim() !== ""), ...aImporter];
-    const colsPortrait = grille({ ...FORMAT_STANDARD, paysage: false })?.colonnes ?? 0, colsPaysage = grille({ ...FORMAT_STANDARD, paysage: true })?.colonnes ?? 0;
+    const colsPortrait = colonnesMini(b.mode, b.dims, false), colsPaysage = colonnesMini(b.mode, b.dims, true);
     const plusLongue = maxParRangee(fusion);
     const passerPaysage = !b.paysage && plusLongue > colsPortrait && plusLongue <= colsPaysage;
     const raccourcis = projet ? nomsRaccourcis(rowsTableauProjet(projet)) : 0;
@@ -150,16 +156,19 @@ export default function EtiquettesPage() {
     if ("erreur" in resultat) { setMessage({ type: "erreur", texte: resultat.erreur }); return; }
     setOccupe(true);
     try {
-      const pdf = await genererPdfEtiquettes(resultat.planches, format, { guides: b.guides, pictos: b.pictos });
+      const pdf = await genererPdfEtiquettes(resultat.groupes, { guides: b.guides });
       const url = URL.createObjectURL(pdf.blob);
       const a = document.createElement("a"); a.href = url; a.download = pdf.nom; document.body.appendChild(a); a.click(); a.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 4000);
-      setMessage({ type: "info", texte: `PDF prêt : ${resultat.total} étiquette${resultat.total > 1 ? "s" : ""} sur ${resultat.planches.length} page${resultat.planches.length > 1 ? "s" : ""}. Imprime à 100 % (taille réelle), sans « ajuster à la page ».` });
+      setMessage({ type: "info", texte: `PDF prêt : ${total} étiquette${total > 1 ? "s" : ""} sur ${pages.length} page${pages.length > 1 ? "s" : ""}. Imprime à 100 % (taille réelle), sans « ajuster à la page ».` });
     } catch (e) { setMessage({ type: "erreur", texte: `PDF impossible : ${e instanceof Error ? e.message : "erreur inconnue"}` }); }
     finally { setOccupe(false); }
   }
 
-  const formatInvalide = g === null;
+  const formatInvalide = "erreur" in resultat && b.etiquettes.some(estImprimable);
+  const genres = genresDuMode(b.mode);
+  const majDims = (genre: GenreEtiquette, patch: Partial<DimsPlanche>) => maj({ dims: { ...b.dims, [genre]: { ...b.dims[genre], ...patch } }, debut: 0 });
+  const sansPicto = "erreur" in resultat ? 0 : resultat.sansPicto;
 
   return (
     <Shell>
@@ -173,7 +182,7 @@ export default function EtiquettesPage() {
         <div className="card card-inner space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-semibold text-ink-800">Étiquettes à imprimer</h2>
-            <p className="text-xs text-ink-400" aria-live="polite">{"erreur" in resultat ? "" : `${resultat.total} au total`}</p>
+            <p className="text-xs text-ink-400" aria-live="polite">{"erreur" in resultat ? "" : `${total} au total`}</p>
           </div>
 
           <ul className="space-y-2">
@@ -195,10 +204,10 @@ export default function EtiquettesPage() {
                   <button type="button" className="btn-ghost !px-2 !py-1 text-red-600" title="Supprimer" aria-label={`Supprimer l'étiquette ${i + 1}`} onClick={() => supprimer(e.id)}><Trash2 size={15} /></button>
                 </div>
                 <div className="md:col-span-4 flex items-center gap-2 text-xs text-ink-500">
-                  <PictoMini id={pictoDeEtiquette(e, b.pictos)} />
+                  <PictoMini id={pictoDeEtiquette(e, true)} />
                   <label className="flex items-center gap-2 min-w-0">
                     <span className="shrink-0">Pictogramme</span>
-                    <select className="input !py-1 text-xs !w-auto min-w-0 max-w-full" aria-label={`Pictogramme de l'étiquette ${i + 1}`} disabled={!b.pictos}
+                    <select className="input !py-1 text-xs !w-auto min-w-0 max-w-full" aria-label={`Pictogramme de l'étiquette ${i + 1}`}
                       value={e.icone ?? "auto"} onChange={ev => majEtiquette(e.id, { icone: ev.target.value === "auto" ? undefined : ev.target.value })}>
                       <option value="auto">{(() => { const d = detecterPicto(e.texte); return d ? `Auto : ${PICTOS[d].nom}` : "Auto (aucun reconnu)"; })()}</option>
                       <option value={PICTO_AUCUN}>Aucun</option>
@@ -245,13 +254,57 @@ export default function EtiquettesPage() {
           )}
         </div>
 
-        {/* ── Planche ── */}
+        {/* ── Ce qu'on imprime ── */}
         <div className="card card-inner space-y-3">
-          <h2 className="font-semibold text-ink-800">Planche A4</h2>
+          <h2 className="font-semibold text-ink-800">Que veux-tu imprimer ?</h2>
+          <div className="grid gap-2 md:grid-cols-3" role="radiogroup" aria-label="Type d'étiquettes">
+            {([
+              ["picto", "Pictogrammes seuls", "Les petits autocollants à coller SUR chaque disjoncteur ou différentiel."],
+              ["texte", "Textes seuls", "Les repères (nom + calibre) à glisser AU-DESSUS des disjoncteurs, sur le tableau."],
+              ["les-deux", "Pictogrammes ET textes", "Deux planches dans le même PDF : celle des pictogrammes, puis celle des textes."],
+            ] as [ModeEtiquettes, string, string][]).map(([m, titre, aide]) => (
+              <label key={m} className={`rounded-lg border p-3 cursor-pointer text-sm space-y-1 ${b.mode === m ? "border-volt-500 bg-volt-50" : "border-ink-200"}`}>
+                <span className="flex items-center gap-2 font-medium text-ink-800">
+                  <input type="radio" name="mode-etiquettes" checked={b.mode === m} onChange={() => maj({ mode: m, debut: 0 })} /> {titre}
+                </span>
+                <span className="block text-[11px] text-ink-500">{aide}</span>
+              </label>
+            ))}
+          </div>
+          {sansPicto > 0 && <p className="text-xs text-amber-700">{sansPicto} étiquette{sansPicto > 1 ? "s" : ""} sans pictogramme : absente{sansPicto > 1 ? "s" : ""} de la planche des pictogrammes (choisis-en un dans la liste ci-dessus).</p>}
+        </div>
+
+        {/* ── Zones d'impression ── */}
+        <div className="card card-inner space-y-3">
+          <h2 className="font-semibold text-ink-800">Zone d&apos;impression (planche A4)</h2>
           <p className="text-xs text-ink-500">
-            Toutes les étiquettes ont la même dimension standard : <strong>{FORMAT_STANDARD.largeur} × {FORMAT_STANDARD.hauteur} mm</strong>, soit la largeur d&apos;un module de rail (17,5 mm),
-            une par disjoncteur ou interrupteur différentiel. Nom limité à {LIMITES.texte} caractères, 2ᵉ ligne à {LIMITES.ligne2}, pour que tout reste lisible.
+            Dimensions d&apos;une étiquette, marge de la page et écart entre étiquettes en mm. Les valeurs de départ suivent les repères Legrand (17,5 mm = un module) ;
+            mesure ton tableau et ajuste-les pour un vieux tableau ou une autre marque. Nom limité à {LIMITES.texte} caractères, 2ᵉ ligne à {LIMITES.ligne2}.
           </p>
+          {genres.map(genre => {
+            const d = b.dims[genre], std = DIMS_STANDARD[genre];
+            const gr = "erreur" in resultat ? null : resultat.groupes.find(x => x.grille && x.genre === genre)?.grille ?? null;
+            const champs: [keyof DimsPlanche, string][] = [["largeur", "Largeur"], ["hauteur", "Hauteur"], ["marge", "Marge page"], ["ecart", "Écart"]];
+            const estStd = champs.every(([k]) => d[k] === std[k]);
+            return (
+              <fieldset key={genre} className="rounded-lg border border-ink-200 p-3 space-y-2">
+                <legend className="px-1 text-sm font-medium text-ink-800">{NOM_GENRE[genre]}</legend>
+                <div className="grid gap-2 grid-cols-2 md:grid-cols-4">
+                  {champs.map(([k, nom]) => (
+                    <label key={k} className="block"><span className="label">{nom} (mm)</span>
+                      <input className="input" type="number" inputMode="decimal" step="0.1" min={0} aria-label={`${nom} — ${NOM_GENRE[genre]}`}
+                        value={Number.isFinite(d[k]) ? d[k] : ""} onChange={ev => majDims(genre, { [k]: ev.target.value === "" ? NaN : Number(ev.target.value) })} />
+                    </label>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-ink-500">
+                  <span>{gr ? `${gr.colonnes} par ligne × ${gr.lignes} lignes = ${gr.parPage} par page.` : "Dimensions à corriger : la planche ne tient pas sur la page."}</span>
+                  {!estStd && <button type="button" className="btn-ghost !py-0.5 !px-2 text-xs" onClick={() => maj({ dims: { ...b.dims, [genre]: { ...std } }, debut: 0 })}>Revenir au standard ({std.largeur} × {std.hauteur} mm)</button>}
+                </div>
+              </fieldset>
+            );
+          })}
+
           <div className="grid gap-3 md:grid-cols-2">
             <label className="block"><span className="label">Orientation de la page</span>
               <select className="input" value={b.paysage ? "paysage" : "portrait"} onChange={ev => maj({ paysage: ev.target.value === "paysage", debut: 0 })}>
@@ -260,9 +313,9 @@ export default function EtiquettesPage() {
               </select>
             </label>
             <label className="block"><span className="label">Commencer à la case n°</span>
-              <input className="input" type="number" inputMode="numeric" min={1} max={g?.parPage ?? 1} disabled={!g} value={b.debut + 1}
+              <input className="input" type="number" inputMode="numeric" min={1} value={b.debut + 1}
                 onChange={ev => maj({ debut: Math.max(0, (Math.round(Number(ev.target.value)) || 1) - 1) })} />
-              <span className="text-[11px] text-ink-400">Pour réutiliser une planche adhésive déjà entamée.</span>
+              <span className="text-[11px] text-ink-400">Pour réutiliser une planche adhésive déjà entamée (vaut pour chaque planche).</span>
             </label>
           </div>
 
@@ -276,25 +329,18 @@ export default function EtiquettesPage() {
             <span className="text-[11px] text-ink-400">(à décocher sur une planche adhésive prédécoupée)</span>
           </label>
 
-          <label className="flex items-center gap-2 text-sm text-ink-700">
-            <input type="checkbox" checked={b.pictos} onChange={ev => maj({ pictos: ev.target.checked })} /> Pictogrammes reconnus automatiquement
-            <span className="text-[11px] text-ink-400">(lave-linge, four, prise, VMC…)</span>
-          </label>
-
-          {formatInvalide
-            ? <p className="text-sm text-red-700" role="alert">{"erreur" in resultat ? resultat.erreur : "Format invalide."}</p>
-            : <p className="text-xs text-ink-500">{g.colonnes} étiquettes par ligne × {g.lignes} lignes = {g.parPage} par page{b.debut >= g.parPage ? ` — la case ${b.debut + 1} n'existe pas, elle sera ramenée à ${g.parPage}` : ""}.</p>}
+          {formatInvalide && <p className="text-sm text-red-700" role="alert">{"erreur" in resultat ? resultat.erreur : ""}</p>}
         </div>
 
         {/* ── Aperçu + PDF ── */}
         <div className="card card-inner space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-semibold text-ink-800">Aperçu</h2>
-            {planches.length > 1 && (
+            {pages.length > 1 && (
               <div className="flex items-center gap-2 text-xs text-ink-500">
                 <button type="button" className="btn-ghost !px-2 !py-1" disabled={page === 0} onClick={() => setPageApercu(page - 1)}>‹</button>
-                <span>Page {page + 1} / {planches.length}</span>
-                <button type="button" className="btn-ghost !px-2 !py-1" disabled={page >= planches.length - 1} onClick={() => setPageApercu(page + 1)}>›</button>
+                <span>Page {page + 1} / {pages.length}{pageCourante ? ` — ${pageCourante.genre === "picto" ? "pictogrammes" : "textes"}` : ""}</span>
+                <button type="button" className="btn-ghost !px-2 !py-1" disabled={page >= pages.length - 1} onClick={() => setPageApercu(page + 1)}>›</button>
               </div>
             )}
           </div>
@@ -303,8 +349,8 @@ export default function EtiquettesPage() {
             <p className="text-sm text-ink-500" role="status">{resultat.erreur}</p>
           ) : (
             <svg viewBox={`0 0 ${dimPage.largeur} ${dimPage.hauteur}`} className={`w-full ${b.paysage ? "max-w-xl" : "max-w-sm"} mx-auto border border-ink-200 bg-white rounded shadow-sm`} role="img"
-              aria-label={`Aperçu de la page ${page + 1} : ${planches[page]?.filter(c => c.etiquette).length ?? 0} étiquettes`}>
-              {(planches[page] ?? []).map((c, k) => {
+              aria-label={`Aperçu de la page ${page + 1} : ${pageCourante?.planche.filter(c => c.etiquette).length ?? 0} étiquettes`}>
+              {(pageCourante?.planche ?? []).map((c, k) => {
                 const mise = mises[k];
                 return (
                   <g key={c.index}>

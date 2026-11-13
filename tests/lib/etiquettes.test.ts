@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  CLE_BROUILLON_ETIQUETTES, FORMAT_STANDARD, LIMITES, composerPlanches, couperLignes, estImprimable, etiquettesDepuisRangees, exemplaires, formatChoisi,
+  CLE_BROUILLON_ETIQUETTES, DIMS_STANDARD, LIMITES, colonnesMini, composerGroupes, composerPicto, etiquettesDuGenre, formatDe, genresDuMode, modeValide, composerPlanches, couperLignes, estImprimable, etiquettesDepuisRangees, exemplaires,
   composerEtiquette, grille, lireBrouillon, maxParRangee, mettreEnPage, nomsRaccourcis, pageDe, nettoyerTexte, nouvelleEtiquette, quantiteValide, serialiserBrouillon, brouillonVide,
   type FormatPlanche, type Mesure,
 } from "@/lib/etiquettes";
+/** Carré de test : la mise en page générique (côte à côte, rangées, pages) ne dépend pas des zones standard. */
+const FORMAT_STANDARD: FormatPlanche = { id: "c", nom: "c", largeur: 17.5, hauteur: 17.5, marge: 8, ecart: 0 };
 import type { BreakerRow } from "@/lib/electrical-constants";
 
 // Police fictive : 0,5 em par caractère (Helvetica ≈ 0,5 à 0,55 em).
@@ -173,17 +175,22 @@ describe("brouillon", () => {
     const y0 = { ...brouillonVide(), etiquettes: [et("Four", 2, "20 A")], debut: 4, guides: false, paysage: true, ligneParRangee: false };
     const y = lireBrouillon(serialiserBrouillon(y0));
     expect(y.etiquettes[0]).toMatchObject({ texte: "Four", ligne2: "20 A", quantite: 2 }); expect(y).toMatchObject({ debut: 4, guides: false, paysage: true, ligneParRangee: false });
-    expect(formatChoisi(y)).toMatchObject({ id: "carre-17-5", largeur: 17.5, hauteur: 17.5, paysage: true });
+    expect(y).toMatchObject({ mode: "les-deux", dims: DIMS_STANDARD });
+  });
+  it("mode et zones personnalisées conservés ; valeurs hors bornes → standard de la sorte", () => {
+    const y0 = { ...brouillonVide(), mode: "picto" as const, dims: { picto: { largeur: 14, hauteur: 11, marge: 5, ecart: 1 }, texte: { largeur: 30, hauteur: 9.5, marge: 6, ecart: 0.5 } } };
+    expect(lireBrouillon(serialiserBrouillon(y0))).toMatchObject({ mode: "picto", dims: y0.dims });
+    const z = lireBrouillon(JSON.stringify({ v: 1, mode: "nimporte", dims: { picto: { largeur: -3, hauteur: "x", marge: 999, ecart: null }, texte: 5 } }));
+    expect(z.mode).toBe("les-deux"); expect(z.dims).toEqual(DIMS_STANDARD);
   });
   it("illisible, version inconnue ou champs invalides → valeurs par défaut", () => {
     for (const brut of [null, "", "{", "[]", '{"v":2}', "null"]) expect(lireBrouillon(brut).etiquettes).toHaveLength(1);
     const y = lireBrouillon(JSON.stringify({ v: 1, etiquettes: [null, { texte: 5, quantite: "zz" }, { texte: "OK", quantite: 9999 }], debut: -3 }));
     expect(y.debut).toBe(0); expect(y.etiquettes.map(e => e.quantite)).toEqual([1, LIMITES.quantiteMax]);
   });
-  it("un ancien brouillon (format personnalisé, anciennes dimensions, modules) ne change JAMAIS la dimension standard", () => {
-    const y = lireBrouillon(JSON.stringify({ v: 1, etiquettes: [{ texte: "A", modules: 3 }], formatId: "perso", perso: { largeur: 50, hauteur: 30, marge: 7, ecart: 2 } }));
-    expect(formatChoisi(y)).toMatchObject({ largeur: 17.5, hauteur: 17.5, marge: 8, ecart: 0 });
-    expect(y.etiquettes[0]).not.toHaveProperty("modules");
+  it("un ancien brouillon (formatId, perso, modules, pictos) est repris avec les zones standard", () => {
+    const y = lireBrouillon(JSON.stringify({ v: 1, etiquettes: [{ texte: "A", modules: 3 }], formatId: "perso", perso: { largeur: 50, hauteur: 30, marge: 7, ecart: 2 }, pictos: false }));
+    expect(y.dims).toEqual(DIMS_STANDARD); expect(y.etiquettes[0]).not.toHaveProperty("modules"); expect(y).not.toHaveProperty("pictos");
   });
   it("noms et 2e lignes d'un ancien brouillon ramenés aux limites", () => {
     const y = lireBrouillon(JSON.stringify({ v: 1, etiquettes: [{ texte: "Prises cuisine plan de travail et îlot", ligne2: "20 A - 30 mA - type A - différentiel" }] }));
@@ -244,33 +251,74 @@ describe("composerEtiquette (pictogramme + texte)", () => {
 });
 
 describe("brouillon : pictogrammes", () => {
-  it("choix par étiquette et réglage global conservés", () => {
-    const x = { ...brouillonVide(), etiquettes: [{ ...et("Four"), icone: "prise" }, { ...et("Cave"), icone: "aucune" }, et("Salon")], pictos: false };
+  it("choix par étiquette conservés", () => {
+    const x = { ...brouillonVide(), etiquettes: [{ ...et("Four"), icone: "prise" }, { ...et("Cave"), icone: "aucune" }, et("Salon")] };
     const y = lireBrouillon(serialiserBrouillon(x));
-    expect(y.etiquettes.map(e => e.icone)).toEqual(["prise", "aucune", undefined]); expect(y.pictos).toBe(false);
+    expect(y.etiquettes.map(e => e.icone)).toEqual(["prise", "aucune", undefined]);
   });
   it("identifiant inconnu ou piégé ignoré, pictogrammes actifs par défaut", () => {
     const y = lireBrouillon(JSON.stringify({ v: 1, etiquettes: [{ texte: "A", icone: "constructor" }, { texte: "B", icone: 12 }, { texte: "C", icone: "__proto__" }] }));
-    expect(y.etiquettes.map(e => e.icone)).toEqual([undefined, undefined, undefined]); expect(y.pictos).toBe(true);
+    expect(y.etiquettes.map(e => e.icone)).toEqual([undefined, undefined, undefined]);
   });
 });
 
-describe("une seule dimension standard", () => {
-  it("le format standard est un carré de 17,5 mm (largeur d'un module), sans écart, et le seul format", () => {
-    expect(FORMAT_STANDARD).toMatchObject({ largeur: 17.5, hauteur: 17.5, ecart: 0 });
-    expect(formatChoisi(brouillonVide())).toMatchObject({ largeur: 17.5, hauteur: 17.5, paysage: false });
-    expect(formatChoisi({ paysage: true })).toMatchObject({ largeur: 17.5, hauteur: 17.5, paysage: true });
+describe("deux sortes d'étiquettes, deux zones d'impression", () => {
+  const dims = DIMS_STANDARD;
+  it("zones standard : pictogramme 12,7 × 9,5 mm (fenêtre Legrand), texte 17,5 × 8 mm (un module, repère Logicab2)", () => {
+    expect(dims.picto).toMatchObject({ largeur: 12.7, hauteur: 9.5, ecart: 0 });
+    expect(dims.texte).toMatchObject({ largeur: 17.5, hauteur: 8, ecart: 0 });
+    expect(formatDe("texte", dims.texte, true)).toMatchObject({ id: "texte", largeur: 17.5, hauteur: 8, paysage: true });
   });
-  it("A4 portrait : 11 étiquettes par ligne ; paysage : 16", () => {
-    expect(grille(FORMAT_STANDARD)).toMatchObject({ colonnes: 11, lignes: 16, parPage: 176 });
-    expect(grille({ ...FORMAT_STANDARD, paysage: true })).toMatchObject({ colonnes: 16, lignes: 11, parPage: 176 });
-    expect(pageDe({ paysage: true })).toEqual({ largeur: 297, hauteur: 210 });
-    expect(pageDe({})).toEqual({ largeur: 210, hauteur: 297 });
+  it("modes : pictos seuls, textes seuls ou les deux ; valeur inconnue refusée", () => {
+    expect(genresDuMode("picto")).toEqual(["picto"]); expect(genresDuMode("texte")).toEqual(["texte"]); expect(genresDuMode("les-deux")).toEqual(["picto", "texte"]);
+    expect(["picto", "texte", "les-deux"].every(modeValide)).toBe(true); expect(modeValide("tout")).toBe(false); expect(modeValide(undefined)).toBe(false);
+  });
+  it("colonnes par ligne : A4 portrait 15 (12,7 mm) et 11 (17,5 mm) ; paysage 20 et 16 ; en mode « les deux » on prend le plus petit", () => {
+    expect(grille(formatDe("picto", dims.picto, false))?.colonnes).toBe(15);
+    expect(grille(formatDe("texte", dims.texte, false))?.colonnes).toBe(11);
+    expect(colonnesMini("les-deux", dims, false)).toBe(11); expect(colonnesMini("picto", dims, false)).toBe(15); expect(colonnesMini("les-deux", dims, true)).toBe(16);
+    expect(colonnesMini("texte", { ...dims, texte: { ...dims.texte, largeur: 500 } }, false)).toBe(0);
   });
   it("plafonds de caractères : 16 pour le nom, 14 pour la 2e ligne", () => {
     expect([LIMITES.texte, LIMITES.ligne2]).toEqual([16, 14]);
     expect(nettoyerTexte("Prises cuisine plan de travail")).toHaveLength(16);
     expect(nettoyerTexte("125\u00A0A - 30\u00A0mA", LIMITES.ligne2)).toBe("125\u00A0A - 30\u00A0mA");
+  });
+  const liste = [{ ...et("Lave-linge"), rangee: 0 }, { ...et("Four"), rangee: 0 }, { ...et("Salon"), rangee: 1 }, { ...et("Cave"), icone: "aucune", rangee: 1 }];
+  const o = { mode: "les-deux" as const, dims, paysage: false, debut: 0, ligneParRangee: true };
+  it("pictos : seules les étiquettes avec un pictogramme (reconnu ou choisi) ; textes : toutes", () => {
+    expect(etiquettesDuGenre(liste, "picto").map(e => e.texte)).toEqual(["Lave-linge", "Four"]);
+    expect(etiquettesDuGenre(liste, "texte")).toHaveLength(4);
+  });
+  it("« les deux » : une planche de pictogrammes puis une planche de textes, aux dimensions de chaque sorte", () => {
+    const r = composerGroupes(liste, o); if ("erreur" in r) throw new Error(r.erreur);
+    expect(r.groupes.map(g => g.genre)).toEqual(["picto", "texte"]);
+    expect(r.groupes[0].total).toBe(2); expect(r.groupes[1].total).toBe(4); expect(r.sansPicto).toBe(2);
+    expect(r.groupes[0].planches[0].every(c => c.largeur === 12.7 && c.hauteur === 9.5)).toBe(true);
+    expect(r.groupes[1].planches[0].every(c => c.largeur === 17.5 && c.hauteur === 8)).toBe(true);
+  });
+  it("un seul mode : un seul groupe ; « textes seuls » ne compte aucune étiquette sans picto", () => {
+    for (const mode of ["picto", "texte"] as const) { const r = composerGroupes(liste, { ...o, mode }); if ("erreur" in r) throw new Error(r.erreur); expect(r.groupes).toHaveLength(1); expect(r.groupes[0].genre).toBe(mode); }
+    const t = composerGroupes(liste, { ...o, mode: "texte" }); if ("erreur" in t) throw new Error(t.erreur); expect(t.sansPicto).toBe(0);
+  });
+  it("zone personnalisée (vieux tableau) utilisée telle quelle", () => {
+    const perso = { ...dims, texte: { largeur: 24, hauteur: 12, marge: 5, ecart: 1 } };
+    const r = composerGroupes(liste, { ...o, mode: "texte", dims: perso }); if ("erreur" in r) throw new Error(r.erreur);
+    expect(r.groupes[0].planches[0][1]).toMatchObject({ x: 5 + 25, y: 5, largeur: 24, hauteur: 12 });
+  });
+  it("erreurs lisibles : aucun pictogramme, dimensions invalides (nommant la planche), rien à imprimer", () => {
+    expect((composerGroupes([et("Salon")], { ...o, mode: "picto" }) as { erreur: string }).erreur).toMatch(/pictogramme/);
+    expect((composerGroupes(liste, { ...o, dims: { ...dims, texte: { ...dims.texte, largeur: NaN } } }) as { erreur: string }).erreur).toMatch(/Textes/);
+    expect((composerGroupes([et("")], o) as { erreur: string }).erreur).toMatch(/Aucune étiquette/);
+  });
+  it("la case de début s'applique à chaque planche", () => {
+    const r = composerGroupes(liste, { ...o, debut: 2 }); if ("erreur" in r) throw new Error(r.erreur);
+    for (const g of r.groupes) expect(g.planches[0].slice(0, 2).every(c => c.etiquette === null)).toBe(true);
+  });
+  it("composerPicto : centré, le plus grand possible ; null si inconnu ou trop petit", () => {
+    const p = composerPicto(12.7, 9.5, "lave_linge")!;
+    expect(p.taille).toBeCloseTo(9.5 - 2 * 0.95, 5); expect(p.x).toBeCloseTo((12.7 - p.taille) / 2, 5); expect(p.y).toBeCloseTo((9.5 - p.taille) / 2, 5);
+    expect(composerPicto(12.7, 9.5, null)).toBeNull(); expect(composerPicto(12.7, 9.5, "constructor")).toBeNull(); expect(composerPicto(3, 3, "four")).toBeNull();
   });
 });
 
@@ -350,19 +398,18 @@ describe("import d'un tableau : un appareil = une étiquette de même taille", (
   });
 });
 
-describe("vraie police (jsPDF) : le pire cas de texte tient toujours dans le carré standard", () => {
-  it("16 caractères + 14 caractères, majuscules larges : aucune troncature « ... »", async () => {
+describe("vraie police (jsPDF) : le pire cas tient dans chaque zone standard", () => {
+  it("texte : 16 + 14 caractères larges dans 17,5 × 8 mm, sans « ... », le nom jamais perdu", async () => {
     const { default: JsPdf } = await import("jspdf");
     const doc = new JsPdf({ unit: "mm" });
     const m: Mesure = (t, pt, g) => { doc.setFont("helvetica", g ? "bold" : "normal"); doc.setFontSize(pt); return doc.getTextWidth(t); };
-    const cas: [string, string, string | null][] = [
-      ["MMMMMMMMMMMMMMMM", "MMMMMMMMMMMMMM", "lave_linge"], ["WWWWWWWW WWWWWWWW", "125 A - 30 mA", null],
-      ["Lave-vaisselle", "20 A", "lave_vaisselle"], ["Prises cuisine p", "40 A - 30 mA", "disjoncteur"], ["Chauffe-eau cumu", "32 A", "chauffe_eau"],
-    ];
-    for (const [t, l2, p] of cas) {
-      const r = composerEtiquette(t, l2, 17.5, 17.5, p, m);
-      expect(r.lignes.length, t).toBeGreaterThan(0);
-      for (const l of r.lignes) { expect(l.texte.includes("..."), `${t}/${l.texte}`).toBe(false); expect(m(l.texte, l.pt, l.gras)).toBeLessThanOrEqual(17.5 - 2.4 + 1e-6); expect(l.y).toBeLessThanOrEqual(17.5); }
+    const { largeur: L, hauteur: H } = DIMS_STANDARD.texte;
+    const cas: [string, string][] = [["MMMMMMMMMMMMMMMM", "MMMMMMMMMMMMMM"], ["WWWWWWWW WWWWWWWW", "125\u00A0A - 30\u00A0mA"], ["Lave-vaisselle", "20\u00A0A"], ["Prises cuisine p", "40\u00A0A - 30\u00A0mA"], ["Chauffe-eau cumu", "32\u00A0A"], ["ID A", "40\u00A0A - 30\u00A0mA"]];
+    for (const [t, l2] of cas) {
+      const r = composerEtiquette(t, l2, L, H, null, m);
+      expect(r.picto, t).toBeNull(); expect(r.lignes.length, t).toBeGreaterThan(0);
+      for (const l of r.lignes) { expect(l.texte.includes("..."), `${t}/${l.texte}`).toBe(false); expect(m(l.texte, l.pt, l.gras)).toBeLessThanOrEqual(L - 2.4 + 1e-6); expect(l.y).toBeLessThanOrEqual(H); }
+      expect(r.lignes.map(l => l.texte).join("").replace(/\s|-/g, "").includes(t.replace(/\s|-/g, "").slice(0, 6)), t).toBe(true);
     }
   });
 });

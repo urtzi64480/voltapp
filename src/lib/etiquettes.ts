@@ -9,7 +9,7 @@ import { PICTO_AUCUN, pictoPour, pictoValide } from "./pictogrammes";
 
 /** icone : absent = pictogramme reconnu automatiquement ; « aucune » = sans pictogramme ; sinon l'identifiant d'un pictogramme choisi (voir pictogrammes.ts). */
 /**
- * UNE étiquette = UN appareil (disjoncteur ou interrupteur différentiel), toujours à la même dimension standard. rangee : numéro de la rangée du
+ * UNE étiquette = UN appareil (disjoncteur ou interrupteur différentiel). rangee : numéro de la rangée du
  * tableau d'où vient l'étiquette (import) ; sert à passer à la ligne à chaque nouvelle rangée.
  * icone : absent = pictogramme reconnu automatiquement ; « aucune » = sans pictogramme ; sinon l'identifiant d'un pictogramme (voir pictogrammes.ts).
  */
@@ -39,11 +39,28 @@ export const LIMITES = {
 } as const;
 
 /**
- * LA dimension standard, jamais modifiable : un carré de 17,5 × 17,5 mm par appareil. 17,5 mm est la largeur d'un module de rail DIN, la seule cote
- * commune à tous les constructeurs (un disjoncteur 1P, un repère Legrand « 17,5 mm », « leur largeur correspond à celle d'un disjoncteur ») : l'étiquette
- * est donc pile à la largeur de l'appareil, et assez haute pour l'icône + le nom + le calibre. Un différentiel a la même étiquette qu'un disjoncteur.
+ * DEUX sortes d'étiquettes, car elles ne vont pas au même endroit du tableau :
+ *  - « picto » : le petit autocollant SUR le disjoncteur / différentiel (fenêtre de repérage de l'appareil, ~12,7 × 9,5 mm chez Legrand), pictogramme seul ;
+ *  - « texte » : le repère AU-DESSUS des appareils (porte-repère du rail, 17,5 mm = un module de large × 8 mm, comme les repères Legrand Logicab2 17,5 × 8),
+ *    nom + calibre, sans pictogramme.
+ * Chaque sorte a sa propre zone d'impression, réglable (vieux tableaux, autres marques) ; un même nombre d'appareils donne le même nombre d'étiquettes dans chaque sorte.
  */
-export const FORMAT_STANDARD: FormatPlanche = { id: "carre-17-5", nom: "Carré 17,5 × 17,5 mm", largeur: 17.5, hauteur: 17.5, marge: 8, ecart: 0 };
+export type GenreEtiquette = "picto" | "texte";
+/** Ce que l'on imprime : les pictogrammes seuls, les textes seuls, ou les deux (deux planches dans le même PDF). */
+export type ModeEtiquettes = GenreEtiquette | "les-deux";
+export const MODES: ModeEtiquettes[] = ["picto", "texte", "les-deux"];
+
+/** Zone d'impression d'une sorte d'étiquette : dimensions d'une étiquette, marge de page et écart entre étiquettes, en mm. */
+export interface DimsPlanche { largeur: number; hauteur: number; marge: number; ecart: number }
+export const DIMS_STANDARD: Record<GenreEtiquette, DimsPlanche> = {
+  picto: { largeur: 12.7, hauteur: 9.5, marge: 8, ecart: 0 },
+  texte: { largeur: 17.5, hauteur: 8, marge: 8, ecart: 0 },
+};
+export const NOM_GENRE: Record<GenreEtiquette, string> = { picto: "Pictogrammes (sur le disjoncteur)", texte: "Textes (au-dessus des disjoncteurs)" };
+export const genresDuMode = (m: ModeEtiquettes): GenreEtiquette[] => (m === "les-deux" ? ["picto", "texte"] : [m]);
+export const modeValide = (m: unknown): m is ModeEtiquettes => typeof m === "string" && (MODES as string[]).includes(m);
+
+export const formatDe = (genre: GenreEtiquette, d: DimsPlanche, paysage: boolean): FormatPlanche => ({ id: genre, nom: NOM_GENRE[genre], ...d, paysage });
 
 // ─── Texte ──────────────────────────────────────────────────────────────────────────────────────
 // Les polices PDF standard ne couvrent que le Latin-1 : on remplace les caractères courants hors Latin-1 et on retire le reste,
@@ -280,6 +297,18 @@ export function composerEtiquette(texte: string, ligne2: string, largeur: number
   return meilleur ? { picto: meilleur.picto, lignes: meilleur.lignes } : seul();
 }
 
+/**
+ * Étiquette « pictogramme seul » : le pictogramme, centré, le plus grand possible dans la case (marge de 10 % du petit côté, 1 mm maximum).
+ * null si la case est trop petite pour un pictogramme lisible.
+ */
+export function composerPicto(largeur: number, hauteur: number, pictoId: string | null): PictoPlace | null {
+  if (!pictoId || !pictoValide(pictoId)) return null;
+  const m = Math.min(1, Math.min(largeur, hauteur) * 0.1);
+  const taille = Math.min(largeur - 2 * m, hauteur - 2 * m, PICTO.tailleMaxi);
+  if (taille < PICTO.tailleMini) return null;
+  return { id: pictoId, x: (largeur - taille) / 2, y: (hauteur - taille) / 2, taille };
+}
+
 /** Pictogramme effectivement imprimé pour une étiquette (réglage de l'étiquette, sinon reconnaissance automatique), ou null. */
 export const pictoDeEtiquette = (e: Pick<Etiquette, "texte" | "icone">, actifs: boolean): string | null => pictoPour(e, actifs);
 
@@ -321,6 +350,41 @@ export function etiquettesDepuisRangees(rows: BreakerRow[]): Etiquette[] {
   return sortie;
 }
 
+// ─── Planches à imprimer (une par sorte d'étiquette) ───────────────────────────────────────────
+
+export interface GroupePlanches { genre: GenreEtiquette; format: FormatPlanche; planches: Planche[]; total: number; grille: Grille }
+export interface ResultatGroupes { groupes: GroupePlanches[]; /** Étiquettes sans pictogramme, absentes de la planche des pictogrammes. */ sansPicto: number }
+
+/** Étiquettes d'une sorte : les textes concernent toutes les étiquettes ; les pictogrammes seulement celles qui en ont un (reconnu ou choisi). */
+export function etiquettesDuGenre(liste: Etiquette[], genre: GenreEtiquette): Etiquette[] {
+  return genre === "texte" ? liste : liste.filter(e => pictoPour(e, true) !== null);
+}
+
+export interface OptionsGroupes { mode: ModeEtiquettes; dims: Record<GenreEtiquette, DimsPlanche>; paysage: boolean; debut: number; ligneParRangee: boolean }
+
+/** Compose la planche de chaque sorte demandée par le mode ; une erreur lisible dès qu'une des planches est impossible. */
+export function composerGroupes(liste: Etiquette[], o: OptionsGroupes): ResultatGroupes | { erreur: string } {
+  const groupes: GroupePlanches[] = [];
+  const imprimables = liste.filter(estImprimable);
+  for (const genre of genresDuMode(o.mode)) {
+    const format = formatDe(genre, o.dims[genre], o.paysage);
+    const choisies = etiquettesDuGenre(imprimables, genre);
+    if (genre === "picto" && imprimables.length > 0 && choisies.length === 0) {
+      return { erreur: "Aucune étiquette n'a de pictogramme : choisis-en un (ou écris « lave-linge », « four »… pour qu'il soit reconnu), ou imprime les textes." };
+    }
+    const r = composerPlanches(choisies, format, o.debut, { ligneParRangee: o.ligneParRangee });
+    if ("erreur" in r) return { erreur: o.mode === "les-deux" ? `${NOM_GENRE[genre]} : ${r.erreur}` : r.erreur };
+    groupes.push({ genre, format, planches: r.planches, total: r.total, grille: r.grille });
+  }
+  return { groupes, sansPicto: o.mode === "texte" ? 0 : imprimables.length - etiquettesDuGenre(imprimables, "picto").length };
+}
+
+/** Plus petit nombre d'étiquettes par ligne parmi les planches du mode (pour décider si une rangée entière tient sur une ligne). */
+export function colonnesMini(mode: ModeEtiquettes, dims: Record<GenreEtiquette, DimsPlanche>, paysage: boolean): number {
+  const cols = genresDuMode(mode).map(g => grille(formatDe(g, dims[g], paysage))?.colonnes ?? 0);
+  return Math.min(...cols);
+}
+
 // ─── Brouillon (stockage local) ─────────────────────────────────────────────────────────────────
 
 export const CLE_BROUILLON_ETIQUETTES = "voltapp:etiquettes";
@@ -329,8 +393,10 @@ export interface BrouillonEtiquettes {
   etiquettes: Etiquette[];
   debut: number;
   guides: boolean;
-  /** Pictogrammes (reconnus automatiquement ou choisis) : désactivables pour toute la planche. */
-  pictos: boolean;
+  /** Ce que l'on imprime : pictogrammes seuls, textes seuls, ou les deux. */
+  mode: ModeEtiquettes;
+  /** Zone d'impression de chaque sorte (réglable pour les vieux tableaux). */
+  dims: Record<GenreEtiquette, DimsPlanche>;
   /** Page A4 en paysage. */
   paysage: boolean;
   /** Une rangée du tableau = une ligne de la planche (étiquettes importées d'un tableau). */
@@ -338,12 +404,22 @@ export interface BrouillonEtiquettes {
 }
 
 export const brouillonVide = (): BrouillonEtiquettes => ({
-  etiquettes: [nouvelleEtiquette()], debut: 0, guides: true, pictos: true, paysage: false, ligneParRangee: true,
+  etiquettes: [nouvelleEtiquette()], debut: 0, guides: true, mode: "les-deux", dims: { picto: { ...DIMS_STANDARD.picto }, texte: { ...DIMS_STANDARD.texte } }, paysage: false, ligneParRangee: true,
 });
 
 export const serialiserBrouillon = (b: BrouillonEtiquettes): string => JSON.stringify({ v: 1, ...b });
 
 const nombre = (v: unknown, defaut: number) => (typeof v === "number" && Number.isFinite(v) ? v : defaut);
+
+/** Dimensions relues : chaque valeur hors bornes retombe sur la valeur standard de la sorte. */
+function lireDims(brut: unknown, genre: GenreEtiquette): DimsPlanche {
+  const d = DIMS_STANDARD[genre], o = (brut && typeof brut === "object" ? brut : {}) as Record<string, unknown>;
+  const dans = (v: unknown, min: number, max: number, defaut: number) => { const n = nombre(v, NaN); return n >= min && n <= max ? n : defaut; };
+  return {
+    largeur: dans(o.largeur, LIMITES.dimMin, LIMITES.dimMax, d.largeur), hauteur: dans(o.hauteur, LIMITES.dimMin, LIMITES.dimMax, d.hauteur),
+    marge: dans(o.marge, 0, LIMITES.margeMax, d.marge), ecart: dans(o.ecart, 0, LIMITES.ecartMax, d.ecart),
+  };
+}
 
 /** Lecture tolérante : tout ce qui est illisible ou hors bornes retombe sur la valeur par défaut, jamais d'exception. */
 export function lireBrouillon(brut: string | null): BrouillonEtiquettes {
@@ -360,12 +436,12 @@ export function lireBrouillon(brut: string | null): BrouillonEtiquettes {
           ...(typeof e.rangee === "number" && Number.isInteger(e.rangee) && e.rangee >= 0 && e.rangee < 1000 ? { rangee: e.rangee } : {}),
         }))
       : [];
+    const dims = (o.dims && typeof o.dims === "object" ? o.dims : {}) as Record<string, unknown>;
     return {
       etiquettes: etiquettes.length > 0 ? etiquettes : defaut.etiquettes,
-      debut: Math.max(0, Math.floor(nombre(o.debut, 0))), guides: o.guides !== false, pictos: o.pictos !== false, paysage: o.paysage === true, ligneParRangee: o.ligneParRangee !== false,
+      debut: Math.max(0, Math.floor(nombre(o.debut, 0))), guides: o.guides !== false, mode: modeValide(o.mode) ? o.mode : defaut.mode,
+      dims: { picto: lireDims(dims.picto, "picto"), texte: lireDims(dims.texte, "texte") },
+      paysage: o.paysage === true, ligneParRangee: o.ligneParRangee !== false,
     };
   } catch { return defaut; }
 }
-
-/** Format de la planche : toujours la dimension standard, avec l'orientation de la page choisie. */
-export const formatChoisi = (b: { paysage?: boolean }): FormatPlanche => ({ ...FORMAT_STANDARD, paysage: b.paysage === true });
