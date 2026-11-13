@@ -1,7 +1,8 @@
 "use client";
+import { REPONSES_CLIENT, STATUTS_MODIFIABLES, reponseDuStatut, statutApresReponse, statutModifiable, type ReponseClient } from "@/lib/devis-statuts";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { Devis, DevisLigne, Prestation, Client, Profil } from "@/types";
+import { Devis, DevisLigne, Prestation, Client, Profil, StatutDevis } from "@/types";
 import { fmt, fmtDate, fmtDatetime, STATUT_LABELS, STATUT_COLORS, cn, dateLocale, arrondi2, echecSupabase } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
 import PostesLignes from "@/components/devis/PostesLignes";
@@ -786,6 +787,16 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
     setDevis(d => (d && (d.statut === "brouillon" || d.statut === "envoye") ? { ...d, statut } : d));
   }
 
+  /** Réponse du client à un devis non signé : pas de réponse, refusé ou à refaire (un devis signé est accepté, rien à saisir). */
+  async function changerReponse(r: ReponseClient) {
+    if (!devis) return;
+    const statut = statutApresReponse(devis.statut, r);
+    if (!statut || statut === devis.statut) return;
+    const { error } = await supabase.from("devis").update({ statut }).eq("id", id).in("statut", [...STATUTS_MODIFIABLES]);
+    if (echecSupabase(error, "Enregistrement de la réponse du client")) return;
+    setDevis(d => (d && statutModifiable(d.statut) ? { ...d, statut: statut as StatutDevis } : d));
+  }
+
   async function dl() {
     if (!devis) return;
     const nbManques = nbLignesACompleter(lignes);
@@ -1182,6 +1193,15 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
               <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 mb-3">
                 {nbLignesACompleter(lignes)} ligne{nbLignesACompleter(lignes) > 1 ? "s" : ""} « À compléter » (besoin du pré-devis sans produit ni prix) : remplace-les par un produit ou supprime-les. Envoi et signature sont bloqués tant qu'il en reste.
               </div>
+            )}
+            {statutModifiable(devis.statut) && (
+              <label className="flex items-center gap-2 text-sm text-ink-700 mb-3 select-none">
+                Réponse du client
+                <select className="input !py-1 text-sm !w-auto" aria-label="Réponse du client" value={reponseDuStatut(devis.statut)} onChange={ev => changerReponse(ev.target.value as ReponseClient)}>
+                  {REPONSES_CLIENT.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+                </select>
+                <span className="text-xs text-ink-400">(signé = accepté, rien à saisir)</span>
+              </label>
             )}
             {(devis.statut === "brouillon" || devis.statut === "envoye") && (
               <label className="flex items-center gap-2 text-sm text-ink-700 mb-3 cursor-pointer select-none">

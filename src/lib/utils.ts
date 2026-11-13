@@ -62,13 +62,13 @@ export function conditionnementLabel(longueurUnitaire: number | null | undefined
   return `${mot} ${longueurUnitaire} m`;
 }
 export const UNITES = ["forfait", "heure", "u", "ml", "m2"] as const;export const BRANCHES = ["service", "materiau"] as const;
-export const STATUTS_DEVIS = ["brouillon", "envoye", "signe", "refuse", "expire"] as const;
+export const STATUTS_DEVIS = ["brouillon", "envoye", "signe", "refuse", "a_refaire", "expire"] as const;
 export const STATUTS_FACTURE = ["a_envoyer", "envoyee", "payee", "relance", "impayee"] as const;
 export const PLAFOND_SERVICE = 83600;
 export const PLAFOND_MATERIAU = 203100;
 export const STATUT_LABELS: Record<string, string> = {
-  brouillon: "Brouillon", envoye: "Envoyé par mail", signe: "Signé",
-  refuse: "Refusé", expire: "Expiré",
+  brouillon: "Brouillon", envoye: "Envoyé par mail", signe: "Signé (accepté)",
+  refuse: "Refusé", a_refaire: "À refaire", expire: "Expiré",
   a_envoyer: "À envoyer",
   envoyee: "Envoyée", payee: "Payée", relance: "Relancée", impayee: "Impayée",
   actif: "Actif", inactif: "Inactif", vip: "VIP", prospect: "Prospect",
@@ -78,6 +78,7 @@ export const STATUT_COLORS: Record<string, string> = {
   envoye:    "bg-volt-100 text-volt-700",
   signe:     "bg-emerald-100 text-emerald-700",
   refuse:    "bg-red-100 text-red-700",
+  a_refaire: "bg-amber-100 text-amber-700",
   expire:    "bg-ink-100 text-ink-500",
   a_envoyer: "bg-blue-100 text-blue-700",
   envoyee:   "bg-volt-100 text-volt-700",

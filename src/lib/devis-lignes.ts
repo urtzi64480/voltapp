@@ -177,11 +177,11 @@ export interface ResultatSync<T> { lignes: T[]; changements: ChangementLigne[]; 
 
 const CHAMPS_SYNC: ChampLigne[] = ["nom", "kit_description", "image_url", "fournisseur_nom", "prix_achat"];
 /** Champs qu'un statut de devis autorise à suivre le catalogue. */
-export const champsSynchronisables = (statut?: string | null): ChampLigne[] => (statut === "brouillon" || statut === "envoye" ? CHAMPS_SYNC : []);
+export const champsSynchronisables = (statut?: string | null): ChampLigne[] => (statut === "brouillon" || statut === "envoye" || statut === "a_refaire" ? CHAMPS_SYNC : []);
 /** Le nouveau prix du catalogue se propose tant que le devis n'est ni signé, ni refusé, ni expiré. */
-export const prixProposable = (statut?: string | null): boolean => statut === "brouillon" || statut === "envoye";
-/** Appliquer le prix du catalogue modifie le devis envoyé : réservé au brouillon. */
-export const prixApplicable = (statut?: string | null): boolean => statut === "brouillon";
+export const prixProposable = (statut?: string | null): boolean => statut === "brouillon" || statut === "envoye" || statut === "a_refaire";
+/** Appliquer le prix du catalogue modifie le devis envoyé : réservé au brouillon et au devis à refaire. */
+export const prixApplicable = (statut?: string | null): boolean => statut === "brouillon" || statut === "a_refaire";
 
 const egal = (a: unknown, b: unknown): boolean => (a ?? null) === (b ?? null);
 const plusRecent = (a?: string | null, b?: string | null): boolean => {

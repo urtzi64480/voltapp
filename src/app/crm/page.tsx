@@ -1,4 +1,5 @@
 "use client";
+import { tauxConversion } from "@/lib/devis-statuts";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, PLAFOND_SERVICE, PLAFOND_MATERIAU, cn, dateLocale } from "@/lib/utils";
@@ -103,7 +104,7 @@ export default function CRMPage() {
   const [caMensuelN1, setCaMensuelN1] = useState<{ mois: number; service: number; materiau: number }[]>([]);
   const [caAnnuelN1, setCaAnnuelN1] = useState({ service: 0, materiau: 0 });
   const [catStats, setCatStats] = useState<CATStat[]>([]);
-  const [devisStats, setDevisStats] = useState({ total: 0, brouillon: 0, envoye: 0, signe: 0, refuse: 0, caDevis: 0, caSignes: 0 });
+  const [devisStats, setDevisStats] = useState({ total: 0, brouillon: 0, envoye: 0, signe: 0, refuse: 0, a_refaire: 0, caDevis: 0, caSignes: 0 });
   const [paiementStats, setPaiementStats] = useState({ nbPayees: 0, nbImpayees: 0, nbRelance: 0, montantPayee: 0, montantImpayee: 0, montantRelance: 0 });
   const [topClients, setTopClients] = useState<{ nom: string; prenom?: string; ca: number; nb: number }[]>([]);
   const [devisEnAttente, setDevisEnAttente] = useState<any[]>([]);
@@ -205,6 +206,7 @@ export default function CRMPage() {
         envoye: dv.filter(d => d.statut === "envoye").length,
         signe: dv.filter(d => d.statut === "signe").length,
         refuse: dv.filter(d => d.statut === "refuse").length,
+        a_refaire: dv.filter(d => d.statut === "a_refaire").length,
         caDevis: dv.reduce((a, d) => a + d.total_ttc, 0),
         caSignes: dv.filter(d => d.statut === "signe").reduce((a, d) => a + d.total_ttc, 0),
       });
@@ -413,8 +415,7 @@ export default function CRMPage() {
   const franchiseServiceDepassee  = caAnnuel.service  > FRANCHISE_TVA_SERVICE;
   const franchiseMateriauDepassee = caAnnuel.materiau > FRANCHISE_TVA_MATERIAU;
   const maxMois = Math.max(...caMensuel.map(m => m.service + m.materiau), ...caMensuelN1.map(m => m.service + m.materiau), 1);
-  const devisDecides = devisStats.envoye + devisStats.signe + devisStats.refuse;
-  const txConversion = devisDecides > 0 ? Math.round(devisStats.signe / devisDecides * 100) : 0;
+  const conversion = tauxConversion(devisStats);
   const evol = caTotalN1 > 0 ? Math.round((caTotal - caTotalN1) / caTotalN1 * 100) : null;
 
   // ── Cotisations URSSAF dues par mois ──
@@ -469,8 +470,8 @@ export default function CRMPage() {
                 </div>
                 <div className="bg-ink-50 rounded-xl p-4">
                   <p className="text-xs text-ink-400 mb-1">Taux conversion devis</p>
-                  <p className="text-3xl font-bold text-ink-900">{txConversion} %</p>
-                  <p className="text-xs text-ink-400 mt-1">{devisStats.signe} signé{devisStats.signe > 1 ? "s" : ""} / {devisDecides} envoyé{devisDecides > 1 ? "s" : ""}</p>
+                  <p className="text-3xl font-bold text-ink-900">{conversion.pourcent === null ? "—" : `${conversion.pourcent} %`}</p>
+                  <p className="text-xs text-ink-400 mt-1">{devisStats.signe} accepté{devisStats.signe > 1 ? "s" : ""} (signés) / {conversion.sortis} devis envoyé{conversion.sortis > 1 ? "s" : ""}</p>
                 </div>
                 <div className="bg-ink-50 rounded-xl p-4">
                   <p className="text-xs text-ink-400 mb-1">Factures payées</p>
@@ -848,13 +849,14 @@ export default function CRMPage() {
               icon={<FileText size={17} className="text-volt-600" />}
               defaultOpen={false}
             >
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
                 {[
                   { label: "Total", val: devisStats.total, color: "text-ink-900" },
                   { label: "Brouillons", val: devisStats.brouillon, color: "text-ink-500" },
                   { label: "Envoyés par mail", val: devisStats.envoye, color: "text-volt-600" },
                   { label: "Signés", val: devisStats.signe, color: "text-emerald-600" },
                   { label: "Refusés", val: devisStats.refuse, color: "text-red-600" },
+                  { label: "À refaire", val: devisStats.a_refaire, color: "text-amber-600" },
                 ].map(s => (
                   <div key={s.label} className="text-center bg-ink-50 rounded-xl py-3">
                     <p className={`text-2xl font-bold ${s.color}`}>{s.val}</p>
@@ -865,7 +867,7 @@ export default function CRMPage() {
               <div className="flex flex-wrap gap-4 text-sm">
                 <div><p className="text-xs text-ink-400 mb-0.5">CA total devis</p><p className="font-bold text-ink-800">{fmt(devisStats.caDevis)}</p></div>
                 <div><p className="text-xs text-ink-400 mb-0.5">CA devis signés</p><p className="font-bold text-emerald-600">{fmt(devisStats.caSignes)}</p></div>
-                <div><p className="text-xs text-ink-400 mb-0.5">Taux conversion</p><p className="font-bold text-volt-600">{txConversion} %</p></div>
+                <div><p className="text-xs text-ink-400 mb-0.5">Taux conversion</p><p className="font-bold text-volt-600">{conversion.pourcent === null ? "—" : `${conversion.pourcent} %`}</p></div>
               </div>
               {devisEnAttente.length > 0 && (
                 <div className="mt-5 pt-4 border-t border-ink-100">
