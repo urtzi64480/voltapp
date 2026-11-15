@@ -5,6 +5,7 @@ import { Profil } from "@/types";
 import Shell from "@/components/layout/Shell";
 import { echecSupabase } from "@/lib/utils";
 import AssuranceDecennale from "@/components/parametres/AssuranceDecennale";
+import ChangerMotDePasse from "@/components/parametres/ChangerMotDePasse";
 import type { InfosAssurance } from "@/lib/assurance";
 import { Save, Settings, Users, Plus, Trash2, Pencil, X, Check, Calendar, Smartphone, CreditCard, RefreshCw, CheckCircle, AlertCircle, ExternalLink, Upload, ImageIcon } from "lucide-react";
 
@@ -771,6 +772,8 @@ export default function ParametresPage() {
             </div>
 
             <AssuranceDecennale profil={profil as InfosAssurance} set={set} />
+
+            <ChangerMotDePasse />
 
             <div className="card card-inner">
               <h2 className="font-semibold text-ink-800 mb-1">Fiscalité auto-entrepreneur</h2>
