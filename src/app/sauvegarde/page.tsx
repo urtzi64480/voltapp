@@ -19,7 +19,14 @@ export default function SauvegardePage() {
   const [ecraser, setEcraser] = useState(false);
 
   async function telecharger(prefixe = "") {
-    const f = await collecter((table, de, a) => supabase.from(table).select("*").range(de, a));
+    // Les réalisations sont lisibles par tous (galerie publique) : sans filtre, la sauvegarde embarquerait celles des autres électriciens.
+    const { data: { session } } = await supabase.auth.getSession();
+    const uid = session?.user.id;
+    if (!uid) throw new Error("Session expirée : reconnecte-toi avant de sauvegarder.");
+    const f = await collecter((table, de, a) => {
+      const requete = supabase.from(table).select("*");
+      return (table === "realisations" ? requete.eq("user_id", uid) : requete).range(de, a);
+    });
     const blob = new Blob([JSON.stringify(f, null, 1)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const el = document.createElement("a"); el.href = url; el.download = prefixe + nomFichierSauvegarde(); document.body.appendChild(el); el.click(); el.remove();
