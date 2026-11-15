@@ -41,6 +41,8 @@ export interface Profil extends InfosAssurance {
   bic?: string;
   banque_nom?: string;
   banque_titulaire?: string;
+  // Lien « laisser un avis » de la fiche Google de l'entreprise (QR code du dashboard)
+  lien_avis_google?: string;
 }
 
 export interface Client {

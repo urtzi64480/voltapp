@@ -298,6 +298,7 @@ with attendues(t, c) as (values
     ('profil', 'email'),
     ('profil', 'iban'),
     ('profil', 'id'),
+    ('profil', 'lien_avis_google'),
     ('profil', 'logo_url'),
     ('profil', 'mention_tva'),
     ('profil', 'nom'),

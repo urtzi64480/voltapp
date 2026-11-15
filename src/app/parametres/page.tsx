@@ -716,6 +716,8 @@ export default function ParametresPage() {
                 <F label="Adresse" full value={val("adresse")} onChange={v => set("adresse", v)} />
                 <F label="Code postal" value={val("code_postal")} onChange={v => set("code_postal", v)} />
                 <F label="Ville" value={val("ville")} onChange={v => set("ville", v)} />
+                <F label="Lien d'avis Google (QR code du dashboard)" full placeholder="https://g.page/r/…/review"
+                  value={val("lien_avis_google")} onChange={v => set("lien_avis_google", v)} />
                 <div>
                   <label className="label">Taux horaire (€/h)</label>
                   <input className="input" type="number" step="0.5"

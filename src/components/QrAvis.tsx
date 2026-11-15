@@ -1,23 +1,44 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Star, X } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
-export const LIEN_AVIS_GOOGLE = "https://g.page/r/CRpBa-eW-iwsECE/review?utm_source=gbp&utm_medium=reviews&utm_campaign=qr";
+/** Lien d'avis exploitable : uniquement une adresse web (http/https), sinon pas de QR code. */
+export function lienAvisValide(brut: string | null | undefined): string | null {
+  const l = (brut ?? "").trim();
+  return /^https?:\/\/\S+$/i.test(l) ? l : null;
+}
 
-/** QR code vers l'avis Google, à montrer au client (plein écran en un clic). */
+/** QR code vers l'avis Google de L'ENTREPRISE connectée (champ « Lien d'avis Google » des Paramètres), à montrer au client (plein écran en un clic).
+ *  Sans lien renseigné, rien n'est affiché : un compte ne doit jamais envoyer ses clients sur la fiche d'un autre. */
 export default function QrAvis() {
+  const [lien, setLien] = useState<string | null>(null);
   const [img, setImg] = useState<string | null>(null);
   const [grand, setGrand] = useState(false);
   const [erreur, setErreur] = useState(false);
 
   useEffect(() => {
     let vivant = true;
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data } = await supabase.from("profil").select("lien_avis_google").eq("id", session.user.id).maybeSingle();
+      if (vivant) setLien(lienAvisValide((data as { lien_avis_google?: string | null } | null)?.lien_avis_google));
+    })().catch(() => { /* colonne absente ou réseau : pas de QR code */ });
+    return () => { vivant = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!lien) { setImg(null); return; }
+    let vivant = true;
     import("qrcode")
-      .then(Q => Q.toDataURL(LIEN_AVIS_GOOGLE, { width: 640, margin: 2, errorCorrectionLevel: "M" }))
+      .then(Q => Q.toDataURL(lien, { width: 640, margin: 2, errorCorrectionLevel: "M" }))
       .then(u => { if (vivant) setImg(u); })
       .catch(() => { if (vivant) setErreur(true); });
     return () => { vivant = false; };
-  }, []);
+  }, [lien]);
+
+  if (!lien) return null;
 
   return (
     <>
