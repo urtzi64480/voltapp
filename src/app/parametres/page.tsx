@@ -735,13 +735,13 @@ export default function ParametresPage() {
               </div>
               <p className="text-xs text-ink-400 mb-4">Ces informations apparaîtront uniquement dans le pied de page de vos factures.</p>
               <div className="grid grid-cols-2 gap-3">
-                <F label="Titulaire du compte" full placeholder="Urtzi Électricien"
+                <F label="Titulaire du compte" full placeholder="Prénom Nom ou raison sociale"
                   value={val("banque_titulaire")} onChange={v => set("banque_titulaire", v)} />
-                <F label="Banque" full placeholder="Crédit Agricole"
+                <F label="Banque" full placeholder="Nom de la banque"
                   value={val("banque_nom")} onChange={v => set("banque_nom", v)} />
                 <F label="IBAN" full placeholder="FR76 0000 0000 0000 0000 0000 000"
                   value={val("iban")} onChange={v => set("iban", v)} />
-                <F label="BIC / SWIFT" placeholder="AGRIFRPP"
+                <F label="BIC / SWIFT" placeholder="Code BIC"
                   value={val("bic")} onChange={v => set("bic", v)} />
               </div>
             </div>

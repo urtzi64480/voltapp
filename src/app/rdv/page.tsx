@@ -61,7 +61,7 @@ function isPast(rdv: Rdv) {
 export default function RdvPage() {
   const [rdvs, setRdvs] = useState<Rdv[]>([]);
   const [loading, setLoading] = useState(true);
-  const [nomEntreprise, setNomEntreprise] = useState("Urtzi Électricien");
+  const [nomEntreprise, setNomEntreprise] = useState("votre électricien");
 
   useEffect(() => {
     async function load() {

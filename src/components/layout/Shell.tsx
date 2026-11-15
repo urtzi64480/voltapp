@@ -50,7 +50,7 @@ function NavLink({ href, label, Icon, active, onClick, badge }: {
 }
 
 // Affichage uniforme : le nom complet sur une seule ligne, tronqué proprement
-// s'il est trop long, que ce soit "VoltApp" ou "Urtzi Électricien".
+// s'il est trop long, que ce soit "VoltApp" ou un nom d'entreprise long.
 function LogoBlock({ nomEntreprise, logoUrl, size = "md" }: { nomEntreprise: string; logoUrl?: string | null; size?: "sm" | "md" }) {
   const nom = nomEntreprise.trim() || "VoltApp";
   // Si le lien du logo est cassé (fichier supprimé, bucket mal configuré...), on retombe
