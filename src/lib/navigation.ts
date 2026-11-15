@@ -19,6 +19,17 @@ export const RUBRIQUES: RubriqueMenu[] = [
   ] },
 ];
 
+/** Rubriques alimentées par la page publique de l'électricien (formulaire de demande, RDV en ligne, galerie de réalisations). */
+export const HREFS_PAGE_PUBLIQUE = ["/leads", "/rdv", "/realisations"];
+
+/** Menu d'un électricien sans page publique : ces rubriques disparaissent (une rubrique vide aussi). Avec page publique : menu inchangé. */
+export function rubriquesVisibles(pagePublique: boolean, rubriques: RubriqueMenu[] = RUBRIQUES): RubriqueMenu[] {
+  if (pagePublique) return rubriques;
+  return rubriques
+    .map(r => ({ ...r, items: r.items.filter(i => !HREFS_PAGE_PUBLIQUE.includes(i.href)) }))
+    .filter(r => r.items.length > 0);
+}
+
 /** « /plan » ne doit pas s'allumer sur « /planning » : correspondance exacte ou sous-chemin. */
 export const estActif = (path: string, href: string): boolean => path === href || path.startsWith(href + "/");
 

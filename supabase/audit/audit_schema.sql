@@ -304,6 +304,7 @@ with attendues(t, c) as (values
     ('profil', 'nom'),
     ('profil', 'nom_entreprise'),
     ('profil', 'numero_tva'),
+    ('profil', 'page_publique'),
     ('profil', 'prefixe_devis'),
     ('profil', 'prefixe_facture'),
     ('profil', 'prenom'),

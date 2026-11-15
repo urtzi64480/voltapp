@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { cn, dateLocale } from "@/lib/utils";
-import { RUBRIQUES, estActif, lireOuvertes, rubriqueDe } from "@/lib/navigation";
+import { RUBRIQUES, estActif, lireOuvertes, rubriqueDe, rubriquesVisibles } from "@/lib/navigation";
 import { lireStockage, ecrireStockage } from "@/lib/safe-storage";
 import { supabase } from "@/lib/supabase";
 
@@ -96,6 +96,8 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const [rdvNouveaux, setRdvNouveaux] = useState(0);
   const [nomEntreprise, setNomEntreprise] = useState("VoltApp");
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  // Vrai tant que le profil ne dit pas explicitement le contraire (colonne absente ou erreur : menu complet, rien n'est masqué par accident).
+  const [pagePublique, setPagePublique] = useState(true);
 
   const isActive = (href: string) => estActif(path, href);
 
@@ -117,7 +119,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const menu = (onClick?: () => void) => (
     <>
       <NavLink href="/dashboard" label="Dashboard" Icon={LayoutDashboard} active={isActive("/dashboard")} onClick={onClick} />
-      {RUBRIQUES.map(r => {
+      {rubriquesVisibles(pagePublique).map(r => {
         const ouverte = ouvertes.includes(r.nom);
         const alertes = r.items.reduce((a, i) => a + (badgeDe(i.href) ?? 0), 0);
         return (
@@ -158,7 +160,14 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         if ((data as any).logo_url) setLogoUrl((data as any).logo_url);
       }
     }
+    async function loadPagePublique() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data } = await supabase.from("profil").select("page_publique").eq("id", session.user.id).maybeSingle();
+      if ((data as { page_publique?: boolean } | null)?.page_publique === false) setPagePublique(false);
+    }
     loadProfil();
+    loadPagePublique().catch(() => { /* colonne absente : menu complet */ });
   }, []);
 
   useEffect(() => {
@@ -216,12 +225,12 @@ export default function Shell({ children }: { children: React.ReactNode }) {
               <AlertTriangle size={12} /> {facturesEnRetard}
             </Link>
           )}
-          {leadsNouveaux > 0 && (
+          {pagePublique && leadsNouveaux > 0 && (
             <Link href="/leads" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold">
               <Inbox size={12} /> {leadsNouveaux}
             </Link>
           )}
-          {rdvNouveaux > 0 && (
+          {pagePublique && rdvNouveaux > 0 && (
             <Link href="/rdv" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold">
               <CalendarCheck size={12} /> {rdvNouveaux}
             </Link>
@@ -261,7 +270,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
 
       {/* ── Bottom nav mobile ── */}
       <nav className="bottom-nav">
-        {BOTTOM_NAV.map(({ href, label, icon: Icon }) => (
+        {(pagePublique ? BOTTOM_NAV : BOTTOM_NAV.map(n => n.href === "/leads" ? { href: "/planning", label: "Planning", icon: CalendarDays } : n)).map(({ href, label, icon: Icon }) => (
           <Link key={href} href={href}
             className={cn("bottom-nav-item relative", isActive(href) && "active")}>
             <Icon size={20} />

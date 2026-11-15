@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { RUBRIQUES, estActif, lireOuvertes, rubriqueDe } from "@/lib/navigation";
+import { RUBRIQUES, estActif, lireOuvertes, rubriqueDe, rubriquesVisibles, HREFS_PAGE_PUBLIQUE } from "@/lib/navigation";
 
 describe("navigation", () => {
   it("« /plan » ne s'allume pas sur « /planning »", () => {
@@ -31,5 +31,19 @@ describe("navigation", () => {
   it("mémoire tolérante", () => {
     expect(lireOuvertes(null)).toBeNull(); expect(lireOuvertes("pas du json")).toBeNull(); expect(lireOuvertes("{}")).toBeNull();
     expect(lireOuvertes('["Ventes","Pirate",3]')).toEqual(["Ventes"]);
+  });
+});
+
+describe("menu sans page publique", () => {
+  const hrefs = (r: typeof RUBRIQUES) => r.flatMap(x => x.items.map(i => i.href));
+  it("avec page publique : menu inchangé", () => {
+    expect(rubriquesVisibles(true)).toEqual(RUBRIQUES);
+  });
+  it("sans page publique : plus de Leads web, RDV ni Réalisations, le reste est conservé", () => {
+    const visibles = hrefs(rubriquesVisibles(false));
+    for (const h of ["/leads", "/rdv", "/realisations"]) expect(visibles).not.toContain(h);
+    expect(HREFS_PAGE_PUBLIQUE).toEqual(["/leads", "/rdv", "/realisations"]);
+    expect(visibles).toEqual(hrefs(RUBRIQUES).filter(h => !HREFS_PAGE_PUBLIQUE.includes(h)));
+    for (const h of ["/clients", "/demandes", "/devis", "/factures", "/planning", "/catalogue", "/parametres"]) expect(visibles).toContain(h);
   });
 });
