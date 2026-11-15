@@ -8,6 +8,7 @@ import Link from "next/link";
 import { AlertTriangle, ArrowLeft, Check, FileDown, Mail, MessageSquare, Plus, Share2, Trash2, WifiOff } from "lucide-react";
 import Shell from "@/components/layout/Shell";
 import { supabase } from "@/lib/supabase";
+import { idUtilisateurStockage, suffixeAleatoire } from "@/lib/stockage-chemin";
 import { cn } from "@/lib/utils";
 import type { Profil } from "@/types";
 import { lireSuivi, type SuiviStocke } from "@/lib/suivi-persistance";
@@ -162,7 +163,7 @@ function Fin({ devis, absenteInitial }: { devis: DevisFin; absenteInitial: boole
     setOccupe(canal); setInfo(null);
     try {
       const pdf = await construirePdf(); if (!pdf) return;
-      const chemin = `controles/${pdf.nom.replace(/\.pdf$/, "")}-${Date.now().toString(36)}.pdf`;
+      const chemin = `${await idUtilisateurStockage()}/controles/${pdf.nom.replace(/\.pdf$/, "")}-${suffixeAleatoire()}.pdf`;
       const { error } = await supabase.storage.from("documents").upload(chemin, pdf.blob, { contentType: "application/pdf", upsert: true });
       if (error) { setInfo(`Dépôt du PDF impossible (${error.message}). Utilise Télécharger ou Partager.`); return; }
       const lien = supabase.storage.from("documents").getPublicUrl(chemin).data.publicUrl;

@@ -20,6 +20,7 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import SchemaTechniqueCircuit, { libelleTroncon } from "@/components/plan/SchemaTechniqueCircuit";
 import PhotosChantier from "@/components/plan/PhotosChantier";
 import { BUCKET_PHOTOS, cheminPhoto, compresserImage, grouperPhotos, projeterSurCircuit, tronconDePhoto, mursProches, deplacerADistanceDuMur, texteCoordonnees } from "@/lib/photos-chantier";
+import { idUtilisateurStockage } from "@/lib/stockage-chemin";
 import { construireSchemaTechnique } from "@/lib/schema-technique";
 import { verifierFusion, fusionnerCircuits } from "@/lib/fusion-circuits";
 import { construireVueAppareil } from "@/lib/bornier-appareillage";
@@ -2124,7 +2125,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
       setPhotoEnvoi(`Envoi ${i + 1} / ${fichiers.length}…`);
       try {
         const { blob, ext, type } = await compresserImage(fichiers[i]);
-        const chemin = cheminPhoto(clientId, niveauId, ext);
+        const chemin = cheminPhoto(await idUtilisateurStockage(), clientId, niveauId, ext);
         const { error } = await supabase.storage.from(BUCKET_PHOTOS).upload(chemin, blob, { contentType: type });
         if (error) { console.error("Upload photo chantier:", error); echecs++; continue; }
         ajoutees.push({ id: uidMaison(), circuit: label, point, chemin, date: new Date(Date.now() + i).toISOString() });

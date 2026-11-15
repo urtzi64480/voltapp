@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
+import { idUtilisateurStockage } from "@/lib/stockage-chemin";
 import { Client } from "@/types";
 import { cn, fmtDate, dateLocale, echecSupabase } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
@@ -242,7 +243,9 @@ export default function DemandesPage() {
   async function handlePhotoAdd(file: File) {
     setUploading(true);
     const ext = file.name.split(".").pop();
-    const path = `demandes/${formId ?? "new-" + Date.now()}/${Date.now()}.${ext}`;
+    let uid: string;
+    try { uid = await idUtilisateurStockage(); } catch { setUploading(false); return; }
+    const path = `${uid}/demandes/${formId ?? "new-" + Date.now()}/${Date.now()}.${ext}`;
     const { error } = await supabase.storage.from("intervention-photos").upload(path, file);
     if (!error) setFormPhotos(prev => [...prev, path]);
     setUploading(false);

@@ -8,6 +8,7 @@ import Shell from "@/components/layout/Shell";
 import SignaturePad, { type SignaturePadRef } from "@/components/SignaturePad";
 import ActionsPdf, { type PdfPret } from "@/components/ActionsPdf";
 import { supabase } from "@/lib/supabase";
+import { idUtilisateurStockage, suffixeAleatoire } from "@/lib/stockage-chemin";
 import { dateLocale, fmtDate } from "@/lib/utils";
 import type { Profil } from "@/types";
 import { contexteDevis } from "@/lib/checklist-fin-chantier";
@@ -70,7 +71,7 @@ function Reception({ devis }: { devis: DevisRec }) {
       for (const f of Array.from(fichiers)) {
         if (photos.length >= 12) { setMsg("12 photos maximum."); break; }
         const blob = await compresserPhoto(f);
-        const chemin = `chantiers/${devis.id}/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}.jpg`;
+        const chemin = `${await idUtilisateurStockage()}/chantiers/${devis.id}/${suffixeAleatoire()}.jpg`;
         const { error } = await supabase.storage.from("documents").upload(chemin, blob, { contentType: "image/jpeg" });
         if (error) { setMsg(`Envoi de la photo impossible : ${error.message}`); break; }
         agir({ action: "photo+", id: devis.id, photo: { url: supabase.storage.from("documents").getPublicUrl(chemin).data.publicUrl, legende } });

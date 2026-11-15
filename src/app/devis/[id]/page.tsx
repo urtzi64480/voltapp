@@ -2,6 +2,7 @@
 import { REPONSES_CLIENT, STATUTS_MODIFIABLES, reponseDuStatut, statutApresReponse, statutModifiable, type ReponseClient } from "@/lib/devis-statuts";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { suffixeAleatoire } from "@/lib/stockage-chemin";
 import { Devis, DevisLigne, Prestation, Client, Profil, StatutDevis } from "@/types";
 import { fmt, fmtDate, fmtDatetime, STATUT_LABELS, STATUT_COLORS, cn, dateLocale, arrondi2, echecSupabase } from "@/lib/utils";
 import Shell from "@/components/layout/Shell";
@@ -865,7 +866,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         const { genPDFDevisBlob } = await import("@/lib/pdf");
         const profilFallback = p ?? { id: user.id, prefixe_devis: "DEV", prefixe_facture: "FAC", compteur_devis: 0, compteur_facture: 0, mention_tva: "TVA non applicable — Art. 293 B du CGI", conditions_paiement: "Paiement à réception", taux_horaire: 55, created_at: "", updated_at: "" };
         const blob = await genPDFDevisBlob(devis, profilFallback);
-        const fileName = `devis/${devis.numero}.pdf`;
+        const fileName = `${user.id}/devis/${devis.numero}-${suffixeAleatoire()}.pdf`;
         const { error: errUpload } = await supabase.storage.from("documents").upload(fileName, blob, { contentType: "application/pdf", upsert: true });
         if (errUpload) throw errUpload;   // pas de mail avec un lien mort : on va directement à la facture
         const { data: urlData } = supabase.storage.from("documents").getPublicUrl(fileName);

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import { idUtilisateurStockage } from "@/lib/stockage-chemin";
 import {
   ChevronLeft, ChevronRight, Plus, X, MapPin, FileText,
   Receipt, Camera, Trash2, Clock, User, ExternalLink, AlertTriangle, Phone,
@@ -858,7 +859,9 @@ export default function PlanningPage() {
   const handlePhotoUpload = async (file: File) => {
     if (!selected) return;
     const ext = file.name.split(".").pop();
-    const path = `${selected.id}/${Date.now()}.${ext}`;
+    let uid: string;
+    try { uid = await idUtilisateurStockage(); } catch (e) { console.error(e); return; }
+    const path = `${uid}/${selected.id}/${Date.now()}.${ext}`;
     const { error } = await supabase.storage.from("intervention-photos").upload(path, file);
     if (error) { console.error("Upload error:", error); return; }
     const current = selected.photos || [];

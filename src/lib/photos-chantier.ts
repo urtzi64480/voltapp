@@ -27,8 +27,9 @@ export async function compresserImage(file: File, max = 1600, qualite = 0.82): P
   } catch { return brut; }
 }
 
-export const cheminPhoto = (clientId: string, niveauId: number, ext: string): string =>
-  `plan/${clientId}/${niveauId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+/** Dossier de l'utilisateur en premier : les policies du bucket ne laissent écrire que dans « <user_id>/… ». */
+export const cheminPhoto = (userId: string, clientId: string, niveauId: number, ext: string): string =>
+  `${userId}/plan/${clientId}/${niveauId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
 /** Point du tracé du circuit le plus proche de `p` (projection sur le chemin réel : coudes compris). `p` inchangé si le circuit n'a aucun tracé. */
 export function projeterSurCircuit(p: Point, breaker: Breaker | undefined, niveau: Niveau): Point {

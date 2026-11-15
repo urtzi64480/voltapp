@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { FileDown, Mail, MessageSquare, Share2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { idUtilisateurStockage, suffixeAleatoire } from "@/lib/stockage-chemin";
 
 type Canal = "share" | "sms" | "mail" | "pdf";
 export interface PdfPret { blob: Blob; nom: string }
@@ -27,7 +28,7 @@ export default function ActionsPdf({ construire, sujet, corpsLien, telephone, em
           try { await navigator.share({ files: [f], title: sujet }); } catch (e) { if ((e as Error).name !== "AbortError") setInfo("Partage impossible : utilise SMS, e-mail ou Télécharger."); }
         } else setInfo("Partage de fichier indisponible ici : utilise SMS, e-mail ou Télécharger.");
       } else {
-        const chemin = `${dossierStockage}/${pdf.nom.replace(/\.pdf$/, "")}-${Date.now().toString(36)}.pdf`;
+        const chemin = `${await idUtilisateurStockage()}/${dossierStockage}/${pdf.nom.replace(/\.pdf$/, "")}-${suffixeAleatoire()}.pdf`;
         const { error } = await supabase.storage.from("documents").upload(chemin, pdf.blob, { contentType: "application/pdf", upsert: true });
         if (error) { setInfo(`Dépôt du PDF impossible (${error.message}). Utilise Télécharger ou Partager.`); return; }
         const lien = supabase.storage.from("documents").getPublicUrl(chemin).data.publicUrl;

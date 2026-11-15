@@ -1,6 +1,7 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { suffixeAleatoire } from "@/lib/stockage-chemin";
 import { Facture, Profil } from "@/types";
 import { verifierConformiteFacture } from "@/lib/facturx";
 import { fmt, fmtDate, STATUT_LABELS, STATUT_COLORS, cn, dateLocale, echecSupabase } from "@/lib/utils";
@@ -74,7 +75,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
       supabase.from("factures").select("*, client:clients(*), lignes:facture_lignes(*)").eq("id", id).single(),
       supabase.from("apporteurs").select("id,nom,entreprise").eq("actif", true).order("nom"),
       supabase.from("acomptes").select("*").eq("facture_id", id).order("date_versement"),
-      supabase.from("profil").select("*").maybeSingle(),
+      supabase.auth.getSession().then(async ({ data: { session } }) => session ? await supabase.from("profil").select("*").eq("id", session.user.id).maybeSingle() : { data: null }),
     ]).then(([{ data: f }, { data: ap }, { data: ac }, { data: pr }]) => {
       setFacture(f as any);
       if ((f as any)?.remise_facture_type && ((f as any).remise_facture_valeur ?? 0) > 0) {
@@ -162,7 +163,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
         p ?? { id: user.id, prefixe_devis: "DEV", prefixe_facture: "FAC", compteur_devis: 0, compteur_facture: 0, mention_tva: "TVA non applicable — Art. 293 B du CGI", conditions_paiement: "Paiement à réception", taux_horaire: 55, created_at: "", updated_at: "" },
         acomptes,
       );
-      const fileName = `factures/${facture.numero}.pdf`;
+      const fileName = `${user.id}/factures/${facture.numero}-${suffixeAleatoire()}.pdf`;
       const { error: uploadError } = await supabase.storage
         .from("documents")
         .upload(fileName, blob, { contentType: "application/pdf", upsert: true });
@@ -201,7 +202,7 @@ export default function FactureDetailPage({ params }: { params: { id: string } }
         p ?? { id: user.id, prefixe_devis: "DEV", prefixe_facture: "FAC", compteur_devis: 0, compteur_facture: 0, mention_tva: "TVA non applicable — Art. 293 B du CGI", conditions_paiement: "Paiement à réception", taux_horaire: 55, created_at: "", updated_at: "" },
         acomptes,
       );
-      const fileName = `factures/${facture.numero}.pdf`;
+      const fileName = `${user.id}/factures/${facture.numero}-${suffixeAleatoire()}.pdf`;
       const { error: errUpload } = await supabase.storage.from("documents").upload(fileName, blob, { contentType: "application/pdf", upsert: true });
       if (errUpload) throw errUpload;   // pas de mail de relance avec un lien mort
       const { data: urlData } = supabase.storage.from("documents").getPublicUrl(fileName);
