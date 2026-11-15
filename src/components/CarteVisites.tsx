@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MapPin } from "lucide-react";
 import { loadLeaflet } from "@/lib/leaflet-cdn";
-import { lieuxAGeocoder, pointsVisiteurs, type Coord, type VisiteCarte } from "@/lib/carte-visites";
+import { ZOOM_VILLE, cibleDeVisite, lieuxAGeocoder, pointsVisiteurs, type Coord, type VisiteCarte } from "@/lib/carte-visites";
 import { COORDONNEES } from "@/lib/seo-zone";
 import { ecrireStockage, lireStockage } from "@/lib/safe-storage";
 
@@ -16,7 +16,10 @@ const lireCache = (): Cache => {
   try { const b = lireStockage("local", CLE_CACHE); return b ? (JSON.parse(b) as Cache) : {}; } catch { return {}; }
 };
 
-export default function CarteVisites({ visites }: { visites: VisiteCarte[] }) {
+/** `cible` : visite sur laquelle zoomer (`seq` change à chaque clic, même sur la même ville) ; `nomPays` : code pays → libellé. */
+export interface CibleDemandee { visite: VisiteCarte; seq: number }
+
+export default function CarteVisites({ visites, cible, nomPays, onToutVoir }: { visites: VisiteCarte[]; cible?: CibleDemandee | null; nomPays?: (code: unknown) => string; onToutVoir?: () => void }) {
   const [cache, setCache] = useState<Cache>({});
   const [erreur, setErreur] = useState(false);
   const [enCours, setEnCours] = useState(false);
@@ -101,6 +104,40 @@ export default function CarteVisites({ visites }: { visites: VisiteCarte[] }) {
     if (!touchee.current) carte.fitBounds(bornes, { padding: [30, 30], maxZoom: 9 });
   }, [points, prete]);
 
+  // Zoom sur la ville d'une visite : marqueur bien visible avec son nom, carte recentrée au niveau ville.
+  const reperage = useRef<any>(null);
+  const [zoomSur, setZoomSur] = useState<string | null>(null);
+  const [cibleIntrouvable, setCibleIntrouvable] = useState(false);
+  useEffect(() => {
+    const L = (window as any).L, carte = carteRef.current;
+    if (!cible || !prete || !L || !carte) return;
+    const c = cibleDeVisite(cible.visite, extra, nomPays);
+    if (reperage.current) { reperage.current.remove(); reperage.current = null; }
+    if (!c) { setCibleIntrouvable(true); setZoomSur(null); return; }
+    setCibleIntrouvable(false);
+    touchee.current = true;
+    carte.setView([c.lat, c.lng], ZOOM_VILLE, { animate: true });
+    reperage.current = L.circleMarker([c.lat, c.lng], { radius: 11, color: "#fff", weight: 2.5, fillColor: "#DC2626", fillOpacity: 0.9 })
+      .addTo(carte).bindTooltip(c.libelle, { permanent: true, direction: "top", offset: [0, -8] }).openTooltip();
+    setZoomSur(c.libelle);
+    conteneur.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cible?.seq, prete]);
+
+  // « Voir toute la carte » : retire le repérage et recadre sur tous les visiteurs.
+  const toutVoir = () => {
+    const L = (window as any).L, carte = carteRef.current;
+    if (reperage.current) { reperage.current.remove(); reperage.current = null; }
+    setZoomSur(null); setCibleIntrouvable(false);
+    touchee.current = false;
+    if (L && carte) {
+      const bornes = L.latLngBounds([[COORDONNEES.lat, COORDONNEES.lng]]);
+      points.forEach(p => bornes.extend([p.lat, p.lng]));
+      carte.fitBounds(bornes, { padding: [30, 30], maxZoom: 9 });
+    }
+    onToutVoir?.();
+  };
+
   const basculer = () => {
     const c = carteRef.current;
     const suivant = !active;
@@ -120,6 +157,11 @@ export default function CarteVisites({ visites }: { visites: VisiteCarte[] }) {
       ) : (
         <div className="relative">
           <div ref={conteneur} className="h-72 w-full rounded-xl overflow-hidden border border-ink-200" role="img" aria-label="Carte de localisation des visiteurs" />
+          {zoomSur && (
+            <button type="button" onClick={toutVoir} className="absolute top-2 right-2 z-[500] rounded-lg bg-white/95 border border-ink-200 px-2.5 py-1.5 text-xs font-semibold text-ink-700 shadow">
+              Voir toute la carte
+            </button>
+          )}
           {tactile && (
             <button type="button" onClick={basculer} className="absolute bottom-2 right-2 z-[500] rounded-lg bg-white/95 border border-ink-200 px-2.5 py-1.5 text-xs font-semibold text-ink-700 shadow">
               {active ? "Figer la carte" : "Déplacer / zoomer"}
@@ -127,6 +169,8 @@ export default function CarteVisites({ visites }: { visites: VisiteCarte[] }) {
           )}
         </div>
       )}
+      {zoomSur && <p className="text-xs font-medium text-red-700 mt-1.5" role="status">Zoom sur {zoomSur} — repère rouge (position approximative : centre de la ville, à 1 km près).</p>}
+      {cibleIntrouvable && <p className="text-xs text-amber-700 mt-1.5" role="status">Cette visite n&apos;a pas de ville localisable sur la carte.</p>}
       <p className="text-[11px] text-ink-400 mt-1.5">
         {points.length} visiteur{points.length > 1 ? "s" : ""} placé{points.length > 1 ? "s" : ""} (position approximative : la ville).
         {sansPosition > 0 ? ` ${sansPosition} sans ville connue.` : ""}{enCours && points.length > 0 ? " Localisation d'autres villes en cours…" : ""}

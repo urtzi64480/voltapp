@@ -31,3 +31,24 @@ describe("carte des visiteurs", () => {
   });
   it("normaliser", () => { expect(normaliser("Saint-Jean-de-Luz")).toBe("saint jean de luz"); });
 });
+
+import { ZOOM_VILLE, cibleDeVisite } from "@/lib/carte-visites";
+describe("cibleDeVisite (zoom sur la ville d'une visite)", () => {
+  const pays = (c: unknown) => (c === "FR" ? "France" : String(c ?? ""));
+  it("coordonnées enregistrées : position exacte (non écartée) et libellé « Ville (Pays) »", () => {
+    expect(cibleDeVisite({ ville: "Biarritz", pays: "FR", latitude: 43.48, longitude: -1.56 }, {}, pays)).toEqual({ lat: 43.48, lng: -1.56, libelle: "Biarritz (France)" });
+  });
+  it("sans coordonnées : ville connue de la zone, sinon ville géocodée, sinon null", () => {
+    const connue = cibleDeVisite({ ville: "Bayonne", pays: "FR" }, {}, pays); expect(connue).not.toBeNull(); expect(connue?.libelle).toBe("Bayonne (France)");
+    const v = { ville: "Zzzville", pays: "FR" };
+    expect(cibleDeVisite(v)).toBeNull();
+    expect(cibleDeVisite(v, { [cleLieu(v)]: { lat: 10, lng: 20 } }, pays)).toMatchObject({ lat: 10, lng: 20, libelle: "Zzzville (France)" });
+  });
+  it("ville seule, pays seul, rien : libellés de repli ; visite sans position → null", () => {
+    expect(cibleDeVisite({ ville: "Pau", latitude: 43.3, longitude: -0.37 })?.libelle).toBe("Pau");
+    expect(cibleDeVisite({ pays: "FR", latitude: 43.3, longitude: -0.37 }, {}, pays)?.libelle).toBe("France");
+    expect(cibleDeVisite({ latitude: 43.3, longitude: -0.37 })?.libelle).toBe("Position approximative");
+    expect(cibleDeVisite({ pays: "FR" })).toBeNull(); expect(cibleDeVisite({ latitude: 0, longitude: 0 })).toBeNull();
+  });
+  it("zoom « ville » entre le zoom régional (9) et la rue (16+)", () => { expect(ZOOM_VILLE).toBeGreaterThan(9); expect(ZOOM_VILLE).toBeLessThan(16); });
+});

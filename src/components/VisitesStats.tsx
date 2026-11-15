@@ -2,9 +2,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { Loader2, Smartphone, Monitor, Globe, Clock, UserPlus, FileSearch, X, ChevronRight } from "lucide-react";
+import { Loader2, Smartphone, Monitor, Globe, Clock, UserPlus, FileSearch, X, ChevronRight, MapPin } from "lucide-react";
 import { fondModal } from "@/lib/fond-modal";
-import CarteVisites from "@/components/CarteVisites";
+import CarteVisites, { type CibleDemandee } from "@/components/CarteVisites";
 
 interface Visite {
   [colonne: string]: unknown;
@@ -92,6 +92,9 @@ export default function VisitesStats({ userId }: { userId: string }) {
   const [clics, setClics] = useState<Clic[]>([]);
   const [loading, setLoading] = useState(true);
   const [selection, setSelection] = useState<Visite | null>(null);
+  const [cible, setCible] = useState<CibleDemandee | null>(null);
+  /** Va sur la carte et zoome sur la ville de la visite (ferme le détail s'il est ouvert). */
+  const voirSurCarte = (v: Visite) => { setSelection(null); setCible(c => ({ visite: v, seq: (c?.seq ?? 0) + 1 })); };
 
   useEffect(() => {
     async function load() {
@@ -203,7 +206,7 @@ export default function VisitesStats({ userId }: { userId: string }) {
         </div>
       </div>
 
-      <CarteVisites visites={visites} />
+      <CarteVisites visites={visites} cible={cible} nomPays={c => (typeof c === "string" && c ? paysLabel(c) : "")} onToutVoir={() => setCible(null)} />
 
       {topPages.length > 0 && (
         <div>
@@ -230,9 +233,9 @@ export default function VisitesStats({ userId }: { userId: string }) {
             const lieu = v.ville ? `${v.ville} · ${paysLabel(v.pays)}` : paysLabel(v.pays);
             const isDesktop = v.device_type === "desktop";
             return (
+              <div key={`${v.created_at}-${i}`} className="relative">
               <button
                 type="button"
-                key={`${v.created_at}-${i}`}
                 onClick={() => setSelection(v)}
                 className="w-full text-left bg-ink-50 hover:bg-ink-100 rounded-xl p-3 text-sm transition-colors cursor-pointer"
               >
@@ -250,6 +253,13 @@ export default function VisitesStats({ userId }: { userId: string }) {
                   <ChevronRight size={14} className="shrink-0 text-ink-300" />
                 </div>
               </button>
+              {v.ville && (
+                <button type="button" onClick={() => voirSurCarte(v)} aria-label={`Voir ${v.ville} sur la carte`} title={`Voir ${v.ville} sur la carte`}
+                  className="absolute right-9 top-2.5 inline-flex items-center gap-1 rounded-lg bg-white border border-ink-200 px-2 py-0.5 text-[11px] font-semibold text-volt-700 hover:bg-volt-50">
+                  <MapPin size={12} /> Carte
+                </button>
+              )}
+              </div>
             );
           })}
           {dernieresVisites.length === 0 && <p className="text-ink-300 text-sm">Aucune donnée pour le moment.</p>}
@@ -270,6 +280,11 @@ export default function VisitesStats({ userId }: { userId: string }) {
               <X size={18} />
             </button>
             <h3 className="font-display text-lg text-ink-900 mb-4 pr-6">Détail de la visite</h3>
+            {selection.ville && (
+              <button type="button" onClick={() => voirSurCarte(selection)} className="btn-ghost mb-4 !text-volt-700">
+                <MapPin size={14} /> Voir {selection.ville} sur la carte
+              </button>
+            )}
             <dl className="space-y-3">
               {[...CHAMPS_ORDRE.filter((c) => c in selection), ...Object.keys(selection).filter((c) => !CHAMPS_ORDRE.includes(c))].map((cle) => (
                 <div key={cle}>

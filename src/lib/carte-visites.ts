@@ -74,3 +74,16 @@ export function lieuxAGeocoder(visites: VisiteCarte[], extra: Record<string, Coo
   });
   return [...m.values()];
 }
+
+/** Zoom de la carte quand on va sur la ville d'une visite : niveau « ville entière avec ses rues principales » (position connue à ~1 km près). */
+export const ZOOM_VILLE = 13;
+
+export interface CibleCarte extends Coord { libelle: string }
+
+/** Où zoomer pour une visite : sa position exacte (non écartée comme sur la carte) et un libellé « Ville (Pays) » ; null si elle ne peut pas être placée. */
+export function cibleDeVisite(v: VisiteCarte, extra: Record<string, Coord> = {}, nomPays: (code: unknown) => string = c => texte(c)): CibleCarte | null {
+  const pos = positionVisite(v, extra);
+  if (!pos) return null;
+  const ville = texte(v.ville), pays = nomPays(v.pays);
+  return { ...pos, libelle: ville && pays ? `${ville} (${pays})` : ville || pays || "Position approximative" };
+}
