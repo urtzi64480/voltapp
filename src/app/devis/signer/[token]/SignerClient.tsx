@@ -91,7 +91,7 @@ export default function SignerPage({ params }: { params: { token: string } }) {
   }
 
   async function telechargerPDF() {
-    if (!devis || !profil) return;
+    if (!devis) return; // profil absent : le profil de secours ci-dessous prend le relais (le bouton ne doit pas rester sans effet)
     setDownloading(true);
     try {
       const { genPDFDevis } = await import("@/lib/pdf");

@@ -238,7 +238,10 @@ export default function ParametresPage() {
     const { id, created_at, updated_at, compteur_devis, compteur_facture, ...updateData } = profil as any;
     void compteur_devis; void compteur_facture;   // jamais réécrits depuis cet écran : une copie périmée ferait reculer la numérotation
     if (!Number.isFinite(updateData.taux_horaire)) delete updateData.taux_horaire;   // champ vidé : on garde la valeur enregistrée
-    const { error } = await supabase.from("profil").update(updateData).eq("id", session.user.id);
+    // .select("id") : un update qui ne touche aucune ligne ne renvoie pas d'erreur. Sur un compte dont la ligne de profil n'existe pas
+    // encore (compte créé à la main), rien n'était enregistré alors que l'écran affichait « enregistré » : on crée alors la ligne.
+    let { data: maj, error } = await supabase.from("profil").update(updateData).eq("id", session.user.id).select("id");
+    if (!error && (maj ?? []).length === 0) ({ error } = await supabase.from("profil").insert({ ...updateData, id: session.user.id }));
     setSaving(false);
     if (echecSupabase(error, "Enregistrement du profil")) return;
     setSaved(true);

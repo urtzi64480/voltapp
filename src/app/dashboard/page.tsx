@@ -9,6 +9,7 @@ import { Zap, TrendingUp, FileText, Receipt, AlertTriangle, Users, Wallet, Clipb
 import InstallEtNotifications from "@/components/InstallEtNotifications";
 import QrAvis from "@/components/QrAvis";
 import { provisionFactures, type ResultatProvision } from "@/lib/provision";
+import { repartir } from "@/lib/export-comptable";
 import { tauxDepuisProfil } from "@/lib/rentabilite";
 
 export default function DashboardPage() {
@@ -43,13 +44,15 @@ export default function DashboardPage() {
         supabase.from("clients").select("id"),
       ]);
 
-      const sum = (rows: any[], k: string) => (rows ?? []).reduce((a, r) => a + (r[k] ?? 0), 0);
+      // Même répartition que le livre des recettes : une remise accordée sur la facture réduit total_ttc mais pas
+      // total_service / total_materiau — les additionner tels quels gonflait le CA par branche (et les plafonds) au-delà de l'encaissé.
+      const sum = (rows: any[], k: "service" | "materiau" | "total") => (rows ?? []).reduce((a, r) => a + repartir(r)[k], 0);
       setStats({
-        ca_service_mois: sum(fM ?? [], "total_service"),
-        ca_materiau_mois: sum(fM ?? [], "total_materiau"),
-        ca_total_mois: sum(fM ?? [], "total_ttc"),
-        ca_service_annee: sum(fA ?? [], "total_service"),
-        ca_materiau_annee: sum(fA ?? [], "total_materiau"),
+        ca_service_mois: sum(fM ?? [], "service"),
+        ca_materiau_mois: sum(fM ?? [], "materiau"),
+        ca_total_mois: sum(fM ?? [], "total"),
+        ca_service_annee: sum(fA ?? [], "service"),
+        ca_materiau_annee: sum(fA ?? [], "materiau"),
         devis_attente: dA?.length ?? 0,
         factures_impayees: fI?.length ?? 0,
         nb_clients: cls?.length ?? 0,

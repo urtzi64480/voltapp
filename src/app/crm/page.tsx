@@ -7,6 +7,7 @@ import Shell from "@/components/layout/Shell";
 import Link from "next/link";
 import { TrendingUp, FileText, Receipt, CheckCircle, Clock, AlertTriangle, BarChart3, PieChart, Euro, Users, Download, Landmark, ShoppingBag, ChevronDown } from "lucide-react";
 import VisitesStats from "@/components/VisitesStats";
+import { repartir } from "@/lib/export-comptable";
 
 // Seuils de franchise en base de TVA 2026 (distincts des plafonds de CA du régime micro)
 const FRANCHISE_TVA_SERVICE = 37500;
@@ -148,8 +149,8 @@ export default function CRMPage() {
         { data: paliersAp },
         { data: facsMois },
       ] = await Promise.all([
-        supabase.from("factures").select("total_service,total_materiau,date_emission,paye_le,statut").gte("paye_le", payeDebut).lt("paye_le", payeFin).eq("statut", "payee"),
-        supabase.from("factures").select("total_service,total_materiau,date_emission,paye_le,statut").gte("paye_le", payeDebutN1).lt("paye_le", payeDebut).eq("statut", "payee"),
+        supabase.from("factures").select("total_service,total_materiau,total_ttc,date_emission,paye_le,statut").gte("paye_le", payeDebut).lt("paye_le", payeFin).eq("statut", "payee"),
+        supabase.from("factures").select("total_service,total_materiau,total_ttc,date_emission,paye_le,statut").gte("paye_le", payeDebutN1).lt("paye_le", payeDebut).eq("statut", "payee"),
         supabase.from("factures").select("statut,total_ttc").gte("date_emission", debut).lte("date_emission", fin),
         supabase.from("devis").select("statut,total_ttc,total_service,total_materiau").gte("created_at", debut).lt("created_at", `${Number(annee) + 1}-01-01`),
         supabase.from("facture_lignes").select("nom,type_branche,quantite,prix_unitaire,facture:factures!inner(statut,date_emission)").gte("facture.date_emission", debut).lte("facture.date_emission", fin).eq("facture.statut", "payee"),
@@ -171,12 +172,18 @@ export default function CRMPage() {
         });
       }
 
-      const rows = facsPayees ?? [];
+      // CA par branche = montant réellement encaissé, réparti comme le livre des recettes : une remise accordée sur la facture
+      // réduit total_ttc mais pas total_service / total_materiau, qui gonflaient donc le CA à déclarer.
+      const encaisse = <T extends { total_service: number; total_materiau: number; total_ttc: number }>(r: T): T => {
+        const p = repartir(r);
+        return { ...r, total_service: p.service, total_materiau: p.materiau };
+      };
+      const rows = (facsPayees ?? []).map(encaisse);
       const caS = rows.reduce((a, r) => a + r.total_service, 0);
       const caM = rows.reduce((a, r) => a + r.total_materiau, 0);
       setCaAnnuel({ service: caS, materiau: caM });
 
-      const rowsN1 = facsPayeesN1 ?? [];
+      const rowsN1 = (facsPayeesN1 ?? []).map(encaisse);
       setCaAnnuelN1({ service: rowsN1.reduce((a, r) => a + r.total_service, 0), materiau: rowsN1.reduce((a, r) => a + r.total_materiau, 0) });
 
       const map: Record<number, { service: number; materiau: number }> = {};
@@ -240,7 +247,7 @@ export default function CRMPage() {
       // car facture_lignes ne porte pas de prestation_id.
       const { data: facsRentabBase } = await supabase
         .from("factures")
-        .select("id,numero,paye_le,total_materiau,devis_id,client:clients(nom,prenom)")
+        .select("id,numero,paye_le,total_service,total_materiau,total_ttc,devis_id,client:clients(nom,prenom)")
         .eq("statut", "payee")
         .gte("paye_le", payeDebut)
         .lt("paye_le", payeFin)
@@ -286,7 +293,7 @@ export default function CRMPage() {
         numero: f.numero,
         date_emission: f.paye_le,
         client_nom: f.client ? `${f.client.prenom ?? ""} ${f.client.nom}`.trim() : "—",
-        total_materiau: f.total_materiau ?? 0,
+        total_materiau: repartir(f).materiau, // part matériaux réellement encaissée (remise de facture déduite)
         cout_achat: f.devis_id ? (coutParDevis[f.devis_id] ?? 0) : 0,
         sans_devis: !f.devis_id,
       }));
@@ -353,14 +360,15 @@ export default function CRMPage() {
       // Jour de paiement vu depuis le navigateur (l'instant UTC donnait la veille juste après minuit)
       f.paye_le ? dateLocale(new Date(f.paye_le)) : "",
       texteCsv(f.objet),
-      euros(f.total_service),
-      euros(f.total_materiau),
-      euros(f.total_ttc),
+      // Parts réellement encaissées (remise de facture répartie au prorata) : Service + Matériaux = Total, comme le livre des recettes.
+      euros(repartir(f).service),
+      euros(repartir(f).materiau),
+      euros(repartir(f).total),
     ]);
 
-    const totService = facs.reduce((a: number, f: any) => a + (Number(f.total_service) || 0), 0);
-    const totMateriau = facs.reduce((a: number, f: any) => a + (Number(f.total_materiau) || 0), 0);
-    const totTTC = facs.reduce((a: number, f: any) => a + (Number(f.total_ttc) || 0), 0);
+    const totService = facs.reduce((a: number, f: any) => a + repartir(f).service, 0);
+    const totMateriau = facs.reduce((a: number, f: any) => a + repartir(f).materiau, 0);
+    const totTTC = facs.reduce((a: number, f: any) => a + repartir(f).total, 0);
     rows.push(["TOTAL", "", "", "", "", euros(totService), euros(totMateriau), euros(totTTC)]);
 
     const csv = [

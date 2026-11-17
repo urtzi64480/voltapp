@@ -1,7 +1,7 @@
 // PDF « Contrôles de fin de chantier » remis au client : uniquement les contrôles retenus ET réalisés.
 // Ce document n'est PAS une attestation Consuel ni un rapport de vérification réglementaire : il le dit explicitement.
 import type { Profil } from "@/types";
-import { fmtDate } from "./utils";
+import { dateLocale, fmtDate } from "./utils";
 import { loadLogoBase64 } from "./pdf";
 import { controlesRemis, type Controles } from "./checklist-fin-chantier";
 
@@ -31,7 +31,7 @@ export async function genPDFControlesBlob(controles: Controles | undefined, prof
   doc.text("CONTRÔLES DE FIN DE CHANTIER", tx, 16);
   doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(200, 200, 190);
   doc.text(`Devis N° ${infos.numeroDevis}`, tx, 23);
-  const date = infos.dateChantier || new Date().toISOString().slice(0, 10);
+  const date = infos.dateChantier || dateLocale(); // jour local (toISOString donnait la veille entre minuit et 2 h)
   doc.text(`Chantier du ${fmtDate(date)}`, tx, 28);
 
   [

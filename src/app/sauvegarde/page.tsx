@@ -19,13 +19,14 @@ export default function SauvegardePage() {
   const [ecraser, setEcraser] = useState(false);
 
   async function telecharger(prefixe = "") {
-    // Les réalisations sont lisibles par tous (galerie publique) : sans filtre, la sauvegarde embarquerait celles des autres électriciens.
+    // Les réalisations ET le profil sont lisibles par tous (galerie et page publiques) : sans filtre, la sauvegarde embarquerait
+    // ceux des autres électriciens (SIRET, coordonnées, liens de calendriers…).
     const { data: { session } } = await supabase.auth.getSession();
     const uid = session?.user.id;
     if (!uid) throw new Error("Session expirée : reconnecte-toi avant de sauvegarder.");
     const f = await collecter((table, de, a) => {
       const requete = supabase.from(table).select("*");
-      return (table === "realisations" ? requete.eq("user_id", uid) : requete).range(de, a);
+      return (table === "realisations" ? requete.eq("user_id", uid) : table === "profil" ? requete.eq("id", uid) : requete).range(de, a);
     });
     const blob = new Blob([JSON.stringify(f, null, 1)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -53,10 +54,16 @@ export default function SauvegardePage() {
     setRestOccupe(true); setErreur(null); setRestauration(null);
     try {
       await telecharger("avant-restauration-");
+      // Seul le profil du compte connecté est réécrit : une sauvegarde ancienne peut contenir celui d'un autre électricien
+      // (refusé par la base, ce qui faisait échouer tout le lot « profil », le sien compris).
+      const { data: { session } } = await supabase.auth.getSession();
+      const uid = session?.user.id;
+      if (!uid) throw new Error("Session expirée : reconnecte-toi avant de restaurer.");
       const existants = await collecter((table, de, a) => supabase.from(table).select("id").range(de, a), TABLES_PARENTES);
       if (Object.keys(existants.erreurs).length > 0 && !ecraser) throw new Error(`Lecture de l'existant impossible (${Object.keys(existants.erreurs).join(", ")}) : restauration annulée.`);
       const parentsExistants = Object.fromEntries(Object.entries(existants.tables).map(([t, l]) => [t, new Set((l as { id: string }[]).map(x => String(x.id)))]));
-      setRestauration(await restaurer(aRestaurer, (table, lignes, ignorer) => supabase.from(table).upsert(lignes as never, ignorer ? { onConflict: "id", ignoreDuplicates: true } : undefined), { ecraser, parentsExistants }));
+      const source = aRestaurer.tables.profil ? { ...aRestaurer, tables: { ...aRestaurer.tables, profil: aRestaurer.tables.profil.filter(l => (l as { id?: unknown }).id === uid) } } : aRestaurer;
+      setRestauration(await restaurer(source, (table, lignes, ignorer) => supabase.from(table).upsert(lignes as never, ignorer ? { onConflict: "id", ignoreDuplicates: true } : undefined), { ecraser, parentsExistants }));
     } catch (e) { setErreur(e instanceof Error ? e.message : "Restauration impossible"); } finally { setRestOccupe(false); }
   }
 

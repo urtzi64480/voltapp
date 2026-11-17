@@ -68,13 +68,17 @@ function Reception({ devis }: { devis: DevisRec }) {
     if (!fichiers || fichiers.length === 0) return;
     setEnvoiPhoto(true); setMsg(null);
     try {
+      // Compteur local : `photos` ne change pas pendant la boucle, la limite n'était donc jamais atteinte lors d'un envoi groupé
+      // (les photos en trop partaient dans le stockage sans jamais apparaître).
+      let nb = photos.length;
       for (const f of Array.from(fichiers)) {
-        if (photos.length >= 12) { setMsg("12 photos maximum."); break; }
+        if (nb >= 12) { setMsg("12 photos maximum."); break; }
         const blob = await compresserPhoto(f);
         const chemin = `${await idUtilisateurStockage()}/chantiers/${devis.id}/${suffixeAleatoire()}.jpg`;
         const { error } = await supabase.storage.from("documents").upload(chemin, blob, { contentType: "image/jpeg" });
         if (error) { setMsg(`Envoi de la photo impossible : ${error.message}`); break; }
         agir({ action: "photo+", id: devis.id, photo: { url: supabase.storage.from("documents").getPublicUrl(chemin).data.publicUrl, legende } });
+        nb++;
       }
     } catch { setMsg("Photo illisible."); } finally { setEnvoiPhoto(false); }
   }
