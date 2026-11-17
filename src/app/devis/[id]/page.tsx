@@ -324,10 +324,19 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
         if (d.remise_valeur > 0 && d.remise_type) {
           try {
             const rt = JSON.parse(d.remise_type);
-            const totSBrut = (d.lignes ?? []).filter((l: any) => l.type_branche === "service").reduce((a: number, l: any) => a + l.prix_unitaire * l.quantite, 0);
-            const totMBrut = (d.lignes ?? []).filter((l: any) => l.type_branche === "materiau").reduce((a: number, l: any) => a + l.prix_unitaire * l.quantite, 0);
-            const remS = totSBrut - d.total_service - (d.remise_fidelite_pct ? totSBrut * d.remise_fidelite_pct / 100 : 0);
-            const remM = totMBrut - d.total_materiau;
+            // Mêmes bruts que le calcul des totaux (kits ventilés par kit_ratio_service), et opération INVERSE exacte de ce calcul :
+            // total_service = (brut − remise) × (1 − fidélité). L'ancienne formule retirait la fidélité du brut : avec une remise
+            // service ET une remise fidélité, la remise relue était plus petite que celle saisie, et l'enregistrement automatique
+            // la réécrivait ainsi (le prix du devis remontait à chaque ouverture en édition).
+            const brutDe = (service: boolean) => (d.lignes ?? []).reduce((a: number, l: any) => {
+              const total = l.prix_unitaire * l.quantite;
+              if (l.kit_ratio_service != null) return a + total * (service ? l.kit_ratio_service : 1 - l.kit_ratio_service);
+              return (l.type_branche === "service") === service ? a + total : a;
+            }, 0);
+            const totSBrut = brutDe(true), totMBrut = brutDe(false);
+            const pctFid = Number(d.remise_fidelite_pct) || 0;
+            const remS = arrondi2(totSBrut - (pctFid > 0 && pctFid < 100 ? d.total_service / (1 - pctFid / 100) : d.total_service));
+            const remM = arrondi2(totMBrut - d.total_materiau);
             setRemise({
               service_type: rt.service ?? "eur",
               service_val: remS > 0 ? (rt.service === "pct" ? String(Math.round(remS / totSBrut * 100 * 100) / 100) : String(remS)) : "",
