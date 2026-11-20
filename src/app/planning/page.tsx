@@ -101,7 +101,17 @@ function InterventionForm({ initial, clients, devis, calEvents, onSave, onCancel
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState<GCalEvent | null>(null);
   const [forceMode, setForceMode] = useState(false);
-  const set = (k: keyof FormData, v: string) => { setConflict(null); setForceMode(false); setForm(f => ({ ...f, [k]: v })); };
+  const adresseDe = (id: string) => {
+    const c = clients.find(x => x.id === id);
+    return c ? [c.adresse, c.code_postal, c.ville].filter(Boolean).join(" ") : "";
+  };
+  const set = (k: keyof FormData, v: string) => {
+    setConflict(null); setForceMode(false);
+    setForm(f => k === "client_id" && v !== f.client_id
+      // Changement de client : le devis lié de l'ancien client n'a plus de sens, et l'adresse préremplie suit le nouveau client.
+      ? { ...f, client_id: v, devis_id: "", adresse_chantier: !f.adresse_chantier || f.adresse_chantier === adresseDe(f.client_id) ? adresseDe(v) : f.adresse_chantier }
+      : { ...f, [k]: v });
+  };
   const clientDevis = devis.filter(d => d.client_id === form.client_id);
 
   useEffect(() => {
@@ -123,6 +133,7 @@ function InterventionForm({ initial, clients, devis, calEvents, onSave, onCancel
 
   const handleSave = async () => {
     if (!form.titre || !form.date_debut || !form.date_fin) return;
+    if (new Date(form.date_fin).getTime() <= new Date(form.date_debut).getTime()) { alert("La fin doit être après le début."); return; }
     if (!forceMode) {
       const c = checkConflict();
       if (c) { setConflict(c); return; }
@@ -325,7 +336,7 @@ function InterventionDrawer({ intervention, onClose, onEdit, onDelete, onMarkTer
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2"><Receipt size={14} className="text-ink-400" /><span className="text-sm text-ink-700">{facture.numero}</span></div>
                   <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                    <DocBadge ok={true} label="Envoyée" />
+                    <DocBadge ok={facture.statut !== "a_envoyer"} label="Envoyée" />
                     <DocBadge ok={!!facture.paye_le} label="Payée" />
                     <Link href={`/factures/${facture.id}`} className="ml-1"><ExternalLink size={13} className="text-ink-400 hover:text-volt-600" /></Link>
                   </div>
@@ -435,7 +446,7 @@ function DayView({ year, month, day, interventions, calEvents, onBack, onCreateA
   const TRACK_LEFT = 48;
   const TRACK_RIGHT = 8;
 
-  function topPx(s: string) { const d = new Date(s); return (d.getHours() - 7 + d.getMinutes() / 60) * HOUR_PX; }
+  function topPx(s: string) { const d = new Date(s); return Math.max(0, (d.getHours() - 7 + d.getMinutes() / 60) * HOUR_PX); }
   function heightPx(sMs: number, eMs: number) { return Math.max(20, (eMs - sMs) / 3600000 * HOUR_PX); }
 
   const handleRowDrop = (e: React.DragEvent, h: number) => {
@@ -1019,8 +1030,8 @@ export default function PlanningPage() {
                                 </button>
                               );
                             })}
-                            {(dayIvs.length + dayEvs.length) > 5 && (
-                              <p className="text-xs text-ink-400 pl-1">+{dayIvs.length + dayEvs.length - 5}</p>
+                            {(Math.max(0, dayEvs.length - 2) + Math.max(0, dayIvs.length - 3)) > 0 && (
+                              <p className="text-xs text-ink-400 pl-1">+{Math.max(0, dayEvs.length - 2) + Math.max(0, dayIvs.length - 3)}</p>
                             )}
                           </div>
                         </>

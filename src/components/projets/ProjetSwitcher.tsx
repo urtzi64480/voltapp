@@ -50,7 +50,8 @@ export default function ProjetSwitcher({ clientId, projets, projetId, avantChang
       if (modal?.mode === "new") {
         if (avantChangement) await avantChangement();
         const p = await creerProjet(clientId, nom, adresse);
-        if (p) await onChanged(p.id);
+        if (!p) { alert("La création du projet a échoué."); return; }
+        await onChanged(p.id);
       } else if (courant) {
         const ok = await modifierProjet(courant.id, { nom: nom.trim(), adresse: adresse.trim() || null });
         if (!ok) { alert("La modification du projet a échoué."); return; }

@@ -392,7 +392,7 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
           }
           setLoading(false);
           if (corrections > 0 || orphelines.length > 0 || nbMurs > 0) {
-            modifierProjet(projet.id, { maison_config: JSON.stringify({ niveaux: niveauxFinal }) });
+            modifierProjet(projet.id, { maison_config: JSON.stringify(cg && Array.isArray(cg.breakers) && cg.breakers.length > 0 ? { niveaux: niveauxFinal, circuitsGeneres: cg } : { niveaux: niveauxFinal }) });
           }
           return;
         }
@@ -2420,6 +2420,8 @@ function PlanEditor({ clientId, projet, projets, onSelect, onChanged }: {
   };
   const terminerDessinCheminement = () => {
     if (!cheminementDessin) return;
+    // « Terminer » sans aucun clic = comme « Auto » : sinon tous les membres d'un circuit automatique seraient exclus.
+    if (cheminementDessin.ordre.length === 0) { reinitialiserDessinCheminement(); return; }
     // Appareillage du circuit non recliqué en dessinant : pour un circuit MANUEL, reste
     // rattaché au même circuit (comportement historique, voir sequenceAncresCircuitOrdonnee)
     // — un simple avertissement suffit. Pour un circuit AUTOMATIQUE en revanche, "oublier"

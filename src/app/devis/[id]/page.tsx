@@ -969,7 +969,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
           <Link href={`/devis/${id}/rentabilite`} className="btn-ghost !px-2.5 !py-2 text-ink-400 hover:text-volt-600" title="Rentabilité (privé)"><Euro size={16} /></Link>
           <button onClick={() => setConfirmDelete(true)} className="btn-ghost !px-2.5 !py-2 text-red-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={16} /></button>
           {peutModifier && mode === "view" && (
-            <button onClick={() => setMode("edit")} className="btn-ghost !px-2.5 !py-2"><Pencil size={16} /></button>
+            <button onClick={() => { setMajCatalogue(null); syncFaiteRef.current = null; setMode("edit"); }} className="btn-ghost !px-2.5 !py-2"><Pencil size={16} /></button>
           )}
         </div>
 
@@ -1274,7 +1274,7 @@ export default function DevisDetailPage({ params }: { params: { id: string } }) 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                     <div>
                       <label className="label">Client</label>
-                      <select className="input" value={clientId} onChange={e => setClientId(e.target.value)}>
+                      <select className="input" value={clientId} onChange={e => { if (e.target.value !== clientId) setRemiseFidelitePct(0); setClientId(e.target.value); }}>
                         <option value="">— Sans client —</option>
                         {clients.map(c => <option key={c.id} value={c.id}>{c.prenom ? `${c.prenom} ${c.nom}` : c.nom}</option>)}
                       </select>

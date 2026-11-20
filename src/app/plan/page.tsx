@@ -173,7 +173,9 @@ export default function PlansPage() {
     Promise.all([
       supabase.from("clients").select("*").order("nom"),
       supabase.from("projets").select("*").order("created_at", { ascending: true }),
-    ]).then(([{ data }, { data: projetsData }]) => {
+    ]).then(([{ data, error: errClients }, { data: projetsData, error: errProjets }]) => {
+      // Sans ça, une erreur sur « projets » ferait passer tous les clients pour des « plans à reprendre » (et « Supprimer » viderait leurs données).
+      if (errClients || errProjets) { console.error(errClients ?? errProjets); alert("Chargement des plans impossible. Recharge la page."); setLoading(false); return; }
       const all = data ?? [];
       setClients(all);
       const parClient: Record<string, Projet[]> = {};

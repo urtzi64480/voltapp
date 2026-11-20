@@ -334,7 +334,7 @@ export default function TableauIAModal({ clientId, client, rowsActuelles, onAppl
 
   // Catalogue chargé à la première ouverture de l'onglet pré-devis.
   useEffect(() => {
-    if (onglet !== "predevis" || prestations || chargementCatalogue) return;
+    if (onglet !== "predevis" || prestations) return;
     let annule = false;
     setChargementCatalogue(true); setErreurCatalogue(null);
     (async () => {
@@ -348,7 +348,7 @@ export default function TableauIAModal({ clientId, client, rowsActuelles, onAppl
       }
     })();
     return () => { annule = true; };
-  }, [onglet, prestations, chargementCatalogue]);
+  }, [onglet, prestations]);
 
   // Les lignes du pré-devis sont recalculées quand le tableau (ou le catalogue) change ; les choix manuels se perdent alors, volontairement.
   const rowsProposees = proposition?.rows;

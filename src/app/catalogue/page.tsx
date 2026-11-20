@@ -691,7 +691,7 @@ function parseCSV(text: string): ImportRow[] {
   });
 }
 
-function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (rows: ImportRow[]) => Promise<void> }) {
+function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (rows: ImportRow[]) => Promise<boolean | void> }) {
   const [rows, setRows] = useState<ImportRow[] | null>(null);
   const [importing, setImporting] = useState(false);
   const [done, setDone] = useState(false);
@@ -708,8 +708,9 @@ function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (ro
   async function handleImport() {
     if (!rows) return;
     setImporting(true);
-    await onImport(rows.filter(r => r._valid));
-    setImporting(false); setDone(true);
+    const ok = await onImport(rows.filter(r => r._valid));
+    setImporting(false);
+    if (ok !== false) setDone(true);
   }
 
   const validCount = rows?.filter(r => r._valid).length ?? 0;
@@ -1334,7 +1335,8 @@ export default function CataloguePage() {
       }
     } else {
       const prixVenteNum = parseFloat(editPrixVente);
-      dataToSave.prix_unitaire = isNaN(prixVenteNum) ? (editData.prix_unitaire ?? orig.prix_unitaire) : prixVenteNum;
+      if (isNaN(prixVenteNum) || prixVenteNum < 0) { alert("Le prix de vente est obligatoire."); return; }
+      dataToSave.prix_unitaire = prixVenteNum;
       if (orig.type_branche === "materiau") {
         // Passage matériau → service : plus de fournisseurs ni de prix d'achat.
         dataToSave.prix_achat = null;
@@ -1449,7 +1451,7 @@ export default function CataloguePage() {
 
     if (toInsert.length > 0) {
       const { data: ins, error } = await supabase.from("prestations").insert(toInsert.map(t => t.payload)).select("id,nom,type_branche");
-      if (error) { alert("Erreur d'import : " + error.message); return; }
+      if (error) { alert("Erreur d'import : " + error.message); return false; }
       for (let i = 0; i < toInsert.length; i++) {
         const t = toInsert[i];
         if (t.offres.length === 0) continue;

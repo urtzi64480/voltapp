@@ -59,6 +59,7 @@ function Reception({ devis }: { devis: DevisRec }) {
   const enregistrer = () => {
     setMsg(null);
     if (!signataire.trim()) { setMsg("Indique le nom de la personne qui signe."); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { setMsg("Indique la date de réception."); return; }
     const sig = pad.current?.exporter();
     if (!sig) { setMsg("La signature est vide."); return; }
     agir({ action: "reception", id: devis.id, reception: { le: date, nom: signataire, reserves, signature: sig } });
