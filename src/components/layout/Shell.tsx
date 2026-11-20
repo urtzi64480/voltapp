@@ -35,8 +35,8 @@ function NavLink({ href, label, Icon, active, onClick, badge }: {
       className={cn(
         "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 relative",
         active
-          ? "bg-volt-500 text-ink-900"
-          : "text-ink-400 hover:bg-ink-800 hover:text-white"
+          ? "bg-ink-800 text-volt-400 before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-r-full before:bg-volt-500"
+          : "text-ink-400 hover:bg-ink-800/70 hover:text-white"
       )}>
       <Icon size={17} />
       <span className="flex-1">{label}</span>
@@ -125,7 +125,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         return (
           <div key={r.nom} className="pt-2">
             <button type="button" onClick={() => basculerRubrique(r.nom)} aria-expanded={ouverte}
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-ink-500 hover:text-ink-300">
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-ink-500 hover:text-ink-300">
               <ChevronDown size={13} className={cn("transition-transform", !ouverte && "-rotate-90")} />
               <span className="flex-1 text-left">{r.nom}</span>
               {!ouverte && alertes > 0 && <span className="w-2 h-2 rounded-full bg-red-500" aria-label="Notifications dans cette rubrique" />}
