@@ -117,6 +117,26 @@ export default function DevisRapidePage() {
   }
   const zoneTexte = useRef<HTMLTextAreaElement>(null);
 
+  // Arrivée depuis l'outil Demandes (?demande=<id>) : le texte de la demande enregistrée devient la dictée, et son client est présélectionné.
+  const [demande, setDemande] = useState<{ id: string; objet: string } | null>(null);
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("demande");
+    if (!id) return;
+    let annule = false;
+    (async () => {
+      const { data, error } = await supabase.from("demandes").select("id, description, client_id").eq("id", id).maybeSingle();
+      if (annule) return;
+      if (error || !data) { setErreur("Demande introuvable : dicte ou tape le texte à la main."); return; }
+      const d = data as { id: string; description: string | null; client_id: string | null };
+      const description = (d.description ?? "").trim();
+      if (!description) setErreur("Cette demande n'a pas de description : dicte ou tape le texte à la main.");
+      setTexte(t => t || description);
+      if (d.client_id) setClientManuel(c => c ?? d.client_id);
+      setDemande({ id: d.id, objet: description.slice(0, 80) });
+    })();
+    return () => { annule = true; };
+  }, []);
+
   useEffect(() => {
     let annule = false;
     (async () => {
@@ -162,8 +182,14 @@ export default function DevisRapidePage() {
     if (creation || !userId || !clientId || lignesDevis.length === 0) return;
     setCreation(true); setErreur(null);
     try {
-      const res = await creerDevisBrouillon(supabase, userId, clientId, "Devis", lignesDevis);
+      const res = await creerDevisBrouillon(supabase, userId, clientId, demande?.objet || "Devis", lignesDevis);
       if (res.erreur || !res.id) { setErreur(res.erreur ?? "Création impossible."); return; }
+      if (demande) {
+        // Rattache la demande au devis créé ; si la colonne devis_id manque en base, on se contente du statut.
+        const maj = { statut: "devis_en_cours", updated_at: new Date().toISOString() };
+        const { error: errLien } = await supabase.from("demandes").update({ ...maj, devis_id: res.id }).eq("id", demande.id);
+        if (errLien) await supabase.from("demandes").update(maj).eq("id", demande.id);
+      }
       router.push(`/devis/${res.id}`);
     } finally {
       setCreation(false);

@@ -269,3 +269,15 @@ describe("heures dictées en h/min", () => {
     expect(h("2 heures de main d'oeuvre, 30 prises").map(x => x[0])).toEqual([2, 30]);
   });
 });
+
+describe("texte de demande rédigé en langage courant (outil Demandes → devis automatique)", () => {
+  const lignes = (t: string) => decouperDictee(t, catalogue).map(s => [s.quantite, s.heures] as const);
+  it("ignore « Visite chez M. Dupont », les deux-points et les verbes d'intention", () => {
+    expect(lignes("Visite chez M. Dupont : refaire le tableau, ajouter 6 prises, 3 spots et prévoir 2 heures de main d'oeuvre"))
+      .toEqual([[1, false], [6, false], [3, false], [2, true]]);
+  });
+  it("« câble 2,5 jusqu'au garage » reste une seule ligne de 15 m", () => {
+    const s = decouperDictee("Il veut changer 4 prises et tirer 15 mètres de câble 2,5 jusqu'au garage", catalogue);
+    expect(s.map(x => x.quantite)).toEqual([4, 15]);
+  });
+});

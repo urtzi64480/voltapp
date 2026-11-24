@@ -269,6 +269,10 @@ export default function DemandesPage() {
     router.push(`/devis/nouveau?${params.toString()}`);
   }
 
+  function devisAutomatique(d: Demande) {
+    router.push(`/devis/rapide?demande=${encodeURIComponent(d.id)}`);
+  }
+
   const filtered = filtreStatut === "tous"
     ? demandes
     : demandes.filter(d => d.statut === filtreStatut);
@@ -443,10 +447,20 @@ export default function DemandesPage() {
                   Modifier
                 </button>
                 {!selected.devis_id && (
-                  <button onClick={() => creerDevis(selected)}
-                    className="flex-1 py-2.5 rounded-xl bg-volt-500 text-ink-900 text-sm font-semibold hover:bg-volt-400">
-                    <FileText size={14} className="inline mr-1" /> Créer un devis
-                  </button>
+                  <>
+                    {selected.description?.trim() && (
+                      <button onClick={() => devisAutomatique(selected)}
+                        className="flex-1 py-2.5 rounded-xl bg-volt-500 text-ink-900 text-sm font-semibold hover:bg-volt-400">
+                        <FileText size={14} className="inline mr-1" /> Devis automatique
+                      </button>
+                    )}
+                    <button onClick={() => creerDevis(selected)}
+                      className={selected.description?.trim()
+                        ? "flex-1 py-2.5 rounded-xl border border-ink-200 text-ink-700 text-sm font-semibold hover:bg-ink-50"
+                        : "flex-1 py-2.5 rounded-xl bg-volt-500 text-ink-900 text-sm font-semibold hover:bg-volt-400"}>
+                      <FileText size={14} className="inline mr-1" /> Créer un devis
+                    </button>
+                  </>
                 )}
               </div>
             </aside>

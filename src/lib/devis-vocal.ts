@@ -144,7 +144,7 @@ const PROTEGES: [RegExp, string][] = [
   [/\baller et retour\b/gi, "aller_et_retour"],
 ];
 
-const REMPLISSAGE = /\b(je veux|je voudrais|il faut|il me faut|on veut|on a besoin de|prevoir|prevois|mets|mettre|ajoute|ajouter|rajoute|rajouter|compte|comptez|devis pour|devis|fourniture et pose( de| d')?|fourniture|svp|s'il te plait|s'il vous plait|aussi|egalement|encore)\b/gi;
+const REMPLISSAGE = /\b(il veut|elle veut|ils veulent|il voudrait|elle voudrait|souhaite|souhaiterait|changer|remplacer|installer|tirer|refaire|je veux|je voudrais|il faut|il me faut|on veut|on a besoin de|prevoir|prevois|prévoir|prévois|prévoyer|mets|mettre|ajoute|ajouter|rajoute|rajouter|compte|comptez|devis pour|devis|fourniture et pose( de| d')?|fourniture|svp|s'il te plait|s'il vous plait|aussi|egalement|encore)\b/gi;
 
 /** « 2 heures et demie » → « 2.5 heures » ; « une demi-heure » → « 0.5 heure ». */
 function heuresDemies(t: string): string {
@@ -199,7 +199,7 @@ export function couperAuxQuantites(texte: string): string {
     let coupe = false;
     if (motsDansSegment > 0 && suivant !== undefined && estMotTok(suivant)) {
       const s = mot(suivant);
-      if (estNombreTok(cur) && !UNITES_SPEC.has(s) && !LIAISONS.has(s) && !AVANT_SPEC.has(precedent)) coupe = true;
+      if (estNombreTok(cur) && !UNITES_SPEC.has(s) && !LIAISONS.has(s) && !PREPOSITIONS.has(s) && !/^jusqu/.test(s) && !AVANT_SPEC.has(precedent)) coupe = true;
       else if ((m === "un" || m === "une") && !PREPOSITIONS.has(precedent) && !LIAISONS.has(s)) coupe = true;
       else if (m === "main" && /^d['’]?oeuvre/.test(minuscules(suivant)) && !["de", "d", "heure", "heures", "h"].includes(precedent)) coupe = true;
     }
@@ -267,9 +267,11 @@ export function decouperDictee(texte: string, prestations: Prestation[] = []): S
   if (!t) return [];
   t = heuresDemies(chiffrer(t));
   PROTEGES.forEach(([re, to]) => { t = t.replace(re, to); });
+  t = t.replace(/(?<!\d)\s*:\s*(?!\d)/g, ", ");   // « chez M. Dupont : refaire… » : les deux-points séparent comme une virgule
+  t = t.replace(/\b(m|mr|mme|mlle|dr)\.(?=\s)/gi, "$1");   // abréviation de civilité : le point n'est pas une fin de phrase
   t = t.replace(REMPLISSAGE, " ").replace(/\s+/g, " ");
   // Client mentionné mais non reconnu (« pour monsieur Zorglub ») : il ne doit pas coller à l'article précédent.
-  t = t.replace(/\b(?:(?:pour|chez)\s+(?:monsieur|madame|mademoiselle|mme|mlle|mr)\.?|client(?:e)?)\s+[a-zà-ÿœ'-]+/gi, ", ");
+  t = t.replace(/\b(?:(?:pour|chez)\s+(?:monsieur|madame|mademoiselle|mme|mlle|mr|m)\.?|client(?:e)?)\s+[a-zà-ÿœ'-]+/gi, ", ");
   t = couperAuxQuantites(t);
   const bruts = t.split(/\s*(?:(?<!\d)[,;.]|[,;.](?!\d)|\bet\b|\bpuis\b|\bplus\b|\bensuite\b|\bavec\b|\bainsi que\b|[+&])\s*/i).map(s => s.trim()).filter(Boolean);
   const morceaux = bruts.flatMap(b => decouperParCatalogue(b.replace(/va_et_vient/g, "va et vient").replace(/aller_et_retour/g, "aller et retour").trim(), prestations));
@@ -277,6 +279,7 @@ export function decouperDictee(texte: string, prestations: Prestation[] = []): S
   for (const morceau of morceaux) {
     const m = morceau.trim();
     if (!/[a-z0-9]/i.test(minuscules(m))) continue;
+    if (/^(?:la\s+)?(?:visite|rdv|rendez-vous)$/.test(minuscules(m))) continue;   // « Visite chez M. Dupont » : contexte, pas un article
     // Mention de client non reconnue (« pour monsieur Martin ») : ce n'est pas un article.
     if (/^(?:pour|chez|client|cliente)\b/.test(minuscules(m)) && !/\d/.test(m)) continue;
     let quantite = 1;
